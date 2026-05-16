@@ -2205,6 +2205,26 @@ body.toc-active .floating-actions {
     transition: right 0.3s var(--ease-out-expo);
 }
 
+/* Mobile Polish */
+@media (max-width: 768px) {
+    .floating-actions {
+        right: 20px;
+        bottom: 20px;
+        top: auto;
+        transform: none;
+        flex-direction: row;
+        gap: 8px;
+    }
+
+    .floating-btn {
+        width: 44px;
+        height: 44px;
+        border-radius: 50%;
+        background: var(--header-bg);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    }
+}
+
 /* On smaller screens where ToC is hidden, reset button position */
 @media (max-width: 1200px) {
     body.toc-active .floating-actions {

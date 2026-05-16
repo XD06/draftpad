@@ -1173,12 +1173,19 @@ export class HybridMarkdownEditor {
             setTimeout(() => this.handleSelectionChange(), 10);
         });
 
-        document.addEventListener('touchend', (e) => {
-            if (this.selectionMenu && this.selectionMenu.contains(e.target)) {
-                return;
+        // Use selectionchange for better mobile support
+        let selectionTimeout;
+        document.addEventListener('selectionchange', () => {
+            if ('ontouchstart' in window) {
+                clearTimeout(selectionTimeout);
+                selectionTimeout = setTimeout(() => {
+                    // Only trigger if the selection is within our editor and NOT collapsed
+                    const sel = window.getSelection();
+                    if (sel && !sel.isCollapsed) {
+                        this.handleSelectionChange();
+                    }
+                }, 300);
             }
-            // Increase timeout slightly for mobile to ensure selection is fully formed
-            setTimeout(() => this.handleSelectionChange(), 50);
         });
 
         // Hide menu on any click elsewhere
@@ -1189,7 +1196,11 @@ export class HybridMarkdownEditor {
         });
         document.addEventListener('touchstart', (e) => {
             if (this.selectionMenu && !this.selectionMenu.contains(e.target)) {
-                this.selectionMenu.style.display = 'none';
+                // Don't hide if we are in the middle of selecting
+                const sel = window.getSelection();
+                if (!sel || sel.isCollapsed) {
+                    this.selectionMenu.style.display = 'none';
+                }
             }
         });
     }
