@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title id="page-title">DumbPad - Login</title>
+    <link rel="icon" type="image/svg+xml" href="Assets/dumbpad.svg">
+    <link rel="alternate icon" type="image/png" href="Assets/dumbpad.png">
+    <link rel="apple-touch-icon" href="Assets/dumbpad.png">
+    <link rel="stylesheet" href="Assets/styles.css">
+    <script>
+        (function() { // Initialize theme immediately - Prevents theme flicker
+            let theme = JSON.parse(localStorage.getItem('dumbpad_theme')) 
+            if (!theme) {
+                theme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+                localStorage.setItem('dumbpad_theme', JSON.stringify(theme));
+            } 
+            document.documentElement.setAttribute('data-theme', theme);
+        })();
+    </script>
+</head>
+<body class="light-mode">
+    <div class="container login-container">
+        <button id="theme-toggle" class="theme-toggle" aria-label="Toggle dark mode">
+            <svg id="moon-icon" class="moon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path stroke="none" d="M0 0h24v24H0z" fill="none"/>
+                <path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454z" />
+            </svg>
+            <svg id="sun-icon" class="sun" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2">
+                <path stroke="none" d="M0 0h24v24H0z" fill="none"/>
+                <path d="M14.828 14.828a4 4 0 1 0 -5.656 -5.656a4 4 0 0 0 5.656 5.656z" />
+                <path d="M6.343 17.657l-1.414 1.414" />
+                <path d="M6.343 6.343l-1.414 -1.414" />
+                <path d="M17.657 6.343l1.414 -1.414" />
+                <path d="M17.657 17.657l1.414 1.414" />
+                <path d="M4 12h-2" />
+                <path d="M12 4v-2" />
+                <path d="M20 12h2" />
+                <path d="M12 20v2" />
+            </svg>
+        </button>
+        <div id="login-content">
+            <div class="pin-header">
+                <h1 id="site-title">DumbPad</h1>
+                <h2 id="pin-description">Enter PIN</h2>
+            </div>
+            <div id="pin-container" class="pin-container">
+                <!-- PIN inputs will be added dynamically -->
+            </div>
+            <p id="pin-error" class="error-message"></p>
+        </div>
+    </div>
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const pinContainer = document.getElementById('pin-container');
+            const pinError = document.getElementById('pin-error');
+            const themeToggle = document.getElementById('theme-toggle');
+            let currentTheme = JSON.parse(localStorage.getItem('dumbpad_theme'));
+            let pinDigits = [];
+            let pinLength = 4;
+
+            // Create PIN input boxes
+            function createPinInputs(length) {
+                pinContainer.innerHTML = '';
+                pinDigits = [];
+                
+                for (let i = 0; i < length; i++) {
+                    const input = document.createElement('input');
+                    input.type = 'password';
+                    input.className = 'pin-digit';
+                    input.maxLength = 1;
+                    input.pattern = '[0-9]';
+                    input.inputMode = 'numeric';
+                    input.autocomplete = 'off';
+                    
+                    input.addEventListener('input', (e) => handlePinInput(e, i));
+                    input.addEventListener('keydown', (e) => handlePinKeydown(e, i));
+                    input.addEventListener('paste', (e) => e.preventDefault());
+                    
+                    pinContainer.appendChild(input);
+                    pinDigits.push(input);
+                }
+            }
+
+            // Handle PIN input
+            const handlePinInput = (e, index) => {
+                const input = e.target;
+                const value = input.value;
+
+                // Only allow numbers
+                if (!/^\d*$/.test(value)) {
+                    input.value = '';
+                    return;
+                }
+
+                if (value) {
+                    input.classList.add('filled');
+                    // Move to next input if available
+                    if (index < pinDigits.length - 1) {
+                        pinDigits[index + 1].focus();
+                    } else if (index === pinDigits.length - 1) {
+                        // If this is the last digit and it's filled
+                        const pin = Array.from(pinDigits).map(digit => digit.value).join('');
+                        if (pin.length === pinLength) {
+                            // Add a small delay to show the last digit being filled
+                            setTimeout(() => {
+                                verifyPin(pin);
+                            }, 150);
+                        }
+                    }
+                } else {
+                    input.classList.remove('filled');
+                }
+            };
+
+            const handlePinKeydown = (e, index) => {
+                // Handle backspace
+                if (e.key === 'Backspace' && !e.target.value) {
+                    if (index > 0) {
+                        pinDigits[index - 1].focus();
+                        pinDigits[index - 1].value = '';
+                        pinDigits[index - 1].classList.remove('filled');
+                    }
+                }
+                // Handle left arrow
+                else if (e.key === 'ArrowLeft' && index > 0) {
+                    pinDigits[index - 1].focus();
+                }
+                // Handle right arrow
+                else if (e.key === 'ArrowRight' && index < pinDigits.length - 1) {
+                    pinDigits[index + 1].focus();
+                }
+                // Handle enter
+                else if (e.key === 'Enter') {
+                    submitPin();
+                }
+            };
+
+            const submitPin = () => {
+                const pin = Array.from(pinDigits).map(digit => digit.value).join('');
+                if (pin.length === pinLength) {
+                    verifyPin(pin);
+                }
+            };
+
+            // Clear PIN inputs
+            const clearPinInputs = () => {
+                pinDigits.forEach(digit => {
+                    digit.value = '';
+                    digit.classList.remove('filled');
+                });
+                pinDigits[0].focus();
+            };
+
+            // Disable/Enable PIN inputs
+            const setPinInputsDisabled = (disabled) => {
+                pinDigits.forEach(digit => {
+                    digit.disabled = disabled;
+                    if (disabled) {
+                        digit.classList.add('disabled');
+                    } else {
+                        digit.classList.remove('disabled');
+                    }
+                });
+            };
+
+            // Validate redirect URL for security
+            const isValidRedirectUrl = (url) => {
+                if (!url || typeof url !== 'string') {
+                    return false;
+                }
+                
+                // Must start with "/" (relative path)
+                if (!url.startsWith('/')) {
+                    return false;
+                }
+                
+                // Must not start with "//" (protocol-relative URL)
+                if (url.startsWith('//')) {
+                    return false;
+                }
+                
+                // Must not contain backslashes
+                if (url.includes('\\')) {
+                    return false;
+                }
+                
+                return true;
+            };
+
+            // Get redirect URL with preserved query parameters
+            const getRedirectUrl = () => {
+                const urlParams = new URLSearchParams(window.location.search);
+                const redirectParam = urlParams.get('redirect');
+                
+                if (redirectParam) {
+                    // Use the redirect parameter if it exists and is valid
+                    const decodedRedirect = decodeURIComponent(redirectParam);
+                    if (isValidRedirectUrl(decodedRedirect)) {
+                        return decodedRedirect;
+                    } else {
+                        console.warn('Invalid redirect parameter blocked:', redirectParam);
+                        // Fall through to check current params
+                    }
+                }
+                
+                // Check if there are any query parameters to preserve
+                const currentParams = window.location.search;
+                if (currentParams && !currentParams.includes('redirect=')) {
+                    const potentialUrl = `/${currentParams}`;
+                    if (isValidRedirectUrl(potentialUrl)) {
+                        return potentialUrl;
+                    }
+                }
+                
+                return '/';
+            };
+
+            // Initialize
+            const initialize = async () => {
+                try {
+                    // Fetch site configuration first
+                    const configResponse = await fetch('/api/config');
+                    if (configResponse.status >= 400) {
+                        throw new Error(configResponse.statusText)
+                    }
+                    const config = await configResponse.json();
+                    document.getElementById('site-title').textContent = config.siteTitle;
+                    document.getElementById('page-title').textContent = `${config.siteTitle} - Login`;
+
+                    // Then check PIN requirements
+                    await checkPinRequired();
+                } catch (err) {
+                    console.error('Error during initialization:', err);
+                    document.getElementById("pin-description").textContent = '';
+                    pinError.textContent = err;
+                }
+            };
+
+            // Check if PIN is required
+            const checkPinRequired = async () => {
+                try {
+                    const response = await fetch(`/api/pin-required`);
+                    const { required, length } = await response.json();
+                    if (required) {
+                        pinLength = length;
+                        createPinInputs(length);
+                        pinDigits[0].focus();
+                    } else {
+                        window.location.href = getRedirectUrl();
+                    }
+                } catch (err) {
+                    console.error('Error checking PIN requirement:', err);
+                }
+            };
+
+            // Verify PIN
+            const verifyPin = async (pin) => {
+                try {
+                    const response = await fetch(`/api/verify-pin`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ pin }),
+                        credentials: 'same-origin'
+                    });
+
+                    const data = await response.json();
+                    if (data.success) {
+                        pinError.textContent = '';
+                        window.location.href = getRedirectUrl();
+                    } else {
+                        if (response.status === 429) {
+                            pinError.textContent = data.error;
+                            setPinInputsDisabled(true);
+                        } else {
+                            pinError.textContent = `Invalid PIN. ${data.attemptsLeft} attempts remaining.`;
+                        }
+                        clearPinInputs();
+                    }
+                } catch (err) {
+                    console.error('Error verifying PIN:', err);
+                    pinError.textContent = 'Error verifying PIN';
+                    clearPinInputs();
+                }
+            };
+
+            // Theme toggle handler
+            const toggleTheme = () => {
+                currentTheme = currentTheme === 'dark' ? 'light' : 'dark';
+                document.documentElement.setAttribute('data-theme', currentTheme);
+                localStorage.setItem('dumbpad_theme', JSON.stringify(currentTheme));
+            };
+
+            themeToggle.addEventListener('click', toggleTheme);
+            initialize(); // Start initialization
+        });
+    </script>
+</body>
+</html> 
