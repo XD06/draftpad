@@ -34,15 +34,17 @@ function generatePWAManifest(siteTitle) {
   generateAssetManifest(); // fetched later in service-worker
 
   const pwaManifest = {
-    name: siteTitle,
-    short_name: siteTitle,
-    description: "A professional hybrid markdown notepad",
+    name: siteTitle || "DumbPad",
+    short_name: "DumbPad",
+    description: "极简、高效、Agent友好的 Markdown 记事本",
     start_url: "/",
     display: "standalone",
     display_override: ["window-controls-overlay", "minimal-ui"],
-    background_color: "#171a21",
-    theme_color: "#171a21",
-    categories: ["productivity", "utilities"],
+    background_color: "#0f172a",
+    theme_color: "#0f172a",
+    categories: ["productivity", "utilities", "education"],
+    lang: "zh-CN",
+    dir: "ltr",
     shortcuts: [
       {
         name: "新建草稿",
@@ -52,9 +54,9 @@ function generatePWAManifest(siteTitle) {
         icons: [{ src: "dumbpad.png", sizes: "192x192" }]
       },
       {
-        name: "搜索文档",
+        name: "全文搜索",
         short_name: "搜索",
-        description: "快速搜索你的文档",
+        description: "在所有文档中搜索",
         url: "/?action=search",
         icons: [{ src: "dumbpad.png", sizes: "192x192" }]
       }
@@ -64,16 +66,16 @@ function generatePWAManifest(siteTitle) {
         src: "dumbpad.png",
         type: "image/png",
         sizes: "192x192",
-        purpose: "any maskable"
+        purpose: "any"
       },
       {
         src: "dumbpad.png",
         type: "image/png",
         sizes: "512x512",
-        purpose: "any maskable"
+        purpose: "any"
       }
     ],
-    orientation: "any",
+    orientation: "portrait-primary",
     prefer_related_applications: false
   };
 

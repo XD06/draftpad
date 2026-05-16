@@ -1323,7 +1323,14 @@ export class HybridMarkdownEditor {
             const menuRect = this.selectionMenu.getBoundingClientRect();
             let left = rect.left + (rect.width / 2) - (menuRect.width / 2);
             let top = rect.top - menuRect.height - 10 + window.scrollY;
-            if (top < window.scrollY + 10) top = rect.bottom + 10 + window.scrollY;
+            
+            // Mobile Optimization: System menu usually appears ABOVE.
+            // We force our menu to appear BELOW the selection to avoid clashing.
+            if ('ontouchstart' in window) {
+                top = rect.bottom + 15 + window.scrollY;
+            } else if (top < window.scrollY + 10) {
+                top = rect.bottom + 10 + window.scrollY;
+            }
             if (left + menuRect.width > window.innerWidth - 10) left = window.innerWidth - menuRect.width - 10;
             if (left < 10) left = 10; // 绝对保证不会跑到左边屏幕外
             this.selectionMenu.style.left = `${left}px`;
