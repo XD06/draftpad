@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en" data-theme="light">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -9,32 +10,38 @@
     <link rel="apple-touch-icon" href="Assets/dumbpad.png">
     <link rel="stylesheet" href="Assets/styles.css">
     <link rel="stylesheet" href="Assets/preview-styles.css">
-    <meta name="apple-mobile-web-app-capable" content="yes">
+    <link rel="stylesheet" href="Assets/thoughts.css">
+    <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="DumbPad">
     <meta name="theme-color" content="#0f172a">
     <link rel="manifest" href="Assets/manifest.json">
     <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
     <script>
-        (function() { // Initialize theme immediately - Prevents theme flicker
-            let theme = JSON.parse(localStorage.getItem('dumbpad_theme')) 
+        (function () { // Initialize theme immediately - Prevents theme flicker
+            let theme = JSON.parse(localStorage.getItem('dumbpad_theme'))
             if (!theme) {
                 theme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
                 localStorage.setItem('dumbpad_theme', JSON.stringify(theme));
-            } 
+            }
             document.documentElement.setAttribute('data-theme', theme);
         })();
     </script>
 </head>
+
 <body>
     <div id="sidebar-overlay" class="sidebar-overlay"></div>
-    
+
     <!-- Command Palette Overlay -->
     <div id="command-palette-overlay" class="command-palette-overlay">
         <div class="command-palette">
             <div class="command-input-wrapper">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 10m-7 0a7 7 0 1 0 14 0a7 7 0 1 0 -14 0" /><path d="M21 21l-6 -6" /></svg>
-                <input type="text" id="command-input" class="command-input" placeholder="Search files or commands (Ctrl+K)...">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M10 10m-7 0a7 7 0 1 0 14 0a7 7 0 1 0 -14 0" />
+                    <path d="M21 21l-6 -6" />
+                </svg>
+                <input type="text" id="command-input" class="command-input"
+                    placeholder="Search files or commands (Ctrl+K)...">
             </div>
             <div id="command-results" class="command-results">
                 <!-- Results populated by JS -->
@@ -47,28 +54,34 @@
             <div class="header-top">
                 <div class="header-left">
                     <button id="mobile-menu-toggle" class="icon-button mobile-only" aria-label="Toggle menu">
-                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2">
                             <line x1="3" y1="12" x2="21" y2="12"></line>
                             <line x1="3" y1="6" x2="21" y2="6"></line>
                             <line x1="3" y1="18" x2="21" y2="18"></line>
                         </svg>
                     </button>
                     <button id="new-notepad-header" class="icon-button" aria-label="Create new notepad">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" stroke-width="2">
                             <line x1="12" y1="5" x2="12" y2="19"></line>
                             <line x1="5" y1="12" x2="19" y2="12"></line>
                         </svg>
                     </button>
                     <button id="copy-link" class="icon-button" data-tooltip="Copy Link">
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                            <path stroke="none" d="M0 0h24v24H0z" fill="none"/>
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path stroke="none" d="M0 0h24v24H0z" fill="none" />
                             <path d="M9 15l6 -6" />
                             <path d="M11 6l.463 -.536a5 5 0 0 1 7.071 7.072l-.534 .464" />
-                            <path d="M13 18l-.397 .534a5.068 5.068 0 0 1 -7.127 0a4.972 4.972 0 0 1 0 -7.071l.524 -.463" />
+                            <path
+                                d="M13 18l-.397 .534a5.068 5.068 0 0 1 -7.127 0a4.972 4.972 0 0 1 0 -7.071l.524 -.463" />
                         </svg>
                     </button>
-                    <button id="download-notepad-header" class="icon-button pc-only" aria-label="Download" data-tooltip="Download">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <button id="download-notepad-header" class="icon-button pc-only" aria-label="Download"
+                        data-tooltip="Download">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" stroke-width="2">
                             <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
                             <polyline points="7 10 12 15 17 10"></polyline>
                             <line x1="12" y1="15" x2="12" y2="3"></line>
@@ -80,32 +93,41 @@
                     <h1>DumbPad</h1>
                 </div>
 
-                <div class="header-right"> 
+                <div class="header-right">
                     <button id="toggle-reading-mode" class="icon-button" data-tooltip="Toggle Reading Mode (Alt+R)">
-                        <svg class="read-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                            <path stroke="none" d="M0 0h24v24H0z" fill="none"/>
+                        <svg class="read-icon" width="20" height="20" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path stroke="none" d="M0 0h24v24H0z" fill="none" />
                             <path d="M19 4v16h-12a2 2 0 0 1 -2 -2v-12a2 2 0 0 1 2 -2h12z" />
                             <path d="M19 16h-12a2 2 0 0 0 -2 2" />
                             <path d="M9 8h6" />
                         </svg>
-                        <svg class="edit-icon" style="display:none" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                            <path stroke="none" d="M0 0h24v24H0z" fill="none"/>
+                        <svg class="edit-icon" style="display:none" width="20" height="20" viewBox="0 0 24 24"
+                            fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                            stroke-linejoin="round">
+                            <path stroke="none" d="M0 0h24v24H0z" fill="none" />
                             <path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" />
                             <path d="M13.5 6.5l4 4" />
                         </svg>
                     </button>
-                    <button id="search-open" class="icon-button" data-tooltip="Search ({shortcut})" data-shortcuts='{"win": "ctrl+k", "mac": "cmd+k"}'>
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                            <path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M10 10m-7 0a7 7 0 1 0 14 0a7 7 0 1 0 -14 0" /><path d="M21 21l-6 -6" />
+                    <button id="search-open" class="icon-button" data-tooltip="Search ({shortcut})"
+                        data-shortcuts='{"win": "ctrl+k", "mac": "cmd+k"}'>
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                            <path d="M10 10m-7 0a7 7 0 1 0 14 0a7 7 0 1 0 -14 0" />
+                            <path d="M21 21l-6 -6" />
                         </svg>
                     </button>
                     <button id="theme-toggle" class="icon-button" aria-label="Toggle dark mode">
-                        <svg id="moon-icon" class="moon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                            <path stroke="none" d="M0 0h24v24H0z" fill="none"/>
+                        <svg id="moon-icon" class="moon" width="20" height="20" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path stroke="none" d="M0 0h24v24H0z" fill="none" />
                             <path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454z" />
                         </svg>
-                       <svg id="sun-icon" class="sun" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
-                            <path stroke="none" d="M0 0h24v24H0z" fill="none"/>
+                        <svg id="sun-icon" class="sun" width="20" height="20" fill="none" stroke="currentColor"
+                            stroke-width="2">
+                            <path stroke="none" d="M0 0h24v24H0z" fill="none" />
                             <path d="M14.828 14.828a4 4 0 1 0 -5.656 -5.656a4 4 0 0 0 5.656 5.656z" />
                             <path d="M6.343 17.657l-1.414 1.414" />
                             <path d="M6.343 6.343l-1.414 -1.414" />
@@ -129,7 +151,8 @@
                     </div>
                     <h3 class="pc-only">目录</h3>
                     <button id="close-sidebar-left" class="icon-button mobile-only" aria-label="Close sidebar">
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2">
                             <line x1="18" y1="6" x2="6" y2="18"></line>
                             <line x1="6" y1="6" x2="18" y2="18"></line>
                         </svg>
@@ -142,21 +165,23 @@
                     <!-- Populated by JS -->
                 </div>
             </aside>
-            
+
             <section id="editor-main" class="editor-main">
                 <div id="empty-state" class="empty-state-container">
                     <div class="empty-state-glow"></div>
                     <h2 class="empty-state-title">DumbPad</h2>
-                    <p class="empty-state-subtitle">Your minimalist thinking space. Press <kbd>Ctrl+K</kbd> to search or create a new note to start.</p>
+                    <p class="empty-state-subtitle">Your minimalist thinking space. Press <kbd>Ctrl+K</kbd> to search or
+                        create a new note to start.</p>
                 </div>
-                <div id="hybrid-editor" class="hybrid-editor" role="textbox" aria-label="Markdown editor" style="display:none"></div>
+                <div id="hybrid-editor" class="hybrid-editor" role="textbox" aria-label="Markdown editor"
+                    style="display:none"></div>
                 <!-- Dynamic Table of Contents -->
                 <nav id="toc-container" class="toc-container">
                     <div class="toc-title">On This Page</div>
                     <div id="toc-list" class="toc-list"></div>
                 </nav>
             </section>
-            
+
             <aside id="sidebar-right" class="sidebar sidebar-right">
                 <div class="sidebar-header">
                     <h3>最近编辑</h3>
@@ -166,6 +191,39 @@
                 </div>
             </aside>
         </main>
+
+        <div id="thoughts-view" class="view-container" style="display: none;">
+            <div class="thoughts-header-actions">
+                <div class="search-bar">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="11" cy="11" r="8"></circle>
+                        <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                    </svg>
+                    <input type="text" id="thoughts-search-input" placeholder="输入关键词搜索...">
+                </div>
+                <div class="thoughts-actions-group">
+                    <input type="date" id="thoughts-date-filter" class="date-input">
+                    <div id="thoughts-status-filter" class="status-pills" data-value="all">
+                        <button class="status-pill active" data-status="all">全部</button>
+                        <button class="status-pill" data-status="todo">待办</button>
+                        <button class="status-pill" data-status="done">已完成</button>
+                    </div>
+                </div>
+            </div>
+            <div class="thoughts-scroll-area">
+                <div id="thoughts-timeline" class="thoughts-timeline">
+                    <!-- Thoughts will be rendered here -->
+                </div>
+            </div>
+            <button id="fab-add-thought" class="fab-btn" title="记录灵感">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+                    stroke-linecap="round">
+                    <line x1="12" y1="5" x2="12" y2="19"></line>
+                    <line x1="5" y1="12" x2="19" y2="12"></line>
+                </svg>
+            </button>
+        </div>
+
         <div id="toast-container" class="toast-container"></div>
         <div id="rename-modal" class="modal">
             <div class="modal-content">
@@ -213,7 +271,8 @@
                 <div class="settings-form">
                     <label class="settings-label">
                         Status Message Timing (ms) - Autosave:
-                        <input id="autosave-status-interval-input" class="modal-input" type="number" min="0" value="0" placeholder="Leave empty or 0 to disable messages" />
+                        <input id="autosave-status-interval-input" class="modal-input" type="number" min="0" value="0"
+                            placeholder="Leave empty or 0 to disable messages" />
                     </label>
                     <label class="settings-label">
                         Enable Remote Connection Messages:
@@ -239,6 +298,12 @@
                 <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
             </svg>
         </button>
+        <button id="toggle-thoughts" class="floating-btn" aria-label="Open today's thoughts" data-tooltip="Thoughts">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 20h9"></path>
+                <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path>
+            </svg>
+        </button>
         <button id="scroll-helper" class="floating-btn" aria-label="Scroll to top or bottom">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M7 13l5 5 5-5M7 6l5 5 5-5"></path>
@@ -248,4 +313,5 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script src="app.js" type="module"></script>
 </body>
+
 </html>

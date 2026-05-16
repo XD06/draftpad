@@ -7,6 +7,7 @@ import SettingsManager from './managers/settings.js'
 import ConfirmationManager from './managers/confirmation.js';
 import { renderSidebar, renderRecentFiles, trackRecentFile, updateSidebarSelection } from './sidebar.js';
 import { HybridMarkdownEditor } from './hybrid-editor.js';
+import { ThoughtsManager } from './managers/thoughts.js';
 import { marked } from '/js/marked/marked.esm.js';
 
 document.addEventListener('DOMContentLoaded', async () => {
@@ -93,6 +94,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const settingsManager = new SettingsManager(storageManager, applySettings);
     const confirmationManager = new ConfirmationManager();
     const searchManager = new SearchManager(fetchWithPin, selectNotepad, closeAllModals);
+    const thoughtsManager = new ThoughtsManager({ toaster, confirmationManager });
     
     // Stub PreviewManager since Vditor handles rendering
     const previewManager = { 

@@ -31,6 +31,7 @@ const DATA_DIR = path.join(__dirname, 'data');
 const PUBLIC_DIR = path.join(__dirname, "public");
 const ASSETS_DIR = path.join(PUBLIC_DIR, "Assets");
 const NOTEPADS_FILE = path.join(DATA_DIR, 'notepads.json');
+const THOUGHTS_FILE = path.join(DATA_DIR, 'thoughts.json');
 const SITE_TITLE = process.env.SITE_TITLE || 'DumbPad';
 const PIN = process.env.DUMBPAD_PIN;
 
@@ -1498,6 +1499,201 @@ app.patch('/api/notes/:id', async (req, res) => {
 
 
 // Delete notepad
+// --- Quick Thoughts API ---
+
+async function readThoughts() {
+    try {
+        const data = await fs.readFile(THOUGHTS_FILE, 'utf8');
+        return JSON.parse(data);
+    } catch (err) {
+        return [];
+    }
+}
+
+async function saveThoughts(thoughts) {
+    await fs.writeFile(THOUGHTS_FILE, JSON.stringify(thoughts, null, 2));
+}
+
+function broadcastThoughtsUpdate(action, payload) {
+    clients.forEach((client) => {
+        if (client.readyState === WebSocket.OPEN) {
+            client.send(JSON.stringify({
+                type: 'thoughts_update',
+                action,
+                payload
+            }));
+        }
+    });
+}
+
+app.get('/api/thoughts/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const thoughts = await readThoughts();
+        const thought = thoughts.find(t => t.id === id);
+        if (!thought) return res.status(404).json({ error: 'Thought not found' });
+        res.json(thought);
+    } catch (err) {
+        res.status(500).json({ error: 'Error fetching thought' });
+    }
+});
+
+app.get('/api/thoughts', async (req, res) => {
+    try {
+        const { q, date } = req.query;
+        let thoughts = await readThoughts();
+        
+        if (q) {
+            const query = q.toLowerCase();
+            thoughts = thoughts.filter(t => {
+                if (t.text.toLowerCase().includes(query)) return true;
+                if (t.subItems && t.subItems.some(s => s.text.toLowerCase().includes(query))) return true;
+                return false;
+            });
+        }
+        
+        if (date) {
+            thoughts = thoughts.filter(t => {
+                // Use a local-time aware date string (YYYY-MM-DD)
+                const d = new Date(t.createdAt);
+                const year = d.getFullYear();
+                const month = String(d.getMonth() + 1).padStart(2, '0');
+                const day = String(d.getDate()).padStart(2, '0');
+                const dateStr = `${year}-${month}-${day}`;
+                return dateStr === date;
+            });
+        }
+        
+        res.json(thoughts);
+    } catch (err) {
+        res.status(500).json({ error: 'Error fetching thoughts' });
+    }
+});
+
+app.post('/api/thoughts', async (req, res) => {
+    try {
+        const { text, subItems } = req.body;
+        if (!text) return res.status(400).json({ error: 'Text is required' });
+        
+        const thoughts = await readThoughts();
+        const newThought = {
+            id: Date.now().toString(),
+            text,
+            subItems: subItems || [],
+            completed: false,
+            createdAt: Date.now(),
+            updatedAt: Date.now()
+        };
+        
+        thoughts.unshift(newThought);
+        await saveThoughts(thoughts);
+        
+        broadcastThoughtsUpdate('create', newThought);
+        res.json(newThought);
+    } catch (err) {
+        res.status(500).json({ error: 'Error creating thought' });
+    }
+});
+
+app.patch('/api/thoughts/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { action, text, target, replacement } = req.body;
+        const thoughts = await readThoughts();
+        const index = thoughts.findIndex(t => t.id === id);
+        
+        if (index === -1) return res.status(404).json({ error: 'Thought not found' });
+        
+        const thought = thoughts[index];
+        let modified = false;
+        
+        switch (action) {
+            case 'toggle_complete':
+                thought.completed = !thought.completed;
+                modified = true;
+                break;
+            case 'append':
+                if (text) {
+                    thought.text += text;
+                    modified = true;
+                }
+                break;
+            case 'replace':
+                if (target && thought.text.includes(target)) {
+                    thought.text = thought.text.split(target).join(replacement || '');
+                    modified = true;
+                }
+                break;
+            case 'overwrite':
+                if (text !== undefined) { thought.text = text; modified = true; }
+                if (req.body.subItems !== undefined) { thought.subItems = req.body.subItems; modified = true; }
+                break;
+            case 'add_subitem':
+                if (!text) return res.status(400).json({ error: 'Subitem text is required' });
+                thought.subItems.push({
+                    id: Date.now().toString(),
+                    text,
+                    completed: false
+                });
+                modified = true;
+                break;
+            case 'toggle_subitem': {
+                const sub = thought.subItems.find(s => s.id === req.body.subId);
+                if (!sub) return res.status(404).json({ error: 'Subitem not found' });
+                sub.completed = !sub.completed;
+                modified = true;
+                break;
+            }
+            case 'update_subitem': {
+                const sub = thought.subItems.find(s => s.id === req.body.subId);
+                if (!sub) return res.status(404).json({ error: 'Subitem not found' });
+                if (text !== undefined) sub.text = text;
+                if (req.body.completed !== undefined) sub.completed = req.body.completed;
+                modified = true;
+                break;
+            }
+            case 'delete_subitem': {
+                const idx = thought.subItems.findIndex(s => s.id === req.body.subId);
+                if (idx === -1) return res.status(404).json({ error: 'Subitem not found' });
+                thought.subItems.splice(idx, 1);
+                modified = true;
+                break;
+            }
+            default:
+                return res.status(400).json({ error: 'Invalid action' });
+        }
+        
+        if (modified) {
+            thought.updatedAt = Date.now();
+            await saveThoughts(thoughts);
+            broadcastThoughtsUpdate('update', thought);
+        }
+        
+        res.json({ success: true, thought });
+    } catch (err) {
+        res.status(500).json({ error: 'Error updating thought' });
+    }
+});
+
+app.delete('/api/thoughts/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        let thoughts = await readThoughts();
+        const initialLen = thoughts.length;
+        thoughts = thoughts.filter(t => t.id !== id);
+        
+        if (thoughts.length !== initialLen) {
+            await saveThoughts(thoughts);
+            broadcastThoughtsUpdate('delete', { id });
+            res.json({ success: true });
+        } else {
+            res.status(404).json({ error: 'Thought not found' });
+        }
+    } catch (err) {
+        res.status(500).json({ error: 'Error deleting thought' });
+    }
+});
+
 app.delete('/api/notepads/:id', async (req, res) => {
     try {
         const { id } = req.params;
