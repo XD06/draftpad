@@ -9,8 +9,14 @@ export class ThoughtsManager {
         this.toggleBtn = document.getElementById('toggle-thoughts');
         this.editorContainer = document.querySelector('main');
 
+        // Quick Add Bar elements
+        this.quickAddBar = document.getElementById('quick-add-bar');
+        this.quickAddInput = document.getElementById('quick-add-input');
+        this.quickAddSubmit = document.getElementById('quick-add-submit');
+
         this.thoughts = [];
         this.isActive = false;
+        this.pendingCreateIds = new Set(); // Prevent duplicate from race conditions
 
         this.initDateFilter();
         this.initEventListeners();
@@ -25,7 +31,29 @@ export class ThoughtsManager {
     initEventListeners() {
         this.addThoughtBtn = document.getElementById('fab-add-thought');
 
-        this.addThoughtBtn.addEventListener('click', () => this.addThought());
+        this.addThoughtBtn.addEventListener('click', () => this.openQuickAdd());
+
+        // Quick Add Bar events
+        if (this.quickAddBar) {
+            // Click backdrop to close
+            this.quickAddBar.querySelector('.quick-add-backdrop').addEventListener('click', () => this.closeQuickAdd());
+            // Submit button
+            this.quickAddSubmit.addEventListener('click', (e) => { e.stopPropagation(); this.submitQuickAdd(); });
+            // Enter to submit (Shift+Enter for newline)
+            this.quickAddInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    this.submitQuickAdd();
+                } else if (e.key === 'Escape') {
+                    this.closeQuickAdd();
+                }
+            });
+            // Auto-resize textarea
+            this.quickAddInput.addEventListener('input', () => {
+                this.quickAddInput.style.height = 'auto';
+                this.quickAddInput.style.height = Math.min(this.quickAddInput.scrollHeight, 160) + 'px';
+            });
+        }
 
         this.toggleBtn.addEventListener('click', () => {
             if (this.isActive) {
@@ -108,40 +136,75 @@ export class ThoughtsManager {
         }
     }
 
-    async addThought() {
+    openQuickAdd() {
+        if (!this.quickAddBar) return;
+        this.quickAddBar.style.display = 'flex';
+        document.body.classList.add('quick-add-open');
+        this.quickAddInput.value = '';
+        this.quickAddInput.style.height = '52px';
+        this.quickAddSubmit.disabled = false;
+
+        // Auto-focus to trigger mobile keyboard
+        setTimeout(() => this.quickAddInput.focus(), 80);
+    }
+
+    closeQuickAdd() {
+        if (!this.quickAddBar) return;
+        this.quickAddBar.style.display = 'none';
+        document.body.classList.remove('quick-add-open');
+        this.quickAddInput.blur();
+    }
+
+    async submitQuickAdd() {
+        const text = this.quickAddInput.value.trim();
+        if (!text) {
+            this.quickAddInput.focus();
+            return;
+        }
         if (this.isAdding) return;
         this.isAdding = true;
+        this.quickAddSubmit.disabled = true;
 
         try {
             const response = await fetch('/api/thoughts', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ text: '新的灵感...' })
+                body: JSON.stringify({ text })
             });
             const data = await response.json();
             if (response.ok) {
-                // 1. Optimistic update: Add to list immediately
-                this.thoughts.unshift(data);
+                // Race-condition guard: if WebSocket already added this thought, skip
+                const exists = this.thoughts.some(t => t.id === data.id);
+                if (!exists) {
+                    this.thoughts.unshift(data);
+                    this.pendingCreateIds.add(data.id);
+                }
                 this.render();
-                
-                // 2. Immediate Edit: Find the new card and enter edit mode
+                this.closeQuickAdd();
+
+                // Scroll new item into view
                 setTimeout(() => {
                     const card = document.querySelector(`.thought-card[data-id="${data.id}"]`);
-                    if (card) {
-                        this.enterEditMode(card, data);
-                    }
-                }, 50); // Short delay to ensure DOM is updated
+                    if (card) card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }, 50);
+
+                // Clear pending after a safe window
+                setTimeout(() => this.pendingCreateIds.delete(data.id), 2000);
             }
         } catch (err) {
             console.error('Failed to add thought:', err);
         } finally {
-            // Short delay to prevent extreme rapid-fire clicks even after completion
-            setTimeout(() => { this.isAdding = false; }, 300);
+            this.isAdding = false;
+            if (this.quickAddBar.style.display !== 'none') {
+                this.quickAddSubmit.disabled = false;
+            }
         }
     }
 
     handleSocketUpdate(action, payload) {
         if (action === 'create') {
+            // Skip if this is our own optimistic update (still in pending window)
+            if (this.pendingCreateIds.has(payload.id)) return;
             const exists = this.thoughts.some(t => t.id === payload.id);
             if (!exists) {
                 this.thoughts.unshift(payload);
@@ -154,7 +217,7 @@ export class ThoughtsManager {
         } else if (action === 'delete') {
             this.thoughts = this.thoughts.filter(t => t.id !== payload.id);
         }
-        
+
         this.render();
     }
 

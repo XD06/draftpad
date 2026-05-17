@@ -724,3 +724,120 @@
         border-radius: 16px;
     }
 }
+
+/* Quick Add Bar - Centered Modal */
+.quick-add-bar {
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    animation: qaFadeIn 0.25s ease;
+}
+
+.quick-add-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.35);
+    backdrop-filter: blur(12px) saturate(150%);
+    -webkit-backdrop-filter: blur(12px) saturate(150%);
+}
+
+.quick-add-inner {
+    position: relative;
+    width: 100%;
+    max-width: 520px;
+    background: color-mix(in srgb, var(--header-bg) 90%, transparent);
+    backdrop-filter: blur(30px) saturate(180%);
+    -webkit-backdrop-filter: blur(30px) saturate(180%);
+    border: 1px solid var(--border-color);
+    border-radius: 24px;
+    padding: 20px;
+    display: flex;
+    gap: 12px;
+    align-items: flex-end;
+    box-shadow: 0 25px 80px rgba(0, 0, 0, 0.18), 0 8px 20px rgba(var(--primary-rgb), 0.06);
+    animation: qaPopIn 0.35s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.quick-add-inner textarea {
+    flex: 1;
+    background: color-mix(in srgb, var(--bg-color) 80%, transparent);
+    border: 1.5px solid var(--border-color);
+    border-radius: 18px;
+    padding: 14px 18px;
+    font-family: inherit;
+    font-size: 16px;
+    line-height: 1.6;
+    color: var(--text-color);
+    outline: none;
+    resize: none;
+    max-height: 160px;
+    min-height: 52px;
+    -webkit-appearance: none;
+    transition: all 0.3s ease;
+}
+
+.quick-add-inner textarea:focus {
+    border-color: var(--primary-color);
+    background: var(--bg-color);
+    box-shadow: 0 0 0 4px rgba(var(--primary-rgb), 0.12);
+}
+
+.quick-add-btn {
+    width: 52px;
+    height: 52px;
+    border-radius: 18px;
+    border: none;
+    background: var(--primary-color);
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: all 0.25s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    box-shadow: 0 4px 12px rgba(var(--primary-rgb), 0.25);
+}
+
+.quick-add-btn:hover {
+    transform: scale(1.08);
+    box-shadow: 0 6px 18px rgba(var(--primary-rgb), 0.35);
+}
+
+.quick-add-btn:active {
+    transform: scale(0.93);
+}
+
+.quick-add-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.quick-add-btn svg {
+    transition: transform 0.2s ease;
+}
+
+@keyframes qaFadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+@keyframes qaPopIn {
+    from {
+        opacity: 0;
+        transform: translateY(30px) scale(0.96);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+}
+
+/* Prevent body scroll when quick add is open */
+body.quick-add-open {
+    overflow: hidden;
+    touch-action: none;
+}
