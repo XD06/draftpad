@@ -1,7 +1,6 @@
 import { OperationsManager, OperationType } from './managers/operations.js';
 import { CollaborationManager } from './managers/collaboration.js';
 import { ToastManager } from './managers/toaster.js';
-import SearchManager from './managers/search.js';
 import StorageManager from './managers/storage.js';
 import SettingsManager from './managers/settings.js'
 import ConfirmationManager from './managers/confirmation.js';
@@ -72,9 +71,21 @@ document.addEventListener('DOMContentLoaded', async () => {
     const SAVE_INTERVAL = 2000;
     let currentNotepadId = 'default';
     let currentNotepads = []; 
-    let isInitialLoad = true; 
+    let isInitialLoad = true;
     let notepadIdToDelete = null;
     let notepadIdToRename = null;
+    let _siteTitle = 'DumbPad';
+    let isReadingMode = false;
+
+    function setHeaderTitle(text) {
+        const h1 = document.getElementById('header-title')?.querySelector('h1');
+        if (h1) { h1.textContent = text; h1.title = text; }
+    }
+
+    function applyReadingModeTitle() {
+        const name = getCurrentNotepadName();
+        setHeaderTitle(name);
+    }
 
     // Initialize managers
     const operationsManager = new OperationsManager();
@@ -93,7 +104,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     let currentTheme = storageManager.load(THEME_KEY);
     const settingsManager = new SettingsManager(storageManager, applySettings);
     const confirmationManager = new ConfirmationManager();
-    const searchManager = new SearchManager(fetchWithPin, selectNotepad, closeAllModals);
     const thoughtsManager = new ThoughtsManager({ toaster, confirmationManager });
     
     // Stub PreviewManager since Vditor handles rendering
@@ -509,6 +519,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         updateToC(); // Update TOC on selection
 
+        // Update header title if in reading mode
+        if (isReadingMode) applyReadingModeTitle();
+
         if (query && editorInstance) {
             setTimeout(() => editorInstance.jumpToKeyword(query), 100);
         }
@@ -541,7 +554,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     function closeAllModals() {
         document.querySelectorAll('.modal').forEach(m => m.classList.remove('visible'));
-        searchManager.closeModal();
     }
 
     function addEventListeners() {
@@ -642,15 +654,70 @@ document.addEventListener('DOMContentLoaded', async () => {
         const searchOpenBtn = document.getElementById('search-open');
         searchOpenBtn?.addEventListener('click', () => commandPalette.open());
 
-        copyAllBtn.addEventListener('click', () => {
-            const content = editor.value;
-            if (!content) return toaster.show('Nothing to copy', 'info');
-            navigator.clipboard.writeText(content).then(() => {
-                toaster.show('Copied to clipboard', 'success');
-            }).catch(err => {
-                console.error('Copy failed:', err);
-                toaster.show('Copy failed', 'error');
+        copyAllBtn.addEventListener('click', async () => {
+            const raw = editor.value;
+            if (!raw) return toaster.show('Nothing to copy', 'info');
+
+            // Render markdown to HTML
+            const temp = document.createElement('div');
+            temp.innerHTML = marked.parse(raw);
+
+            // Strip annotation badges from copy
+            temp.querySelectorAll('.annotation-badge').forEach(b => b.remove());
+
+            // Wrap styled spans (and trailing note-labels) in <div> for app compatibility
+            temp.querySelectorAll('[style*="text-decoration"]').forEach(el => {
+                // Collect: the span itself + any adjacent data-note-label element
+                const wrapper = document.createElement('div');
+                el.parentNode.insertBefore(wrapper, el);
+                wrapper.appendChild(el);
+                let next = wrapper.nextSibling;
+                while (next && next.nodeType === 1 && next.hasAttribute && next.hasAttribute('data-note-label')) {
+                    const n = next.nextSibling;
+                    wrapper.appendChild(next);
+                    next = n;
+                }
             });
+
+            // Wrap outer <span> tags in <div> for better pasting compatibility in other note apps
+            temp.querySelectorAll('span:not(span span)').forEach(span => {
+                // Skip if already directly wrapped in a div (e.g. by the logic above)
+                if (span.parentElement && span.parentElement.tagName === 'DIV') return;
+                const wrapper = document.createElement('div');
+                span.parentNode.insertBefore(wrapper, span);
+                wrapper.appendChild(span);
+            });
+
+            const html = temp.innerHTML;
+
+            // Try ClipboardItem API first (keeps HTML formatting)
+            try {
+                const htmlBlob = new Blob([html], { type: 'text/html' });
+                const textBlob = new Blob([raw], { type: 'text/plain' });
+                await navigator.clipboard.write([new ClipboardItem({ 'text/html': htmlBlob, 'text/plain': textBlob })]);
+                toaster.show('已复制（含格式）', 'success');
+                return;
+            } catch (e) { /* fall through to DOM method */ }
+
+            // Fallback: DOM-based copy (preserves HTML reliably)
+            try {
+                const clone = document.createElement('div');
+                clone.innerHTML = html;
+                clone.style.position = 'fixed';
+                clone.style.left = '-9999px';
+                document.body.appendChild(clone);
+                const range = document.createRange();
+                range.selectNodeContents(clone);
+                const sel = window.getSelection();
+                sel.removeAllRanges();
+                sel.addRange(range);
+                document.execCommand('copy');
+                sel.removeAllRanges();
+                document.body.removeChild(clone);
+                toaster.show('已复制', 'success');
+            } catch (err) {
+                toaster.show('复制失败', 'error');
+            }
         });
 
 
@@ -689,21 +756,23 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (settingsSave) settingsSave.addEventListener('click', () => { settingsManager.saveSettings(); hideModal(settingsModal, 'Settings Saved'); });
         
         const readModeBtn = document.getElementById('toggle-reading-mode');
-        let isReadingMode = localStorage.getItem('dumbpad_reading_mode') === 'true';
+        isReadingMode = localStorage.getItem('dumbpad_reading_mode') === 'true';
 
         function updateReadingMode(showToast = false) {
             if (!readModeBtn) return;
             editor.setReadingMode(isReadingMode);
-            
+
             // Update icons
             readModeBtn.querySelector('.read-icon').style.display = isReadingMode ? 'none' : 'block';
             readModeBtn.querySelector('.edit-icon').style.display = isReadingMode ? 'block' : 'none';
             readModeBtn.classList.toggle('active', isReadingMode);
-            
+
             if (isReadingMode) {
                 document.body.classList.add('reading-mode-active');
+                applyReadingModeTitle();
             } else {
                 document.body.classList.remove('reading-mode-active');
+                setHeaderTitle(_siteTitle);
             }
 
             updateToC(); // Update TOC when toggling mode
@@ -831,7 +900,6 @@ document.addEventListener('DOMContentLoaded', async () => {
             });
         }
 
-        searchManager.addEventListeners();
     }
 
     function setupSidebarTabs() {
@@ -929,7 +997,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         appSettings = settingsManager.loadSettings();
         try {
             const config = await (await fetch('/api/config')).json();
-            document.getElementById('header-title').textContent = config.siteTitle;
+            _siteTitle = config.siteTitle;
+            if (!isReadingMode) setHeaderTitle(_siteTitle);
             await loadNotepads();
         } catch (err) { console.error(err); }
         applySettings(appSettings);

@@ -214,6 +214,10 @@ export class HybridMarkdownEditor {
             });
         };
 
+        // New format: inline HTML spans
+        replaceMark(/<span data-note="([^"]*)" style="text-decoration:underline wavy #e74c3c;text-decoration-thickness:2\.5px;">(.+?)<\/span><sub data-note-label style="color:#e74c3c;font-size:0\.65em;margin-left:2px;">（(.*?)）<\/sub>/g, 'annotation');
+        replaceMark(/<span data-draw style="text-decoration:underline blue;text-decoration-thickness:2px;">(.+?)<\/span>/g, 'highlight');
+        // Legacy compat patterns
         replaceMark(/<mark note="([^"]+)">(.+?)<\/mark>/g, 'annotation');
         replaceMark(/==(.+?)==\{(?:用户批注:\s*)?(.*?)\}/g, 'annotation_legacy');
         replaceMark(/==(.+?)==/g, 'highlight');
@@ -235,14 +239,14 @@ export class HybridMarkdownEditor {
                 const comment = this.escapeAttribute(m.groups[0]);
                 const textInner = m.groups[1];
                 const badge = `<span class="annotation-badge"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg></span>`;
-                return `<span class="has-annotation" data-raw="${raw}" data-text="${this.escapeAttribute(textInner)}" data-comment="${comment}">${parseInline(textInner)}${badge}</span>`;
+                return `<span class="has-annotation" data-raw="${raw}" data-text="${this.escapeAttribute(textInner)}" data-comment="${comment}"><span style="text-decoration:underline wavy #e74c3c;text-decoration-thickness:2.5px;">${parseInline(textInner)}</span>${badge}<sub style="color:#e74c3c;font-size:0.65em;margin-left:2px;white-space:nowrap;cursor:default;user-select:none;display:none">（${this.escapeHtml(comment)}）</sub></span>`;
             } else if (m.type === 'annotation_legacy') {
                 const textInner = m.groups[0];
                 const comment = this.escapeAttribute(m.groups[1]);
                 const badge = `<span class="annotation-badge"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg></span>`;
-                return `<span class="has-annotation" data-raw="${raw}" data-text="${this.escapeAttribute(textInner)}" data-comment="${comment}">${parseInline(textInner)}${badge}</span>`;
+                return `<span class="has-annotation" data-raw="${raw}" data-text="${this.escapeAttribute(textInner)}" data-comment="${comment}"><span style="text-decoration:underline wavy #e74c3c;text-decoration-thickness:2.5px;">${parseInline(textInner)}</span>${badge}<sub style="color:#e74c3c;font-size:0.65em;margin-left:2px;white-space:nowrap;cursor:default;user-select:none;display:none">（${this.escapeHtml(comment)}）</sub></span>`;
             } else if (m.type === 'highlight') {
-                return `<mark class="md-highlight" data-raw="${raw}" data-text="${this.escapeAttribute(m.groups[0])}">${parseInline(m.groups[0])}</mark>`;
+                return `<span data-draw data-raw="${raw}" data-text="${this.escapeAttribute(m.groups[0])}" style="text-decoration:underline blue;text-decoration-thickness:2px;">${parseInline(m.groups[0])}</span>`;
             } else if (m.type === 'mark') {
                 return `<mark class="md-mark" data-raw="${raw}" data-text="${this.escapeAttribute(m.groups[0])}">${parseInline(m.groups[0])}</mark>`;
             }
@@ -328,7 +332,7 @@ export class HybridMarkdownEditor {
 
         line.addEventListener('click', (event) => {
             const badgeEl = event.target.closest('.annotation-badge');
-            const markEl = event.target.closest?.('.has-annotation, .md-highlight, .md-mark');
+            const markEl = event.target.closest?.('.has-annotation, [data-draw], .md-mark');
             if (markEl && line.contains(markEl)) {
                 event.preventDefault();
                 event.stopPropagation();
@@ -858,17 +862,15 @@ export class HybridMarkdownEditor {
         const container = document.createElement('div');
         container.appendChild(range.cloneContents());
 
-        // Process annotations in the copied content
-        const annotations = container.querySelectorAll('.has-annotation');
-        annotations.forEach(node => {
-            const comment = node.dataset.annotation;
-            if (comment) {
-                const noteText = document.createTextNode(` (${comment})`);
-                node.appendChild(noteText);
-            }
-        });
+        // Strip annotation badges from copy
+        container.querySelectorAll('.annotation-badge').forEach(b => b.remove());
+
+        // Wrap inline styled spans in a <div> for app compatibility
+        let html = container.innerHTML;
+        html = html.replace(/(<span\s[^>]*style="text-decoration:[^"]*"[^>]*>.*?<\/span>)/g, '<div>$1</div>');
 
         const text = container.innerText;
+        event.clipboardData.setData('text/html', html);
         event.clipboardData.setData('text/plain', text);
         event.preventDefault();
     }
@@ -930,8 +932,8 @@ export class HybridMarkdownEditor {
             this.markPopover.remove();
         }
 
-        const type = el.classList.contains('has-annotation') ? 'annotation' :
-            el.classList.contains('md-highlight') ? 'highlight' : 'mark';
+        const type = el.classList.contains('has-annotation') || el.hasAttribute('data-note') ? 'annotation' :
+            el.hasAttribute('data-draw') ? 'highlight' : 'mark';
 
         const rawMatch = decodeURIComponent(atob(el.dataset.raw));
         const text = el.dataset.text;
@@ -1047,7 +1049,9 @@ export class HybridMarkdownEditor {
                     se.stopPropagation();
                     const newComment = textarea.value.trim();
                     if (!newComment) return;
-                    let newStr = `<mark note="${newComment}">${text}</mark>`;
+                    const safeComment = newComment.replace(/"/g, '&quot;');
+                    const safeText = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+                    let newStr = `<span data-note="${safeComment}" style="text-decoration:underline wavy #e74c3c;text-decoration-thickness:2.5px;">${safeText}</span><sub data-note-label style="color:#e74c3c;font-size:0.65em;margin-left:2px;">（${newComment}）</sub>`;
                     let lineContent = this.lines[lineIndex];
                     this.lines[lineIndex] = lineContent.replace(rawMatch, newStr);
                     this.rerenderLine(lineIndex);
@@ -1245,7 +1249,21 @@ export class HybridMarkdownEditor {
                 const regex = new RegExp(pattern, 'i');
                 const match = lineText.match(regex);
                 if (match) {
-                    return { index: match.index, text: match[0] };
+                    let idx = match.index;
+                    let matchLen = match[0].length;
+                    // Expand to include surrounding bold/italic/strikethrough markers
+                    // so the full markdown segment gets wrapped, not split
+                    const markerPairs = ['**', '__', '~~', '*', '_'];
+                    for (const m of markerPairs) {
+                        while (idx >= m.length && lineText.slice(idx - m.length, idx) === m) {
+                            idx -= m.length;
+                            matchLen += m.length;
+                        }
+                        while (idx + matchLen + m.length <= lineText.length && lineText.slice(idx + matchLen, idx + matchLen + m.length) === m) {
+                            matchLen += m.length;
+                        }
+                    }
+                    return { index: idx, text: lineText.slice(idx, idx + matchLen) };
                 }
             } catch (e) { }
         }
@@ -1387,11 +1405,11 @@ export class HybridMarkdownEditor {
 
             let newText;
             if (action === 'drawLine') {
-                newText = lineText.slice(0, textIndex) + `==${matchedText}==` + lineText.slice(textIndex + matchedText.length);
+                newText = lineText.slice(0, textIndex) + `<span data-draw style="text-decoration:underline blue;text-decoration-thickness:2px;">${matchedText}</span>` + lineText.slice(textIndex + matchedText.length);
             } else if (action === 'mark') {
                 newText = lineText.slice(0, textIndex) + `<mark>${matchedText}</mark>` + lineText.slice(textIndex + matchedText.length);
             } else if (action === 'annotate') {
-                newText = lineText.slice(0, textIndex) + `<mark note="${comment}">${matchedText}</mark>` + lineText.slice(textIndex + matchedText.length);
+                newText = lineText.slice(0, textIndex) + `<span data-note="${this.escapeAttribute(comment)}" style="text-decoration:underline wavy #e74c3c;text-decoration-thickness:2.5px;">${matchedText}</span><sub data-note-label style="color:#e74c3c;font-size:0.65em;margin-left:2px;">（${this.escapeHtml(comment)}）</sub>` + lineText.slice(textIndex + matchedText.length);
             }
 
             if (newText && newText !== lineText) {

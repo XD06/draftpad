@@ -189,6 +189,17 @@ header {
     color: var(--text-color);
     margin: 0;
     opacity: 0.9;
+    max-width: 30vw;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+@media (max-width: 640px) {
+    #header-title h1 {
+        max-width: 25vw;
+        font-size: 14px;
+    }
 }
 
 #theme-toggle span {
@@ -862,9 +873,6 @@ main {
 .toc-item.active {
     color: var(--primary-color);
     font-weight: 600;
-}
-
-padding-left: 12px;
 }
 
 .toc-item.h3 {
@@ -1618,100 +1626,6 @@ padding-left: 12px;
     opacity: 1;
 }
 
-/* Search styles */
-/* Scoped Search Styles */
-#search-modal.modal {
-    display: none;
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    background: rgba(0, 0, 0, 0.35);
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    z-index: 1000;
-}
-
-#search-modal.hidden {
-    display: none;
-}
-
-.search-modal-content {
-    background: var(--header-bg);
-    padding: 20px;
-    min-width: 30%;
-    max-width: 50%;
-    border-radius: 8px;
-    box-shadow: 0px 4px 10px rgba(0, 0, 0, 0.3);
-}
-
-#search-modal input {
-    width: 100%;
-    padding: 8px;
-    margin-bottom: 10px;
-    border: 1px solid var(--primary-color);
-    border-radius: 4px;
-    background-color: var(--textarea-bg);
-    color: var(--text-color);
-    font-family: monospace;
-    font-size: 1rem;
-}
-
-#search-results {
-    list-style-type: none;
-    padding: 0;
-    margin: 0;
-    max-height: 30rem;
-    overflow-y: auto;
-    font-family: monospace;
-    font-size: 1rem;
-}
-
-#search-results li {
-    list-style-type: none;
-    padding: 8px 12px;
-    cursor: pointer;
-    border-bottom: 1px solid var(--border-color);
-    transition: var(--transition);
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-}
-
-.search-result-title {
-    font-weight: 600;
-    color: var(--text-color);
-    font-size: 0.95rem;
-}
-
-.search-result-snippet {
-    font-size: 0.8rem;
-    color: var(--muted-text);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    opacity: 0.8;
-}
-
-#search-results li:last-child {
-    border-bottom: none;
-}
-
-#search-results li:hover,
-#search-results .selected {
-    background-color: var(--button-hover);
-    border-radius: 6px;
-    padding: 4px 8px;
-    /* Adds spacing to make the rounded corners more visible */
-}
-
-#search-results mark {
-    background: var(--primary-color);
-    font-weight: bold;
-}
-
 .settings-form {
     display: flex;
     flex-direction: column;
@@ -1993,22 +1907,18 @@ blockquote {
 }
 
 .has-annotation {
-    background-color: transparent !important;
     position: relative;
     cursor: pointer;
     color: inherit;
-    text-decoration: none;
-    /* Subtle, elegant wavy underline */
-    background-image: url('data:image/svg+xml;charset=utf-8,%3Csvg xmlns="http://www.w3.org/2000/svg" width="20" height="4"%3E%3Cpath d="M0 2 Q 5 3.5, 10 2 T 20 2" fill="none" stroke="%23ff4d4f" stroke-width="1.8" stroke-linecap="round" /%3E%3C/svg%3E');
-    background-position: left bottom;
-    background-repeat: repeat-x;
-    background-size: 10px 4px;
-    padding-bottom: 2px;
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-.has-annotation:hover {
-    background-color: rgba(255, 77, 79, 0.06) !important;
+.annotation-note {
+    color: #e74c3c;
+    font-size: 0.72em;
+    vertical-align: super;
+    cursor: default;
+    user-select: none;
+    white-space: nowrap;
 }
 
 .annotation-badge {

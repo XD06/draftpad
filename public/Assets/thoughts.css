@@ -548,6 +548,73 @@
     opacity: 1;
 }
 
+/* Inline input for quick add / inline edit subtask */
+.subtask-inline-input {
+    flex: 1;
+    background: transparent;
+    border: none;
+    border-bottom: 1.5px solid var(--primary-color);
+    color: var(--text-color);
+    font-family: inherit;
+    font-size: 13.5px;
+    padding: 4px 2px;
+    outline: none;
+}
+
+.subtask .subtask-inline-input {
+    border-bottom-color: transparent;
+    transition: border-color 0.2s;
+}
+
+.subtask .subtask-inline-input:focus {
+    border-bottom-color: var(--primary-color);
+}
+
+/* Disabled checkbox in add-subtask row */
+.subtask .subtask-check:disabled {
+    opacity: 0.8;
+    cursor: default;
+}
+
+/* Inline add subtask button — aligned with checkboxes */
+.subtask-list .subtask-add-inline {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 8px;
+    margin-left: -3px;
+    background: transparent;
+    border: none;
+    color: var(--muted-text);
+    cursor: pointer;
+    font-size: 13px;
+    width: 100%;
+    opacity: 0;
+    transition: all 0.2s ease;
+}
+
+.subtask-list:hover .subtask-add-inline {
+    opacity: 0.4;
+}
+
+.subtask-add-inline:hover {
+    opacity: 1 !important;
+    color: black;
+}
+
+.subtask-add-inline svg {
+    margin-left: 3px;
+    flex-shrink: 0;
+}
+
+/* Add row for inline input (matches subtask checkpoint alignment) */
+.subtask-list .subtask-add-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 8px;
+}
+
 /* Status: Completed */
 .thought-card.completed {
     opacity: 0.6;

@@ -342,24 +342,21 @@ export class ThoughtsManager {
                 bodyHtml = bodyHtml.replace(regex, '<mark class="thought-highlight">$1</mark>');
             }
 
-            // Render subtask list
-            let subtasksHtml = '';
-            if (subItems.length > 0) {
-                subtasksHtml = '<div class="subtask-list">' + subItems.map(item => {
-                    let label = this.escapeHtml(item.text);
-                    if (query) {
-                        const regex = new RegExp(`(${this.escapeRegExp(query)})`, 'gi');
-                        label = label.replace(regex, '<mark class="thought-highlight">$1</mark>');
-                    }
-                    return `<div class="subtask ${item.completed ? 'completed' : ''}" data-subid="${item.id}">
-                        <input type="checkbox" class="subtask-check" ${item.completed ? 'checked' : ''}>
-                        <span class="subtask-text">${label}</span>
-                        <button class="subtask-copy-btn" title="复制">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                        </button>
-                    </div>`;
-                }).join('') + '</div>';
-            }
+            // Render subtask list (always shown, with add button at bottom)
+            let subtasksHtml = '<div class="subtask-list">' + subItems.map(item => {
+                let label = this.escapeHtml(item.text);
+                if (query) {
+                    const regex = new RegExp(`(${this.escapeRegExp(query)})`, 'gi');
+                    label = label.replace(regex, '<mark class="thought-highlight">$1</mark>');
+                }
+                return `<div class="subtask ${item.completed ? 'completed' : ''}" data-subid="${item.id}">
+                    <input type="checkbox" class="subtask-check" ${item.completed ? 'checked' : ''}>
+                    <span class="subtask-text">${label}</span>
+                    <button class="subtask-copy-btn" title="复制">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                    </button>
+                </div>`;
+            }).join('') + '<button class="subtask-add-inline" title="添加子任务"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg></button></div>';
 
             const isLong = bodyText.split('\n').length > 6 || bodyText.length > 200 || subItems.length > 3;
             if (isLong) card.classList.add('can-expand');
@@ -487,9 +484,27 @@ export class ThoughtsManager {
                         // Visual feedback
                         copyBtn.classList.add('copied');
                         setTimeout(() => copyBtn.classList.remove('copied'), 1200);
+                        this.app.toaster?.show('已复制', 'success', false, 1500);
                     });
                 }
             });
+
+            // 5. Double-click subtask text → inline edit
+            card.querySelectorAll('.subtask-text').forEach((textSpan) => {
+                textSpan.addEventListener('dblclick', (e) => {
+                    e.stopPropagation();
+                    this.inlineEditSubtask(card, thought, textSpan);
+                });
+            });
+
+            // 6. Quick add subtask button (inside subtask-list)
+            const addSubBtn = card.querySelector('.subtask-add-inline');
+            if (addSubBtn) {
+                addSubBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    this.quickAddSubtask(card, thought);
+                });
+            }
 
             if (expandBtn) {
                 expandBtn.onclick = (e) => {
@@ -659,6 +674,108 @@ export class ThoughtsManager {
             card._clickOutsideHandler = null;
         }
         card._saveAndExit = null;
+    }
+
+    async quickAddSubtask(card, thought) {
+        const sublist = card.querySelector('.subtask-list');
+        const addBtn = sublist.querySelector('.subtask-add-inline');
+
+        if (addBtn) addBtn.style.display = 'none';
+        const row = document.createElement('div');
+        row.className = 'subtask';
+        row.innerHTML = '<input type="checkbox" class="subtask-check" disabled><input type="text" class="subtask-inline-input" placeholder="新增子任务...">';
+        sublist.insertBefore(row, addBtn);
+        const input = row.querySelector('input[type="text"]');
+        input.focus();
+
+        let committed = false;
+
+        const cleanup = () => {
+            row.remove();
+            if (addBtn) addBtn.style.display = '';
+        };
+
+        const commit = async () => {
+            if (committed) return;
+            committed = true;
+            const text = input.value.trim();
+            if (!text) { cleanup(); return; }
+            try {
+                const res = await fetch(`/api/thoughts/${thought.id}`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: 'add_subitem', text })
+                });
+                if (res.ok) {
+                    const updated = await res.json();
+                    const idx = this.thoughts.findIndex(t => t.id === thought.id);
+                    if (idx !== -1) this.thoughts[idx] = updated.thought;
+                    this.render();
+                } else {
+                    cleanup();
+                }
+            } catch (err) { console.error('Failed to add subtask:', err); cleanup(); }
+        };
+
+        input.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') { e.preventDefault(); commit(); }
+            else if (e.key === 'Escape') { cleanup(); }
+        });
+        input.addEventListener('blur', () => {
+            setTimeout(() => { if (row.parentNode) commit(); }, 100);
+        });
+    }
+
+    inlineEditSubtask(card, thought, textSpan) {
+        const subtaskEl = textSpan.closest('.subtask');
+        const subId = subtaskEl.dataset.subid;
+        const originalText = textSpan.textContent;
+
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.className = 'subtask-inline-input';
+        input.value = originalText;
+        input.style.margin = '0';
+        textSpan.replaceWith(input);
+        input.focus();
+        input.select();
+
+        const commit = async () => {
+            const newText = input.value.trim();
+            if (newText === originalText) { input.replaceWith(textSpan); return; }
+
+            try {
+                if (!newText) {
+                    // Empty text = delete subtask
+                    const res = await fetch(`/api/thoughts/${thought.id}`, {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ action: 'delete_subitem', subId })
+                    });
+                    if (res.ok) this.render();
+                    else input.replaceWith(textSpan);
+                } else {
+                    const res = await fetch(`/api/thoughts/${thought.id}`, {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ action: 'update_subitem', subId, text: newText })
+                    });
+                    if (res.ok) this.render();
+                    else input.replaceWith(textSpan);
+                }
+            } catch (err) {
+                console.error('Failed to edit subtask:', err);
+                input.replaceWith(textSpan);
+            }
+        };
+
+        input.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') { e.preventDefault(); commit(); }
+            else if (e.key === 'Escape') { input.replaceWith(textSpan); }
+        });
+        input.addEventListener('blur', () => {
+            setTimeout(() => { if (input.parentNode) commit(); }, 100);
+        });
     }
 
     async toggleSubtask(id, subId) {

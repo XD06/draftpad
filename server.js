@@ -728,10 +728,13 @@ app.get('/s/:id', async (req, res) => {
                 const comment = encodeURIComponent(m.type === 'annotation' ? m.groups[0] : m.groups[1]);
                 const textInner = m.type === 'annotation' ? m.groups[1] : m.groups[0];
                 const badge = `<span class="annotation-badge"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg></span>`;
-                return `<span class="has-annotation" data-comment="${comment}">${textInner}${badge}</span>`;
-            } else if (m.type === 'highlight' || m.type === 'mark') {
-                const className = m.type === 'highlight' ? 'md-highlight' : 'md-mark';
-                return `<mark class="${className}">${m.groups[0]}</mark>`;
+                const decoded = decodeURIComponent(comment);
+                const note = decoded ? `<span class="annotation-note">（${decoded}）</span>` : '';
+                return `<span class="has-annotation" data-comment="${comment}"><span style="text-decoration:underline wavy #e74c3c;text-decoration-thickness:2.5px;">${textInner}</span>${badge}${note}</span>`;
+            } else if (m.type === 'highlight') {
+                return `<span style="text-decoration:underline blue;text-decoration-thickness:2px;">${m.groups[0]}</span>`;
+            } else if (m.type === 'mark') {
+                return `<mark class="md-mark">${m.groups[0]}</mark>`;
             }
             return match;
         });
@@ -807,7 +810,10 @@ app.get('/s/:id', async (req, res) => {
         .markdown-body li > p { margin-bottom: 0.5em; }
 
         /* Annotation/Highlight consistency */
-        .md-highlight, .md-mark { background-color: #fcfdbf; color: #000; padding: 0 2px; border-radius: 2px; font-weight: 500; }
+        .md-mark { background-color: #fcfdbf; color: #000; padding: 0 2px; border-radius: 2px; font-weight: 500; }
+        .has-annotation { position: relative; cursor: default; }
+        .annotation-note { color: #e74c3c; font-size: 0.72em; vertical-align: super; white-space: nowrap; }
+        .annotation-badge { position: absolute; right: -18px; bottom: -10px; color: #ff4d4f; cursor: pointer; }
 
         /* Popover Styles (Read-only) */
         .shared-popover {
