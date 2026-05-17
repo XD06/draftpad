@@ -5,7 +5,7 @@ export class ToastManager {
     this.isSuccess = 'success';
   }
 
-  show(message, type = 'success', isStatic = false, timeoutMs = 1000) {
+  show(message, type = 'success', isStatic = false, timeoutMs = 1000, onClick = null) {
     if (!timeoutMs || timeoutMs < 1) return;
 
     const toast = document.createElement('div');
@@ -13,23 +13,33 @@ export class ToastManager {
     toast.textContent = message;
 
     if (type === this.isSuccess) toast.classList.add('success');
+    else if (type === 'info') toast.classList.add('info');
     else toast.classList.add('error');
 
     this.container.appendChild(toast);
 
     setTimeout(() => {
-      toast.addEventListener('click', () => this.hide(toast));
+      if (onClick) {
+        toast.style.cursor = 'pointer';
+        toast.addEventListener('click', () => {
+          this.hide(toast);
+          onClick();
+        });
+      } else {
+        toast.addEventListener('click', () => this.hide(toast));
+      }
       toast.classList.add('show');
     }, 10);
-    
+
     if (!isStatic) {
       setTimeout(() => {
         toast.classList.remove('show');
         setTimeout(() => {
           this.hide(toast);
-        }, 300); // Match transition duration
+        }, 300);
       }, timeoutMs);
     }
+    return toast;
   }
 
   hide(toast) {

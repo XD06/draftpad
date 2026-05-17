@@ -866,11 +866,58 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (!('serviceWorker' in navigator)) return;
         try {
             const registration = await navigator.serviceWorker.register('/service-worker.js');
-            await registration.update();
+
+            // Check for updates immediately and every 5 minutes
+            const checkUpdate = async () => {
+                try {
+                    await registration.update();
+                    if (registration.waiting) {
+                        // New SW is waiting; tell it to skip waiting
+                        registration.waiting.postMessage({ type: 'SKIP_WAITING' });
+                    }
+                } catch (e) { /* ignore */ }
+            };
+            checkUpdate();
+            setInterval(checkUpdate, 5 * 60 * 1000);
+
+            // Also check when app becomes visible (PWA wake from background)
+            document.addEventListener('visibilitychange', () => {
+                if (document.visibilityState === 'visible') checkUpdate();
+            });
+
+            // Handle update notifications from SW
+            let updateToastEl = null;
             navigator.serviceWorker.addEventListener('message', (event) => {
-                if (event.data?.type === 'CACHE_UPDATED' && event.data.reload) {
-                    window.location.reload();
+                const { type, version } = event.data || {};
+
+                if (type === 'UPDATE_AVAILABLE') {
+                    // Show a persistent toast; clicking it reloads the page
+                    if (updateToastEl) toaster.hide(updateToastEl);
+                    updateToastEl = toaster.show(
+                        `新版本 ${version} 可用，点击刷新`,
+                        'info',
+                        true,
+                        0,
+                        () => window.location.reload()
+                    );
+                } else if (type === 'CACHE_INSTALLED') {
+                    toaster.show('已缓存，离线可用', 'success', false, 3000);
                 }
+            });
+
+            // If a new SW is already waiting when we load, prompt immediately
+            if (registration.waiting) {
+                registration.waiting.postMessage({ type: 'SKIP_WAITING' });
+            }
+
+            registration.addEventListener('updatefound', () => {
+                const newWorker = registration.installing;
+                newWorker?.addEventListener('statechange', () => {
+                    if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                        // New SW installed but waiting; skip waiting so it activates
+                        newWorker.postMessage({ type: 'SKIP_WAITING' });
+                    }
+                });
             });
         } catch (error) {
             console.warn('Service worker registration failed:', error);

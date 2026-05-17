@@ -573,6 +573,11 @@ main {
     background-color: var(--danger-status-bg);
 }
 
+.toast.info {
+    background-color: rgba(var(--primary-rgb), 0.85);
+    color: white;
+}
+
 .notepad-controls {
     position: absolute;
     left: 1rem;

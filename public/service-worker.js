@@ -1,15 +1,16 @@
-let APP_VERSION = "1.0.0"; // Default version, will be updated by server
+let APP_VERSION = "1.0.0";
+let CURRENT_CACHE_NAME = "DUMBPAD_CACHE_1.0.0";
 
 const getCacheName = (version) => `DUMBPAD_CACHE_${version}`;
 
 const getConfig = async () => {
   try {
-    const response = await fetch("/api/config");
+    const response = await fetch("/api/config", { cache: "no-store" });
     const data = await response.json();
     return data;
   } catch (error) {
     console.error("Failed to fetch config:", error);
-    return null; // Fallback to default version
+    return null;
   }
 }
 
@@ -17,15 +18,16 @@ const getAppVersion = async () => {
   try {
     const data = await getConfig();
     if (!data || !data.version) {
-      console.warn("No version found in config, using default version:", APP_VERSION);
-      return APP_VERSION; // Fallback to default version
+      console.warn("No version found in config, using default:", APP_VERSION);
+      return APP_VERSION;
     }
-    APP_VERSION = data.version; // Update global version variable
-    console.log("App version fetched from config:", APP_VERSION);
+    APP_VERSION = data.version;
+    CURRENT_CACHE_NAME = getCacheName(APP_VERSION);
+    console.log("App version:", APP_VERSION, "Cache:", CURRENT_CACHE_NAME);
     return data.version;
   } catch (error) {
     console.error("Failed to fetch app version:", error);
-    return "1.0.0"; // Fallback version
+    return APP_VERSION;
   }
 };
 
@@ -44,8 +46,9 @@ const getCurrentCacheVersion = async () => {
 
 const installNewCache = async (version) => {
   const cacheName = getCacheName(version);
+  CURRENT_CACHE_NAME = cacheName;
   console.log("Installing new cache:", cacheName);
-  
+
   const cache = await caches.open(cacheName);
   
   try {
@@ -127,37 +130,37 @@ const checkAndUpdateCache = async () => {
 
 self.addEventListener("install", (event) => {
   console.log("Service worker installing...");
-  // Force the waiting service worker to become the active service worker
-  self.skipWaiting();
+  // Pre-fetch version so CURRENT_CACHE_NAME is ready for fetch events
+  event.waitUntil(
+    getAppVersion().then(() => {
+      self.skipWaiting();
+    })
+  );
 });
 
 self.addEventListener("activate", (event) => {
   console.log("Service worker activating...");
-  
+
   event.waitUntil(
     checkAndUpdateCache().then(({ updated, firstInstall }) => {
-      // Take control of all clients immediately
       return self.clients.claim().then(() => {
         if (updated && !firstInstall) {
-          // Cache was updated and it's not the first install - reload page
-          console.log("Cache updated - notifying clients to reload");
+          // Notify clients that an update is available; let user decide when to reload
+          console.log("Cache updated - notifying clients");
           self.clients.matchAll().then(clients => {
             clients.forEach(client => {
-              client.postMessage({ 
-                type: 'CACHE_UPDATED', 
-                reload: true,
+              client.postMessage({
+                type: 'UPDATE_AVAILABLE',
                 version: APP_VERSION
               });
             });
           });
         } else if (updated && firstInstall) {
-          // First install - just notify, don't reload
           console.log("Cache installed for first time");
           self.clients.matchAll().then(clients => {
             clients.forEach(client => {
-              client.postMessage({ 
-                type: 'CACHE_INSTALLED', 
-                reload: false,
+              client.postMessage({
+                type: 'CACHE_INSTALLED',
                 version: APP_VERSION
               });
             });
@@ -181,12 +184,26 @@ self.addEventListener("fetch", (event) => {
   const isNavigation = event.request.mode === "navigate";
   const isNetworkFirstAsset = networkFirstExtensions.some(ext => requestUrl.pathname.endsWith(ext));
 
-  if (isNavigation || isNetworkFirstAsset) {
+  if (isNavigation) {
+    // Always fetch fresh index.html, fallback to cache only when offline
+    event.respondWith(
+      fetch(event.request, { cache: "no-store" })
+        .then((response) => {
+          const copy = response.clone();
+          caches.open(CURRENT_CACHE_NAME).then(cache => cache.put(event.request, copy));
+          return response;
+        })
+        .catch(() => caches.match(event.request))
+    );
+    return;
+  }
+
+  if (isNetworkFirstAsset) {
     event.respondWith(
       fetch(event.request)
         .then((response) => {
           const copy = response.clone();
-          caches.open(getCacheName(APP_VERSION)).then(cache => cache.put(event.request, copy));
+          caches.open(CURRENT_CACHE_NAME).then(cache => cache.put(event.request, copy));
           return response;
         })
         .catch(() => caches.match(event.request))
@@ -201,9 +218,17 @@ self.addEventListener("fetch", (event) => {
   );
 });
 
-// Handle version check requests from the main thread
+// Handle messages from the main thread
 self.addEventListener("message", (event) => {
-  if (event.data && event.data.type === 'CHECK_VERSION') {
+  if (!event.data) return;
+
+  if (event.data.type === 'SKIP_WAITING') {
+    console.log('Skipping waiting...');
+    self.skipWaiting();
+    return;
+  }
+
+  if (event.data.type === 'CHECK_VERSION') {
     checkAndUpdateCache().then(({ updated, firstInstall }) => {
       event.ports[0].postMessage({
         updated,
