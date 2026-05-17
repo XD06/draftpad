@@ -2,7 +2,11 @@
   "permissions": {
     "allow": [
       "Bash(curl -s http://localhost:10003/health)",
-      "Bash(node *)"
+      "Bash(node *)",
+      "WebFetch(domain:github.com)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git push *)"
     ]
   }
 }

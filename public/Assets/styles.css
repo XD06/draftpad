@@ -2151,10 +2151,9 @@ img.annotation-badge:hover {
 
 .mark-popover-actions button.delete-btn::before {
     content: '';
-    display: inline-block;
+    display: none;
     width: 14px;
     height: 14px;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M18 6L6 18M6 6l12 12'%3E%3C/path%3E%3C/svg%3E");
     background-size: contain;
     opacity: 0.6;
 }

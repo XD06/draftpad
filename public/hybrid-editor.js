@@ -1091,6 +1091,32 @@ export class HybridMarkdownEditor {
         const annotateBtn = document.createElement('button');
         annotateBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 20l1.3 -3.9a9 8 0 1 1 3.4 2.9l-4.7 1" /></svg> 批注';
 
+        const copyBtn = document.createElement('button');
+        copyBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg> 复制';
+        copyBtn.addEventListener('click', () => {
+            const data = this.currentSelectionData;
+            if (!data || !data.selectionLines) return;
+            const text = data.selectionLines.map(s => s.selectedText).join('\n');
+            if (text) {
+                navigator.clipboard.writeText(text).then(() => {
+                    copyBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg> 已复制';
+                    setTimeout(() => {
+                        this.selectionMenu.style.display = 'none';
+                        copyBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg> 复制';
+                    }, 800);
+                }).catch(() => {
+                    // Fallback
+                    const ta = document.createElement('textarea');
+                    ta.value = text;
+                    document.body.appendChild(ta);
+                    ta.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(ta);
+                    this.selectionMenu.style.display = 'none';
+                });
+            }
+        });
+
         const inputGroup = document.createElement('div');
         inputGroup.className = 'menu-input-group';
         inputGroup.style.display = 'none';
@@ -1158,6 +1184,7 @@ export class HybridMarkdownEditor {
         btnGroup.appendChild(drawLineBtn);
         btnGroup.appendChild(markBtn);
         btnGroup.appendChild(annotateBtn);
+        btnGroup.appendChild(copyBtn);
 
         inputGroup.appendChild(annoInput);
         inputGroup.appendChild(saveBtn);

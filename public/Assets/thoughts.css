@@ -362,6 +362,11 @@
     background: rgba(var(--primary-rgb), 0.05);
 }
 
+.thought-body {
+    position: relative;
+    padding-bottom: 4px;
+}
+
 .thought-text {
     font-size: 15.5px;
     line-height: 1.65;
@@ -370,7 +375,45 @@
     word-break: break-word;
     cursor: text;
     padding: 4px 0;
+    padding-right: 28px;
     transition: all 0.3s ease;
+    font-weight: 600;
+}
+
+.thought-copy-btn {
+    position: absolute;
+    bottom: 0;
+    right: 0;
+    background: none;
+    border: none;
+    padding: 4px 6px;
+    margin: 0;
+    color: var(--muted-text);
+    cursor: pointer;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    transform: scale(0.8);
+    transition: all 0.2s ease;
+}
+
+.thought-body:hover .thought-copy-btn {
+    opacity: 0.5;
+    transform: scale(1);
+}
+
+.thought-copy-btn:hover {
+    opacity: 1 !important;
+    background: rgba(var(--primary-rgb), 0.1);
+    color: var(--primary-color);
+}
+
+.thought-copy-btn.copied {
+    opacity: 1 !important;
+    color: var(--primary-color);
+    background: rgba(var(--primary-rgb), 0.08);
 }
 
 .thought-card.can-expand:not(.expanded) .thought-text {
@@ -553,9 +596,10 @@
     font-size: 13.5px;
     color: var(--text-color);
     border-radius: 6px;
-    cursor: pointer;
+    cursor: default;
     transition: background 0.15s ease;
     user-select: none;
+    position: relative;
 }
 
 .subtask:hover {
@@ -570,7 +614,7 @@
     opacity: 0.6;
 }
 
-.subtask.completed span {
+.subtask.completed .subtask-text {
     text-decoration: line-through;
     color: var(--muted-text);
 }
@@ -582,6 +626,51 @@
     height: 15px;
     flex-shrink: 0;
     margin: 0;
+}
+
+.subtask-text {
+    flex: 1;
+    cursor: text;
+    user-select: text;
+    word-break: break-word;
+}
+
+.subtask-copy-btn {
+    background: none;
+    border: none;
+    padding: 3px;
+    margin: 0;
+    color: var(--muted-text);
+    cursor: pointer;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    transform: scale(0.8);
+    transition: all 0.2s ease;
+    flex-shrink: 0;
+}
+
+.subtask:hover .subtask-copy-btn {
+    opacity: 0.5;
+    transform: scale(1);
+}
+
+.subtask-copy-btn:hover {
+    opacity: 1 !important;
+    background: rgba(var(--primary-rgb), 0.1);
+    color: var(--primary-color);
+}
+
+.subtask-copy-btn.copied {
+    opacity: 1 !important;
+    color: var(--primary-color);
+    background: rgba(var(--primary-rgb), 0.08);
+}
+
+.subtask-copy-btn.copied svg {
+    stroke-width: 2.5;
 }
 
 .thought-card.completed .thought-text {

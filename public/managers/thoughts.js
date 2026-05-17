@@ -351,7 +351,13 @@ export class ThoughtsManager {
                         const regex = new RegExp(`(${this.escapeRegExp(query)})`, 'gi');
                         label = label.replace(regex, '<mark class="thought-highlight">$1</mark>');
                     }
-                    return `<label class="subtask ${item.completed ? 'completed' : ''}" data-subid="${item.id}"><input type="checkbox" class="subtask-check" ${item.completed ? 'checked' : ''}><span>${label}</span></label>`;
+                    return `<div class="subtask ${item.completed ? 'completed' : ''}" data-subid="${item.id}">
+                        <input type="checkbox" class="subtask-check" ${item.completed ? 'checked' : ''}>
+                        <span class="subtask-text">${label}</span>
+                        <button class="subtask-copy-btn" title="复制">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                        </button>
+                    </div>`;
                 }).join('') + '</div>';
             }
 
@@ -366,7 +372,12 @@ export class ThoughtsManager {
                     </div>
                     <div class="thought-time">${dateStr}</div>
                 </div>
-                <div class="thought-text">${bodyHtml}</div>
+                <div class="thought-body">
+                    <div class="thought-text">${bodyHtml}</div>
+                    <button class="thought-copy-btn" title="复制">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                    </button>
+                </div>
                 ${subtasksHtml}
             `;
 
@@ -374,12 +385,31 @@ export class ThoughtsManager {
             const textEl = card.querySelector('.thought-text');
             const dotEl = card.querySelector('.thought-dot');
             const expandBtn = card.querySelector('.expand-btn');
+            const thoughtCopyBtn = card.querySelector('.thought-copy-btn');
 
             // 1. Toggle completion
             dotEl.onclick = (e) => {
                 e.stopPropagation();
                 this.toggleComplete(thought.id);
             };
+
+            // 1.5 Copy main task text
+            if (thoughtCopyBtn) {
+                thoughtCopyBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    navigator.clipboard.writeText(bodyText).catch(() => {
+                        const ta = document.createElement('textarea');
+                        ta.value = bodyText;
+                        document.body.appendChild(ta);
+                        ta.select();
+                        document.execCommand('copy');
+                        document.body.removeChild(ta);
+                    });
+                    thoughtCopyBtn.classList.add('copied');
+                    setTimeout(() => thoughtCopyBtn.classList.remove('copied'), 1200);
+                    this.app.toaster?.show('已复制', 'success', false, 1500);
+                });
+            }
 
             // 2. Gesture handling (Single click/tap = Expand, Double click/tap = Edit)
             let lastTap = 0;
@@ -437,8 +467,28 @@ export class ThoughtsManager {
 
             // 4. Subtasks
             card.querySelectorAll('.subtask-check').forEach((check) => {
-                const subId = check.closest('.subtask').dataset.subid;
+                const subtaskEl = check.closest('.subtask');
+                const subId = subtaskEl.dataset.subid;
                 check.onchange = () => this.toggleSubtask(thought.id, subId);
+                // Copy button: click to copy subtask text
+                const copyBtn = subtaskEl.querySelector('.subtask-copy-btn');
+                if (copyBtn) {
+                    copyBtn.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        const text = subtaskEl.querySelector('.subtask-text').textContent;
+                        navigator.clipboard.writeText(text).catch(() => {
+                            const ta = document.createElement('textarea');
+                            ta.value = text;
+                            document.body.appendChild(ta);
+                            ta.select();
+                            document.execCommand('copy');
+                            document.body.removeChild(ta);
+                        });
+                        // Visual feedback
+                        copyBtn.classList.add('copied');
+                        setTimeout(() => copyBtn.classList.remove('copied'), 1200);
+                    });
+                }
             });
 
             if (expandBtn) {
