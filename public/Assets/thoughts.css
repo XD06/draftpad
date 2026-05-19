@@ -332,7 +332,7 @@
 
 .timeline-node {
     position: absolute;
-    left: -21px;
+    left: -29px;
     top: 28px;
     width: 10px;
     height: 10px;
@@ -347,6 +347,7 @@
     background: var(--primary-color);
     border-color: var(--primary-color);
     box-shadow: 0 0 10px rgba(var(--primary-rgb), 0.4);
+    left: -28px;
 }
 
 .thought-card-header {
@@ -943,6 +944,26 @@
         height: 48px;
         border-radius: 16px;
     }
+    .timeline-node {
+    position: absolute;
+    left: -21px;
+    top: 28px;
+    width: 10px;
+    height: 10px;
+    background: var(--bg-color);
+    border: 2px solid rgba(var(--primary-rgb), 0.5);
+    border-radius: 50%;
+    z-index: 2;
+    transition: all 0.3s ease;
+}
+
+.thought-card:hover .timeline-node {
+    background: var(--primary-color);
+    border-color: var(--primary-color);
+    box-shadow: 0 0 10px rgba(var(--primary-rgb), 0.4);
+    left:-21px;
+}
+
 }
 
 /* Quick Add Bar - Centered Modal */
