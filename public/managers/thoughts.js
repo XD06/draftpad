@@ -63,6 +63,31 @@ export class ThoughtsManager {
             }
         });
 
+        // Mobile search/filter toggle: click opens header, click outside closes
+        this.searchToggle = document.getElementById('thoughts-search-toggle');
+        this.headerActions = document.querySelector('.thoughts-header-actions');
+        if (this.searchToggle) {
+            this.searchToggle.addEventListener('click', () => {
+                this.view.classList.add('expanded');
+                this.searchInput.focus();
+            });
+            // Click outside header-actions or toggle button → collapse
+            document.addEventListener('click', (e) => {
+                if (!this.view.classList.contains('expanded')) return;
+                if (this.headerActions.contains(e.target) || this.searchToggle.contains(e.target)) return;
+                this.view.classList.remove('expanded');
+            });
+            // Blur on all inputs inside header-actions → collapse if focus left the group
+            this.headerActions.addEventListener('focusout', (e) => {
+                // Delay to check if focus moved to another element inside header-actions
+                setTimeout(() => {
+                    if (!this.headerActions.contains(document.activeElement)) {
+                        this.view.classList.remove('expanded');
+                    }
+                }, 0);
+            });
+        }
+
         window.addEventListener('hashchange', () => this.handleHashChange());
 
         this.searchInput.addEventListener('input', () => this.render());
@@ -73,6 +98,9 @@ export class ThoughtsManager {
                 btn.classList.add('active');
                 this.statusFilter.dataset.value = btn.dataset.status;
                 this.render();
+                if (window.innerWidth <= 640) {
+                    this.view.classList.remove('expanded');
+                }
             });
         });
 

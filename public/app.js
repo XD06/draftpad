@@ -665,30 +665,12 @@ document.addEventListener('DOMContentLoaded', async () => {
             // Strip annotation badges from copy
             temp.querySelectorAll('.annotation-badge').forEach(b => b.remove());
 
-            // Wrap styled spans (and trailing note-labels) in <div> for app compatibility
-            temp.querySelectorAll('[style*="text-decoration"]').forEach(el => {
-                // Collect: the span itself + any adjacent data-note-label element
-                const wrapper = document.createElement('div');
-                el.parentNode.insertBefore(wrapper, el);
-                wrapper.appendChild(el);
-                let next = wrapper.nextSibling;
-                while (next && next.nodeType === 1 && next.hasAttribute && next.hasAttribute('data-note-label')) {
-                    const n = next.nextSibling;
-                    wrapper.appendChild(next);
-                    next = n;
-                }
-            });
+            let html = temp.innerHTML;
 
-            // Wrap outer <span> tags in <div> for better pasting compatibility in other note apps
-            temp.querySelectorAll('span:not(span span)').forEach(span => {
-                // Skip if already directly wrapped in a div (e.g. by the logic above)
-                if (span.parentElement && span.parentElement.tagName === 'DIV') return;
-                const wrapper = document.createElement('div');
-                span.parentNode.insertBefore(wrapper, span);
-                wrapper.appendChild(span);
-            });
-
-            const html = temp.innerHTML;
+            // Wrap annotations (span data-note + sub data-note-label) in <div>
+            html = html.replace(/(<span\s+data-note="[^"]*?"[^>]*?>[\s\S]*?<\/span>\s*<sub\s+data-note-label[^>]*?>[\s\S]*?<\/sub>)/g, '<div>$1</div>');
+            // Wrap highlights (span data-draw) in <div>
+            html = html.replace(/(<span\s+data-draw[^>]*?>[\s\S]*?<\/span>)/g, '<div>$1</div>');
 
             // Try ClipboardItem API first (keeps HTML formatting)
             try {

@@ -68,6 +68,43 @@
     box-shadow: 0 4px 20px rgba(0, 0, 0, 0.05);
 }
 
+/* Search toggle button (mobile) — hidden on desktop */
+.search-toggle-btn {
+    display: none;
+    width: 36px;
+    height: 36px;
+    border: 1px solid var(--border-color);
+    background: var(--header-bg);
+    border-radius: 12px;
+    color: var(--muted-text);
+    cursor: pointer;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    transition: all 0.25s var(--ease-out-expo);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+}
+
+.search-toggle-btn:hover {
+    color: var(--primary-color);
+    border-color: var(--primary-color);
+}
+
+.view-container.expanded .search-toggle-btn {
+    background: rgba(var(--primary-rgb), 0.08);
+    color: var(--primary-color);
+    border-color: var(--primary-color);
+}
+
+/* Collapsible header content */
+.header-actions-content {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex: 1;
+    min-width: 0;
+}
+
 .search-bar {
     flex: 1;
     display: flex;
@@ -285,8 +322,7 @@
     margin-bottom: 24px;
     box-shadow: 0 4px 20px rgba(0, 0, 0, 0.02);
     transition: all 0.4s cubic-bezier(0.165, 0.84, 0.44, 1);
-    overflow: hidden;
-}
+    }
 
 .thought-card:hover {
     transform: translateY(-3px) scale(1.005);
@@ -296,7 +332,7 @@
 
 .timeline-node {
     position: absolute;
-    left: -29px;
+    left: -21px;
     top: 28px;
     width: 10px;
     height: 10px;
@@ -833,12 +869,40 @@
 
 /* Mobile Responsiveness */
 @media (max-width: 640px) {
-    .thoughts-header-actions {
+    .search-toggle-btn {
+        display: flex;
+        position: absolute;
+        top: 8px;
+        right: 8px;
+        z-index: 10;
+    }
+
+    /* Collapsed: header takes no layout space */
+    .view-container:not(.expanded) .thoughts-header-actions {
+        height: 0;
+        margin: 0;
+        padding: 0;
+        border: none;
+        overflow: hidden;
+        background: transparent;
+        backdrop-filter: none;
+        -webkit-backdrop-filter: none;
+        box-shadow: none;
+    }
+
+    /* Expanded: slide-down panel */
+    .view-container.expanded .thoughts-header-actions {
         flex-direction: column;
         align-items: stretch;
+        gap: 10px;
         padding: 12px;
-        gap: 8px;
-        margin-left: 8px;
+        margin-bottom: 12px;
+    }
+
+    .view-container.expanded .header-actions-content {
+        opacity: 1;
+        flex-direction: column;
+        gap: 10px;
     }
 
     .thoughts-actions-group {

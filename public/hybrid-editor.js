@@ -865,9 +865,13 @@ export class HybridMarkdownEditor {
         // Strip annotation badges from copy
         container.querySelectorAll('.annotation-badge').forEach(b => b.remove());
 
-        // Wrap inline styled spans in a <div> for app compatibility
+        // Wrap annotations and highlights in <div> for app compatibility
         let html = container.innerHTML;
-        html = html.replace(/(<span\s[^>]*style="text-decoration:[^"]*"[^>]*>.*?<\/span>)/g, '<div>$1</div>');
+        // Annotations: <span class="has-annotation"...>...<sub>...</sub></span> OR <span data-note...>...<sub data-note-label...>...</sub>
+        html = html.replace(/(<span\s+class="has-annotation"[^>]*>[\s\S]*?<\/span>)/g, '<div>$1</div>');
+        html = html.replace(/(<span\s+data-note="[^"]*?"[^>]*>[\s\S]*?<\/span>\s*<sub\s+data-note-label[^>]*>[\s\S]*?<\/sub>)/g, '<div>$1</div>');
+        // Highlights: <span data-draw...>...</span>
+        html = html.replace(/(<span\s+data-draw[^>]*>[\s\S]*?<\/span>)/g, '<div>$1</div>');
 
         const text = container.innerText;
         event.clipboardData.setData('text/html', html);
