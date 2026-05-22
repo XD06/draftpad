@@ -13,8 +13,15 @@ export class ThoughtsManager {
         this.quickAddBar = document.getElementById('quick-add-bar');
         this.quickAddInput = document.getElementById('quick-add-input');
         this.quickAddSubmit = document.getElementById('quick-add-submit');
+        this.quickAddTagsList = document.getElementById('quick-add-tags-list');
+        this.quickAddTagInput = document.getElementById('quick-add-tag-input');
+        this.quickAddTagSuggestions = document.getElementById('quick-add-tag-suggestions');
+        this.tagsFilter = document.getElementById('thoughts-tags-filter');
 
         this.thoughts = [];
+        this.quickAddTags = [];
+        this.activeTag = '';
+        this.savedTags = this.loadSavedTags();
         this.isActive = false;
         this.pendingCreateIds = new Set(); // Prevent duplicate from race conditions
 
@@ -22,11 +29,7 @@ export class ThoughtsManager {
         this.initEventListeners();
     }
     initDateFilter() {
-        // Correctly get YYYY-MM-DD in local time
-        const now = new Date();
-        const offset = now.getTimezoneOffset();
-        const localDate = new Date(now.getTime() - (offset * 60 * 1000));
-        this.dateFilter.value = localDate.toISOString().split('T')[0];
+        this.dateFilter.value = '';
     }
     initEventListeners() {
         this.addThoughtBtn = document.getElementById('fab-add-thought');
@@ -53,6 +56,7 @@ export class ThoughtsManager {
                 this.quickAddInput.style.height = 'auto';
                 this.quickAddInput.style.height = Math.min(this.quickAddInput.scrollHeight, 160) + 'px';
             });
+            this.initQuickAddTagEvents();
         }
 
         this.toggleBtn.addEventListener('click', () => {
@@ -74,18 +78,23 @@ export class ThoughtsManager {
             // Click outside header-actions or toggle button → collapse
             document.addEventListener('click', (e) => {
                 if (!this.view.classList.contains('expanded')) return;
-                if (this.headerActions.contains(e.target) || this.searchToggle.contains(e.target)) return;
+                const path = e.composedPath ? e.composedPath() : [];
+                const clickedInsideHeader = path.includes(this.headerActions) || this.headerActions.contains(e.target);
+                const clickedSearchToggle = path.includes(this.searchToggle) || this.searchToggle.contains(e.target);
+                if (clickedInsideHeader || clickedSearchToggle) return;
                 this.view.classList.remove('expanded');
             });
-            // Blur on all inputs inside header-actions → collapse if focus left the group
-            this.headerActions.addEventListener('focusout', (e) => {
-                // Delay to check if focus moved to another element inside header-actions
-                setTimeout(() => {
-                    if (!this.headerActions.contains(document.activeElement)) {
-                        this.view.classList.remove('expanded');
+
+            // Click outside expanded card → collapse
+            document.addEventListener('click', (e) => {
+                const expandedCards = this.timeline.querySelectorAll('.thought-card.expanded');
+                expandedCards.forEach(card => {
+                    if (!card.contains(e.target) && !card.classList.contains('editing')) {
+                        card.classList.remove('expanded');
                     }
-                }, 0);
+                });
             });
+            // Blur on all inputs inside header-actions → collapse if focus left the group
         }
 
         window.addEventListener('hashchange', () => this.handleHashChange());
@@ -98,11 +107,43 @@ export class ThoughtsManager {
                 btn.classList.add('active');
                 this.statusFilter.dataset.value = btn.dataset.status;
                 this.render();
-                if (window.innerWidth <= 640) {
-                    this.view.classList.remove('expanded');
-                }
             });
         });
+
+        if (this.tagsFilter) {
+            this.tagsFilter.addEventListener('click', (e) => {
+                const clearBtn = e.target.closest('[data-clear-tag-filter]');
+                if (clearBtn) {
+                    this.activeTag = '';
+                    this.render();
+                    return;
+                }
+
+                const tagBtn = e.target.closest('[data-tag-filter]');
+                if (!tagBtn) return;
+                const tag = tagBtn.dataset.tagFilter;
+                this.activeTag = this.activeTag.toLowerCase() === tag.toLowerCase() ? '' : tag;
+                this.render();
+            });
+
+            this.tagsFilter.addEventListener('keydown', (e) => {
+                const input = e.target.closest('#thoughts-tag-filter-input');
+                if (!input) return;
+                if (e.key === 'Enter' || e.key === ',') {
+                    e.preventDefault();
+                    const tag = this.normalizeTag(input.value);
+                    if (!tag) return;
+                    this.saveTag(tag);
+                    this.activeTag = tag;
+                    input.value = '';
+                    this.render();
+                } else if (e.key === 'Escape') {
+                    input.value = '';
+                    this.activeTag = '';
+                    this.render();
+                }
+            });
+        }
 
         document.getElementById('header-title').addEventListener('click', () => {
             if (this.isActive) {
@@ -158,6 +199,7 @@ export class ThoughtsManager {
         try {
             const response = await fetch(url);
             this.thoughts = await response.json();
+            this.syncTagsFromThoughts(this.thoughts);
             this.render();
         } catch (err) {
             console.error('Failed to fetch thoughts:', err);
@@ -169,8 +211,11 @@ export class ThoughtsManager {
         this.quickAddBar.style.display = 'flex';
         document.body.classList.add('quick-add-open');
         this.quickAddInput.value = '';
+        this.quickAddTags = [];
         this.quickAddInput.style.height = '52px';
         this.quickAddSubmit.disabled = false;
+        this.renderQuickAddTags();
+        this.hideQuickAddTagSuggestions();
 
         // Auto-focus to trigger mobile keyboard
         setTimeout(() => this.quickAddInput.focus(), 80);
@@ -181,6 +226,7 @@ export class ThoughtsManager {
         this.quickAddBar.style.display = 'none';
         document.body.classList.remove('quick-add-open');
         this.quickAddInput.blur();
+        this.hideQuickAddTagSuggestions();
     }
 
     async submitQuickAdd() {
@@ -197,7 +243,7 @@ export class ThoughtsManager {
             const response = await fetch('/api/thoughts', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ text })
+                body: JSON.stringify({ text, tags: this.quickAddTags })
             });
             const data = await response.json();
             if (response.ok) {
@@ -207,6 +253,7 @@ export class ThoughtsManager {
                     this.thoughts.unshift(data);
                     this.pendingCreateIds.add(data.id);
                 }
+                this.syncTagsFromThoughts([data]);
                 this.render();
                 this.closeQuickAdd();
 
@@ -227,6 +274,82 @@ export class ThoughtsManager {
                 this.quickAddSubmit.disabled = false;
             }
         }
+    }
+
+    initQuickAddTagEvents() {
+        if (this.quickAddTagInput) {
+            this.quickAddTagInput.disabled = true;
+        }
+        if (this.quickAddTagsList) {
+            this.quickAddTagsList.addEventListener('click', (e) => {
+                const btn = e.target.closest('[data-quick-tag-choice]');
+                if (!btn) return;
+                this.toggleQuickAddTag(btn.dataset.quickTagChoice);
+                this.renderQuickAddTags();
+            });
+        }
+    }
+
+    toggleQuickAddTag(value) {
+        const tag = this.normalizeTag(value);
+        if (!tag) return;
+        const index = this.quickAddTags.findIndex(t => t.toLowerCase() === tag.toLowerCase());
+        if (index === -1) {
+            this.quickAddTags.push(tag);
+        } else {
+            this.quickAddTags.splice(index, 1);
+        }
+    }
+
+    renderQuickAddTags() {
+        if (!this.quickAddTagsList) return;
+        const tags = this.getAllTags();
+        const selected = new Set(this.quickAddTags.map(tag => tag.toLowerCase()));
+        if (tags.length === 0) {
+            this.quickAddTagsList.innerHTML = '<div class="quick-add-tags-empty">No saved tags</div>';
+            return;
+        }
+        this.quickAddTagsList.innerHTML = tags.map(tag => {
+            const isSelected = selected.has(tag.toLowerCase());
+            return `
+                <button type="button" class="quick-add-tag-chip ${isSelected ? 'selected' : ''}" data-quick-tag-choice="${this.escapeHtml(tag)}" aria-pressed="${isSelected}">
+                    <span>#${this.escapeHtml(tag)}</span>
+                </button>
+            `;
+        }).join('');
+        return;
+        this.quickAddTagsList.innerHTML = this.quickAddTags.map(tag => `
+            <button type="button" class="quick-add-tag-chip" data-remove-quick-tag="${this.escapeHtml(tag)}" title="移除标签">
+                <span>#${this.escapeHtml(tag)}</span>
+                <span aria-hidden="true">×</span>
+            </button>
+        `).join('');
+    }
+
+    renderQuickAddTagSuggestions() {
+        if (!this.quickAddTagSuggestions || !this.quickAddTagInput) return;
+        const query = this.quickAddTagInput.value.trim().toLowerCase();
+        const selected = new Set(this.quickAddTags.map(tag => tag.toLowerCase()));
+        const suggestions = this.getAllTags()
+            .filter(tag => !selected.has(tag.toLowerCase()))
+            .filter(tag => !query || tag.toLowerCase().includes(query))
+            .slice(0, 8);
+
+        if (suggestions.length === 0) {
+            this.hideQuickAddTagSuggestions();
+            return;
+        }
+
+        this.quickAddTagSuggestions.innerHTML = suggestions.map(tag => `
+            <button type="button" class="quick-add-tag-suggestion" data-quick-tag-suggestion="${this.escapeHtml(tag)}">#${this.escapeHtml(tag)}</button>
+        `).join('');
+        this.quickAddTagSuggestions.style.display = 'flex';
+    }
+
+    hideQuickAddTagSuggestions() {
+        if (!this.quickAddTagSuggestions) return;
+        this.quickAddTagSuggestions.style.display = 'none';
+        this.quickAddTagSuggestions.innerHTML = '';
     }
 
     handleSocketUpdate(action, payload) {
@@ -309,6 +432,8 @@ export class ThoughtsManager {
     render() {
         const query = this.searchInput.value.toLowerCase();
         const status = this.statusFilter.dataset.value || 'all';
+        const activeTag = this.activeTag.toLowerCase();
+        this.renderTagFilters();
         
         let filtered = this.thoughts.filter(t => {
             if (t.text.toLowerCase().includes(query)) return true;
@@ -320,6 +445,10 @@ export class ThoughtsManager {
             filtered = filtered.filter(t => !t.completed);
         } else if (status === 'done') {
             filtered = filtered.filter(t => t.completed);
+        }
+
+        if (activeTag) {
+            filtered = filtered.filter(t => (t.tags || []).some(tag => tag.toLowerCase() === activeTag));
         }
 
         // Sort: Incomplete first, completed last. Then by creation/update time desc.
@@ -363,28 +492,76 @@ export class ThoughtsManager {
                 bodyText = parsed.bodyText;
             }
 
+            // Sort subtasks: incomplete first, completed last.
+            const sortedSubItems = [...subItems].sort((a, b) => {
+                if (a.completed !== b.completed) {
+                    return a.completed ? 1 : -1;
+                }
+                return 0;
+            });
+
             // Render body text
-            let bodyHtml = this.escapeHtml(bodyText).split('\n').join('<br>');
+            let bodyHtml = this.linkify(bodyText).split('\n').join('<br>');
             if (query) {
-                const regex = new RegExp(`(${this.escapeRegExp(query)})`, 'gi');
-                bodyHtml = bodyHtml.replace(regex, '<mark class="thought-highlight">$1</mark>');
+                bodyHtml = this.highlightSearch(bodyHtml, query);
             }
 
+            const tags = thought.tags || [];
+            const tagsHtml = tags.length ? `
+                <div class="thought-tags">
+                    ${tags.map(tag => `<button class="thought-tag" data-card-tag="${this.escapeHtml(tag)}">#${this.escapeHtml(tag)}</button>`).join('')}
+                </div>
+            ` : '';
+
             // Render subtask list (always shown, with add button at bottom)
-            let subtasksHtml = '<div class="subtask-list">' + subItems.map(item => {
-                let label = this.escapeHtml(item.text);
+            let subtasksHtml = '<div class="subtask-list">';
+            sortedSubItems.forEach((item, index) => {
+                let label = this.linkify(item.text);
                 if (query) {
-                    const regex = new RegExp(`(${this.escapeRegExp(query)})`, 'gi');
-                    label = label.replace(regex, '<mark class="thought-highlight">$1</mark>');
+                    label = this.highlightSearch(label, query);
                 }
-                return `<div class="subtask ${item.completed ? 'completed' : ''}" data-subid="${item.id}">
+                const isExtra = sortedSubItems.length > 3 && index >= 3;
+                const extraClass = isExtra ? 'subtask-extra' : '';
+                subtasksHtml += `<div class="subtask ${item.completed ? 'completed' : ''} ${extraClass}" data-subid="${item.id}">
                     <input type="checkbox" class="subtask-check" ${item.completed ? 'checked' : ''}>
                     <span class="subtask-text">${label}</span>
                     <button class="subtask-copy-btn" title="复制">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                     </button>
                 </div>`;
-            }).join('') + '<button class="subtask-add-inline" title="添加子任务"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg></button></div>';
+            });
+
+            if (sortedSubItems.length > 3) {
+                const remainingCount = sortedSubItems.length - 3;
+                const completedCount = sortedSubItems.filter(item => item.completed).length;
+                const totalCount = sortedSubItems.length;
+                
+                const radius = 7;
+                const circumference = Math.round(2 * Math.PI * radius); // ~44
+                const progress = totalCount > 0 ? (completedCount / totalCount) : 0;
+                const strokeDashoffset = circumference - (progress * circumference);
+
+                subtasksHtml += `
+                    <div class="subtasks-summary-row">
+                        <div class="summary-left">
+                            <svg class="progress-ring" width="18" height="18" viewBox="0 0 18 18">
+                                <circle class="progress-ring-bg" cx="9" cy="9" r="7" fill="none" stroke-width="2"/>
+                                <circle class="progress-ring-fg" cx="9" cy="9" r="7" fill="none" stroke-width="2"
+                                        stroke-dasharray="${circumference}" stroke-dashoffset="${strokeDashoffset}"
+                                        stroke-linecap="round" transform="rotate(-90 9 9)"/>
+                            </svg>
+                        </div>
+                        <div class="summary-right">
+                            <span class="summary-more-num">+${remainingCount}</span>
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="chevron-down-icon">
+                                <polyline points="6 9 12 15 18 9"></polyline>
+                            </svg>
+                        </div>
+                    </div>
+                `;
+            }
+
+            subtasksHtml += '<button class="subtask-add-inline" title="添加子任务"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg></button></div>';
 
             const isLong = bodyText.split('\n').length > 6 || bodyText.length > 200 || subItems.length > 3;
             if (isLong) card.classList.add('can-expand');
@@ -403,13 +580,13 @@ export class ThoughtsManager {
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                     </button>
                 </div>
+                ${tagsHtml}
                 ${subtasksHtml}
             `;
 
             // Handle all interactions via event delegation or direct listeners
             const textEl = card.querySelector('.thought-text');
             const dotEl = card.querySelector('.thought-dot');
-            const expandBtn = card.querySelector('.expand-btn');
             const thoughtCopyBtn = card.querySelector('.thought-copy-btn');
 
             // 1. Toggle completion
@@ -441,9 +618,21 @@ export class ThoughtsManager {
             let tapTimeout;
 
             const handleGesture = (e) => {
-                // Don't trigger expand/collapse when clicking subtask elements
-                if (e.target.classList.contains('subtask-check') ||
-                    e.target.closest('.subtask')) return;
+                // Don't trigger expand/collapse when clicking interactive elements or inside editing panel
+                if (
+                    e.target.closest('.thought-dot') ||
+                    e.target.closest('.thought-copy-btn') ||
+                    e.target.closest('.thought-tag') ||
+                    e.target.closest('.subtask') ||
+                    e.target.closest('.subtask-add-inline') ||
+                    e.target.closest('.subtasks-summary-row') ||
+                    e.target.closest('.subtask-editor-panel') ||
+                    e.target.closest('.edit-textarea') ||
+                    e.target.closest('.thought-link') ||
+                    card.classList.contains('editing')
+                ) {
+                    return;
+                }
 
                 const now = Date.now();
                 const DOUBLE_TAP_DELAY = 300;
@@ -459,14 +648,20 @@ export class ThoughtsManager {
                     tapTimeout = setTimeout(() => {
                         if (isLong) {
                             card.classList.toggle('expanded');
-                            const btn = card.querySelector('.expand-btn');
-                            if (btn) btn.textContent = card.classList.contains('expanded') ? '收起内容' : '展开阅读';
                         }
                     }, DOUBLE_TAP_DELAY);
                 }
             };
 
-            textEl.addEventListener('click', handleGesture);
+            card.addEventListener('click', handleGesture);
+
+            card.querySelectorAll('.thought-tag').forEach((tagBtn) => {
+                tagBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    this.activeTag = tagBtn.dataset.cardTag;
+                    this.render();
+                });
+            });
 
             // 3. Long press to delete (Desktop & Mobile)
             let longPressTimer;
@@ -534,16 +729,162 @@ export class ThoughtsManager {
                 });
             }
 
-            if (expandBtn) {
-                expandBtn.onclick = (e) => {
+            const summaryRow = card.querySelector('.subtasks-summary-row');
+            if (summaryRow) {
+                summaryRow.onclick = (e) => {
                     e.stopPropagation();
-                    card.classList.toggle('expanded');
-                    expandBtn.textContent = card.classList.contains('expanded') ? '收起内容' : '展开阅读';
+                    card.classList.add('expanded');
                 };
             }
 
             this.timeline.appendChild(card);
         });
+    }
+
+    renderTagFilters() {
+        if (!this.tagsFilter) return;
+        const tags = this.getAllTags();
+        const activeTag = this.activeTag.toLowerCase();
+        const activeStillExists = tags.some(tag => tag.toLowerCase() === activeTag);
+
+        const tagButtons = tags.map(tag => `
+            <button type="button" class="thoughts-tag-filter ${tag.toLowerCase() === activeTag ? 'active' : ''}" data-tag-filter="${this.escapeHtml(tag)}">
+                #${this.escapeHtml(tag)}
+            </button>
+        `).join('');
+
+        const customActive = this.activeTag && !activeStillExists ? `
+            <button type="button" class="thoughts-tag-filter active" data-tag-filter="${this.escapeHtml(this.activeTag)}">#${this.escapeHtml(this.activeTag)}</button>
+        ` : '';
+
+        this.tagsFilter.innerHTML = `
+            <div class="thoughts-tag-filter-row">
+                ${tagButtons}
+                ${customActive}
+                <input id="thoughts-tag-filter-input" class="thoughts-tag-filter-input" type="text" placeholder="+ 标签筛选" autocomplete="off">
+                ${this.activeTag ? '<button type="button" class="thoughts-tag-clear" data-clear-tag-filter>清除</button>' : ''}
+            </div>
+        `;
+    }
+
+    getAllTags() {
+        const tagMap = new Map();
+        this.thoughts.forEach(thought => {
+            (thought.tags || []).forEach(rawTag => {
+                const tag = this.normalizeTag(rawTag);
+                if (!tag) return;
+                const key = tag.toLowerCase();
+                if (!tagMap.has(key)) tagMap.set(key, tag);
+            });
+        });
+        return Array.from(tagMap.values()).sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'));
+    }
+
+    renderTagFilters() {
+        if (!this.tagsFilter) return;
+        const tags = this.getAllTags();
+        const activeTag = this.activeTag.toLowerCase();
+        const activeStillExists = tags.some(tag => tag.toLowerCase() === activeTag);
+
+        const tagButtons = tags.map(tag => `
+            <button type="button" class="thoughts-tag-filter ${tag.toLowerCase() === activeTag ? 'active' : ''}" data-tag-filter="${this.escapeHtml(tag)}">
+                <span>#</span>${this.escapeHtml(tag)}
+            </button>
+        `).join('');
+
+        const customActive = this.activeTag && !activeStillExists ? `
+            <button type="button" class="thoughts-tag-filter active" data-tag-filter="${this.escapeHtml(this.activeTag)}"><span>#</span>${this.escapeHtml(this.activeTag)}</button>
+        ` : '';
+
+        this.tagsFilter.innerHTML = `
+            <div class="thoughts-tag-filter-row">
+                ${tagButtons}
+                ${customActive}
+                <label class="thoughts-tag-create">
+                    <span>#</span>
+                    <input id="thoughts-tag-filter-input" class="thoughts-tag-filter-input" type="text" placeholder="新建或筛选" autocomplete="off">
+                </label>
+                ${this.activeTag ? '<button type="button" class="thoughts-tag-clear" data-clear-tag-filter>清除</button>' : ''}
+            </div>
+        `;
+    }
+
+    getAllTags() {
+        const tagMap = new Map();
+        this.savedTags.forEach(rawTag => {
+            const tag = this.normalizeTag(rawTag);
+            if (!tag) return;
+            tagMap.set(tag.toLowerCase(), tag);
+        });
+        this.thoughts.forEach(thought => {
+            (thought.tags || []).forEach(rawTag => {
+                const tag = this.normalizeTag(rawTag);
+                if (!tag) return;
+                const key = tag.toLowerCase();
+                if (!tagMap.has(key)) tagMap.set(key, tag);
+            });
+        });
+        return Array.from(tagMap.values()).sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'));
+    }
+
+    loadSavedTags() {
+        try {
+            const raw = localStorage.getItem('dumbpad_thought_tags');
+            if (!raw) return [];
+            const tags = JSON.parse(raw);
+            if (!Array.isArray(tags)) return [];
+            return tags.map(tag => this.normalizeTag(tag)).filter(Boolean);
+        } catch (err) {
+            console.warn('Failed to load thought tags:', err);
+            return [];
+        }
+    }
+
+    persistSavedTags() {
+        try {
+            localStorage.setItem('dumbpad_thought_tags', JSON.stringify(this.savedTags));
+        } catch (err) {
+            console.warn('Failed to save thought tags:', err);
+        }
+    }
+
+    saveTag(value) {
+        const tag = this.normalizeTag(value);
+        if (!tag) return '';
+        const exists = this.savedTags.some(t => t.toLowerCase() === tag.toLowerCase());
+        if (!exists) {
+            this.savedTags.push(tag);
+            this.savedTags.sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'));
+            this.persistSavedTags();
+        }
+        return tag;
+    }
+
+    syncTagsFromThoughts(thoughts) {
+        let changed = false;
+        thoughts.forEach(thought => {
+            (thought.tags || []).forEach(rawTag => {
+                const tag = this.normalizeTag(rawTag);
+                if (!tag) return;
+                const exists = this.savedTags.some(t => t.toLowerCase() === tag.toLowerCase());
+                if (!exists) {
+                    this.savedTags.push(tag);
+                    changed = true;
+                }
+            });
+        });
+        if (changed) {
+            this.savedTags.sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'));
+            this.persistSavedTags();
+        }
+    }
+
+    normalizeTag(value) {
+        return String(value || '')
+            .replace(/^#+/, '')
+            .trim()
+            .replace(/\s+/g, ' ')
+            .slice(0, 24);
     }
 
     enterEditMode(card, thought) {
@@ -870,6 +1211,80 @@ export class ThoughtsManager {
             }
         });
         return { bodyText: bodyLines.join('\n'), subItems };
+    }
+
+    linkify(text) {
+        if (!text) return '';
+        const escaped = this.escapeHtml(text);
+        return escaped.replace(/((?:https?:\/\/|www\.)[^\s<>\'\"]+)/gi, (match) => {
+            let url = match;
+            let trailing = '';
+            const punctuation = /[.,;:!?\)]$/;
+            while (punctuation.test(url)) {
+                if (url.endsWith(')')) {
+                    const openParentheses = (url.match(/\(/g) || []).length;
+                    const closeParentheses = (url.match(/\)/g) || []).length;
+                    if (closeParentheses > openParentheses) {
+                        trailing = url.slice(-1) + trailing;
+                        url = url.slice(0, -1);
+                        continue;
+                    }
+                } else {
+                    trailing = url.slice(-1) + trailing;
+                    url = url.slice(0, -1);
+                    continue;
+                }
+                break;
+            }
+            let href = url;
+            if (url.toLowerCase().startsWith('www.')) {
+                href = 'https://' + url;
+            }
+            return `<a href="${href}" target="_blank" rel="noopener noreferrer" class="thought-link">${url}</a>${trailing}`;
+        });
+    }
+
+    highlightSearch(htmlString, query) {
+        if (!query) return htmlString;
+        const template = document.createElement('div');
+        template.innerHTML = htmlString;
+        
+        const walk = (node) => {
+            if (node.nodeType === Node.TEXT_NODE) {
+                const text = node.nodeValue;
+                const lowerText = text.toLowerCase();
+                const lowerQuery = query.toLowerCase();
+                if (lowerText.includes(lowerQuery)) {
+                    const fragment = document.createDocumentFragment();
+                    let lastIdx = 0;
+                    let idx = lowerText.indexOf(lowerQuery);
+                    while (idx !== -1) {
+                        if (idx > lastIdx) {
+                            fragment.appendChild(document.createTextNode(text.substring(lastIdx, idx)));
+                        }
+                        const mark = document.createElement('mark');
+                        mark.className = 'thought-highlight';
+                        mark.textContent = text.substring(idx, idx + query.length);
+                        fragment.appendChild(mark);
+                        
+                        lastIdx = idx + query.length;
+                        idx = lowerText.indexOf(lowerQuery, lastIdx);
+                    }
+                    if (lastIdx < text.length) {
+                        fragment.appendChild(document.createTextNode(text.substring(lastIdx)));
+                    }
+                    node.parentNode.replaceChild(fragment, node);
+                }
+            } else if (node.nodeType === Node.ELEMENT_NODE && node.tagName !== 'MARK') {
+                const children = Array.from(node.childNodes);
+                for (const child of children) {
+                    walk(child);
+                }
+            }
+        };
+        
+        Array.from(template.childNodes).forEach(walk);
+        return template.innerHTML;
     }
 
     escapeHtml(text) {

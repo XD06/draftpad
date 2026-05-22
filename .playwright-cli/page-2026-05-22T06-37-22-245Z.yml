@@ -1,0 +1,8 @@
+- generic [ref=e2]:
+  - button "Toggle dark mode" [ref=e3] [cursor=pointer]:
+    - img [ref=e4]
+  - generic [ref=e7]:
+    - generic [ref=e8]:
+      - heading "DumbPad" [level=1] [ref=e9]
+      - heading "Enter PIN" [level=2] [ref=e10]
+    - paragraph [ref=e11]

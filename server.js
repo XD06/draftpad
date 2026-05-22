@@ -1546,8 +1546,13 @@ app.get('/api/thoughts/:id', async (req, res) => {
 
 app.get('/api/thoughts', async (req, res) => {
     try {
-        const { q, date } = req.query;
+        const { q, date, tag } = req.query;
         let thoughts = await readThoughts();
+        
+        if (tag) {
+            const tagLower = tag.toLowerCase();
+            thoughts = thoughts.filter(t => t.tags && t.tags.some(tg => tg.toLowerCase() === tagLower));
+        }
         
         if (q) {
             const query = q.toLowerCase();
@@ -1578,7 +1583,7 @@ app.get('/api/thoughts', async (req, res) => {
 
 app.post('/api/thoughts', async (req, res) => {
     try {
-        const { text, subItems } = req.body;
+        const { text, subItems, tags } = req.body;
         if (!text) return res.status(400).json({ error: 'Text is required' });
         
         const thoughts = await readThoughts();
@@ -1586,6 +1591,7 @@ app.post('/api/thoughts', async (req, res) => {
             id: Date.now().toString(),
             text,
             subItems: subItems || [],
+            tags: tags || [],
             completed: false,
             createdAt: Date.now(),
             updatedAt: Date.now()
@@ -1633,6 +1639,7 @@ app.patch('/api/thoughts/:id', async (req, res) => {
             case 'overwrite':
                 if (text !== undefined) { thought.text = text; modified = true; }
                 if (req.body.subItems !== undefined) { thought.subItems = req.body.subItems; modified = true; }
+                if (req.body.tags !== undefined) { thought.tags = req.body.tags; modified = true; }
                 break;
             case 'add_subitem':
                 if (!text) return res.status(400).json({ error: 'Subitem text is required' });
