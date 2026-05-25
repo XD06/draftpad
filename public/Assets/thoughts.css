@@ -212,7 +212,7 @@
     display: flex;
     flex-wrap: wrap;
     gap: 6px;
-    margin: 8px 0 2px 36px;
+    margin: 8px 0 2px 0px;
 }
 
 .thought-tag {
@@ -280,7 +280,7 @@
     border: 1px solid transparent;
     border-radius: 12px;
     padding: 8px 12px;
-    color: var(--text-color);
+    color: #697180;
     font-size: 13px;
     outline: none;
     cursor: pointer;
