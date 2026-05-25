@@ -316,13 +316,22 @@ document.addEventListener('DOMContentLoaded', async () => {
     async function createNotepad() {
         try {
             const response = await fetchWithPin('/api/notepads', { method: 'POST' });
-            const newNotepad = await response.json();
+            if (!response) throw new Error('Network error');
+            const payload = await response.json().catch(() => ({}));
+            if (!response.ok) {
+                const msg = payload?.error || 'Error creating new notepad';
+                throw new Error(msg);
+            }
+            const newNotepad = payload;
+            if (!newNotepad?.id) {
+                throw new Error(payload?.error || 'Create notepad succeeded but missing id');
+            }
             await loadNotepads();
             await selectNotepad(newNotepad.id);
             toaster.show(`New notepad: ${newNotepad.name}`, 'success');
         } catch (err) {
             console.error('Error creating notepad:', err);
-            toaster.show('Error creating notepad', 'error', true);
+            toaster.show(err?.message || 'Error creating notepad', 'error', true);
         }
     }
 
@@ -369,6 +378,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     async function saveNotes(content, isAutoSave, showStatus = true) {
         try {
+            if (!currentNotepadId) return;
             await fetchWithPin(`/api/notes/${currentNotepadId}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -508,6 +518,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         } else {
             emptyState.style.display = 'flex';
             hybridEditor.style.display = 'none';
+            // No valid notepad selected — avoid any further loading/rendering
+            document.getElementById('page-title').textContent = `${_siteTitle} - DumbPad`;
+            return;
         }
 
         // Hide mobile sidebar on selection

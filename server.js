@@ -916,17 +916,54 @@ async function ensureDataDir() {
                     throw new Error('Invalid notepads structure');
                 }
             } catch (err) {
-                console.error('Invalid notepads.json, recreating:', err);
-                await fs.writeFile(NOTEPADS_FILE, JSON.stringify({
-                    notepads: [{ id: 'default', name: 'Default Notepad', createdAt: Date.now(), updatedAt: Date.now() }]
-                }, null, 2));
+                console.error('Invalid notepads.json detected. Backing up and rebuilding:', err);
+                
+                // 1) Backup the corrupted file to avoid silent data loss
+                try {
+                    const backupPath = path.join(DATA_DIR, `notepads.json.bak-${Date.now()}`);
+                    await fs.rename(NOTEPADS_FILE, backupPath);
+                    console.log(`Backed up corrupted notepads.json -> ${backupPath}`);
+                } catch (backupErr) {
+                    console.warn('Failed to backup corrupted notepads.json:', backupErr);
+                }
+                
+                // 2) Best-effort rebuild from existing .txt files
+                const notepads = [];
+                const now = Date.now();
+                notepads.push({ id: 'default', name: 'Default Notepad', createdAt: now, updatedAt: now });
+                try {
+                    const dataFiles = await fs.readdir(DATA_DIR);
+                    const txtFiles = dataFiles
+                        .filter(f => f.endsWith('.txt'))
+                        .map(f => path.parse(f).name);
+                    
+                    for (const base of txtFiles) {
+                        if (!base || base === 'default') continue;
+                        let stats;
+                        try {
+                            stats = await fs.stat(path.join(DATA_DIR, `${base}.txt`));
+                        } catch {
+                            stats = { birthtimeMs: now, mtimeMs: now };
+                        }
+                        notepads.push({
+                            id: base,
+                            name: base,
+                            createdAt: Math.floor(stats.birthtimeMs || now),
+                            updatedAt: Math.floor(stats.mtimeMs || now),
+                        });
+                    }
+                } catch (rebuildErr) {
+                    console.warn('Failed to rebuild notepads list from data directory:', rebuildErr);
+                }
+                
+                await fs.writeFile(NOTEPADS_FILE, JSON.stringify({ notepads }, null, 2), 'utf8');
             }
         } catch (err) {
             // File doesn't exist or can't be accessed, create it
             console.log('Creating new notepads.json');
             await fs.writeFile(NOTEPADS_FILE, JSON.stringify({
                 notepads: [{ id: 'default', name: 'Default Notepad', createdAt: Date.now(), updatedAt: Date.now() }]
-            }, null, 2));
+            }, null, 2), 'utf8');
         }
 
         // Ensure default notepad file exists
@@ -1191,7 +1228,8 @@ app.get('/api/notepads', async (req, res) => {
 // Create new notepad
 app.post('/api/notepads', async (req, res) => {
     try {
-        const { name, content } = req.body;
+        const { name, content } = req.body || {};
+        await ensureDataDir();
 
         const data = JSON.parse(await fs.readFile(NOTEPADS_FILE, 'utf8'));
         const id = Date.now().toString();
@@ -1214,16 +1252,17 @@ app.post('/api/notepads', async (req, res) => {
             maxAge: pageHistoryCookieAge
         });
 
-        await fs.writeFile(NOTEPADS_FILE, JSON.stringify(data));
+        await fs.writeFile(NOTEPADS_FILE, JSON.stringify(data, null, 2), 'utf8');
         
         // Create file using sanitized name instead of ID
         const sanitizedName = sanitizeFilename(uniqueName);
         const filePath = path.join(DATA_DIR, `${sanitizedName}.txt`);
-        await fs.writeFile(filePath, content || '');
+        await fs.writeFile(filePath, content || '', 'utf8');
         
         scheduleIndexNotepads(250); // update searching index
         res.json(newNotepad);
     } catch (err) {
+        console.error('Error creating new notepad:', err);
         res.status(500).json({ error: 'Error creating new notepad' });
     }
 });
@@ -1383,6 +1422,9 @@ app.get('/api/notes/:id', async (req, res) => {
 app.post('/api/notes/:id', async (req, res) => {
     try {
         const { id } = req.params;
+        if (!id || id === 'undefined' || id === 'null') {
+            return res.status(400).json({ error: 'Invalid notepad id' });
+        }
         await ensureDataDir();
         
         // Find the notepad to get its current name
