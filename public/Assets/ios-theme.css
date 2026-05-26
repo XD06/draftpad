@@ -1,0 +1,609 @@
+/* ═══════════════════════════════════════════════════════════
+   iOS 备忘录风格 — 设计系统覆盖层
+   加载顺序: styles.css → preview-styles.css → thoughts.css → 本文件
+   不修改 HTML/JS，仅覆盖 CSS 视觉属性
+   ═══════════════════════════════════════════════════════════ */
+
+/* ──────────────────────────────────────
+   3.2  Design Tokens
+   ────────────────────────────────────── */
+
+:root {
+    /* iOS 系统灰背景 */
+    --bg-color: #f2f2f7;
+    --header-bg: #ffffff;
+    --textarea-bg: #ffffff;
+    --surface-subtle: #f2f2f7;
+    --modal-bg: #ffffff;
+
+    /* iOS 导航栏 */
+    --nav-bg: rgba(255, 255, 255, 0.45);
+    --nav-separator: rgba(60, 60, 67, 0.12);
+
+    /* iOS 文字色 */
+    --text-color: #1c1c1e;
+    --muted-text: #8e8e93;
+    --primary-color: #E5A100;
+    --primary-rgb: 229, 161, 0;
+
+    /* iOS 分割线 */
+    --border-color: rgba(60, 60, 67, 0.08);
+    --separator-color: rgba(60, 60, 67, 0.08);
+
+    /* iOS 按钮 */
+    --button-hover: rgba(0, 0, 0, 0.05);
+    --danger-color: #ff3b30;
+    --danger-hover: #ff3b30;
+
+    /* iOS 圆角体系 */
+    --radius-sm: 10px;
+    --radius-md: 14px;
+    --radius-lg: 20px;
+
+    /* iOS 阴影 */
+    --shadow-sm: 0 0.5px 1px rgba(0, 0, 0, 0.05);
+    --shadow-md: 0 1px 3px rgba(0, 0, 0, 0.06);
+    --shadow-premium: 0 10px 30px rgba(0, 0, 0, 0.12);
+
+    /* iOS 辅助色（styles.css 依赖，不能缺失） */
+    --secondary-color: #e5e5ea;
+    --toc-bg: rgba(255, 255, 255, 0.85);
+    --command-palette-bg: rgba(255, 255, 255, 0.95);
+
+    /* 保留现有过渡变量 */
+    --transition: background-color 0.3s, color 0.3s;
+    --input-element-transition: background-color 0.2s ease;
+    --ease-out-expo: cubic-bezier(0.19, 1, 0.22, 1);
+
+    /* iOS 字体 */
+    --font-system: -apple-system, BlinkMacSystemFont, "SF Pro", "SF Pro Text", "Helvetica Neue", sans-serif;
+    --font-mono: "SF Mono", SFMono-Regular, "JetBrains Mono", monospace;
+
+    /* 保留兼容 */
+    --code-markdown: rgba(229, 161, 0, 0.12);
+    --modal-overlay: rgba(0, 0, 0, 0.4);
+    --success-status-bg: rgba(229, 161, 0, 0.85);
+    --danger-status-bg: rgba(255, 59, 48, 0.85);
+}
+
+[data-theme="dark"] {
+    --bg-color: #1c1c1e;
+    --header-bg: #2c2c2e;
+    --textarea-bg: #2c2c2e;
+    --surface-subtle: #1c1c1e;
+    --modal-bg: #2c2c2e;
+    --nav-bg: rgba(28, 28, 30, 0.45);
+    --nav-separator: rgba(255, 255, 255, 0.10);
+    --text-color: #ffffff;
+    --muted-text: #8e8e93;
+    --primary-color: #FFD60A;
+    --primary-rgb: 255, 214, 10;
+    --border-color: rgba(255, 255, 255, 0.08);
+    --separator-color: rgba(255, 255, 255, 0.08);
+    --button-hover: rgba(255, 255, 255, 0.1);
+    --secondary-color: #3a3a3c;
+    --danger-color: #ff453a;
+    --danger-hover: #ff453a;
+    --code-markdown: rgba(255, 214, 10, 0.18);
+    --toc-bg: rgba(44, 44, 46, 0.85);
+    --shadow-premium: 0 10px 30px rgba(0, 0, 0, 0.4);
+    --command-palette-bg: rgba(44, 44, 46, 0.95);
+    --success-status-bg: rgba(255, 214, 10, 0.85);
+    --danger-status-bg: rgba(255, 69, 58, 0.85);
+    --modal-overlay: rgba(0, 0, 0, 0.6);
+}
+
+/* ──────────────────────────────────────
+   3.3  全局重置 + iOS Scrollbar
+   ────────────────────────────────────── */
+
+/* 开启页面级滚动 — 毛玻璃 fixed header 的前提 */
+html, body {
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+    height: auto !important;
+    overscroll-behavior-y: auto !important;
+}
+
+body {
+    font-family: var(--font-system);
+    background-color: var(--bg-color);
+    color: var(--text-color);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    letter-spacing: -0.01em;
+}
+
+/* 容器撑开页面，补偿 fixed header 高度 */
+.container {
+    height: auto !important;
+    min-height: 100vh;
+    padding-top: 76px !important;
+}
+
+::-webkit-scrollbar {
+    width: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+    background: rgba(128, 128, 128, 0.15);
+    border-radius: 100px;
+}
+
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: rgba(128, 128, 128, 0.28);
+}
+
+/* ──────────────────────────────────────
+   3.4  导航栏 — iOS 原生风格
+   ────────────────────────────────────── */
+
+header {
+    position: fixed !important;
+    top: 12px;
+    left: 12px;
+    right: 12px;
+    width: auto;
+    background: var(--nav-bg) !important;
+    backdrop-filter: blur(40px) saturate(200%);
+    -webkit-backdrop-filter: blur(40px) saturate(200%);
+    border: none !important;
+    border-bottom: 0.5px solid var(--nav-separator) !important;
+    border-radius: 14px !important;
+    padding: 6px 16px !important;
+    margin-bottom: 0 !important;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04) !important;
+    min-height: 52px;
+    z-index: 1000;
+    display: flex;
+    flex-direction: column;
+}
+
+/* header-top / header-left / header-right 必须透明，不能遮挡毛玻璃 */
+.header-top,
+.header-left,
+.header-right {
+    background: transparent !important;
+}
+
+#header-title h1 {
+    font-size: 17px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    color: var(--text-color);
+    opacity: 1;
+}
+
+.icon-button {
+    color: var(--primary-color);
+    border-radius: 100px;
+    padding: 6px;
+    transition: background 0.2s;
+}
+
+.icon-button:hover {
+    background: var(--button-hover);
+}
+
+/* ──────────────────────────────────────
+   3.5  侧边栏 — iOS grouped list
+   ────────────────────────────────────── */
+
+.sidebar {
+    background: var(--bg-color);
+    border: 1px solid var(--border-color);
+    border-radius: 0;
+    box-shadow: none;
+}
+
+.sidebar-header {
+    padding: 10px 16px 6px;
+    border-bottom: none;
+}
+
+.sidebar-header h3 {
+    font-size: 13px;
+    font-weight: 400;
+    text-transform: none;
+    letter-spacing: 0;
+    color: var(--muted-text);
+}
+
+.sidebar-item-wrapper {
+    background: var(--header-bg);
+    border-radius: var(--radius-sm);
+    padding: 0;
+    margin-bottom: 2px;
+    transition: background 0.15s;
+}
+
+.sidebar-item-wrapper.active {
+    background: var(--primary-color);
+    color: white;
+}
+
+.sidebar-item-wrapper:hover {
+    background: var(--button-hover);
+}
+
+.dir-item {
+    font-size: 13px;
+    padding: 10px 14px;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px;
+}
+
+.item-time {
+    font-size: 12px;
+    color: var(--muted-text);
+}
+
+.dir-group-title {
+    font-size: 13px;
+    font-weight: 400;
+    color: var(--muted-text);
+    padding: 8px 12px;
+}
+
+/* ──────────────────────────────────────
+   3.6  Thought 卡片 — iOS Notes 风格
+   ────────────────────────────────────── */
+
+.thought-card {
+    background: #ffffff;
+    border: none;
+    border-radius: 16px;
+    padding: 20px 24px 0px;
+    margin-bottom: 16px;
+    box-shadow:
+        0 0 0 0.5px rgba(0, 0, 0, 0.06),
+        0 1px 3px rgba(0, 0, 0, 0.04),
+        0 3px 12px rgba(0, 0, 0, 0.03);
+    transition: all 0.3s cubic-bezier(0.25, 0.1, 0.25, 1);
+}
+
+.thought-card:hover {
+    transform: translateY(-2px);
+    box-shadow:
+        0 0 0 0.5px rgba(0, 0, 0, 0.08),
+        0 2px 6px rgba(0, 0, 0, 0.06),
+        0 8px 24px rgba(0, 0, 0, 0.05);
+}
+
+.thought-card.completed {
+    opacity: 0.55;
+    background: #f8f8f8;
+    box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.04);
+}
+
+/* 时间戳 */
+.thought-time {
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--muted-text);
+    background: transparent;
+    padding: 0 0 8px 0;
+    border-radius: 0;
+    letter-spacing: 0.02em;
+    opacity: 0.75;
+}
+
+/* 主文本 */
+.thought-text {
+    font-size: 16px;
+    line-height: 1.55;
+    font-weight: 400;
+    padding: 0;
+    color: var(--text-color);
+}
+
+/* 圆点 checkbox */
+.thought-dot {
+    width: 24px;
+    height: 24px;
+    border: 2px solid rgba(60, 60, 67, 0.18);
+    border-radius: 50%;
+    background: transparent;
+    transition: all 0.2s;
+    flex-shrink: 0;
+}
+
+.thought-dot svg {
+    width: 11px;
+    height: 11px;
+}
+
+.thought-dot:hover {
+    border-color: var(--primary-color);
+    background: rgba(var(--primary-rgb), 0.06);
+}
+
+.thought-card.completed .thought-dot {
+    background: var(--primary-color);
+    border-color: var(--primary-color);
+}
+
+/* 子任务 */
+.subtask {
+    font-size: 14px;
+    padding: 8px 10px;
+    color: var(--text-color);
+    border-radius: 8px;
+}
+
+.subtask + .subtask {
+    border-top: 0.5px solid var(--separator-color);
+}
+
+.subtask-check {
+    accent-color: var(--primary-color);
+    width: 18px;
+    height: 18px;
+}
+
+/* 时间线 — 极简：隐藏竖线和节点 */
+.thoughts-timeline::before {
+    display: none;
+}
+
+.timeline-node {
+    display: none;
+}
+
+.thoughts-timeline {
+    padding-left: 0;
+}
+
+/* ──────────────────────────────────────
+   3.7  iOS 风格状态栏
+   ────────────────────────────────────── */
+
+body::before {
+    content: '';
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: env(safe-area-inset-top, 44px);
+    background: var(--nav-bg);
+    backdrop-filter: blur(30px) saturate(180%);
+    -webkit-backdrop-filter: blur(30px) saturate(180%);
+    z-index: 9999;
+    pointer-events: none;
+}
+
+/* ──────────────────────────────────────
+   3.8  Command Palette
+   ────────────────────────────────────── */
+
+.command-palette {
+    border-radius: var(--radius-lg);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+    border: none;
+}
+
+.command-input {
+    font-size: 17px;
+    font-family: var(--font-system);
+}
+
+/* ──────────────────────────────────────
+   3.9  模态框 — iOS iCloud 风格
+   ────────────────────────────────────── */
+
+.modal-content {
+    background: var(--modal-bg);
+    border-radius: var(--radius-lg);
+    padding: 24px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+}
+
+.modal-buttons button {
+    border-radius: var(--radius-sm);
+    padding: 10px 20px;
+    font-size: 15px;
+    font-weight: 500;
+}
+
+#rename-confirm,
+#settings-save {
+    background: var(--primary-color);
+}
+
+#rename-cancel,
+#settings-cancel {
+    background: transparent;
+    color: var(--muted-text);
+}
+
+/* ──────────────────────────────────────
+   3.10  空状态 + FAB
+   ────────────────────────────────────── */
+
+.empty-state-title {
+    font-size: 28px;
+    font-weight: 700;
+    background: none;
+    -webkit-text-fill-color: var(--text-color);
+    color: var(--text-color);
+}
+
+.fab-btn {
+    position: fixed !important;
+    bottom: 30px;
+    right: 30px;
+    background: var(--primary-color);
+    border-radius: 100px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    z-index: 100;
+}
+
+.floating-btn {
+    background: var(--header-bg);
+    border: none;
+    border-radius: 100px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+    width: 38px;
+    height: 38px;
+}
+
+.floating-btn:hover {
+    transform: scale(1.05);
+    background: var(--header-bg);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+/* ──────────────────────────────────────
+   3.11  移动端适配
+   ────────────────────────────────────── */
+
+@media (max-width: 640px) {
+    .container {
+        padding-top: 60px !important;
+    }
+
+    header {
+        top: 8px;
+        left: 10px;
+        right: 10px;
+        border-radius: 12px !important;
+        padding: 4px 12px !important;
+        min-height: 48px;
+    }
+
+    .thought-card {
+        border-radius: 14px;
+        padding: 16px 18px 0px;
+        margin-bottom: 12px;
+    }
+
+    .sidebar {
+        border-radius: var(--radius-lg);
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15);
+    }
+
+    .fab-btn {
+        bottom: 20px;
+        right: 20px;
+        width: 48px;
+        height: 48px;
+        border-radius: 16px;
+    }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   iOS 备忘录 — 额外微调
+   ═══════════════════════════════════════════════════════════ */
+
+/* 编辑器容器微调 — 与 iOS 卡片风格一致 */
+.editor-container,
+.preview-container {
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-sm);
+    border: none;
+}
+
+/* Toast 微调 — iOS 风格 pill */
+.toast {
+    border-radius: 100px;
+    font-size: 14px;
+    font-weight: 500;
+    padding: 8px 18px;
+}
+
+/* 输入栏微调 — 融入 iOS 背景 */
+.thoughts-input-bar {
+    border-radius: var(--radius-lg);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+}
+
+/* 搜索栏微调 */
+.search-bar {
+    background: rgba(118, 118, 128, 0.08);
+    border-radius: var(--radius-sm);
+}
+
+/* 状态 pills */
+.status-pills {
+    background: rgba(118, 118, 128, 0.08);
+    border: none;
+}
+
+.status-pill.active {
+    background: var(--primary-color);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   页面滚动架构 — 毛玻璃 fixed header 前提
+   禁用内部滚动，统一走 body 页面级滚动
+   ═══════════════════════════════════════════════════════════ */
+
+main {
+    height: auto !important;
+    flex: 1;
+}
+
+.three-column-layout {
+    height: auto !important;
+    min-height: calc(100vh - 140px);
+}
+
+.editor-container,
+.preview-container {
+    height: auto !important;
+    min-height: calc(100vh - 140px);
+    overflow: visible !important;
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-sm);
+    border: none;
+}
+
+.hybrid-editor-scroller {
+    overflow: visible !important;
+    max-height: none !important;
+}
+
+.view-container {
+    height: auto !important;
+    min-height: calc(100vh - 140px);
+}
+
+.thoughts-scroll-area {
+    overflow: visible !important;
+    max-height: none !important;
+    mask-image: none !important;
+    -webkit-mask-image: none !important;
+}
+
+/* 暗色模式 */
+[data-theme="dark"] .thought-card {
+    background: #2c2c2e;
+    box-shadow:
+        0 0 0 0.5px rgba(255, 255, 255, 0.06),
+        0 1px 3px rgba(0, 0, 0, 0.2),
+        0 3px 12px rgba(0, 0, 0, 0.15);
+}
+
+[data-theme="dark"] .thought-card:hover {
+    box-shadow:
+        0 0 0 0.5px rgba(255, 255, 255, 0.1),
+        0 2px 6px rgba(0, 0, 0, 0.3),
+        0 8px 24px rgba(0, 0, 0, 0.2);
+}
+
+[data-theme="dark"] .thought-card.completed {
+    background: #222224;
+    box-shadow: 0 0 0 0.5px rgba(255, 255, 255, 0.04);
+}
+
+[data-theme="dark"] .subtask + .subtask {
+    border-top-color: rgba(255, 255, 255, 0.06);
+}
+
+[data-theme="dark"] .thought-dot {
+    border-color: rgba(255, 255, 255, 0.15);
+}

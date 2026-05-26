@@ -89,7 +89,10 @@ export class HybridMarkdownEditor {
         for (let i = 0; i < this.lines.length; i++) {
             const idx = this.lines[i].toLowerCase().indexOf(lowKeyword);
             if (idx !== -1) {
-                this.focusLine(i, idx);
+                // In reading mode, just scroll + highlight — don't activate editing
+                if (!this.isReadingMode) {
+                    this.focusLine(i, idx);
+                }
                 requestAnimationFrame(() => {
                     const el = this.scroller.querySelector(`[data-line="${i}"]`);
                     if (el) {

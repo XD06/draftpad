@@ -67,13 +67,17 @@ export class ThoughtsManager {
             }
         });
 
-        // Mobile search/filter toggle: click opens header, click outside closes
+        // Search/filter toggle: thoughts mode expands panel, editor mode opens article search
         this.searchToggle = document.getElementById('thoughts-search-toggle');
         this.headerActions = document.querySelector('.thoughts-header-actions');
         if (this.searchToggle) {
             this.searchToggle.addEventListener('click', () => {
-                this.view.classList.add('expanded');
-                this.searchInput.focus();
+                if (this.isActive) {
+                    this.view.classList.add('expanded');
+                    this.searchInput.focus();
+                } else if (this.app.openSearch) {
+                    this.app.openSearch();
+                }
             });
             // Click outside header-actions or toggle button → collapse
             document.addEventListener('click', (e) => {

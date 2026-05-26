@@ -577,6 +577,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             results: null,
             selectedIndex: 0,
             isActive: false,
+            currentQuery: '',
+            searchTimeout: null,
 
             init() {
                 this.overlay = document.getElementById('command-palette-overlay');
@@ -602,8 +604,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                 this.isActive = true;
                 this.overlay.classList.add('active');
                 this.input.value = '';
+                this.currentQuery = '';
                 this.input.focus();
-                this.search();
+                this.results.innerHTML = '';
             },
 
             close() {
@@ -611,28 +614,55 @@ document.addEventListener('DOMContentLoaded', async () => {
                 this.overlay.classList.remove('active');
             },
 
-            search() {
-                const query = this.input.value.toLowerCase();
-                const results = currentNotepads.filter(n => n.name.toLowerCase().includes(query))
-                                       .slice(0, 8);
-                
-                this.render(results);
+            async search() {
+                const query = this.input.value.trim();
+                this.currentQuery = query;
+                if (!query) {
+                    this.results.innerHTML = '';
+                    return;
+                }
+
+                // Debounce: wait 200ms after last keystroke
+                clearTimeout(this.searchTimeout);
+                this.searchTimeout = setTimeout(async () => {
+                    if (!this.isActive) return;
+                    try {
+                        this.results.innerHTML = '<div class="command-item"><span>Searching…</span></div>';
+                        const response = await fetchWithPin(`/api/search?q=${encodeURIComponent(query)}`);
+                        const data = await response.json();
+                        if (this.currentQuery !== query) return; // stale
+                        this.render(data.results || []);
+                    } catch (err) {
+                        console.error('Search failed:', err);
+                        this.results.innerHTML = '<div class="command-item"><span>Search failed</span></div>';
+                    }
+                }, 200);
             },
 
             render(items) {
                 this.selectedIndex = 0;
+                if (!items.length) {
+                    this.results.innerHTML = '<div class="command-item" style="color:var(--muted-text)"><span>No results</span></div>';
+                    return;
+                }
+
                 this.results.innerHTML = items.map((item, index) => `
-                    <div class="command-item ${index === 0 ? 'selected' : ''}" data-id="${item.id}">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-                        <span>${item.name}</span>
+                    <div class="command-item ${index === 0 ? 'selected' : ''}" data-id="${this.escapeAttr(item.id)}">
+                        <div class="command-item-main">
+                            <span class="command-item-title">${this.escapeHtml(item.title || item.name)}</span>
+                            ${item.matchType === 'content' && item.snippet
+                                ? `<span class="command-item-snippet">${this.escapeHtml(item.snippet)}</span>`
+                                : ''}
+                        </div>
                         <kbd>Enter</kbd>
                     </div>
                 `).join('');
 
+                const query = this.currentQuery;
                 const els = this.results.querySelectorAll('.command-item');
                 els.forEach((el, index) => {
                     el.onclick = () => {
-                        selectNotepad(el.dataset.id);
+                        selectNotepad(el.dataset.id, query);
                         this.close();
                     };
                 });
@@ -660,12 +690,25 @@ document.addEventListener('DOMContentLoaded', async () => {
                     item.classList.toggle('selected', index === this.selectedIndex);
                     if (index === this.selectedIndex) item.scrollIntoView({ block: 'nearest' });
                 });
+            },
+
+            escapeHtml(text) {
+                if (!text) return '';
+                const div = document.createElement('div');
+                div.textContent = text;
+                return div.innerHTML;
+            },
+
+            escapeAttr(text) {
+                if (!text) return '';
+                return text.replace(/"/g, '&quot;').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
             }
         };
 
         commandPalette.init();
-        const searchOpenBtn = document.getElementById('search-open');
-        searchOpenBtn?.addEventListener('click', () => commandPalette.open());
+
+        // Wire search toggle button: editor mode → command palette, thoughts mode → expand filter
+        thoughtsManager.app.openSearch = () => commandPalette.open();
 
         copyAllBtn.addEventListener('click', async () => {
             const raw = editor.value;
@@ -848,50 +891,76 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
 
         // Scroll Helper Logic
-        let scrollAction = 'bottom';
-        let scrollHideTimer;
-        const scroller = editorInstance.scroller;
-        
-        if (scroller && scrollBtn) {
-            scroller.addEventListener('scroll', () => {
-                // Hide actions while scrolling
-                if (floatingActions) {
-                    floatingActions.classList.add('scrolling');
-                    clearTimeout(scrollHideTimer);
-                    scrollHideTimer = setTimeout(() => {
-                        floatingActions.classList.remove('scrolling');
-                    }, 600);
-                }
+        // Icon follows scroll direction: scrolling down → ↓↓, scrolling up → ↑↑
+        let scrollDir = 'down';
+        let lastScrollY = 0;
 
-                const totalScrollable = scroller.scrollHeight - scroller.clientHeight;
-                if (totalScrollable <= 0) return;
-                
-                const progress = scroller.scrollTop / totalScrollable;
-                if (progress < 0.5) {
-                    if (scrollAction !== 'bottom') {
-                        scrollBtn.innerHTML = `
-                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <path d="M7 13l5 5 5-5M7 6l5 5 5-5"></path>
-                            </svg>`;
-                        scrollAction = 'bottom';
-                    }
+        if (scrollBtn) {
+            const updateIcon = () => {
+                if (scrollDir === 'down') {
+                    scrollBtn.innerHTML = `
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M7 13l5 5 5-5M7 6l5 5 5-5"></path>
+                        </svg>`;
                 } else {
-                    if (scrollAction !== 'top') {
-                        scrollBtn.innerHTML = `
-                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <path d="M7 11l5-5 5 5M7 18l5-5 5 5"></path>
-                            </svg>`;
-                        scrollAction = 'top';
-                    }
+                    scrollBtn.innerHTML = `
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M7 11l5-5 5 5M7 18l5-5 5 5"></path>
+                        </svg>`;
                 }
-            });
+            };
+
+            window.addEventListener('scroll', () => {
+                const el = document.scrollingElement || document.documentElement;
+                const y = el.scrollTop;
+                const maxScroll = el.scrollHeight - el.clientHeight;
+                if (maxScroll <= 0) return;
+                if (y === lastScrollY) return;
+
+                let dir;
+                if (y <= 2) {
+                    dir = 'down';           // at top → only useful direction is down
+                } else if (y >= maxScroll - 2) {
+                    dir = 'up';             // at bottom → only useful direction is up
+                } else {
+                    dir = y > lastScrollY ? 'down' : 'up';
+                }
+                lastScrollY = y;
+                if (scrollDir !== dir) {
+                    scrollDir = dir;
+                    updateIcon();
+                }
+            }, { passive: true });
+
+            let scrollAnim = null;
 
             scrollBtn.addEventListener('click', () => {
-                if (scrollAction === 'bottom') {
-                    scroller.scrollTo({ top: scroller.scrollHeight, behavior: 'smooth' });
-                } else {
-                    scroller.scrollTo({ top: 0, behavior: 'smooth' });
-                }
+                const el = document.scrollingElement || document.documentElement;
+                const startY = el.scrollTop;
+                const endY = scrollDir === 'down' ? el.scrollHeight - el.clientHeight : 0;
+                const distance = endY - startY;
+                if (Math.abs(distance) < 2) return;
+
+                // Cancel any running animation
+                if (scrollAnim) cancelAnimationFrame(scrollAnim);
+
+                const duration = Math.min(1200, Math.max(400, Math.abs(distance) / 2));
+                const startTime = performance.now();
+
+                const animate = (now) => {
+                    const elapsed = now - startTime;
+                    const progress = Math.min(1, elapsed / duration);
+                    // easeInOutCubic
+                    const eased = progress < 0.5
+                        ? 4 * progress * progress * progress
+                        : 1 - Math.pow(-2 * progress + 2, 3) / 2;
+                    el.scrollTop = startY + distance * eased;
+                    if (progress < 1) {
+                        scrollAnim = requestAnimationFrame(animate);
+                    }
+                };
+
+                scrollAnim = requestAnimationFrame(animate);
             });
         }
 

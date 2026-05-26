@@ -43,6 +43,7 @@
     --code-markdown: rgba(37, 100, 235, 0.2);
     --transition: background-color 0.3s, color 0.3s;
     --input-element-transition: background-color 0.2s ease;
+    --ease-out-expo: cubic-bezier(0.19, 1, 0.22, 1);
 }
 
 [data-theme="dark"] {
@@ -65,15 +66,7 @@
     --code-markdown: rgba(96, 165, 250, 0.2);
     --command-palette-bg: rgba(23, 26, 33, 0.95);
     --shadow-premium: 0 20px 50px rgba(0, 0, 0, 0.3);
-    --toc-bg: rgba(255, 255, 255, 0.8);
-}
-
-[data-theme="dark"] {
     --toc-bg: rgba(23, 26, 33, 0.8);
-}
-
-:root {
-    --ease-out-expo: cubic-bezier(0.19, 1, 0.22, 1);
 }
 
 * {
@@ -107,25 +100,6 @@ body {
     transition: var(--transition);
     overflow: hidden;
     line-height: 1.5;
-}
-
-/* Premium Scrollbars */
-::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
-}
-
-::-webkit-scrollbar-track {
-    background: transparent;
-}
-
-::-webkit-scrollbar-thumb {
-    background: rgba(128, 128, 128, 0.2);
-    border-radius: 10px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-    background: rgba(128, 128, 128, 0.3);
 }
 
 .container {
@@ -266,10 +240,6 @@ main {
 #preview-pane {
     scrollbar-width: thin;
     scrollbar-color: var(--secondary-color) transparent;
-}
-
-#editor,
-#preview-pane {
     width: 100%;
     height: 100%;
     padding: 1.5rem;
@@ -283,6 +253,9 @@ main {
     transition: var(--transition);
     position: relative;
     z-index: 2;
+}
+
+#editor {
     font-family: monospace;
 }
 
@@ -294,12 +267,15 @@ main {
 .preview-container {
     height: calc(100vh - 9rem);
     border-radius: 12px;
-    overflow: hidden;
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
     position: relative;
     z-index: 1;
     background-color: var(--textarea-bg);
     transition: var(--transition);
+}
+
+.editor-container {
+    overflow: hidden;
 }
 
 /* Three Column Layout */
@@ -350,6 +326,7 @@ main {
 }
 
 .editor-main {
+     padding: 10px 0;
     flex: 1;
     background-color: var(--textarea-bg);
     border: 1px solid var(--border-color);
@@ -621,8 +598,7 @@ main {
     background-color: var(--button-hover);
 }
 
-#preview-markdown.active svg,
-#search-open.active svg {
+#preview-markdown.active svg {
     stroke: var(--primary-color);
 }
 
@@ -790,6 +766,31 @@ main {
     opacity: 0.6;
 }
 
+.command-item-main {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+    flex: 1;
+}
+
+.command-item-title {
+    font-weight: 600;
+    color: var(--text-color);
+    font-size: 14px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.command-item-snippet {
+    font-size: 12px;
+    color: var(--muted-text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
 /* Table of Contents */
 .toc-container {
     position: fixed;
@@ -859,7 +860,7 @@ main {
 }
 
 .toc-item.h3 {
-    padding-left: 32px;
+    padding-left: 24px;
     font-size: 12.5px;
     opacity: 0.9;
 }
@@ -873,10 +874,6 @@ main {
 .toc-item.active {
     color: var(--primary-color);
     font-weight: 600;
-}
-
-.toc-item.h3 {
-    padding-left: 24px;
 }
 
 /* Premium Empty State */
@@ -1076,19 +1073,7 @@ main {
     margin-top: 2rem;
 }
 
-#pin-modal .modal-buttons button.primary {
-    background-color: var(--primary-color);
-    color: white;
-    padding: 0.75rem 2rem;
-    font-size: 1rem;
-    min-width: 120px;
-    border-radius: 8px;
-    transition: var(--input-element-transition);
-}
-
 #pin-modal .modal-buttons button.primary:hover {
-    background-color: var(--primary-color);
-    opacity: 0.9;
     transform: translateY(-1px);
 }
 
@@ -1137,6 +1122,7 @@ main {
     background: var(--textarea-bg);
     color: var(--text-color);
     overflow: hidden;
+    border-radius: 8px;
 }
 
 .hybrid-editor-scroller {
@@ -1149,9 +1135,13 @@ main {
 /* Typography Polish */
 .hybrid-line {
     font-size: 16px;
-    line-height: 1.8;
+    line-height: 1.68;
     color: var(--text-color);
     margin-bottom: 2px;
+    min-height: 30px;
+    border-radius: 6px;
+    padding: 2px 8px;
+    overflow-wrap: anywhere;
 }
 
 .hybrid-line.h1 {
@@ -1175,14 +1165,6 @@ main {
     font-weight: 600;
     margin-top: 0.8em;
     margin-bottom: 0.4em;
-}
-
-.hybrid-line {
-    min-height: 30px;
-    border-radius: 6px;
-    padding: 2px 8px;
-    line-height: 1.68;
-    overflow-wrap: anywhere;
 }
 
 .hybrid-line.is-rendered {
@@ -2103,7 +2085,7 @@ body.reading-mode-active .three-column-layout {
 }
 
 body.reading-mode-active .editor-main {
-    padding: 20px 0;
+   padding: 10px 0;
     width: 100%;
     max-width: 800px;
     margin: 0 auto;
