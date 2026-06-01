@@ -129,11 +129,19 @@ function assertThoughtsFrontendRegressions() {
         'thought creation should avoid Date.now-only id collisions during rapid creates'
     );
     assert(
-        thoughtsSource.includes('<span class="thought-ai-count">${count}</span>') &&
+        thoughtsSource.includes('thought-ai-count ${count > 0') &&
         thoughtsSource.includes('updateThoughtToolCounts') &&
         thoughtRoutesSource.includes('targetRelationCount') &&
         thoughtRoutesSource.includes("type: 'relations_update'"),
         'AI status buttons should always show a count and relation add/delete should refresh counts without manual reload'
+    );
+    assert(
+        thoughtsSource.includes("thought-ai-count ${count > 0 ? 'has-count' : 'is-zero'}") &&
+        thoughtsSource.includes("relations-count ${relationCount > 0 ? 'has-count' : 'is-zero'}") &&
+        thoughtsCss.includes('.thought-ai-count.has-count') &&
+        thoughtsCss.includes('.relations-count.has-count') &&
+        thoughtsCss.includes('[data-theme=\"dark\"] .relations-count.has-count'),
+        'AI and relation count badges should expose zero/non-zero classes with theme-aware colors'
     );
 }
 

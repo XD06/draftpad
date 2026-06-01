@@ -688,9 +688,58 @@
 }
 
 .thought-ai-count {
-    min-width: 10px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 16px;
+    height: 16px;
+    padding: 0 5px;
+    border-radius: 999px;
     font-size: 11px;
     font-weight: 800;
+    line-height: 1;
+    border: 1px solid transparent;
+    transition: background 0.18s ease, border-color 0.18s ease, color 0.18s ease;
+}
+
+.thought-ai-count.is-zero,
+.relations-count.is-zero {
+    background: rgba(120, 128, 140, 0.12);
+    border-color: rgba(120, 128, 140, 0.16);
+    color: var(--muted-text);
+}
+
+.thought-ai-count.has-count {
+    background: rgba(var(--primary-rgb), 0.14);
+    border-color: rgba(var(--primary-rgb), 0.24);
+    color: var(--primary-color);
+}
+
+.relations-count {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 16px;
+    height: 16px;
+    padding: 0 5px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 800;
+    line-height: 1;
+    border: 1px solid transparent;
+    transition: background 0.18s ease, border-color 0.18s ease, color 0.18s ease;
+}
+
+.relations-count.has-count {
+    background: rgba(37, 99, 235, 0.12);
+    border-color: rgba(37, 99, 235, 0.22);
+    color: #2563eb;
+}
+
+[data-theme="dark"] .relations-count.has-count {
+    background: rgba(96, 165, 250, 0.16);
+    border-color: rgba(96, 165, 250, 0.28);
+    color: #60a5fa;
 }
 
 .thought-ai-status.pending {

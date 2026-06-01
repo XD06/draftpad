@@ -547,7 +547,11 @@ export class ThoughtsManager {
         if (!card || !thought) return;
         const nextCount = Math.max(0, Number.isFinite(Number(relationCount)) ? Number(relationCount) : 0);
         const countEl = card.querySelector('.relations-count');
-        if (countEl) countEl.textContent = nextCount;
+        if (countEl) {
+            countEl.textContent = nextCount;
+            countEl.classList.toggle('is-zero', nextCount === 0);
+            countEl.classList.toggle('has-count', nextCount > 0);
+        }
 
         const statusEl = card.querySelector('.thought-ai-status');
         if (!statusEl) return;
@@ -746,7 +750,7 @@ export class ThoughtsManager {
                             <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
                             <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
                         </svg>
-                        <span class="relations-count">${relationCount}</span>
+                        <span class="relations-count ${relationCount > 0 ? 'has-count' : 'is-zero'}">${relationCount}</span>
                     </button>
                 </div>
             `;
@@ -1146,7 +1150,7 @@ export class ThoughtsManager {
         return `
             <button type="button" class="thought-tool-btn thought-ai-status ${this.escapeHtml(status)}" data-ai-status="${this.escapeHtml(thought.id)}" title="${this.escapeHtml(label + errorMessage)}" aria-label="${this.escapeHtml(label + '，点击查看详情')}" aria-expanded="false">
                 ${this.aiStatusIcon(status)}
-                <span class="thought-ai-count">${count}</span>
+                <span class="thought-ai-count ${count > 0 ? 'has-count' : 'is-zero'}">${count}</span>
             </button>
         `;
     }
