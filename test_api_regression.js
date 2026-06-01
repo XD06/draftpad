@@ -128,6 +128,13 @@ function assertThoughtsFrontendRegressions() {
         thoughtRoutesSource.includes('Math.random().toString(36)'),
         'thought creation should avoid Date.now-only id collisions during rapid creates'
     );
+    assert(
+        thoughtsSource.includes('<span class="thought-ai-count">${count}</span>') &&
+        thoughtsSource.includes('updateThoughtToolCounts') &&
+        thoughtRoutesSource.includes('targetRelationCount') &&
+        thoughtRoutesSource.includes("type: 'relations_update'"),
+        'AI status buttons should always show a count and relation add/delete should refresh counts without manual reload'
+    );
 }
 
 function assertDataSpaceSettingsRegression() {

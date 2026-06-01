@@ -152,8 +152,20 @@ function registerThoughtRoutes(app, context) {
 
                 return {
                     success: true,
-                    removed: relations.edges.length !== originalLength
+                    removed: relations.edges.length !== originalLength,
+                    relationCount: relations.edges.length,
+                    targetRelationCount: reverse.edges.length
                 };
+            });
+            broadcastWebSocketMessage({
+                type: 'relations_update',
+                thoughtId: id,
+                relationsCount: result.relationCount
+            });
+            broadcastWebSocketMessage({
+                type: 'relations_update',
+                thoughtId: targetId,
+                relationsCount: result.targetRelationCount
             });
             res.json(result);
         } catch (err) {

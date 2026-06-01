@@ -536,25 +536,30 @@ export class ThoughtsManager {
         }
 
         const card = this.timeline?.querySelector(`.thought-card[data-id="${CSS.escape(thoughtId)}"]`);
-        const countEl = card?.querySelector('.relations-count');
-        if (countEl) countEl.textContent = nextCount;
-        const statusEl = card?.querySelector('.thought-ai-status');
-        if (statusEl && thought) {
-            const wrapper = document.createElement('span');
-            wrapper.innerHTML = this.renderAIStatus(thought, 'ready', nextCount);
-            const nextStatusEl = wrapper.firstElementChild;
-            if (nextStatusEl) {
-                nextStatusEl.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    this.toggleAIStatusPanel(card, thought);
-                });
-                statusEl.replaceWith(nextStatusEl);
-            }
-        }
+        if (card && thought) this.updateThoughtToolCounts(card, thought, 'ready', nextCount);
         const panel = card?.querySelector('.thought-relations-panel');
         if (panel && thought) {
             this.refreshRelationsPanel(panel, thought);
         }
+    }
+
+    updateThoughtToolCounts(card, thought, status = this.normalizeAIStatus(thought?.aiStatus), relationCount = Number(thought?.relationCount || 0)) {
+        if (!card || !thought) return;
+        const nextCount = Math.max(0, Number.isFinite(Number(relationCount)) ? Number(relationCount) : 0);
+        const countEl = card.querySelector('.relations-count');
+        if (countEl) countEl.textContent = nextCount;
+
+        const statusEl = card.querySelector('.thought-ai-status');
+        if (!statusEl) return;
+        const wrapper = document.createElement('span');
+        wrapper.innerHTML = this.renderAIStatus(thought, status, nextCount);
+        const nextStatusEl = wrapper.firstElementChild;
+        if (!nextStatusEl) return;
+        nextStatusEl.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.toggleAIStatusPanel(card, thought);
+        });
+        statusEl.replaceWith(nextStatusEl);
     }
 
     handleAIStatusSocketUpdate(detail) {
@@ -1136,11 +1141,12 @@ export class ThoughtsManager {
 
     renderAIStatus(thought, status, relationCount = 0) {
         const label = this.aiStatusLabel(status, relationCount);
+        const count = Math.max(0, Number.isFinite(Number(relationCount)) ? Number(relationCount) : 0);
         const errorMessage = thought.aiError?.message ? `：${thought.aiError.message}` : '';
         return `
             <button type="button" class="thought-tool-btn thought-ai-status ${this.escapeHtml(status)}" data-ai-status="${this.escapeHtml(thought.id)}" title="${this.escapeHtml(label + errorMessage)}" aria-label="${this.escapeHtml(label + '，点击查看详情')}" aria-expanded="false">
                 ${this.aiStatusIcon(status)}
-                ${relationCount > 0 ? `<span class="thought-ai-count">${relationCount}</span>` : ''}
+                <span class="thought-ai-count">${count}</span>
             </button>
         `;
     }
@@ -1487,8 +1493,8 @@ export class ThoughtsManager {
         try {
             const data = await this.apiClient.createRelation(thought.id, targetId, relationType);
             thought.relationCount = data.relationCount;
-            const countEl = card.querySelector('.relations-count');
-            if (countEl) countEl.textContent = data.relationCount;
+            thought.aiStatus = 'ready';
+            this.updateThoughtToolCounts(card, thought, 'ready', data.relationCount);
 
             const relationsData = await this.apiClient.getRelations(thought.id);
             if (panel) {
@@ -1598,16 +1604,17 @@ export class ThoughtsManager {
         deleteButton?.classList.add('deleting');
 
         try {
-            await this.apiClient.deleteRelation(sourceId, targetId);
+            const data = await this.apiClient.deleteRelation(sourceId, targetId);
 
             item?.remove();
             const sourceThought = this.thoughts.find(thought => thought.id === sourceId);
             if (sourceThought) {
-                sourceThought.relationCount = Math.max(0, Number(sourceThought.relationCount || 0) - 1);
+                sourceThought.relationCount = Number.isFinite(Number(data?.relationCount))
+                    ? Number(data.relationCount)
+                    : Math.max(0, Number(sourceThought.relationCount || 0) - 1);
             }
 
-            const countEl = card.querySelector('.relations-count');
-            if (countEl && sourceThought) countEl.textContent = sourceThought.relationCount;
+            if (sourceThought) this.updateThoughtToolCounts(card, sourceThought, sourceThought.aiStatus || 'ready', sourceThought.relationCount);
 
             if (!card.querySelector('.thought-relation-item') && !card.querySelector('.thought-relation-suggestion')) {
                 const panel = card.querySelector('.thought-relations-panel');
