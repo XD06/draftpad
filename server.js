@@ -1574,25 +1574,28 @@ app.get('/api/thoughts/:id/relations', async (req, res) => {
 app.delete('/api/thoughts/:id/relations/:targetId', async (req, res) => {
     try {
         const { id, targetId } = req.params;
-        const relations = await storage.readRelations(id);
-        const originalLength = Array.isArray(relations.edges) ? relations.edges.length : 0;
-        relations.edges = (relations.edges || []).filter(edge => edge.targetId !== targetId);
-        relations.suggestions = (relations.suggestions || []).filter(edge => edge.targetId !== targetId);
-        relations.computedAt = Date.now();
-        await storage.writeRelations(id, relations);
+        const result = await withRelationWriteLock(async () => {
+            const relations = await storage.readRelations(id);
+            const originalLength = Array.isArray(relations.edges) ? relations.edges.length : 0;
+            relations.edges = (relations.edges || []).filter(edge => edge.targetId !== targetId);
+            relations.suggestions = (relations.suggestions || []).filter(edge => edge.targetId !== targetId);
+            relations.computedAt = Date.now();
+            await storage.writeRelations(id, relations);
 
-        const reverse = await storage.readRelations(targetId);
-        reverse.edges = (reverse.edges || []).filter(edge => edge.targetId !== id);
-        reverse.suggestions = (reverse.suggestions || []).filter(edge => edge.targetId !== id);
-        reverse.computedAt = Date.now();
-        await storage.writeRelations(targetId, reverse);
-        await storage.suppressRelation(id, targetId);
-        await storage.suppressRelation(targetId, id);
+            const reverse = await storage.readRelations(targetId);
+            reverse.edges = (reverse.edges || []).filter(edge => edge.targetId !== id);
+            reverse.suggestions = (reverse.suggestions || []).filter(edge => edge.targetId !== id);
+            reverse.computedAt = Date.now();
+            await storage.writeRelations(targetId, reverse);
+            await storage.suppressRelation(id, targetId);
+            await storage.suppressRelation(targetId, id);
 
-        res.json({
-            success: true,
-            removed: relations.edges.length !== originalLength
+            return {
+                success: true,
+                removed: relations.edges.length !== originalLength
+            };
         });
+        res.json(result);
     } catch (err) {
         console.error('Error deleting thought relation:', err);
         res.status(500).json({ error: 'Error deleting thought relation' });
@@ -1607,6 +1610,11 @@ async function removeSuppressedPair(id, targetId) {
     const targetSuppressed = await storage.readSuppressedRelations(targetId);
     targetSuppressed.edges = (targetSuppressed.edges || []).filter(edge => edge.targetId !== id);
     await storage.writeSuppressedRelations(targetId, targetSuppressed);
+}
+
+async function withRelationWriteLock(task) {
+    const lock = aiQueue._private?.withRelationWriteLock;
+    return typeof lock === 'function' ? lock(task) : task();
 }
 
 function upsertManualEdge(relations, targetId, relationType = 'manual') {
@@ -1647,11 +1655,14 @@ app.post('/api/thoughts/:id/relations', async (req, res) => {
         const targetThought = await storage.readThought(targetId);
         if (!sourceThought || !targetThought) return res.status(404).json({ error: 'Thought not found' });
 
-        const sourceRelations = upsertManualEdge(await storage.readRelations(id), targetId, relationType);
-        const targetRelations = upsertManualEdge(await storage.readRelations(targetId), id, relationType);
-        await storage.writeRelations(id, sourceRelations);
-        await storage.writeRelations(targetId, targetRelations);
-        await removeSuppressedPair(id, targetId);
+        const { sourceRelations, targetRelations } = await withRelationWriteLock(async () => {
+            const sourceRelations = upsertManualEdge(await storage.readRelations(id), targetId, relationType);
+            const targetRelations = upsertManualEdge(await storage.readRelations(targetId), id, relationType);
+            await storage.writeRelations(id, sourceRelations);
+            await storage.writeRelations(targetId, targetRelations);
+            await removeSuppressedPair(id, targetId);
+            return { sourceRelations, targetRelations };
+        });
 
         broadcastWebSocketMessage({
             type: 'relations_update',

@@ -36,6 +36,7 @@ function assertSaveNotesConflictScope() {
 
 function assertThoughtsFrontendRegressions() {
     const thoughtsSource = fs.readFileSync(path.join(ROOT, 'public', 'managers', 'thoughts.js'), 'utf8');
+    const serverSource = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
     const thoughtApiClientSource = fs.readFileSync(path.join(ROOT, 'public', 'managers', 'thought-api-client.js'), 'utf8');
     const thoughtOutboxSource = fs.readFileSync(path.join(ROOT, 'public', 'managers', 'thought-outbox.js'), 'utf8');
     const thoughtsCss = fs.readFileSync(path.join(ROOT, 'public', 'Assets', 'thoughts.css'), 'utf8');
@@ -78,6 +79,12 @@ function assertThoughtsFrontendRegressions() {
     assert(
         thoughtOutboxSource.includes("completed: thought.completed === true"),
         'thought overwrite outbox payload should preserve completed state'
+    );
+    assert(
+        serverSource.includes('async function withRelationWriteLock') &&
+        serverSource.includes('await withRelationWriteLock(async () =>') &&
+        serverSource.includes("app.post('/api/thoughts/:id/relations'"),
+        'manual relation writes should share the AI relation write lock to avoid confirm/rebuild races'
     );
     assert(
         thoughtsSource.includes("import ThoughtApiClient from './thought-api-client.js'") &&
