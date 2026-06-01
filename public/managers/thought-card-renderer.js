@@ -1,0 +1,151 @@
+export function renderThoughtCard({
+    thought,
+    query = '',
+    parseLegacyText,
+    sortSubItems,
+    linkify,
+    highlightSearch,
+    escapeHtml,
+    renderAISuggestedTags,
+    renderAIStatus,
+    normalizeAIStatus
+}) {
+    const dateStr = new Date(thought.createdAt).toLocaleString();
+    let subItems = thought.subItems || [];
+    let bodyText = thought.text;
+
+    if (subItems.length === 0 && /^- \[[ x]\]/m.test(thought.text)) {
+        const parsed = parseLegacyText(thought.text);
+        subItems = parsed.subItems;
+        bodyText = parsed.bodyText;
+    }
+
+    const sortedSubItems = sortSubItems(subItems);
+    let bodyHtml = linkify(bodyText).split('\n').join('<br>');
+    if (query) {
+        bodyHtml = highlightSearch(bodyHtml, query);
+    }
+
+    const tags = thought.tags || [];
+    const tagsHtml = tags.length ? `
+                <div class="thought-tags">
+                    ${tags.map(tag => `
+                        <span class="thought-tag-wrap">
+                            <button type="button" class="thought-tag" data-card-tag="${escapeHtml(tag)}">#${escapeHtml(tag)}</button>
+                            <button type="button" class="thought-tag-remove" data-remove-tag="${escapeHtml(tag)}" title="从当前 Thought 移除标签" aria-label="从当前 Thought 移除标签">×</button>
+                        </span>
+                    `).join('')}
+                </div>
+            ` : '';
+    const aiTagsHtml = renderAISuggestedTags(thought, tags);
+    const relationCount = Number.isFinite(Number(thought.relationCount)) ? Number(thought.relationCount) : 0;
+    const aiStatus = normalizeAIStatus(thought.aiStatus);
+    const aiStatusHtml = renderAIStatus(thought, aiStatus, relationCount);
+    const hasSubtasks = sortedSubItems.length > 0;
+    const emptySubtaskActionHtml = hasSubtasks ? '' : `
+                <button class="thought-tool-btn subtask-add-inline subtask-add-footer" title="添加子任务" aria-label="添加子任务">
+                    <svg class="thought-tool-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round">
+                        <line x1="12" y1="5" x2="12" y2="19"></line>
+                        <line x1="5" y1="12" x2="19" y2="12"></line>
+                    </svg>
+                </button>
+            `;
+    const footerHtml = `
+                <div class="thought-card-footer">
+                    ${emptySubtaskActionHtml}
+                    ${aiStatusHtml}
+                    <button class="thought-tool-btn thought-relations-btn" data-relations="${escapeHtml(thought.id)}" title="查看关联想法" aria-label="查看关联想法">
+                        <svg class="thought-tool-icon relations-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
+                            <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
+                        </svg>
+                        <span class="relations-count ${relationCount > 0 ? 'has-count' : 'is-zero'}">${relationCount}</span>
+                    </button>
+                </div>
+            `;
+
+    const subtasksHtml = renderSubtasks({
+        sortedSubItems,
+        query,
+        linkify,
+        highlightSearch
+    });
+    const isLong = bodyText.split('\n').length > 6 || bodyText.length > 200 || subItems.length > 3;
+
+    return {
+        bodyText,
+        isLong,
+        html: `
+                <div class="timeline-node"></div>
+                <div class="thought-card-header">
+                    <div class="thought-dot" title="点击切换完成状态">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                    </div>
+                    <div class="thought-time">${dateStr}</div>
+                </div>
+                <div class="thought-body">
+                    <div class="thought-text">${bodyHtml}</div>
+                    <button class="thought-copy-btn" title="复制">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                    </button>
+                </div>
+                ${tagsHtml}
+                ${aiTagsHtml}
+                ${subtasksHtml}
+                ${footerHtml}
+            `
+    };
+}
+
+function renderSubtasks({ sortedSubItems, query, linkify, highlightSearch }) {
+    if (sortedSubItems.length === 0) return '';
+
+    let subtasksHtml = '<div class="subtask-list">';
+    sortedSubItems.forEach((item, index) => {
+        let label = linkify(item.text);
+        if (query) {
+            label = highlightSearch(label, query);
+        }
+        const isExtra = sortedSubItems.length > 3 && index >= 3;
+        const extraClass = isExtra ? 'subtask-extra' : '';
+        subtasksHtml += `<div class="subtask ${item.completed ? 'completed' : ''} ${extraClass}" data-subid="${item.id}">
+                        <input type="checkbox" class="subtask-check" ${item.completed ? 'checked' : ''}>
+                        <span class="subtask-text">${label}</span>
+                        <button class="subtask-copy-btn" title="复制">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                        </button>
+                    </div>`;
+    });
+
+    if (sortedSubItems.length > 3) {
+        const remainingCount = sortedSubItems.length - 3;
+        const completedCount = sortedSubItems.filter(item => item.completed).length;
+        const totalCount = sortedSubItems.length;
+        const radius = 7;
+        const circumference = Math.round(2 * Math.PI * radius);
+        const progress = totalCount > 0 ? (completedCount / totalCount) : 0;
+        const strokeDashoffset = circumference - (progress * circumference);
+
+        subtasksHtml += `
+                        <div class="subtasks-summary-row">
+                            <div class="summary-left">
+                                <svg class="progress-ring" width="18" height="18" viewBox="0 0 18 18">
+                                    <circle class="progress-ring-bg" cx="9" cy="9" r="7" fill="none" stroke-width="2"/>
+                                    <circle class="progress-ring-fg" cx="9" cy="9" r="7" fill="none" stroke-width="2"
+                                            stroke-dasharray="${circumference}" stroke-dashoffset="${strokeDashoffset}"
+                                            stroke-linecap="round" transform="rotate(-90 9 9)"/>
+                                </svg>
+                            </div>
+                            <div class="summary-right">
+                                <span class="summary-more-num">+${remainingCount}</span>
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="chevron-down-icon">
+                                    <polyline points="6 9 12 15 18 9"></polyline>
+                                </svg>
+                            </div>
+                        </div>
+                    `;
+    }
+
+    subtasksHtml += '<button class="subtask-add-inline" title="添加子任务"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg></button></div>';
+    return subtasksHtml;
+}

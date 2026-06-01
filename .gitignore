@@ -153,10 +153,12 @@ scratch/
 
 # Local private AI/provider config
 ai_config.txt
+.local/private/
 
 # Personal planning notes and scratch docs
 todo*.md
 thought.md
+.local/dev-history/
 
 # Temporary/generated icon candidates
 public/Assets/1.png

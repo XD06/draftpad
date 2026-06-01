@@ -9,7 +9,6 @@ const crypto = require('crypto');
 const cookieParser = require('cookie-parser');
 const { generatePWAManifest } = require("./scripts/pwa-manifest-generator")
 const { originValidationMiddleware, getCorsOptions, validateOrigin } = require('./scripts/cors');
-const { getHighlightLanguages } = require('./constants');
 const { 
     sanitizeFilename, 
     getNotepadFilePath, 
@@ -34,9 +33,24 @@ const { registerShareRoutes } = require('./routes/share-routes');
 const { registerStaticRoutes } = require('./routes/static-routes');
 const { registerThoughtRoutes } = require('./routes/thought-routes');
 const ipaddr = require('ipaddr.js');
+
+function getAvailableHighlightLanguages() {
+    const languagesDir = path.join(__dirname, 'node_modules/@highlightjs/cdn-assets/es/languages');
+    try {
+        return fsSync.readdirSync(languagesDir)
+            .filter(file => file.endsWith('.min.js'))
+            .map(file => file.replace(/\.min\.js$/, ''))
+            .filter(Boolean)
+            .sort();
+    } catch (err) {
+        console.warn('Unable to read highlight.js language directory:', err.message);
+        return ['javascript', 'json', 'markdown', 'plaintext'];
+    }
+}
+
 const HIGHLIGHT_LANGUAGES = process.env.HIGHLIGHT_LANGUAGES
     ? process.env.HIGHLIGHT_LANGUAGES.split(',').map(lang => lang.trim())
-    : getHighlightLanguages();
+    : getAvailableHighlightLanguages();
 
 const app = express();
 const PORT = process.env.PORT || 3000;

@@ -26,17 +26,24 @@
 ## 3. 前端边界
 
 前端没有构建步骤，所有浏览器代码都通过原生 ES module 加载。新增模块时要同时确认 service worker asset manifest 能覆盖新文件。
+Thought 前端 helper 拆分模块有聚合测试入口：`npm run test:thought-modules`。
 
 核心模块：
 
 - `public/app.js`：应用启动、Notepad 编辑与保存、设置页、同步状态、全局快捷键和主视图协调。
 - `public/hybrid-editor.js`：Vditor 封装，负责混合编辑、源码模式、阅读模式、目录索引、批注和高亮装饰。
-- `public/managers/thoughts.js`：Thought UI 协调层。负责 DOM 渲染、事件绑定、乐观更新、toast、筛选、AI/relations 面板入口。
+- `public/managers/thoughts.js`：Thought UI 协调层。负责 DOM 插入、每卡事件绑定、乐观更新、toast、筛选、AI/relations 面板入口；全局事件初始化按 Quick Add、视图切换、搜索筛选、outbox、socket 分段，`render()` 负责列表生成，单卡交互集中在 `bindThoughtCardEvents()`，relation panel 事件分发集中在 `handleRelationsPanelClick()`，inline 子任务编辑的输入替换和提交协调分开维护。
 - `public/managers/thought-api-client.js`：Thought HTTP client。负责 URL 拼接、`encodeURIComponent`、JSON 请求和带 `status` 的错误。
 - `public/managers/thought-outbox.js`：Thought 本地 outbox。负责 localStorage key、队列合并、create/patch/delete/relation 队列项构造、服务端列表合并和 retry。
-- `public/managers/thought-relations-panel.js`：关系面板纯渲染 helper，保留事件和 API 协调在 `ThoughtsManager`。
-- `public/managers/thought-editor.js`：Thought 编辑、legacy 子任务解析、子任务清理与排序等纯 helper。
-- `public/managers/thought-renderer.js`：Thought 过滤、排序和标签收集 helper。
+- `public/managers/thought-ai-status.js`：Thought AI 状态边界。负责 AI 状态/阶段归一化、pending 最短显示时间计算、socket detail 应用到 Thought 对象、标签文案、按钮图标、状态详情 HTML、loading/error 片段；`ThoughtsManager` 只保留 timer 调度、点击、拉取状态和重试协调。
+- `public/managers/thought-card-renderer.js`：Thought 卡片纯 HTML 渲染边界。负责正文、legacy checkbox 子任务、标签、AI 状态入口、关系计数和折叠子任务摘要；`ThoughtsManager` 只保留 DOM 插入、复制文本和交互事件绑定。
+- `public/managers/thought-relations-panel.js`：关系面板纯渲染 helper。负责关系列表、推荐列表、手动关联输入控件、候选摘要截断/高亮和空状态 HTML；保留事件、防抖、API 协调在 `ThoughtsManager`。
+- `public/managers/thought-editor.js`：Thought 编辑 helper。负责 legacy 子任务解析、编辑态正文/子任务拆分、子任务清理/排序、编辑行与 inline 新增子任务输入 HTML 片段，以及新增/修改/删除/toggle 子任务的本地对象变更；保存触发、失焦、快捷键和 API 协调仍保留在 `ThoughtsManager`。
+- `public/managers/thought-renderer.js`：Thought 过滤和排序 helper。
+- `public/managers/thought-quick-add.js`：Quick Add 数据构造 helper。负责服务端创建成功后的本地 pending AI 标记、离线 local pending Thought 构造和 create outbox payload；弹层、焦点、提交时序、API 和 outbox 协调仍保留在 `ThoughtsManager`。
+- `public/managers/thought-tags.js`：Thought 标签边界。负责标签归一化、`dumbpad_thought_tags` 持久化、标签收集，以及标签筛选、Quick Add 标签、AI 建议标签 HTML 片段渲染；`ThoughtsManager` 只保留事件协调。
+- `public/managers/thought-text-formatting.js`：Thought 文本格式化 helper。负责 HTML 转义、URL linkify 和正则转义；DOM 依赖的搜索高亮仍保留在 `ThoughtsManager`。
+- `public/managers/thought-relations-state.js`：Thought 关系本地状态 helper。负责关系计数归一化、手动关联成功/失败和删除成功/失败时的本地 relation count/localPending/ready 状态变更；API、panel 刷新和 outbox 协调仍保留在 `ThoughtsManager`。
 - `public/managers/note-sync-controller.js`：启动缓存与 Note cache 读写控制器，避免缓存细节继续散落在 `app.js`。
 - `public/managers/settings-data-panel.js`：设置页数据空间和云端维护 API adapter。
 - `public/managers/ws-client.js`：轻量 WebSocket 客户端，把服务端事件转成浏览器 `CustomEvent`。
@@ -69,7 +76,7 @@ PWA 缓存策略分为三层：
 
 - API 请求始终绕过 Service Worker 缓存，保证用户数据实时读取。
 - HTML 导航使用 network-first，离线或慢网时回退到缓存的 `index.html`。
-- JS/CSS/图片/字体等静态资源使用 cache-first，避免手机 PWA 每次打开重复下载大资源。
+- JS/CSS/JSON 这类无 hash 的代码与样式资源使用 network-first，离线或慢网时回退缓存，避免普通刷新继续拿到旧样式或旧模块；图片、字体等稳定大资源仍使用 cache-first。
 
 Service Worker 的核心缓存包含入口页面、主 JS/CSS、Vditor/Lute、Thought 拆分模块和图标。`WARM_ASSETS` 额外预热中文字体、代码字体和 highlight 主包；这些资源较大但变化很少，第一次安装或版本更新时缓存，后续打开直接复用。
 

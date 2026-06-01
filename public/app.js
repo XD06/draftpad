@@ -1825,20 +1825,41 @@ document.addEventListener('DOMContentLoaded', async () => {
         
         const overlay = document.getElementById('sidebar-overlay');
         const sidebarLeft = document.getElementById('sidebar-left');
+        const mobileSidebarHost = document.querySelector('main.three-column-layout');
+
+        const setMobileSidebarVisible = (visible) => {
+            if (!sidebarLeft) return;
+            sidebarLeft.classList.toggle('visible', visible);
+            overlay?.classList.toggle('visible', visible);
+            document.body.classList.toggle('mobile-sidebar-open', visible);
+
+            if (!mobileSidebarHost) return;
+            if (visible && document.body.classList.contains('thoughts-mode')) {
+                if (!mobileSidebarHost.dataset.sidebarRestoreDisplay) {
+                    mobileSidebarHost.dataset.sidebarRestoreDisplay = mobileSidebarHost.style.display || '';
+                }
+                mobileSidebarHost.style.display = 'block';
+                mobileSidebarHost.classList.add('mobile-sidebar-host');
+                return;
+            }
+
+            if (mobileSidebarHost.classList.contains('mobile-sidebar-host')) {
+                mobileSidebarHost.style.display = mobileSidebarHost.dataset.sidebarRestoreDisplay || '';
+                delete mobileSidebarHost.dataset.sidebarRestoreDisplay;
+                mobileSidebarHost.classList.remove('mobile-sidebar-host');
+            }
+        };
 
         document.getElementById('mobile-menu-toggle')?.addEventListener('click', () => {
-            const isVisible = sidebarLeft.classList.toggle('visible');
-            overlay?.classList.toggle('visible', isVisible);
+            setMobileSidebarVisible(!sidebarLeft.classList.contains('visible'));
         });
 
         document.getElementById('close-sidebar-left')?.addEventListener('click', () => {
-            sidebarLeft.classList.remove('visible');
-            overlay?.classList.remove('visible');
+            setMobileSidebarVisible(false);
         });
 
         overlay?.addEventListener('click', () => {
-            sidebarLeft.classList.remove('visible');
-            overlay.classList.remove('visible');
+            setMobileSidebarVisible(false);
         });
 
         setupSidebarTabs();

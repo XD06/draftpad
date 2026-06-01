@@ -9,11 +9,17 @@ const serviceWorker = fs.readFileSync(path.join(root, 'public', 'service-worker.
 const requiredCoreAssets = [
     '/managers/note-sync-controller.js',
     '/managers/settings-data-panel.js',
+    '/managers/thought-ai-status.js',
     '/managers/thought-api-client.js',
+    '/managers/thought-card-renderer.js',
     '/managers/thought-editor.js',
     '/managers/thought-outbox.js',
+    '/managers/thought-quick-add.js',
     '/managers/thought-relations-panel.js',
-    '/managers/thought-renderer.js'
+    '/managers/thought-relations-state.js',
+    '/managers/thought-renderer.js',
+    '/managers/thought-tags.js',
+    '/managers/thought-text-formatting.js'
 ];
 
 const requiredWarmAssets = [
@@ -31,6 +37,11 @@ for (const asset of requiredWarmAssets) {
 }
 
 assert(serviceWorker.includes('cacheFirst'), 'service worker should use cache-first for static assets');
+assert(
+    serviceWorker.includes('NETWORK_FIRST_STATIC_EXTENSIONS') &&
+    serviceWorker.includes('fetchOptions: { cache: "no-cache" }'),
+    'service worker should refresh unversioned JS/CSS/JSON from network before falling back to cache'
+);
 assert(serviceWorker.includes('requestUrl.pathname.startsWith("/api/")'), 'service worker should bypass API requests');
 
 generatePWAManifest('DumbPad');

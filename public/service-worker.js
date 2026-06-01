@@ -30,11 +30,17 @@ const CORE_ASSETS = [
   "/managers/storage.js",
   "/managers/note-sync-controller.js",
   "/managers/thoughts.js",
+  "/managers/thought-ai-status.js",
   "/managers/thought-api-client.js",
+  "/managers/thought-card-renderer.js",
   "/managers/thought-editor.js",
   "/managers/thought-outbox.js",
+  "/managers/thought-quick-add.js",
   "/managers/thought-relations-panel.js",
+  "/managers/thought-relations-state.js",
   "/managers/thought-renderer.js",
+  "/managers/thought-tags.js",
+  "/managers/thought-text-formatting.js",
   "/managers/toaster.js",
   "/managers/ws-client.js",
 ];
@@ -44,6 +50,8 @@ const WARM_ASSETS = [
   "/font/FiraCode-Regular.ttf",
   "/js/@highlightjs/highlight.min.js",
 ];
+
+const NETWORK_FIRST_STATIC_EXTENSIONS = [".js", ".css", ".json"];
 
 const getConfig = async () => {
   try {
@@ -262,6 +270,7 @@ self.addEventListener("fetch", (event) => {
   const staticAssetExtensions = [".js", ".css", ".json", ".png", ".ico", ".svg", ".woff", ".woff2", ".ttf"];
   const isNavigation = event.request.mode === "navigate";
   const isStaticAsset = staticAssetExtensions.some(ext => requestUrl.pathname.endsWith(ext));
+  const isNetworkFirstStaticAsset = NETWORK_FIRST_STATIC_EXTENSIONS.some(ext => requestUrl.pathname.endsWith(ext));
 
   if (isNavigation) {
     // Always fetch fresh index.html, fallback to cache only when offline
@@ -276,6 +285,17 @@ self.addEventListener("fetch", (event) => {
   }
 
   if (isStaticAsset) {
+    if (isNetworkFirstStaticAsset) {
+      event.respondWith(
+        networkFirstWithTimeout(event.request, {
+          timeout: 1500,
+          fetchOptions: { cache: "no-cache" },
+          fallbackRequests: [event.request],
+        })
+      );
+      return;
+    }
+
     event.respondWith(cacheFirst(event.request));
     return;
   }

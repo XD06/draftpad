@@ -48,19 +48,25 @@ function registerThoughtRoutes(app, context) {
 
     function upsertManualEdge(relations, targetId, relationType = 'manual') {
         const now = Date.now();
+        const suggestion = Array.isArray(relations.suggestions)
+            ? relations.suggestions.find(edge => edge.targetId === targetId)
+            : null;
         const edges = Array.isArray(relations.edges) ? relations.edges.filter(edge => edge.targetId !== targetId) : [];
         const suggestions = Array.isArray(relations.suggestions)
             ? relations.suggestions.filter(edge => edge.targetId !== targetId)
             : [];
+        const preservedRelationType = suggestion?.relationType && ['manual', 'suggested'].includes(relationType)
+            ? suggestion.relationType
+            : relationType;
         edges.unshift({
             targetId,
-            score: 1,
-            confidence: 1,
-            relationType,
+            score: Number.isFinite(Number(suggestion?.score)) ? Number(suggestion.score) : 1,
+            confidence: Number.isFinite(Number(suggestion?.confidence)) ? Number(suggestion.confidence) : 1,
+            relationType: preservedRelationType,
             method: 'manual',
             source: 'manual',
-            reasons: ['manual'],
-            signals: { manual: 1 },
+            reasons: Array.isArray(suggestion?.reasons) && suggestion.reasons.length > 0 ? suggestion.reasons : [],
+            signals: suggestion?.signals ? { ...suggestion.signals, manual: 1 } : { manual: 1 },
             createdAt: now
         });
         return {

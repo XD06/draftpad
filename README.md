@@ -67,7 +67,7 @@ DumbPad 当前保持无构建工具的 Vanilla JS 前端和 Express 后端。重
 - `scripts/ai-queue.js` 和 `scripts/ai-provider.js` 负责后端 AI pipeline；AI、S3、WebSocket 都不能阻塞 Thought 快速写入。
 - `public/managers/thought-api-client.js` 封装 Thought HTTP 细节，统一 URL 编码和非 `ok` 错误。
 - `public/managers/thought-outbox.js` 管理 Thought 浏览器本地 outbox 的持久化、合并和重试。
-- `public/managers/thought-relations-panel.js`、`thought-editor.js`、`thought-renderer.js` 承接 Thought 关系面板、编辑 helper、过滤排序等高变化逻辑。
+- `public/managers/thought-*` 拆分 Thought 前端高变化逻辑：API client、outbox、卡片渲染、标签、AI 状态、关系面板、关系本地状态、Quick Add 数据构造、编辑 helper、文本格式化、过滤排序等。
 - `public/managers/note-sync-controller.js` 管理启动缓存和 Note cache 读写，`app.js` 继续协调编辑器和设置页 DOM。
 - `public/managers/settings-data-panel.js` 封装设置页数据空间和云端维护 API，前端不直接散落数据管理 URL。
 - `routes/data-management-routes.js` 承接后端数据管理 route，`server.js` 只负责注册。
@@ -167,6 +167,7 @@ npm run test:api
 npm run test:ai-provider
 npm run test:ai-queue
 npm run test:relations
+npm run test:thought-modules
 npm run test:note-sync
 npm run test:pwa-cache
 npm run test:s3-storage
@@ -191,7 +192,9 @@ npm run test:s3-real
 
 ## 📚 文档
 
-- [API 文档](api.md) — 完整的 Thoughts REST API 参考
+- [Agent Context](AGENT_CONTEXT.md) — 新开 AI 会话时优先阅读的项目入口
+- [文档索引](docs/README.md) — 当前文档、归档文档和维护规则
+- [API 文档](api.md) — 完整的 REST API 参考
 - [项目技术介绍](docs/technical-overview.md) — 当前模块边界、数据流和后续重构顺序
 - [Storage Interface](docs/storage-interface.md) — 本地/S3 存储接口约束
 - [AI Pipeline Interface](docs/ai-pipeline-interface.md) — AI 队列、provider 与 relation 写入约束

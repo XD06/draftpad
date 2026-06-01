@@ -1,3 +1,9 @@
+# Historical Note
+
+This is an older API automation report kept for reference only. It is not the current API contract. Use `../../api.md` for current REST API behavior and `../README.md` for the active documentation index.
+
+---
+
 # DumbPad API 自动化管理深度报告 (v1.3)
 
 ## 1. 应用概述 (App Purpose)

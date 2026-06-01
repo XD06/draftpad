@@ -25,5 +25,5 @@ services:
       
       # MARKDOWN CODE SYNTAX HIGHLIGHTING (only use below if you want to restrict to specific languages):
       # By default, DumbPad includes support for all ~180 languages supported by highlight.js.
-      # view entire list and usage in /docs/MARKDOWN_SYNTAX_HIGHLIGHTING_USAGE.md
+      # view entire list and usage in /docs/markdown-syntax-highlighting.md
       # HIGHLIGHT_LANGUAGES=c,csharp,css,dockerfile,go,html,java,javascript,json,kotlin,markdown,perl,php,python,ruby,sql,swift,typescript,xml,yaml

@@ -47,6 +47,9 @@ function assertThoughtsFrontendRegressions() {
     const thoughtsSource = fs.readFileSync(path.join(ROOT, 'public', 'managers', 'thoughts.js'), 'utf8');
     const serverSource = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
     const thoughtRoutesSource = fs.readFileSync(path.join(ROOT, 'routes', 'thought-routes.js'), 'utf8');
+    const thoughtAIStatusSource = fs.readFileSync(path.join(ROOT, 'public', 'managers', 'thought-ai-status.js'), 'utf8');
+    const thoughtCardRendererSource = fs.readFileSync(path.join(ROOT, 'public', 'managers', 'thought-card-renderer.js'), 'utf8');
+    const thoughtRelationsPanelSource = fs.readFileSync(path.join(ROOT, 'public', 'managers', 'thought-relations-panel.js'), 'utf8');
     const thoughtApiClientSource = fs.readFileSync(path.join(ROOT, 'public', 'managers', 'thought-api-client.js'), 'utf8');
     const thoughtOutboxSource = fs.readFileSync(path.join(ROOT, 'public', 'managers', 'thought-outbox.js'), 'utf8');
     const thoughtsCss = fs.readFileSync(path.join(ROOT, 'public', 'Assets', 'thoughts.css'), 'utf8');
@@ -56,7 +59,7 @@ function assertThoughtsFrontendRegressions() {
         'AI status relation update should not replace the button without rebinding click events'
     );
     assert(
-        thoughtsSource.includes('待评估'),
+        thoughtAIStatusSource.includes('待评估'),
         'AI detail counts should use user-facing 待评估 wording instead of 候选'
     );
     assert(
@@ -114,9 +117,17 @@ function assertThoughtsFrontendRegressions() {
         thoughtsSource.includes('queueManualRelationSearch') &&
         thoughtsSource.includes('manualRelationSearchSeq') &&
         thoughtsSource.includes('limit: 8, light: true') &&
-        thoughtsSource.includes('summaryHtml = this.highlightPlainText') &&
-        thoughtsSource.includes('textSnippetAroundQuery'),
+        thoughtRelationsPanelSource.includes('summaryHtml = highlightPlainText') &&
+        thoughtRelationsPanelSource.includes('textSnippetAroundQuery'),
         'manual relation search should be debounced, lightweight, stale-safe, and keyword-highlighted'
+    );
+    assert(
+        (thoughtsSource.match(/renderTagFilters\(\)\s*\{/g) || []).length === 1,
+        'ThoughtsManager should not contain duplicate renderTagFilters definitions'
+    );
+    assert(
+        (thoughtsSource.match(/getAllTags\(\)\s*\{/g) || []).length === 1,
+        'ThoughtsManager should not contain duplicate getAllTags definitions'
     );
     assert(
         thoughtRoutesSource.includes('const light =') &&
@@ -130,15 +141,15 @@ function assertThoughtsFrontendRegressions() {
         'thought creation should avoid Date.now-only id collisions during rapid creates'
     );
     assert(
-        thoughtsSource.includes('thought-ai-count ${count > 0') &&
+        thoughtAIStatusSource.includes('thought-ai-count ${count > 0') &&
         thoughtsSource.includes('updateThoughtToolCounts') &&
         thoughtRoutesSource.includes('targetRelationCount') &&
         thoughtRoutesSource.includes("type: 'relations_update'"),
         'AI status buttons should always show a count and relation add/delete should refresh counts without manual reload'
     );
     assert(
-        thoughtsSource.includes("thought-ai-count ${count > 0 ? 'has-count' : 'is-zero'}") &&
-        thoughtsSource.includes("relations-count ${relationCount > 0 ? 'has-count' : 'is-zero'}") &&
+        thoughtAIStatusSource.includes("thought-ai-count ${count > 0 ? 'has-count' : 'is-zero'}") &&
+        thoughtCardRendererSource.includes("relations-count ${relationCount > 0 ? 'has-count' : 'is-zero'}") &&
         thoughtsCss.includes('.thought-ai-count.has-count') &&
         thoughtsCss.includes('.relations-count.has-count') &&
         thoughtsCss.includes('[data-theme=\"dark\"] .relations-count.has-count'),
@@ -581,6 +592,17 @@ async function run() {
         assert(result.response.ok, 'GET missing thought relations should not produce a browser-visible 404');
         assert(result.body.status === 'missing', 'missing thought relations should report missing status');
         assert(Array.isArray(result.body.relations) && result.body.relations.length === 0, 'missing thought relations should return empty relations');
+
+        result = await request(`/api/thoughts/${thoughtId}/relations`, {
+            method: 'POST',
+            body: JSON.stringify({ targetId: targetThoughtId, relationType: 'suggested' })
+        });
+        assert(result.response.status === 201, 'POST suggested thought relation should succeed');
+        assert(result.body.relation?.method === 'manual', 'confirmed suggestion should be marked as manual');
+        assert(result.body.relation?.relationType === 'same_project', 'confirmed suggestion should preserve the AI relation type');
+        assert(result.body.relation?.confidence === 0.64, 'confirmed suggestion should preserve AI confidence');
+        assert(result.body.relation?.reasons?.includes('candidate'), 'confirmed suggestion should preserve AI reasons');
+        assert(result.body.relation?.signals?.keyword === 0.6, 'confirmed suggestion should preserve AI signals');
 
         result = await request(`/api/thoughts/${thoughtId}/relations/${targetThoughtId}`, { method: 'DELETE' });
         assert(result.response.ok, 'DELETE /api/thoughts/:id/relations/:targetId should succeed');

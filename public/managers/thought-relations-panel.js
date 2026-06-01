@@ -1,3 +1,5 @@
+const MANUAL_RELATION_ICON_SRC = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAYAAADgdz34AAAACXBIWXMAAAsTAAALEwEAmpwYAAABUklEQVR4nM2Tu0rEQBSGPwVtxHoVvC74BF66tVJ7LcRi0cewVQsVG7HSxcJ3ULFQX0Sx0bUQFEER3fUWGfgDQ5ghySSFPwxzOOfk/yYnGUjXCNAAmsCn9gPlC2sOeAUixzL52SLmo5b5CTAJ9Gg/Vf4FGA4FNCxzl2LIfiigKYMJnfISeAMugCFgSvXbUEBLBr0yt+d/rryJP0IBNzIwM28rHtPeVt7E16GAPRmcWSfHiuP8bihgEHhKjMYGRKoPUEDTwKMHYPI1SlC/B3AELOq7dBaFRJ4RxesZ2AG6shqOAwtAxQEwN3we2ACOgTurbiCp2rIeaAGHCYBLM6o/pJmvW/+5ubE/jr/Ipyw9rKrpG6gDVd2H97IARmtq/AKWlOsDtssCuN4ki3IBQiBRXkByXMtAh6evpr77vAAbkmVtEqgV4Ar49Ribkxvz7lDA/9Uf8JCaXbQbHiUAAAAASUVORK5CYII=';
+
 export function renderRelationsPanelContent({ thoughtId, status, relations, suggestions = [], error = null, escapeHtml }) {
     const manualControls = renderManualRelationControls(thoughtId, escapeHtml);
     const listHtml = renderRelationsList(relations, escapeHtml);
@@ -23,6 +25,81 @@ export function renderManualRelationControls(thoughtId, escapeHtml) {
             <div class="thought-manual-relation-results"></div>
         </div>
     `;
+}
+
+export function textSnippetAroundQuery(text, query, maxLength = 96) {
+    const cleanText = String(text || '').replace(/\s+/g, ' ').trim();
+    const cleanQuery = String(query || '').trim();
+    if (!cleanText || !cleanQuery || cleanText.length <= maxLength) return cleanText;
+
+    const index = cleanText.toLowerCase().indexOf(cleanQuery.toLowerCase());
+    if (index < 0) return `${cleanText.slice(0, maxLength)}...`;
+
+    const side = Math.max(12, Math.floor((maxLength - cleanQuery.length) / 2));
+    const start = Math.max(0, index - side);
+    const end = Math.min(cleanText.length, index + cleanQuery.length + side);
+    return `${start > 0 ? '...' : ''}${cleanText.slice(start, end)}${end < cleanText.length ? '...' : ''}`;
+}
+
+export function buildManualRelationSummary(text, matchedSubItem, query) {
+    const mainText = text || '空白想法';
+    const lowerText = mainText.toLowerCase();
+    const lowerQuery = String(query || '').toLowerCase();
+    if (lowerQuery && lowerText.includes(lowerQuery)) {
+        return textSnippetAroundQuery(mainText, query, 96);
+    }
+    if (matchedSubItem) {
+        const mainPrefix = mainText.length > 36 ? `${mainText.slice(0, 36)}...` : mainText;
+        return `${mainPrefix} · ${textSnippetAroundQuery(matchedSubItem, query, 72)}`;
+    }
+    return mainText.length > 96 ? `${mainText.slice(0, 96)}...` : mainText;
+}
+
+export function highlightPlainText(text, query, escapeHtml) {
+    const cleanText = String(text || '');
+    const cleanQuery = String(query || '').trim();
+    if (!cleanText || !cleanQuery) return escapeHtml(cleanText);
+
+    const lowerText = cleanText.toLowerCase();
+    const lowerQuery = cleanQuery.toLowerCase();
+    let lastIdx = 0;
+    let idx = lowerText.indexOf(lowerQuery);
+    let html = '';
+
+    while (idx !== -1) {
+        html += escapeHtml(cleanText.slice(lastIdx, idx));
+        html += `<mark class="thought-highlight">${escapeHtml(cleanText.slice(idx, idx + cleanQuery.length))}</mark>`;
+        lastIdx = idx + cleanQuery.length;
+        idx = lowerText.indexOf(lowerQuery, lastIdx);
+    }
+
+    html += escapeHtml(cleanText.slice(lastIdx));
+    return html;
+}
+
+export function renderManualRelationSearchOptions({ thoughts, sourceId, linkedIds, query, escapeHtml }) {
+    const linked = linkedIds instanceof Set ? linkedIds : new Set(linkedIds || []);
+    const q = String(query || '').trim();
+    const options = (Array.isArray(thoughts) ? thoughts : [])
+        .filter(item => item.id !== sourceId && !linked.has(item.id))
+        .slice(0, 6);
+
+    if (options.length === 0) return '<div class="thought-manual-relation-empty">没有可链接结果</div>';
+
+    return options.map(item => {
+        const text = String(item.text || '').replace(/\s+/g, ' ').trim();
+        const subItems = Array.isArray(item.subItems) ? item.subItems : [];
+        const matchedSubItem = subItems
+            .map(subItem => String(subItem?.text || '').replace(/\s+/g, ' ').trim())
+            .find(subText => subText.toLowerCase().includes(q.toLowerCase()));
+        const summary = buildManualRelationSummary(text, matchedSubItem, q);
+        const summaryHtml = highlightPlainText(summary, q, escapeHtml);
+        return `
+                    <button type="button" class="thought-manual-relation-option" data-manual-relation-target="${escapeHtml(item.id)}">
+                        ${summaryHtml}
+                    </button>
+                `;
+    }).join('');
 }
 
 export function relationTypeLabel(type = '') {
@@ -68,6 +145,15 @@ export function renderRelationsMoreButton(count, escapeHtml) {
     return `<button type="button" class="thought-relations-more">显示其余 ${escapeHtml(count)} 条</button>`;
 }
 
+export function isManualRelation(relation = {}) {
+    return relation.method === 'manual' || relation.source === 'manual';
+}
+
+export function renderManualRelationIcon(relation, escapeHtml) {
+    if (!isManualRelation(relation)) return '';
+    return `<span class="thought-relation-manual-icon" title="手动关联" aria-label="手动关联"><img src="${escapeHtml(MANUAL_RELATION_ICON_SRC)}" alt="nui2"></span>`;
+}
+
 export function renderRelationsList(relations, escapeHtml) {
     const topRelations = relations
         .slice()
@@ -89,10 +175,10 @@ export function renderRelationsList(relations, escapeHtml) {
                 const confidenceText = confidence ? `${Math.round(confidence * 100)}%` : '';
                 const strengthClass = relationStrengthClass(score);
                 const relationTypeText = relationTypeLabel(relation.relationType || '');
-                const method = relation.method || relation.source || '';
                 const reasons = Array.isArray(relation.reasons) ? relation.reasons.filter(Boolean).slice(0, 2) : [];
                 const createdAt = relationDisplayDate(target.createdAt);
-                const detailLine = relationDetailLine([method, ...reasons]);
+                const detailLine = relationDetailLine(reasons);
+                const manualIcon = renderManualRelationIcon(relation, escapeHtml);
                 const collapsed = index >= 5;
 
                 return `
@@ -100,6 +186,7 @@ export function renderRelationsList(relations, escapeHtml) {
                         <span class="thought-relation-main">
                             <span class="thought-relation-head">
                                 <span class="thought-relation-type">${escapeHtml(relationTypeText)}</span>
+                                ${manualIcon}
                                 <span class="thought-relation-score">${escapeHtml(scoreText)}</span>
                                 ${confidenceText ? `<span class="thought-relation-confidence">置信 ${escapeHtml(confidenceText)}</span>` : ''}
                                 ${createdAt ? `<span class="thought-relation-date">${escapeHtml(createdAt)}</span>` : ''}
