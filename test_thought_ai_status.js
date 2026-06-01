@@ -129,6 +129,8 @@ function run() {
     assert(detail.includes('AI 已关联 1'), 'detail should include status label');
     assert(detail.includes('关联 1 · 建议 2 · 待评估 3'), 'detail should include counts line');
     assert(detail.includes('chat-model'), 'detail should include stage model');
+    assert(detail.includes('thought-ai-detail-retry'), 'detail should include manual AI rerun action');
+    assert(detail.includes('alt="run-command"'), 'manual AI rerun action should use the run-command icon');
     assert(detail.includes('1536维'), 'detail should include embedding dimensions');
 
     const errorDetail = ai.renderAIStatusDetail({
@@ -140,10 +142,12 @@ function run() {
         escapeHtml
     });
     assert(errorDetail.includes('thought-ai-detail-retry'), 'error detail should include retry action');
+    assert(errorDetail.includes('alt="run-command"'), 'error detail should use the run-command icon');
     assert(errorDetail.includes('&lt;failed&gt;'), 'error detail should escape error messages');
 
     assert(ai.renderAIStatusLoading().includes('正在读取 AI 状态'), 'loading render should preserve wording');
     assert(ai.renderAIStatusError().includes('AI 状态读取失败'), 'error render should preserve wording');
+    assert(ai.renderAIStatusError().includes('alt="run-command"'), 'AI status fetch error should expose the run-command icon action');
 
     console.log('Thought AI status module checks passed');
 }

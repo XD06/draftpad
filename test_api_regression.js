@@ -141,6 +141,11 @@ function assertThoughtsFrontendRegressions() {
         'thought creation should avoid Date.now-only id collisions during rapid creates'
     );
     assert(
+        !thoughtRoutesSource.includes('queue reason=update') &&
+        !thoughtRoutesSource.includes("queueThought(thought.id, 'update')"),
+        'thought edits should not automatically rerun the AI pipeline'
+    );
+    assert(
         thoughtAIStatusSource.includes('thought-ai-count ${count > 0') &&
         thoughtsSource.includes('updateThoughtToolCounts') &&
         thoughtsSource.includes('updateThoughtRelationCount(targetId, data.targetRelationCount') &&

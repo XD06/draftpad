@@ -1,4 +1,5 @@
 export const AI_PENDING_MIN_VISIBLE_MS = 1200;
+const AI_RUN_COMMAND_ICON_SRC = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAACXBIWXMAAAsTAAALEwEAmpwYAAAAeElEQVR4nGNgGGxAlIGB4T8J+BUDiRrQ8X5KDZiC7oWpUIlmAl5tg6rLQpfYD5UIIGDATqg6e1xekIUqRBeHgVdQvigDrpDFY4ACFnVg4ACV2MaAHwQjxwAyyCYxAKfgcmYAkQEIj4H/ZGJwDCADWMgSi8ExMPAAAJoqcdFU9JHGAAAAAElFTkSuQmCC';
 
 export function normalizeAIStatus(status = '') {
     return ['pending', 'ready', 'empty', 'error', 'missing'].includes(status) ? status : 'missing';
@@ -122,7 +123,9 @@ export function renderAIStatusDetail({ detail = {}, escapeHtml }) {
     return `
             <div class="thought-ai-detail-head">
                 <span>${escapeHtml(aiStatusLabel(normalizeAIStatus(detail.status), detail.relationCount || 0))}</span>
-                ${detail.status === 'error' ? '<button type="button" class="thought-ai-detail-retry">重试</button>' : ''}
+                <button type="button" class="thought-ai-detail-retry" title="重新运行 AI" aria-label="重新运行 AI">
+                    <img src="${escapeHtml(AI_RUN_COMMAND_ICON_SRC)}" alt="run-command">
+                </button>
             </div>
             <div class="thought-ai-detail-counts">${escapeHtml(counts)}</div>
             <div class="thought-ai-stage-list">${stageRows}</div>
@@ -137,6 +140,8 @@ export function renderAIStatusLoading() {
 export function renderAIStatusError() {
     return `
                 <div class="thought-ai-detail-state error">AI 状态读取失败</div>
-                <button type="button" class="thought-ai-detail-retry">重试分析</button>
+                <button type="button" class="thought-ai-detail-retry" title="重新运行 AI" aria-label="重新运行 AI">
+                    <img src="${AI_RUN_COMMAND_ICON_SRC}" alt="run-command">
+                </button>
             `;
 }

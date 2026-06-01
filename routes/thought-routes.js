@@ -502,8 +502,6 @@ function registerThoughtRoutes(app, context) {
                 await saveThoughts(thoughts);
                 scheduleIndexNotepads(250);
                 broadcastThoughtsUpdate('update', thought);
-                console.info(`[thought-ai] queue reason=update thoughtId=${thought.id}`);
-                aiQueue.queueThought(thought.id, 'update');
             }
 
             res.json({ success: true, thought });
