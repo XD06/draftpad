@@ -27,6 +27,22 @@ function registerThoughtRoutes(app, context) {
         return typeof lock === 'function' ? lock(task) : task();
     }
 
+    function isThoughtAIActive(thoughtId) {
+        const status = typeof aiQueue.getQueueStatus === 'function' ? aiQueue.getQueueStatus() : null;
+        const id = String(thoughtId || '');
+        return (
+            Array.isArray(status?.queuedIds) && status.queuedIds.some(item => String(item) === id)
+        ) || (
+            Array.isArray(status?.currentJobs) && status.currentJobs.some(job => String(job?.thoughtId) === id)
+        ) || String(status?.currentJob?.thoughtId || '') === id;
+    }
+
+    function visibleAIStatus(thoughtId, meta, fallback = 'missing') {
+        const status = meta?.status || fallback;
+        if (status === 'pending' && !isThoughtAIActive(thoughtId)) return 'missing';
+        return status;
+    }
+
     function createThoughtId(existingThoughts = []) {
         const existingIds = new Set(existingThoughts.map(thought => String(thought.id)));
         let id = '';
@@ -127,7 +143,7 @@ function registerThoughtRoutes(app, context) {
 
             res.json({
                 id,
-                status: meta?.status || 'missing',
+                status: visibleAIStatus(id, meta),
                 relations: responseRelations,
                 suggestions: responseSuggestions
             });
@@ -335,7 +351,7 @@ function registerThoughtRoutes(app, context) {
                 return {
                     ...thought,
                     relationCount: await storage.readRelationCount(thought.id),
-                    aiStatus: meta?.status || 'missing',
+                    aiStatus: visibleAIStatus(thought.id, meta),
                     aiError: meta?.error || null,
                     aiProcessedAt: meta?.ai?.processedAt || 0,
                     aiTags: Array.isArray(meta?.ai?.tags) ? meta.ai.tags : []
@@ -399,7 +415,7 @@ function registerThoughtRoutes(app, context) {
             };
             res.json({
                 id,
-                status: meta?.status || 'missing',
+                status: visibleAIStatus(id, meta),
                 error: meta?.error || null,
                 processedAt: meta?.ai?.processedAt || 0,
                 relationCount: relationEdges.length,
@@ -500,7 +516,7 @@ function registerThoughtRoutes(app, context) {
                 thought.updatedAt = Date.now();
                 thought.version = (thought.version || 1) + 1;
                 const meta = await storage.readThoughtMeta(thought.id);
-                thought.aiStatus = meta?.status || thought.aiStatus || 'missing';
+                thought.aiStatus = visibleAIStatus(thought.id, meta, thought.aiStatus || 'missing');
                 thought.aiError = meta?.error || null;
                 thought.relationCount = await storage.readRelationCount(thought.id);
                 await saveThoughts(thoughts);

@@ -516,7 +516,33 @@ async function run() {
         assert(result.response.ok, 'PATCH ready thought should succeed');
         assert(result.body.thought.aiStatus === 'ready', 'PATCH ready thought should keep current AI status instead of stale pending');
         assert(Number.isFinite(result.body.thought.relationCount), 'PATCH ready thought should include current relation count');
-        const editedThoughtVersion = result.body.thought.version;
+        let editedThoughtVersion = result.body.thought.version;
+
+        fs.writeFileSync(
+            path.join(dataDir, 'thoughts.meta', `${thoughtId}.json`),
+            JSON.stringify({
+                ...generatedMeta,
+                status: 'pending',
+                queuedAt: Date.now() - 600000,
+                updatedAt: Date.now() - 600000
+            }, null, 2)
+        );
+        result = await request('/api/thoughts?q=edited');
+        assert(result.response.ok, 'GET thoughts with stale pending meta should succeed');
+        assert(
+            result.body.find(item => item.id === thoughtId)?.aiStatus !== 'pending',
+            'stale pending meta should not render as an active pending state in thought lists'
+        );
+        result = await request(`/api/thoughts/${thoughtId}/ai-status`);
+        assert(result.response.ok, 'GET ai-status with stale pending meta should succeed');
+        assert(result.body.status !== 'pending', 'stale pending meta should not render as an active pending state in AI detail');
+        result = await request(`/api/thoughts/${thoughtId}`, {
+            method: 'PATCH',
+            body: JSON.stringify({ action: 'overwrite', text: 'API regression thought edited again', subItems: [] })
+        });
+        assert(result.response.ok, 'PATCH stale pending thought should succeed');
+        assert(result.body.thought.aiStatus !== 'pending', 'PATCH stale pending thought should not broadcast a spinning pending state');
+        editedThoughtVersion = result.body.thought.version;
 
         fs.mkdirSync(path.join(dataDir, 'thoughts.meta'), { recursive: true });
         fs.mkdirSync(path.join(dataDir, 'relations'), { recursive: true });
