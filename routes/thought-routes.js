@@ -215,7 +215,8 @@ function registerThoughtRoutes(app, context) {
             res.status(201).json({
                 success: true,
                 relation: sourceRelations.edges.find(edge => edge.targetId === targetId),
-                relationCount: sourceRelations.edges.length
+                relationCount: sourceRelations.edges.length,
+                targetRelationCount: targetRelations.edges.length
             });
         } catch (err) {
             console.error('Error creating manual thought relation:', err);

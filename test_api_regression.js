@@ -143,6 +143,7 @@ function assertThoughtsFrontendRegressions() {
     assert(
         thoughtAIStatusSource.includes('thought-ai-count ${count > 0') &&
         thoughtsSource.includes('updateThoughtToolCounts') &&
+        thoughtsSource.includes('updateThoughtRelationCount(targetId, data.targetRelationCount') &&
         thoughtRoutesSource.includes('targetRelationCount') &&
         thoughtRoutesSource.includes("type: 'relations_update'"),
         'AI status buttons should always show a count and relation add/delete should refresh counts without manual reload'
@@ -603,6 +604,7 @@ async function run() {
         assert(result.body.relation?.confidence === 0.64, 'confirmed suggestion should preserve AI confidence');
         assert(result.body.relation?.reasons?.includes('candidate'), 'confirmed suggestion should preserve AI reasons');
         assert(result.body.relation?.signals?.keyword === 0.6, 'confirmed suggestion should preserve AI signals');
+        assert(result.body.targetRelationCount === 1, 'manual relation response should include the target relation count for immediate UI sync');
 
         result = await request(`/api/thoughts/${thoughtId}/relations/${targetThoughtId}`, { method: 'DELETE' });
         assert(result.response.ok, 'DELETE /api/thoughts/:id/relations/:targetId should succeed');

@@ -552,18 +552,26 @@ export class ThoughtsManager {
             relationsCount: nextCount
         })) return;
 
+        this.updateThoughtRelationCount(thoughtId, nextCount, 'ready');
+    }
+
+    updateThoughtRelationCount(thoughtId, relationCount, status = 'ready') {
+        if (!thoughtId) return null;
+        const nextCount = Math.max(0, Number.isFinite(Number(relationCount)) ? Number(relationCount) : 0);
+        const thought = this.thoughts.find(item => item.id === thoughtId);
         if (thought) {
             thought.relationCount = nextCount;
-            thought.aiStatus = 'ready';
+            thought.aiStatus = status;
             delete thought.aiPendingSince;
         }
 
         const card = this.timeline?.querySelector(`.thought-card[data-id="${CSS.escape(thoughtId)}"]`);
-        if (card && thought) this.updateThoughtToolCounts(card, thought, 'ready', nextCount);
+        if (card && thought) this.updateThoughtToolCounts(card, thought, status, nextCount);
         const panel = card?.querySelector('.thought-relations-panel');
         if (panel && thought) {
             this.refreshRelationsPanel(panel, thought);
         }
+        return nextCount;
     }
 
     updateThoughtToolCounts(card, thought, status = this.normalizeAIStatus(thought?.aiStatus), relationCount = Number(thought?.relationCount || 0)) {
@@ -1227,6 +1235,9 @@ export class ThoughtsManager {
             const data = await this.apiClient.createRelation(thought.id, targetId, relationType);
             const nextCount = applyManualRelationCreated(thought, data.relationCount);
             this.updateThoughtToolCounts(card, thought, 'ready', nextCount);
+            if (Number.isFinite(Number(data.targetRelationCount))) {
+                this.updateThoughtRelationCount(targetId, data.targetRelationCount, 'ready');
+            }
 
             const relationsData = await this.apiClient.getRelations(thought.id);
             if (panel) {
