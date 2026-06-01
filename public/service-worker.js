@@ -15,7 +15,7 @@ const CORE_ASSETS = [
   "/Assets/dumbpad.png",
   "/Assets/dumbpad-192.png",
   "/Assets/dumbpad-512.png",
-  "/Assets/favicon-64.png",
+  "/Assets/favicon-512.png",
   "/vendor/vditor/index.css",
   "/vendor/vditor/index.min.js",
   "/vendor/vditor-package/dist/js/i18n/zh_CN.js",
