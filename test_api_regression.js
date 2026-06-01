@@ -509,6 +509,15 @@ async function run() {
         assert(generatedMeta.stages?.embedding?.status === 'ready', 'AI meta should include embedding stage');
         assert(generatedMeta.stages?.relations?.status === 'ready', 'AI meta should include relations stage');
 
+        result = await request(`/api/thoughts/${thoughtId}`, {
+            method: 'PATCH',
+            body: JSON.stringify({ action: 'overwrite', text: 'API regression thought edited', subItems: [] })
+        });
+        assert(result.response.ok, 'PATCH ready thought should succeed');
+        assert(result.body.thought.aiStatus === 'ready', 'PATCH ready thought should keep current AI status instead of stale pending');
+        assert(Number.isFinite(result.body.thought.relationCount), 'PATCH ready thought should include current relation count');
+        const editedThoughtVersion = result.body.thought.version;
+
         fs.mkdirSync(path.join(dataDir, 'thoughts.meta'), { recursive: true });
         fs.mkdirSync(path.join(dataDir, 'relations'), { recursive: true });
         fs.writeFileSync(
@@ -751,7 +760,7 @@ async function run() {
             body: JSON.stringify({ action: 'append', text: ' stale', baseVersion: 0 })
         });
         assert(result.response.status === 409, 'stale thought patch should return 409');
-        assert(result.body.currentVersion === 1, 'thought conflict should report current version');
+        assert(result.body.currentVersion === editedThoughtVersion, 'thought conflict should report current version');
 
         result = await request(`/api/thoughts/${thoughtId}`, {
             method: 'PATCH',

@@ -499,6 +499,10 @@ function registerThoughtRoutes(app, context) {
             if (modified) {
                 thought.updatedAt = Date.now();
                 thought.version = (thought.version || 1) + 1;
+                const meta = await storage.readThoughtMeta(thought.id);
+                thought.aiStatus = meta?.status || thought.aiStatus || 'missing';
+                thought.aiError = meta?.error || null;
+                thought.relationCount = await storage.readRelationCount(thought.id);
                 await saveThoughts(thoughts);
                 scheduleIndexNotepads(250);
                 broadcastThoughtsUpdate('update', thought);
