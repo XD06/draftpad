@@ -250,6 +250,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         isApplyingRemoteUpdate = true;
         editor.value = detail.content || '';
         isApplyingRemoteUpdate = false;
+        const remoteVersion = Number(detail.version);
+        if (Number.isFinite(remoteVersion)) {
+            setCurrentNoteVersion(currentNotepadId, remoteVersion);
+            cacheSyncedNote(currentNotepadId, detail.content || '', { version: remoteVersion });
+            dirtyConflictNotepadIds.delete(currentNotepadId);
+            setStartupSyncStatus('synced', '已同步');
+        }
         debouncedUpdateToC();
     });
 

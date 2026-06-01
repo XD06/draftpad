@@ -191,6 +191,14 @@ function assertDataSpaceSettingsRegression() {
         'WebSocket setup and broadcast helpers should live in the websocket server module'
     );
     assert(
+        websocketSource.includes('function broadcastUpdate(notepadId, content, senderId = \'api\', version = undefined)') &&
+        websocketSource.includes('version') &&
+        appSource.includes('const remoteVersion = Number(detail.version)') &&
+        appSource.includes('setCurrentNoteVersion(currentNotepadId, remoteVersion)') &&
+        appSource.includes('cacheSyncedNote(currentNotepadId, detail.content || \'\', { version: remoteVersion })'),
+        'remote note updates should carry and apply the saved version to avoid false 409 conflicts across devices'
+    );
+    assert(
         serverSource.includes('createSearchIndex({') &&
         indexingSource.includes('function createSearchIndex') &&
         indexingSource.includes('searchNotepads(query)') &&

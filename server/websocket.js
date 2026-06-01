@@ -30,12 +30,13 @@ function createWebSocketHub({ server, validateOrigin, debug = false }) {
         sendToAll(message);
     }
 
-    function broadcastUpdate(notepadId, content, senderId = 'api') {
+    function broadcastUpdate(notepadId, content, senderId = 'api', version = undefined) {
         sendToAll({
             type: 'notes_update',
             notepadId,
             content,
-            userId: senderId
+            userId: senderId,
+            version
         });
     }
 

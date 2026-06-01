@@ -80,7 +80,7 @@ function registerNoteRoutes(app, context) {
                 await storage.saveNotepadsMeta(data);
             }
 
-            broadcastUpdate(id, content, senderId);
+            broadcastUpdate(id, content, senderId, targetNotepad?.version || 1);
             scheduleIndexNotepads();
             res.json({ success: true, version: targetNotepad?.version || 1 });
         } catch (err) {
@@ -170,7 +170,7 @@ function registerNoteRoutes(app, context) {
                     await storage.saveNotepadsMeta(data);
                 }
 
-                broadcastUpdate(id, content, senderId);
+            broadcastUpdate(id, content, senderId, targetNotepad.version);
                 scheduleIndexNotepads();
                 return res.json({ success: true, content, modified, version: savedVersion });
             }
