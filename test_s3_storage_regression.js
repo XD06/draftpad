@@ -35,8 +35,9 @@ const fakeS3 = {
 
         if (name === 'HeadObjectCommand') {
             if (!objects.has(input.Key)) {
-                const error = new Error('Not found');
-                error.name = 'NotFound';
+                const error = new Error('S3-compatible missing object');
+                error.name = 'Unknown';
+                error.$metadata = { httpStatusCode: 400 };
                 throw error;
             }
             return { ContentLength: Buffer.byteLength(objects.get(input.Key)) };
@@ -49,8 +50,9 @@ const fakeS3 = {
 
         if (name === 'GetObjectCommand') {
             if (!objects.has(input.Key)) {
-                const error = new Error('Not found');
-                error.name = 'NoSuchKey';
+                const error = new Error('S3-compatible missing object');
+                error.name = 'Unknown';
+                error.$metadata = { httpStatusCode: 400 };
                 throw error;
             }
             return { Body: Buffer.from(objects.get(input.Key)) };

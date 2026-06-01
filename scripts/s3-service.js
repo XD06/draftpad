@@ -83,6 +83,12 @@ function isNotFound(error) {
     return error?.name === 'NoSuchKey' || error?.name === 'NotFound' || error?.$metadata?.httpStatusCode === 404;
 }
 
+function isCompatibleMissingObject(error) {
+    const status = error?.$metadata?.httpStatusCode;
+    const name = String(error?.name || '');
+    return status === 400 && (name === 'Unknown' || name === 'UnknownError');
+}
+
 async function putObject(key, body, contentType = 'application/octet-stream') {
     await ensureClient().send(new PutObjectCommand({
         Bucket: s3Bucket,
@@ -100,7 +106,7 @@ async function getObject(key) {
         }));
         return bodyToString(result.Body);
     } catch (error) {
-        if (isNotFound(error)) return null;
+        if (isNotFound(error) || isCompatibleMissingObject(error)) return null;
         throw error;
     }
 }
@@ -152,7 +158,7 @@ async function headObject(key) {
             Key: normalizeKey(key)
         }));
     } catch (error) {
-        if (isNotFound(error)) return null;
+        if (isNotFound(error) || isCompatibleMissingObject(error)) return null;
         throw error;
     }
 }

@@ -161,9 +161,11 @@ thought.md
 # Temporary/generated icon candidates
 public/Assets/1.png
 public/Assets/2.png
+public/Assets/12.png
 public/Assets/22.png
 public/Assets/2_*.ico
 public/Assets/favicon-512.png
+public/Assets/test.png
 
 # Unused local font experiments
 font/MapleMono-NF-CN-Regular.ttf
