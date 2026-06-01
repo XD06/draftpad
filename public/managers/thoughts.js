@@ -15,6 +15,7 @@ import { assignRealSubItemIds, cleanSubItems, createSubItem, parseLegacyText, so
 import { collectThoughtTags, filterThoughts, sortThoughts } from './thought-renderer.js';
 
 const AI_PENDING_MIN_VISIBLE_MS = 1200;
+const THOUGHTS_CACHE_KEY = 'dumbpad_thoughts_cache_v1';
 
 export class ThoughtsManager {
     constructor(app) {
@@ -39,7 +40,7 @@ export class ThoughtsManager {
         this.tagsFilter = document.getElementById('thoughts-tags-filter');
         this.outboxStatus = document.getElementById('thoughts-outbox-status');
 
-        this.thoughts = [];
+        this.thoughts = this.loadThoughtsCache();
         this.quickAddTags = [];
         this.activeTag = '';
         this.savedTags = this.loadSavedTags();
@@ -222,6 +223,10 @@ export class ThoughtsManager {
             this.editorContainer.style.display = 'none';
             this.toggleBtn.classList.add('active');
             if (floatingActions) floatingActions.style.display = 'none';
+            if (this.thoughts.length > 0) {
+                this.syncTagsFromThoughts(this.thoughts);
+                this.render();
+            }
             await this.fetchThoughts();
         } else {
             document.body.classList.remove('thoughts-mode');
@@ -229,6 +234,27 @@ export class ThoughtsManager {
             this.editorContainer.style.display = 'flex';
             this.toggleBtn.classList.remove('active');
             if (floatingActions) floatingActions.style.display = 'flex';
+        }
+    }
+
+    loadThoughtsCache() {
+        try {
+            const cached = JSON.parse(localStorage.getItem(THOUGHTS_CACHE_KEY) || 'null');
+            const thoughts = Array.isArray(cached?.thoughts) ? cached.thoughts : [];
+            return this.mergeOutboxThoughts(thoughts);
+        } catch (_error) {
+            return this.mergeOutboxThoughts([]);
+        }
+    }
+
+    saveThoughtsCache(thoughts) {
+        try {
+            localStorage.setItem(THOUGHTS_CACHE_KEY, JSON.stringify({
+                updatedAt: Date.now(),
+                thoughts: Array.isArray(thoughts) ? thoughts.slice(0, 500) : []
+            }));
+        } catch (_error) {
+            // Cache is a best-effort startup accelerator.
         }
     }
 
@@ -317,6 +343,7 @@ export class ThoughtsManager {
         const query = this.searchInput.value.trim();
         try {
             this.thoughts = this.mergeOutboxThoughts(await this.apiClient.list({ date, query }));
+            if (!date && !query) this.saveThoughtsCache(this.thoughts);
             this.syncTagsFromThoughts(this.thoughts);
             this.render();
         } catch (err) {

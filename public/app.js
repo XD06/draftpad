@@ -2065,15 +2065,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     const initializeApp = async () => {
         addEventListeners();
         appSettings = settingsManager.loadSettings();
+        scheduleIdleTask(() => {
+            ensureThoughtsManager().catch(() => {});
+        });
         hydrateStartupCache();
         loadAppConfig();
         await loadNotepads();
         await syncCurrentDirtyNote();
         applySettings(appSettings);
         await registerServiceWorker();
-        scheduleIdleTask(() => {
-            ensureThoughtsManager().catch(() => {});
-        });
         isInitialLoad = false;
     };
 

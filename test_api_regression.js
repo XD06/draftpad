@@ -43,6 +43,7 @@ function assertSaveNotesConflictScope() {
 }
 
 function assertThoughtsFrontendRegressions() {
+    const appSource = fs.readFileSync(path.join(ROOT, 'public', 'app.js'), 'utf8');
     const thoughtsSource = fs.readFileSync(path.join(ROOT, 'public', 'managers', 'thoughts.js'), 'utf8');
     const serverSource = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
     const thoughtRoutesSource = fs.readFileSync(path.join(ROOT, 'routes', 'thought-routes.js'), 'utf8');
@@ -142,6 +143,16 @@ function assertThoughtsFrontendRegressions() {
         thoughtsCss.includes('.relations-count.has-count') &&
         thoughtsCss.includes('[data-theme=\"dark\"] .relations-count.has-count'),
         'AI and relation count badges should expose zero/non-zero classes with theme-aware colors'
+    );
+    const initializeStart = appSource.indexOf('const initializeApp = async () =>');
+    const initializeSource = initializeStart >= 0 ? appSource.slice(initializeStart) : '';
+    assert(
+        thoughtsSource.includes("const THOUGHTS_CACHE_KEY = 'dumbpad_thoughts_cache_v1'") &&
+        thoughtsSource.includes('loadThoughtsCache()') &&
+        thoughtsSource.includes('saveThoughtsCache(thoughts)') &&
+        initializeSource.includes('scheduleIdleTask(() =>') &&
+        initializeSource.indexOf('scheduleIdleTask(() =>') < initializeSource.indexOf('await loadNotepads()'),
+        'Thoughts view should load its module early and render cached thoughts before the network refresh'
     );
 }
 
