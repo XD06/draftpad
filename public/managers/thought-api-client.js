@@ -42,10 +42,12 @@ export default class ThoughtApiClient {
         return body;
     }
 
-    list({ date = '', query = '' } = {}) {
+    list({ date = '', query = '', limit = '', light = false } = {}) {
         const params = new URLSearchParams();
         if (date) params.set('date', date);
         if (query) params.set('q', query);
+        if (limit) params.set('limit', String(limit));
+        if (light) params.set('light', '1');
         const qs = params.toString();
         return this.request(`${this.baseUrl}${qs ? `?${qs}` : ''}`);
     }

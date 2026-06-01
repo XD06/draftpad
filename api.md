@@ -297,6 +297,9 @@ Thought 是一个**主任务 + 子任务（最多二层）**的待办结构。
 |---|---|---|
 | `q` | string | 搜索关键词（匹配主任务 + 子任务文本） |
 | `date` | string | 日期过滤，格式 `YYYY-MM-DD` |
+| `tag` | string | 按用户标签精确过滤 |
+| `limit` | number | 限制返回数量，最大 50 |
+| `light` | `1` / `true` | 轻量列表模式，只返回基础 Thought 字段，不读取 AI meta 和 relation count。用于手动关联搜索等高频输入场景。 |
 
 **响应：** `Thought[]`
 
@@ -313,6 +316,9 @@ curl http://localhost:3000/api/thoughts
 
 # 搜索
 curl "http://localhost:3000/api/thoughts?q=报告"
+
+# 手动关联等轻量搜索
+curl "http://localhost:3000/api/thoughts?q=报告&limit=8&light=1"
 
 # 按日期
 curl "http://localhost:3000/api/thoughts?date=2026-05-17"

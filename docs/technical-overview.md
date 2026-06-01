@@ -53,7 +53,29 @@
 
 这个流程要求快速记录不等待 AI，不等待 S3 之外的额外流程，也不因为离线而丢失本地输入。
 
-## 5. 重构约束
+### 手动关联搜索
+
+Thought 关联面板里的“搜索并手动链接 Thought”使用 `/api/thoughts?q=...&limit=8&light=1`。该轻量模式只返回候选 Thought 的基础字段，不读取每条候选的 AI meta 和 relation count，避免 S3 场景下输入每个字都触发多次远程对象读取。
+
+前端侧由 `ThoughtsManager.queueManualRelationSearch()` 做输入防抖，并使用 `manualRelationSearchSeq` 丢弃过期响应。候选项通过 `highlightSearch()` 高亮当前关键词；如果命中的是子任务文本，候选摘要会同时显示主 Thought 和匹配子任务。
+
+### Thought ID
+
+新建 Thought 使用 `createThoughtId()` 生成 `Date.now()` 加随机后缀的字符串 id，避免同一毫秒内连续创建多个 Thought 时发生 id 碰撞。排序和时间展示仍以 `createdAt/updatedAt` 为准。
+
+## 5. PWA 与移动端性能
+
+PWA 缓存策略分为三层：
+
+- API 请求始终绕过 Service Worker 缓存，保证用户数据实时读取。
+- HTML 导航使用 network-first，离线或慢网时回退到缓存的 `index.html`。
+- JS/CSS/图片/字体等静态资源使用 cache-first，避免手机 PWA 每次打开重复下载大资源。
+
+Service Worker 的核心缓存包含入口页面、主 JS/CSS、Vditor/Lute、Thought 拆分模块和图标。`WARM_ASSETS` 额外预热中文字体、代码字体和 highlight 主包；这些资源较大但变化很少，第一次安装或版本更新时缓存，后续打开直接复用。
+
+移动端 CSS 在支持 `100dvh` 的浏览器上覆盖主要容器高度，降低地址栏收起、虚拟键盘弹出时 `100vh` 导致的错位。PWA asset manifest 生成器会排除本地候选图片、临时图标和生成产物，避免把无关资源带进缓存清单。
+
+## 6. 重构约束
 
 - 不改变用户数据结构。
 - 不改变已有 API 行为。
@@ -61,7 +83,7 @@
 - 不为拆文件而拆文件；只有能降低调用方认知负担时才提取模块。
 - 每轮只处理一个领域，并运行对应测试。
 
-## 6. 后续建议
+## 7. 后续建议
 
 本轮已完成的低风险重构：
 

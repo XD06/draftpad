@@ -20,6 +20,8 @@ function sleep(ms) {
 
 function assertSaveNotesConflictScope() {
     const appSource = fs.readFileSync(path.join(ROOT, 'public', 'app.js'), 'utf8');
+    const serverSource = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
+    const noteRoutesSource = fs.readFileSync(path.join(ROOT, 'routes', 'note-routes.js'), 'utf8');
     const start = appSource.indexOf('async function saveNotes(');
     const end = appSource.indexOf('let dirtySyncInFlight', start);
     assert(start >= 0 && end > start, 'saveNotes function should be discoverable');
@@ -32,11 +34,18 @@ function assertSaveNotesConflictScope() {
         !/const\s+baseVersion\s*=/.test(saveNotesSource),
         'saveNotes should not redeclare baseVersion inside try because catch needs it'
     );
+    assert(
+        serverSource.includes('registerNoteRoutes(app') &&
+        noteRoutesSource.includes("app.post('/api/notes/:id'") &&
+        noteRoutesSource.includes('currentVersion: notepad.version || 1'),
+        'note save conflict behavior should live in the note route module'
+    );
 }
 
 function assertThoughtsFrontendRegressions() {
     const thoughtsSource = fs.readFileSync(path.join(ROOT, 'public', 'managers', 'thoughts.js'), 'utf8');
     const serverSource = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
+    const thoughtRoutesSource = fs.readFileSync(path.join(ROOT, 'routes', 'thought-routes.js'), 'utf8');
     const thoughtApiClientSource = fs.readFileSync(path.join(ROOT, 'public', 'managers', 'thought-api-client.js'), 'utf8');
     const thoughtOutboxSource = fs.readFileSync(path.join(ROOT, 'public', 'managers', 'thought-outbox.js'), 'utf8');
     const thoughtsCss = fs.readFileSync(path.join(ROOT, 'public', 'Assets', 'thoughts.css'), 'utf8');
@@ -81,9 +90,10 @@ function assertThoughtsFrontendRegressions() {
         'thought overwrite outbox payload should preserve completed state'
     );
     assert(
-        serverSource.includes('async function withRelationWriteLock') &&
-        serverSource.includes('await withRelationWriteLock(async () =>') &&
-        serverSource.includes("app.post('/api/thoughts/:id/relations'"),
+        serverSource.includes('registerThoughtRoutes(app') &&
+        thoughtRoutesSource.includes('async function withRelationWriteLock') &&
+        thoughtRoutesSource.includes('await withRelationWriteLock(async () =>') &&
+        thoughtRoutesSource.includes("app.post('/api/thoughts/:id/relations'"),
         'manual relation writes should share the AI relation write lock to avoid confirm/rebuild races'
     );
     assert(
@@ -94,6 +104,30 @@ function assertThoughtsFrontendRegressions() {
         !thoughtsSource.includes('fetch(`/api/thoughts'),
         'ThoughtsManager should delegate Thought HTTP details to ThoughtApiClient'
     );
+    assert(
+        thoughtApiClientSource.includes("params.set('light', '1')") &&
+        thoughtApiClientSource.includes("params.set('limit'"),
+        'ThoughtApiClient should support lightweight limited thought search'
+    );
+    assert(
+        thoughtsSource.includes('queueManualRelationSearch') &&
+        thoughtsSource.includes('manualRelationSearchSeq') &&
+        thoughtsSource.includes('limit: 8, light: true') &&
+        thoughtsSource.includes('summaryHtml = this.highlightPlainText') &&
+        thoughtsSource.includes('textSnippetAroundQuery'),
+        'manual relation search should be debounced, lightweight, stale-safe, and keyword-highlighted'
+    );
+    assert(
+        thoughtRoutesSource.includes('const light =') &&
+        thoughtRoutesSource.includes('const limit =') &&
+        thoughtRoutesSource.includes('return res.json(thoughts.map(thought => ({'),
+        'thought routes should expose a lightweight search response that skips meta and relation-count reads'
+    );
+    assert(
+        thoughtRoutesSource.includes('function createThoughtId') &&
+        thoughtRoutesSource.includes('Math.random().toString(36)'),
+        'thought creation should avoid Date.now-only id collisions during rapid creates'
+    );
 }
 
 function assertDataSpaceSettingsRegression() {
@@ -101,13 +135,41 @@ function assertDataSpaceSettingsRegression() {
     const settingsDataPanelSource = fs.readFileSync(path.join(ROOT, 'public', 'managers', 'settings-data-panel.js'), 'utf8');
     const indexSource = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
     const serverSource = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
+    const authRoutesSource = fs.readFileSync(path.join(ROOT, 'routes', 'auth-routes.js'), 'utf8');
+    const websocketSource = fs.readFileSync(path.join(ROOT, 'server', 'websocket.js'), 'utf8');
+    const indexingSource = fs.readFileSync(path.join(ROOT, 'server', 'indexing.js'), 'utf8');
     const dataManagementRoutesSource = fs.readFileSync(path.join(ROOT, 'routes', 'data-management-routes.js'), 'utf8');
+    const notepadRoutesSource = fs.readFileSync(path.join(ROOT, 'routes', 'notepad-routes.js'), 'utf8');
+    const searchRoutesSource = fs.readFileSync(path.join(ROOT, 'routes', 'search-routes.js'), 'utf8');
+    const shareRoutesSource = fs.readFileSync(path.join(ROOT, 'routes', 'share-routes.js'), 'utf8');
+    const staticRoutesSource = fs.readFileSync(path.join(ROOT, 'routes', 'static-routes.js'), 'utf8');
     const storageSource = fs.readFileSync(path.join(ROOT, 'scripts', 'storage.js'), 'utf8');
     const prefixToolsSource = fs.readFileSync(path.join(ROOT, 'scripts', 's3-prefix-tools.js'), 'utf8');
 
     assert(
         indexSource.includes('settings-space-list'),
         'settings should expose a cloud data space list'
+    );
+    assert(
+        serverSource.includes('registerAuthRoutes(app') &&
+        authRoutesSource.includes("app.post('/api/verify-pin'") &&
+        authRoutesSource.includes("app.use('/api'") &&
+        authRoutesSource.includes("app.get('/api/config'"),
+        'auth routes and PIN protection middleware should live in the auth route module'
+    );
+    assert(
+        serverSource.includes('createWebSocketHub({') &&
+        websocketSource.includes('function createWebSocketHub') &&
+        websocketSource.includes('broadcastWebSocketMessage') &&
+        websocketSource.includes('broadcastUpdate'),
+        'WebSocket setup and broadcast helpers should live in the websocket server module'
+    );
+    assert(
+        serverSource.includes('createSearchIndex({') &&
+        indexingSource.includes('function createSearchIndex') &&
+        indexingSource.includes('searchNotepads(query)') &&
+        indexingSource.includes('watchSearchDocuments'),
+        'search indexing cache, search, and filesystem watchers should live in the indexing server module'
     );
     assert(
         appSource.includes('import SettingsDataPanel from \'./managers/settings-data-panel.js\'') &&
@@ -128,6 +190,33 @@ function assertDataSpaceSettingsRegression() {
         dataManagementRoutesSource.includes("app.get('/api/data-management/s3/spaces'") &&
         dataManagementRoutesSource.includes("app.post('/api/data-management/s3/select-space'"),
         'server should expose data space listing and selection APIs through the data-management route module'
+    );
+    assert(
+        serverSource.includes('registerNotepadRoutes(app') &&
+        notepadRoutesSource.includes("app.get('/api/notepads'") &&
+        notepadRoutesSource.includes("app.post('/api/upload'") &&
+        notepadRoutesSource.includes("app.delete('/api/notepads/:id'"),
+        'notepad list, create, upload, rename, and delete routes should live in the notepad route module'
+    );
+    assert(
+        serverSource.includes('registerSearchRoutes(app') &&
+        searchRoutesSource.includes("app.get('/api/search'") &&
+        searchRoutesSource.includes('searchNotepads(query)'),
+        'search route should live in the search route module'
+    );
+    assert(
+        serverSource.includes('registerShareRoutes(app') &&
+        shareRoutesSource.includes("app.get('/api/share/:id'") &&
+        shareRoutesSource.includes("app.get('/s/:id'") &&
+        shareRoutesSource.includes('getShareToken(id)'),
+        'share URL and public share rendering routes should live in the share route module'
+    );
+    assert(
+        serverSource.includes('registerStaticRoutes(app') &&
+        staticRoutesSource.includes("app.get('/service-worker.js'") &&
+        staticRoutesSource.includes("app.get('/asset-manifest.json'") &&
+        staticRoutesSource.includes("app.get('/health'"),
+        'static app support routes should live in the static route module'
     );
     assert(
         storageSource.includes('activeS3Prefix') &&

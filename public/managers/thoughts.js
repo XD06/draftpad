@@ -47,6 +47,8 @@ export class ThoughtsManager {
         this.pendingCreateIds = new Set(); // Prevent duplicate from race conditions
         this.pendingAIStatusTimers = new Map();
         this.outboxInFlight = false;
+        this.manualRelationSearchTimer = null;
+        this.manualRelationSearchSeq = 0;
 
         this.initDateFilter();
         this.initEventListeners();
@@ -1323,7 +1325,7 @@ export class ThoughtsManager {
         panel.addEventListener('input', (e) => {
             const input = e.target.closest('.thought-manual-relation-input');
             if (!input) return;
-            this.searchManualRelationTargets(panel, thought.id, input.value);
+            this.queueManualRelationSearch(panel, thought.id, input.value);
         });
         card.appendChild(panel);
         button?.classList.add('active');
@@ -1371,7 +1373,25 @@ export class ThoughtsManager {
         return renderManualRelationControlsHtml(thoughtId, value => this.escapeHtml(value));
     }
 
-    async searchManualRelationTargets(panel, sourceId, query) {
+    queueManualRelationSearch(panel, sourceId, query) {
+        const resultsEl = panel.querySelector('.thought-manual-relation-results');
+        if (!resultsEl) return;
+        const q = String(query || '').trim();
+        const searchSeq = ++this.manualRelationSearchSeq;
+        clearTimeout(this.manualRelationSearchTimer);
+
+        if (!q) {
+            resultsEl.innerHTML = '';
+            return;
+        }
+
+        resultsEl.innerHTML = '<div class="thought-manual-relation-empty">搜索中...</div>';
+        this.manualRelationSearchTimer = setTimeout(() => {
+            this.searchManualRelationTargets(panel, sourceId, q, searchSeq);
+        }, 180);
+    }
+
+    async searchManualRelationTargets(panel, sourceId, query, searchSeq = this.manualRelationSearchSeq) {
         const resultsEl = panel.querySelector('.thought-manual-relation-results');
         if (!resultsEl) return;
         const q = String(query || '').trim();
@@ -1381,7 +1401,8 @@ export class ThoughtsManager {
         }
 
         try {
-            const thoughts = await this.apiClient.list({ query: q });
+            const thoughts = await this.apiClient.list({ query: q, limit: 8, light: true });
+            if (searchSeq !== this.manualRelationSearchSeq) return;
             const linkedIds = new Set(
                 Array.from(panel.querySelectorAll('.thought-relation-item'))
                     .map(item => item.dataset.relationTarget)
@@ -1391,17 +1412,73 @@ export class ThoughtsManager {
                 .slice(0, 6);
             resultsEl.innerHTML = options.length ? options.map(item => {
                 const text = String(item.text || '').replace(/\s+/g, ' ').trim();
-                const summary = text.length > 80 ? `${text.slice(0, 80)}...` : text || '空白想法';
+                const subItems = Array.isArray(item.subItems) ? item.subItems : [];
+                const matchedSubItem = subItems
+                    .map(subItem => String(subItem?.text || '').replace(/\s+/g, ' ').trim())
+                    .find(subText => subText.toLowerCase().includes(q.toLowerCase()));
+                const summary = this.buildManualRelationSummary(text, matchedSubItem, q);
+                const summaryHtml = this.highlightPlainText(summary, q);
                 return `
                     <button type="button" class="thought-manual-relation-option" data-manual-relation-target="${this.escapeHtml(item.id)}">
-                        ${this.escapeHtml(summary)}
+                        ${summaryHtml}
                     </button>
                 `;
             }).join('') : '<div class="thought-manual-relation-empty">没有可链接结果</div>';
         } catch (err) {
+            if (searchSeq !== this.manualRelationSearchSeq) return;
             console.warn('Failed to search manual relation targets:', err);
             resultsEl.innerHTML = '<div class="thought-manual-relation-empty">搜索失败</div>';
         }
+    }
+
+    buildManualRelationSummary(text, matchedSubItem, query) {
+        const mainText = text || '空白想法';
+        const lowerText = mainText.toLowerCase();
+        const lowerQuery = String(query || '').toLowerCase();
+        if (lowerQuery && lowerText.includes(lowerQuery)) {
+            return this.textSnippetAroundQuery(mainText, query, 96);
+        }
+        if (matchedSubItem) {
+            const mainPrefix = mainText.length > 36 ? `${mainText.slice(0, 36)}...` : mainText;
+            return `${mainPrefix} · ${this.textSnippetAroundQuery(matchedSubItem, query, 72)}`;
+        }
+        return mainText.length > 96 ? `${mainText.slice(0, 96)}...` : mainText;
+    }
+
+    textSnippetAroundQuery(text, query, maxLength = 96) {
+        const cleanText = String(text || '').replace(/\s+/g, ' ').trim();
+        const cleanQuery = String(query || '').trim();
+        if (!cleanText || !cleanQuery || cleanText.length <= maxLength) return cleanText;
+
+        const index = cleanText.toLowerCase().indexOf(cleanQuery.toLowerCase());
+        if (index < 0) return `${cleanText.slice(0, maxLength)}...`;
+
+        const side = Math.max(12, Math.floor((maxLength - cleanQuery.length) / 2));
+        const start = Math.max(0, index - side);
+        const end = Math.min(cleanText.length, index + cleanQuery.length + side);
+        return `${start > 0 ? '...' : ''}${cleanText.slice(start, end)}${end < cleanText.length ? '...' : ''}`;
+    }
+
+    highlightPlainText(text, query) {
+        const cleanText = String(text || '');
+        const cleanQuery = String(query || '').trim();
+        if (!cleanText || !cleanQuery) return this.escapeHtml(cleanText);
+
+        const lowerText = cleanText.toLowerCase();
+        const lowerQuery = cleanQuery.toLowerCase();
+        let lastIdx = 0;
+        let idx = lowerText.indexOf(lowerQuery);
+        let html = '';
+
+        while (idx !== -1) {
+            html += this.escapeHtml(cleanText.slice(lastIdx, idx));
+            html += `<mark class="thought-highlight">${this.escapeHtml(cleanText.slice(idx, idx + cleanQuery.length))}</mark>`;
+            lastIdx = idx + cleanQuery.length;
+            idx = lowerText.indexOf(lowerQuery, lastIdx);
+        }
+
+        html += this.escapeHtml(cleanText.slice(lastIdx));
+        return html;
     }
 
     async createManualRelation(card, thought, targetId, relationType = 'manual') {

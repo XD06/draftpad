@@ -10,6 +10,8 @@
     "test:ai-provider": "node test_ai_provider.js",
     "test:ai-queue": "node test_ai_queue_relations.js",
     "test:relations": "node test_relations_calculator.js",
+    "test:note-sync": "node test_note_sync_controller.js",
+    "test:pwa-cache": "node test_pwa_cache_regression.js",
     "test:api": "node test_api_regression.js",
     "test:thoughts-migration": "node test_migrate_thoughts_local.js",
     "test:s3-migration": "node test_migrate_local_to_s3_cli.js",

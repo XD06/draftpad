@@ -722,3 +722,26 @@ main {
         border-radius: 0;
     }
 }
+
+@supports (height: 100dvh) {
+    .container {
+        height: 100dvh;
+    }
+
+    @media (max-width: 980px) {
+        .three-column-layout {
+            height: calc(100dvh - 56px) !important;
+        }
+
+        .sidebar {
+            height: calc(100dvh - 100px) !important;
+            max-height: calc(100dvh - 100px) !important;
+        }
+    }
+
+    @media (max-width: 640px) {
+        .view-container {
+            height: calc(100dvh - 100px) !important;
+        }
+    }
+}

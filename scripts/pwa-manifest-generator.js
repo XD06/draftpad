@@ -6,7 +6,18 @@ const ASSETS_DIR = path.join(PUBLIC_DIR, "Assets");
 function getFiles(dir, basePath = "/") {
   let fileList = [];
   const files = fs.readdirSync(dir);
-  const excludeList = [".DS_Store"]; // Add files or patterns to exclude here
+  const excludeList = new Set([
+    ".DS_Store",
+    "asset-manifest.json",
+    "manifest.json",
+    "1.png",
+    "2.png",
+    "12.png",
+    "22.png",
+    "test.png",
+    "2_64x64.ico",
+    "2_256x256.ico",
+  ]);
 
   files.forEach((file) => {
     const filePath = path.join(dir, file);
@@ -15,7 +26,7 @@ function getFiles(dir, basePath = "/") {
     if (fs.statSync(filePath).isDirectory()) {
       fileList = fileList.concat(getFiles(filePath, fileUrl));
     } else {
-      if (!excludeList.includes(file)){
+      if (!excludeList.has(file)) {
         fileList.push(fileUrl);
       }
     }

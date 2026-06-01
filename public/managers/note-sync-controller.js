@@ -68,7 +68,73 @@ export default class NoteSyncController {
         });
     }
 
+    cacheDirtyNote(notepadId, content, { version, notepads = [] } = {}) {
+        return this.cacheNote(notepadId, content, {
+            version,
+            dirty: true
+        }, { notepads });
+    }
+
+    cacheSyncedNote(notepadId, content, { version, notepads = [] } = {}) {
+        return this.cacheNote(notepadId, content, {
+            version,
+            dirty: false
+        }, { notepads });
+    }
+
+    cacheConflictNote(notepadId, content, { localVersion, remoteVersion, notepads = [] } = {}) {
+        return this.cacheNote(notepadId, content, {
+            version: localVersion,
+            dirty: true,
+            remoteVersion,
+            conflict: true
+        }, { notepads });
+    }
+
     getCachedNote(notepadId) {
         return this.loadStartupCache()?.notes?.[notepadId] || null;
+    }
+
+    getDirtyCachedNotes({ currentNotepads = [], conflictIds = new Set() } = {}) {
+        const cache = this.loadStartupCache();
+        if (!cache?.notes || typeof cache.notes !== 'object') return [];
+        const knownNotepads = [
+            ...(Array.isArray(currentNotepads) ? currentNotepads : []),
+            ...(Array.isArray(cache.notepads) ? cache.notepads : [])
+        ];
+        const names = new Map();
+        for (const notepad of knownNotepads) {
+            if (notepad?.id && !names.has(notepad.id)) {
+                names.set(notepad.id, notepad.name || notepad.id);
+            }
+        }
+        return Object.entries(cache.notes)
+            .filter(([id, note]) => id && note?.dirty)
+            .map(([id, note]) => ({
+                id,
+                name: names.get(id) || id,
+                savedAt: note.savedAt || 0,
+                conflict: !!note.conflict || conflictIds.has(id)
+            }))
+            .sort((a, b) => Number(b.savedAt || 0) - Number(a.savedAt || 0));
+    }
+
+    canSyncDirtyNote({
+        notepadId,
+        cachedNote,
+        editorContent,
+        isOnline = true,
+        notepadExists = true,
+        conflictIds = new Set()
+    } = {}) {
+        if (!isOnline) return { ok: false, reason: 'offline' };
+        if (!notepadId) return { ok: false, reason: 'invalid_notepad' };
+        if (!cachedNote?.dirty) return { ok: false, reason: 'no_dirty' };
+        if (editorContent !== cachedNote.content) return { ok: false, reason: 'editor_changed' };
+        if (!notepadExists) return { ok: false, reason: 'notepad_missing' };
+        if (conflictIds.has(notepadId) || cachedNote.conflict) {
+            return { ok: false, reason: 'conflict' };
+        }
+        return { ok: true, reason: 'ready' };
     }
 }

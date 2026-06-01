@@ -7,8 +7,6 @@ import NoteSyncController from './managers/note-sync-controller.js';
 import SettingsDataPanel from './managers/settings-data-panel.js';
 import { renderSidebar, renderRecentFiles, trackRecentFile, updateSidebarSelection } from './sidebar.js';
 import { HybridMarkdownEditor } from './hybrid-editor.js';
-import { ThoughtsManager } from './managers/thoughts.js';
-import { marked } from '/js/marked/marked.esm.js';
 
 document.addEventListener('DOMContentLoaded', async () => {
     const DEBUG = false;
@@ -175,10 +173,44 @@ document.addEventListener('DOMContentLoaded', async () => {
     const storageManager = new StorageManager();
     const noteSyncController = new NoteSyncController({ storageManager });
     let settingsDataPanel = null;
+    let thoughtsManager = null;
+    let thoughtsManagerLoader = null;
+    let openCommandSearch = null;
+    let markedLoader = null;
     let currentTheme = storageManager.load(THEME_KEY);
     const settingsManager = new SettingsManager(storageManager, applySettings);
     const confirmationManager = new ConfirmationManager();
-    const thoughtsManager = new ThoughtsManager({ toaster, confirmationManager });
+
+    function scheduleIdleTask(callback) {
+        if ('requestIdleCallback' in window) {
+            window.requestIdleCallback(callback, { timeout: 2500 });
+            return;
+        }
+        setTimeout(callback, 600);
+    }
+
+    function ensureThoughtsManager() {
+        if (!thoughtsManagerLoader) {
+            thoughtsManagerLoader = import('./managers/thoughts.js')
+                .then(({ ThoughtsManager }) => {
+                    thoughtsManager = new ThoughtsManager({ toaster, confirmationManager });
+                    thoughtsManager.app.openSearch = () => openCommandSearch?.();
+                    return thoughtsManager;
+                })
+                .catch((error) => {
+                    thoughtsManagerLoader = null;
+                    console.warn('Failed to load thoughts manager:', error);
+                    toaster.show('Failed to load thoughts', 'error', true);
+                    throw error;
+                });
+        }
+        return thoughtsManagerLoader;
+    }
+
+    function renderMarkdown(markdown) {
+        markedLoader ||= import('/js/marked/marked.esm.js');
+        return markedLoader.then(({ marked }) => marked.parse(markdown || ''));
+    }
     
     // Stub PreviewManager since Vditor handles rendering
     const previewManager = { 
@@ -191,7 +223,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         addEventListeners: () => {},
         addCopyLangButtonsToCodeBlocks: () => {},
         initializeMarkdown: () => Promise.resolve(),
-        preparePrintContent: () => ({ formattedContent: marked.parse(editor.value), mainStyles: '', previewStyles: '', highlightStyles: '', printStyles: '' }) 
+        preparePrintContent: async () => ({ formattedContent: await renderMarkdown(editor.value), mainStyles: '', previewStyles: '', highlightStyles: '', printStyles: '' })
     };
 
     // Generate user ID for lightweight multi-tab update filtering.
@@ -603,33 +635,40 @@ document.addEventListener('DOMContentLoaded', async () => {
         noteSyncController.cacheNote(notepadId, content, options, { notepads: currentNotepads });
     }
 
+    function cacheDirtyNote(notepadId, content, options = {}) {
+        if (!isValidNotepadId(notepadId)) return;
+        noteSyncController.cacheDirtyNote(notepadId, content, {
+            ...options,
+            notepads: currentNotepads
+        });
+    }
+
+    function cacheSyncedNote(notepadId, content, options = {}) {
+        if (!isValidNotepadId(notepadId)) return;
+        noteSyncController.cacheSyncedNote(notepadId, content, {
+            ...options,
+            notepads: currentNotepads
+        });
+    }
+
+    function cacheConflictNote(notepadId, content, options = {}) {
+        if (!isValidNotepadId(notepadId)) return;
+        noteSyncController.cacheConflictNote(notepadId, content, {
+            ...options,
+            notepads: currentNotepads
+        });
+    }
+
     function getCachedNote(notepadId) {
         if (!isValidNotepadId(notepadId)) return null;
         return noteSyncController.getCachedNote(notepadId);
     }
 
     function getDirtyCachedNotes() {
-        const cache = loadStartupCache();
-        if (!cache?.notes || typeof cache.notes !== 'object') return [];
-        const knownNotepads = [
-            ...(Array.isArray(currentNotepads) ? currentNotepads : []),
-            ...(Array.isArray(cache.notepads) ? cache.notepads : [])
-        ];
-        const names = new Map();
-        for (const notepad of knownNotepads) {
-            if (isValidNotepadId(notepad?.id) && !names.has(notepad.id)) {
-                names.set(notepad.id, notepad.name || notepad.id);
-            }
-        }
-        return Object.entries(cache.notes)
-            .filter(([id, note]) => isValidNotepadId(id) && note?.dirty)
-            .map(([id, note]) => ({
-                id,
-                name: names.get(id) || id,
-                savedAt: note.savedAt || 0,
-                conflict: !!note.conflict || dirtyConflictNotepadIds.has(id)
-            }))
-            .sort((a, b) => Number(b.savedAt || 0) - Number(a.savedAt || 0));
+        return noteSyncController.getDirtyCachedNotes({
+            currentNotepads,
+            conflictIds: dirtyConflictNotepadIds
+        }).filter(note => isValidNotepadId(note.id));
     }
 
     function renderCachedNotepad(notepadId, content) {
@@ -687,7 +726,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     const data = await fetchNoteData(id);
                     const existing = getCachedNote(id);
                     if (!existing?.dirty) {
-                        cacheNote(id, data.content || '', { version: data.version, dirty: false });
+                        cacheSyncedNote(id, data.content || '', { version: data.version });
                     }
                 } catch (error) {
                     console.info('[sync] note prefetch skipped notepadId=%s reason=%s', id, error.message);
@@ -815,21 +854,16 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (cachedNote?.dirty && currentNotepadId === notepadId) {
                 setCurrentNoteVersion(notepadId, cachedNote.version);
                 if (Number(data.version) > Number(cachedNote.version || 0)) {
-                    cacheNote(notepadId, cachedNote.content || '', {
-                        version: cachedNote.version,
-                        dirty: true,
-                        remoteVersion: data.version,
-                        conflict: true
+                    cacheConflictNote(notepadId, cachedNote.content || '', {
+                        localVersion: cachedNote.version,
+                        remoteVersion: data.version
                     });
                     dirtyConflictNotepadIds.add(notepadId);
                     setStartupSyncStatus('error', '有远端更新，本地已保留');
                     return;
                 }
                 dirtyConflictNotepadIds.delete(notepadId);
-                cacheNote(notepadId, cachedNote.content || '', {
-                    version: cachedNote.version,
-                    dirty: true
-                });
+                cacheDirtyNote(notepadId, cachedNote.content || '', { version: cachedNote.version });
                 setStartupSyncStatus('cached', '本地未同步');
                 return;
             }
@@ -838,7 +872,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             hasUnsavedChanges = false;
             dirtyConflictNotepadIds.delete(notepadId);
             setCurrentNoteVersion(notepadId, data.version);
-            cacheNote(notepadId, data.content || '', { version: data.version, dirty: false });
+            cacheSyncedNote(notepadId, data.content || '', { version: data.version });
             setStartupSyncStatus('synced', '已同步');
 
             const currentNotepad = currentNotepads.find(n => n.id === notepadId); 
@@ -933,7 +967,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 ...currentNotepads.filter(note => note.id !== newNotepad.id),
                 newNotepad
             ];
-            cacheNote(newNotepad.id, '', { version: newNotepad.version || 1, dirty: false });
+            cacheSyncedNote(newNotepad.id, '', { version: newNotepad.version || 1 });
             cacheNotepads(newNotepad.id);
             renderSidebar(currentNotepads, newNotepad.id, selectNotepad, deleteNotepadById, renameNotepadById);
             renderCachedNotepad(newNotepad.id, '');
@@ -1032,7 +1066,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 hasUnsavedChanges = false;
             }
             setCurrentNoteVersion(targetNotepadId, result.version);
-            cacheNote(targetNotepadId, content, { version: result.version, dirty: false });
+            cacheSyncedNote(targetNotepadId, content, { version: result.version });
             setStartupSyncStatus('synced', '已同步');
             dirtyConflictNotepadIds.delete(targetNotepadId);
             return true;
@@ -1041,11 +1075,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (err?.status === 409) {
                 dirtyConflictNotepadIds.add(targetNotepadId);
                 const remoteVersion = Number(err?.payload?.currentVersion);
-                cacheNote(targetNotepadId, content, {
-                    version: baseVersion,
-                    dirty: true,
-                    remoteVersion: Number.isFinite(remoteVersion) ? remoteVersion : undefined,
-                    conflict: true
+                cacheConflictNote(targetNotepadId, content, {
+                    localVersion: baseVersion,
+                    remoteVersion: Number.isFinite(remoteVersion) ? remoteVersion : undefined
                 });
                 setStartupSyncStatus('error', '有远端更新，本地已保留');
                 toaster.show('内容已在其他设备更新，请刷新后再保存或复制当前内容', 'error', true, 6000);
@@ -1069,30 +1101,26 @@ document.addEventListener('DOMContentLoaded', async () => {
             console.info('[sync] skip dirty sync reason=in_flight');
             return;
         }
-        if (!navigator.onLine) {
-            console.info('[sync] skip dirty sync reason=offline');
-            return;
-        }
-        if (!isValidNotepadId(currentNotepadId)) {
-            console.info('[sync] skip dirty sync reason=invalid_notepad');
-            return;
-        }
         const cachedNote = getCachedNote(currentNotepadId);
-        if (!cachedNote?.dirty) return;
-        if (editor.value !== cachedNote.content) {
-            console.info('[sync] skip dirty sync reason=editor_changed notepadId=%s', currentNotepadId);
-            return;
-        }
-        if (!findNotepadByIdOrName(currentNotepads, currentNotepadId)) {
-            console.info('[sync] skip dirty sync reason=notepad_missing notepadId=%s', currentNotepadId);
-            return;
-        }
-        if (dirtyConflictNotepadIds.has(currentNotepadId) || cachedNote.conflict) {
-            console.info('[sync] skip dirty sync reason=conflict notepadId=%s localVersion=%s remoteVersion=%s',
-                currentNotepadId,
-                cachedNote.version ?? '-',
-                cachedNote.remoteVersion ?? '-'
-            );
+        const decision = noteSyncController.canSyncDirtyNote({
+            notepadId: isValidNotepadId(currentNotepadId) ? currentNotepadId : '',
+            cachedNote,
+            editorContent: editor.value,
+            isOnline: navigator.onLine,
+            notepadExists: !!findNotepadByIdOrName(currentNotepads, currentNotepadId),
+            conflictIds: dirtyConflictNotepadIds
+        });
+        if (!decision.ok) {
+            if (decision.reason === 'no_dirty') return;
+            if (decision.reason === 'conflict') {
+                console.info('[sync] skip dirty sync reason=conflict notepadId=%s localVersion=%s remoteVersion=%s',
+                    currentNotepadId,
+                    cachedNote?.version ?? '-',
+                    cachedNote?.remoteVersion ?? '-'
+                );
+                return;
+            }
+            console.info('[sync] skip dirty sync reason=%s notepadId=%s', decision.reason, currentNotepadId);
             return;
         }
 
@@ -1102,7 +1130,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         setStartupSyncStatus('syncing', '同步本地修改');
         try {
             const synced = await saveNotes(cachedNote.content || '', true, false, 0, currentNotepadId);
-            if (synced) cacheNote(currentNotepadId, cachedNote.content || '', { version: currentNoteVersion, dirty: false });
+            if (synced) cacheSyncedNote(currentNotepadId, cachedNote.content || '', { version: currentNoteVersion });
         } finally {
             dirtySyncInFlight = false;
         }
@@ -1219,7 +1247,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
         if (!confirmed) return;
 
-        cacheNote(currentNotepadId, cachedNote.content || '', { version: cachedNote.version, dirty: false });
+        cacheSyncedNote(currentNotepadId, cachedNote.content || '', { version: cachedNote.version });
         dirtyConflictNotepadIds.delete(currentNotepadId);
         await loadNotes(currentNotepadId);
         updateSettingsConflictSection();
@@ -1248,7 +1276,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     function debouncedSave(content) {
-        cacheNote(currentNotepadId, content, { dirty: true });
+        cacheDirtyNote(currentNotepadId, content);
         setStartupSyncStatus('cached', '本地已保留');
         clearTimeout(saveTimeout);
         saveTimeout = setTimeout(async () => {
@@ -1574,7 +1602,18 @@ document.addEventListener('DOMContentLoaded', async () => {
         commandPalette.init();
 
         // Wire search toggle button: editor mode → command palette, thoughts mode → expand filter
-        thoughtsManager.app.openSearch = () => commandPalette.open();
+        openCommandSearch = () => commandPalette.open();
+        document.getElementById('toggle-thoughts')?.addEventListener('click', async (event) => {
+            if (thoughtsManager) return;
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            try {
+                await ensureThoughtsManager();
+                window.location.hash = window.location.hash === '#thoughts' ? '' : 'thoughts';
+            } catch (_error) {
+                // ensureThoughtsManager already reports load errors to the user.
+            }
+        }, { capture: true });
 
         copyAllBtn.addEventListener('click', async () => {
             const raw = editor.value;
@@ -1582,7 +1621,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
             // Render markdown to HTML
             const temp = document.createElement('div');
-            temp.innerHTML = marked.parse(raw);
+            temp.innerHTML = await renderMarkdown(raw);
 
             // Strip annotation badges from copy
             temp.querySelectorAll('.annotation-badge').forEach(b => b.remove());
@@ -2032,6 +2071,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         await syncCurrentDirtyNote();
         applySettings(appSettings);
         await registerServiceWorker();
+        scheduleIdleTask(() => {
+            ensureThoughtsManager().catch(() => {});
+        });
         isInitialLoad = false;
     };
 

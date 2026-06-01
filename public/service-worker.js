@@ -26,10 +26,23 @@ const CORE_ASSETS = [
   "/managers/confirmation.js",
   "/managers/preview.js",
   "/managers/settings.js",
+  "/managers/settings-data-panel.js",
   "/managers/storage.js",
+  "/managers/note-sync-controller.js",
   "/managers/thoughts.js",
+  "/managers/thought-api-client.js",
+  "/managers/thought-editor.js",
+  "/managers/thought-outbox.js",
+  "/managers/thought-relations-panel.js",
+  "/managers/thought-renderer.js",
   "/managers/toaster.js",
   "/managers/ws-client.js",
+];
+
+const WARM_ASSETS = [
+  "/font/LXGWWenKai-Regular.ttf",
+  "/font/FiraCode-Regular.ttf",
+  "/js/@highlightjs/highlight.min.js",
 ];
 
 const getConfig = async () => {
@@ -75,6 +88,17 @@ const installNewCache = async (version) => {
   try {
     console.log("Core assets to cache:", { assetsToCache: CORE_ASSETS });
     await cache.addAll(CORE_ASSETS);
+    console.log("Warm assets to cache:", { assetsToCache: WARM_ASSETS });
+    const warmResults = await Promise.allSettled(
+      WARM_ASSETS.map(async (asset) => {
+        if (await cache.match(asset)) return;
+        await cache.add(asset);
+      })
+    );
+    const warmFailed = warmResults.filter(result => result.status === "rejected").length;
+    if (warmFailed) {
+      console.warn("Some warm assets were not cached:", { failed: warmFailed, total: WARM_ASSETS.length });
+    }
     console.log("Cache installation complete for version:", version);
   } catch (error) {
     console.error("Failed to install cache:", error);
@@ -210,6 +234,22 @@ const networkFirstWithTimeout = async (request, options = {}) => {
   }
 };
 
+const cacheFirst = async (request) => {
+  const cachedResponse = await caches.match(request);
+  if (cachedResponse) return cachedResponse;
+
+  try {
+    const response = await fetch(request);
+    putInCache(request, response).catch(() => {});
+    return response;
+  } catch (_error) {
+    return new Response("", {
+      status: 504,
+      statusText: "Gateway Timeout",
+    });
+  }
+};
+
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
 
@@ -219,9 +259,9 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  const networkFirstExtensions = [".html", ".js", ".css", ".json"];
+  const staticAssetExtensions = [".js", ".css", ".json", ".png", ".ico", ".svg", ".woff", ".woff2", ".ttf"];
   const isNavigation = event.request.mode === "navigate";
-  const isNetworkFirstAsset = networkFirstExtensions.some(ext => requestUrl.pathname.endsWith(ext));
+  const isStaticAsset = staticAssetExtensions.some(ext => requestUrl.pathname.endsWith(ext));
 
   if (isNavigation) {
     // Always fetch fresh index.html, fallback to cache only when offline
@@ -235,10 +275,8 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  if (isNetworkFirstAsset) {
-    event.respondWith(
-      networkFirstWithTimeout(event.request, { timeout: 2500 })
-    );
+  if (isStaticAsset) {
+    event.respondWith(cacheFirst(event.request));
     return;
   }
 

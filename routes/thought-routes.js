@@ -1,0 +1,530 @@
+function registerThoughtRoutes(app, context) {
+    const {
+        storage,
+        aiQueue,
+        scheduleIndexNotepads,
+        broadcastWebSocketMessage
+    } = context;
+
+    async function readThoughts() {
+        return storage.readThoughts();
+    }
+
+    async function saveThoughts(thoughts) {
+        await storage.saveThoughts(thoughts);
+    }
+
+    function broadcastThoughtsUpdate(action, payload) {
+        broadcastWebSocketMessage({
+            type: 'thoughts_update',
+            action,
+            payload
+        });
+    }
+
+    async function withRelationWriteLock(task) {
+        const lock = aiQueue._private?.withRelationWriteLock;
+        return typeof lock === 'function' ? lock(task) : task();
+    }
+
+    function createThoughtId(existingThoughts = []) {
+        const existingIds = new Set(existingThoughts.map(thought => String(thought.id)));
+        let id = '';
+        do {
+            id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        } while (existingIds.has(id));
+        return id;
+    }
+
+    async function removeSuppressedPair(id, targetId) {
+        const sourceSuppressed = await storage.readSuppressedRelations(id);
+        sourceSuppressed.edges = (sourceSuppressed.edges || []).filter(edge => edge.targetId !== targetId);
+        await storage.writeSuppressedRelations(id, sourceSuppressed);
+
+        const targetSuppressed = await storage.readSuppressedRelations(targetId);
+        targetSuppressed.edges = (targetSuppressed.edges || []).filter(edge => edge.targetId !== id);
+        await storage.writeSuppressedRelations(targetId, targetSuppressed);
+    }
+
+    function upsertManualEdge(relations, targetId, relationType = 'manual') {
+        const now = Date.now();
+        const edges = Array.isArray(relations.edges) ? relations.edges.filter(edge => edge.targetId !== targetId) : [];
+        const suggestions = Array.isArray(relations.suggestions)
+            ? relations.suggestions.filter(edge => edge.targetId !== targetId)
+            : [];
+        edges.unshift({
+            targetId,
+            score: 1,
+            confidence: 1,
+            relationType,
+            method: 'manual',
+            source: 'manual',
+            reasons: ['manual'],
+            signals: { manual: 1 },
+            createdAt: now
+        });
+        return {
+            id: relations.id,
+            edges,
+            suggestions,
+            version: 2,
+            computedAt: now
+        };
+    }
+
+    app.get('/api/thoughts/:id/relations', async (req, res) => {
+        try {
+            const { id } = req.params;
+            const thought = await storage.readThought(id);
+            if (!thought) {
+                return res.json({
+                    id,
+                    status: 'missing',
+                    relations: []
+                });
+            }
+
+            const meta = await storage.readThoughtMeta(id);
+            const relations = await storage.readRelations(id);
+            const responseRelations = [];
+            const responseSuggestions = [];
+
+            async function edgeToResponse(edge) {
+                const target = await storage.readThought(edge.targetId);
+                if (!target) return null;
+                return {
+                    thought: {
+                        id: target.id,
+                        text: target.text || '',
+                        tags: Array.isArray(target.tags) ? target.tags : [],
+                        completed: !!target.completed,
+                        createdAt: target.createdAt || 0
+                    },
+                    score: edge.score || 0,
+                    confidence: edge.confidence || 0,
+                    relationType: edge.relationType || '',
+                    method: edge.method || 'unknown',
+                    reasons: Array.isArray(edge.reasons) ? edge.reasons : [],
+                    signals: edge.signals || null
+                };
+            }
+
+            for (const edge of relations.edges || []) {
+                const item = await edgeToResponse(edge);
+                if (item) responseRelations.push(item);
+            }
+
+            for (const edge of relations.suggestions || []) {
+                const item = await edgeToResponse(edge);
+                if (item) responseSuggestions.push(item);
+            }
+
+            res.json({
+                id,
+                status: meta?.status || 'missing',
+                relations: responseRelations,
+                suggestions: responseSuggestions
+            });
+        } catch (err) {
+            console.error('Error fetching thought relations:', err);
+            res.status(500).json({ error: 'Error fetching thought relations' });
+        }
+    });
+
+    app.delete('/api/thoughts/:id/relations/:targetId', async (req, res) => {
+        try {
+            const { id, targetId } = req.params;
+            const result = await withRelationWriteLock(async () => {
+                const relations = await storage.readRelations(id);
+                const originalLength = Array.isArray(relations.edges) ? relations.edges.length : 0;
+                relations.edges = (relations.edges || []).filter(edge => edge.targetId !== targetId);
+                relations.suggestions = (relations.suggestions || []).filter(edge => edge.targetId !== targetId);
+                relations.computedAt = Date.now();
+                await storage.writeRelations(id, relations);
+
+                const reverse = await storage.readRelations(targetId);
+                reverse.edges = (reverse.edges || []).filter(edge => edge.targetId !== id);
+                reverse.suggestions = (reverse.suggestions || []).filter(edge => edge.targetId !== id);
+                reverse.computedAt = Date.now();
+                await storage.writeRelations(targetId, reverse);
+                await storage.suppressRelation(id, targetId);
+                await storage.suppressRelation(targetId, id);
+
+                return {
+                    success: true,
+                    removed: relations.edges.length !== originalLength
+                };
+            });
+            res.json(result);
+        } catch (err) {
+            console.error('Error deleting thought relation:', err);
+            res.status(500).json({ error: 'Error deleting thought relation' });
+        }
+    });
+
+    app.post('/api/thoughts/:id/relations', async (req, res) => {
+        try {
+            const { id } = req.params;
+            const targetId = String(req.body?.targetId || '').trim();
+            const relationType = String(req.body?.relationType || 'manual').trim() || 'manual';
+            if (!targetId) return res.status(400).json({ error: 'targetId is required' });
+            if (targetId === id) return res.status(400).json({ error: 'Cannot link a thought to itself' });
+
+            const sourceThought = await storage.readThought(id);
+            const targetThought = await storage.readThought(targetId);
+            if (!sourceThought || !targetThought) return res.status(404).json({ error: 'Thought not found' });
+
+            const { sourceRelations, targetRelations } = await withRelationWriteLock(async () => {
+                const sourceRelations = upsertManualEdge(await storage.readRelations(id), targetId, relationType);
+                const targetRelations = upsertManualEdge(await storage.readRelations(targetId), id, relationType);
+                await storage.writeRelations(id, sourceRelations);
+                await storage.writeRelations(targetId, targetRelations);
+                await removeSuppressedPair(id, targetId);
+                return { sourceRelations, targetRelations };
+            });
+
+            broadcastWebSocketMessage({
+                type: 'relations_update',
+                thoughtId: id,
+                relationsCount: sourceRelations.edges.length
+            });
+            broadcastWebSocketMessage({
+                type: 'relations_update',
+                thoughtId: targetId,
+                relationsCount: targetRelations.edges.length
+            });
+
+            res.status(201).json({
+                success: true,
+                relation: sourceRelations.edges.find(edge => edge.targetId === targetId),
+                relationCount: sourceRelations.edges.length
+            });
+        } catch (err) {
+            console.error('Error creating manual thought relation:', err);
+            res.status(500).json({ error: 'Error creating manual thought relation' });
+        }
+    });
+
+    app.post('/api/thoughts/:id/ai-process', async (req, res) => {
+        const { id } = req.params;
+        const thought = await storage.readThought(id);
+        if (!thought) return res.status(404).json({ error: 'Thought not found' });
+
+        console.info(`[thought-ai] queue reason=manual thoughtId=${id}`);
+        aiQueue.queueThought(id, 'manual');
+        res.status(202).json({ queued: true, id });
+    });
+
+    app.post('/api/thoughts/ai-backfill', async (req, res) => {
+        try {
+            const limit = Number(req.body?.limit);
+            const result = await aiQueue.backfillMissingMeta({
+                limit: Number.isFinite(limit) && limit > 0 ? limit : Infinity
+            });
+            res.status(202).json(result);
+        } catch (err) {
+            console.error('Error queueing AI backfill:', err);
+            res.status(500).json({ error: 'Error queueing AI backfill' });
+        }
+    });
+
+    app.post('/api/thoughts/relations-rebuild', async (req, res) => {
+        try {
+            const limit = Number(req.body?.limit);
+            const result = await aiQueue.rebuildRelations({
+                limit: Number.isFinite(limit) && limit > 0 ? limit : Infinity
+            });
+            res.status(202).json(result);
+        } catch (err) {
+            console.error('Error rebuilding thought relations:', err);
+            res.status(500).json({ error: 'Error rebuilding thought relations' });
+        }
+    });
+
+    app.get('/api/thoughts/ai-queue/status', async (req, res) => {
+        try {
+            res.json(aiQueue.getQueueStatus());
+        } catch (err) {
+            console.error('Error fetching AI queue status:', err);
+            res.status(500).json({ error: 'Error fetching AI queue status' });
+        }
+    });
+
+    app.get('/api/thoughts/:id', async (req, res) => {
+        try {
+            const { id } = req.params;
+            const thoughts = await readThoughts();
+            const thought = thoughts.find(t => t.id === id);
+            if (!thought) return res.status(404).json({ error: 'Thought not found' });
+            res.json(thought);
+        } catch (err) {
+            res.status(500).json({ error: 'Error fetching thought' });
+        }
+    });
+
+    app.get('/api/thoughts', async (req, res) => {
+        try {
+            const { q, date, tag } = req.query;
+            const light = req.query.light === '1' || req.query.light === 'true';
+            const rawLimit = Number.parseInt(req.query.limit, 10);
+            const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, 50) : 0;
+            let thoughts = await readThoughts();
+
+            if (tag) {
+                const tagLower = tag.toLowerCase();
+                thoughts = thoughts.filter(t => t.tags && t.tags.some(tg => tg.toLowerCase() === tagLower));
+            }
+
+            if (q) {
+                const query = q.toLowerCase();
+                thoughts = thoughts.filter(t => {
+                    if (t.text.toLowerCase().includes(query)) return true;
+                    if (t.subItems && t.subItems.some(s => s.text.toLowerCase().includes(query))) return true;
+                    return false;
+                });
+            }
+
+            if (date) {
+                thoughts = thoughts.filter(t => {
+                    const d = new Date(t.createdAt);
+                    const year = d.getFullYear();
+                    const month = String(d.getMonth() + 1).padStart(2, '0');
+                    const day = String(d.getDate()).padStart(2, '0');
+                    const dateStr = `${year}-${month}-${day}`;
+                    return dateStr === date;
+                });
+            }
+
+            if (limit) {
+                thoughts = thoughts.slice(0, limit);
+            }
+
+            if (light) {
+                return res.json(thoughts.map(thought => ({
+                    id: thought.id,
+                    text: thought.text || '',
+                    subItems: Array.isArray(thought.subItems) ? thought.subItems : [],
+                    tags: Array.isArray(thought.tags) ? thought.tags : [],
+                    completed: thought.completed === true,
+                    createdAt: thought.createdAt || 0,
+                    updatedAt: thought.updatedAt || thought.createdAt || 0
+                })));
+            }
+
+            const thoughtsWithRelationCounts = await Promise.all(thoughts.map(async (thought) => {
+                const meta = await storage.readThoughtMeta(thought.id);
+                return {
+                    ...thought,
+                    relationCount: await storage.readRelationCount(thought.id),
+                    aiStatus: meta?.status || 'missing',
+                    aiError: meta?.error || null,
+                    aiProcessedAt: meta?.ai?.processedAt || 0,
+                    aiTags: Array.isArray(meta?.ai?.tags) ? meta.ai.tags : []
+                };
+            }));
+
+            res.json(thoughtsWithRelationCounts);
+        } catch (err) {
+            res.status(500).json({ error: 'Error fetching thoughts' });
+        }
+    });
+
+    app.post('/api/thoughts', async (req, res) => {
+        try {
+            const { text, subItems, tags, completed } = req.body;
+            if (!text) return res.status(400).json({ error: 'Text is required' });
+
+            const thoughts = await readThoughts();
+            const now = Date.now();
+            const newThought = {
+                id: createThoughtId(thoughts),
+                text,
+                subItems: subItems || [],
+                tags: tags || [],
+                completed: completed === true,
+                relationCount: 0,
+                aiStatus: 'pending',
+                version: 1,
+                createdAt: now,
+                updatedAt: now
+            };
+
+            thoughts.unshift(newThought);
+            await saveThoughts(thoughts);
+            scheduleIndexNotepads(250);
+
+            broadcastThoughtsUpdate('create', newThought);
+            console.info(`[thought-ai] queue reason=create thoughtId=${newThought.id}`);
+            aiQueue.queueThought(newThought.id, 'create');
+            res.json(newThought);
+        } catch (err) {
+            res.status(500).json({ error: 'Error creating thought' });
+        }
+    });
+
+    app.get('/api/thoughts/:id/ai-status', async (req, res) => {
+        try {
+            const { id } = req.params;
+            const thought = await storage.readThought(id);
+            if (!thought) return res.status(404).json({ error: 'Thought not found' });
+
+            const meta = await storage.readThoughtMeta(id);
+            const relations = await storage.readRelations(id);
+            const relationEdges = Array.isArray(relations.edges) ? relations.edges : [];
+            const relationSuggestions = Array.isArray(relations.suggestions) ? relations.suggestions : [];
+            const stages = meta?.stages || {
+                queued: { status: meta ? 'ready' : 'missing' },
+                analysis: { status: meta?.status === 'ready' ? 'ready' : (meta?.status || 'missing') },
+                embedding: { status: meta?.status === 'ready' ? 'ready' : (meta?.status || 'missing') },
+                relations: relations?.diagnostics?.status ? { status: relations.diagnostics.status } : { status: 'missing' }
+            };
+            res.json({
+                id,
+                status: meta?.status || 'missing',
+                error: meta?.error || null,
+                processedAt: meta?.ai?.processedAt || 0,
+                relationCount: relationEdges.length,
+                suggestionCount: relationSuggestions.length,
+                aiTags: Array.isArray(meta?.ai?.tags) ? meta.ai.tags : [],
+                stages,
+                models: {
+                    extract: meta?.ai?.extractModel || stages.analysis?.model || null,
+                    embedding: meta?.ai?.model || stages.embedding?.model || null,
+                    rerank: stages.relations?.model || null
+                },
+                diagnostics: relations?.diagnostics || null
+            });
+        } catch (err) {
+            console.error('Error fetching thought AI status:', err);
+            res.status(500).json({ error: 'Error fetching thought AI status' });
+        }
+    });
+
+    app.patch('/api/thoughts/:id', async (req, res) => {
+        try {
+            const { id } = req.params;
+            const { action, text, target, replacement, baseVersion } = req.body;
+            const thoughts = await readThoughts();
+            const index = thoughts.findIndex(t => t.id === id);
+
+            if (index === -1) return res.status(404).json({ error: 'Thought not found' });
+
+            const thought = thoughts[index];
+            const clientVersion = Number(baseVersion);
+            if (Number.isFinite(clientVersion) && (thought.version || 1) > clientVersion) {
+                return res.status(409).json({
+                    error: 'Thought has been updated on another device',
+                    currentVersion: thought.version || 1
+                });
+            }
+            let modified = false;
+
+            switch (action) {
+                case 'toggle_complete':
+                    thought.completed = !thought.completed;
+                    modified = true;
+                    break;
+                case 'append':
+                    if (text) {
+                        thought.text += text;
+                        modified = true;
+                    }
+                    break;
+                case 'replace':
+                    if (target && thought.text.includes(target)) {
+                        thought.text = thought.text.split(target).join(replacement || '');
+                        modified = true;
+                    }
+                    break;
+                case 'overwrite':
+                    if (text !== undefined) { thought.text = text; modified = true; }
+                    if (req.body.subItems !== undefined) { thought.subItems = req.body.subItems; modified = true; }
+                    if (req.body.tags !== undefined) { thought.tags = req.body.tags; modified = true; }
+                    if (req.body.completed !== undefined) { thought.completed = req.body.completed === true; modified = true; }
+                    break;
+                case 'add_subitem':
+                    if (!text) return res.status(400).json({ error: 'Subitem text is required' });
+                    thought.subItems.push({
+                        id: Date.now().toString(),
+                        text,
+                        completed: false
+                    });
+                    modified = true;
+                    break;
+                case 'toggle_subitem': {
+                    const sub = thought.subItems.find(s => s.id === req.body.subId);
+                    if (!sub) return res.status(404).json({ error: 'Subitem not found' });
+                    sub.completed = !sub.completed;
+                    modified = true;
+                    break;
+                }
+                case 'update_subitem': {
+                    const sub = thought.subItems.find(s => s.id === req.body.subId);
+                    if (!sub) return res.status(404).json({ error: 'Subitem not found' });
+                    if (text !== undefined) sub.text = text;
+                    if (req.body.completed !== undefined) sub.completed = req.body.completed;
+                    modified = true;
+                    break;
+                }
+                case 'delete_subitem': {
+                    const idx = thought.subItems.findIndex(s => s.id === req.body.subId);
+                    if (idx === -1) return res.status(404).json({ error: 'Subitem not found' });
+                    thought.subItems.splice(idx, 1);
+                    modified = true;
+                    break;
+                }
+                default:
+                    return res.status(400).json({ error: 'Invalid action' });
+            }
+
+            if (modified) {
+                thought.updatedAt = Date.now();
+                thought.version = (thought.version || 1) + 1;
+                await saveThoughts(thoughts);
+                scheduleIndexNotepads(250);
+                broadcastThoughtsUpdate('update', thought);
+                console.info(`[thought-ai] queue reason=update thoughtId=${thought.id}`);
+                aiQueue.queueThought(thought.id, 'update');
+            }
+
+            res.json({ success: true, thought });
+        } catch (err) {
+            res.status(500).json({ error: 'Error updating thought' });
+        }
+    });
+
+    app.delete('/api/thoughts/:id', async (req, res) => {
+        try {
+            const { id } = req.params;
+            let thoughts = await readThoughts();
+            const initialLen = thoughts.length;
+            thoughts = thoughts.filter(t => t.id !== id);
+
+            if (thoughts.length !== initialLen) {
+                await saveThoughts(thoughts);
+                await storage.deleteThoughtMeta(id);
+                await storage.deleteRelations(id);
+                await storage.deleteSuppressedRelations(id);
+                const relationCleanup = await storage.removeRelationReferences(id);
+                await storage.removeSuppressedRelationReferences(id);
+                scheduleIndexNotepads(250);
+                broadcastThoughtsUpdate('delete', { id });
+                const affectedRelationIds = Array.isArray(relationCleanup?.affectedIds) ? relationCleanup.affectedIds : [];
+                for (const affectedId of affectedRelationIds) {
+                    broadcastWebSocketMessage({
+                        type: 'relations_update',
+                        thoughtId: affectedId,
+                        relationsCount: await storage.readRelationCount(affectedId)
+                    });
+                }
+                res.json({ success: true });
+            } else {
+                res.status(404).json({ error: 'Thought not found' });
+            }
+        } catch (err) {
+            res.status(500).json({ error: 'Error deleting thought' });
+        }
+    });
+}
+
+module.exports = { registerThoughtRoutes };
