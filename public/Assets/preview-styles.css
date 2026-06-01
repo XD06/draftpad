@@ -5,7 +5,9 @@
 }
 #preview-pane {
   /* white-space: pre-wrap; */
-  font-family: sans-serif;
+  font-family: var(--font-reading);
+  font-size: 16.5px;
+  line-height: 1.78;
 }
 
 /* Image sizing in markdown preview */
@@ -27,6 +29,7 @@
 }
 
 #preview-pane code {
+  font-family: var(--font-code);
   background-color: var(--code-markdown);
   padding: 2px 2px;
   border-radius: 5px;
@@ -68,7 +71,7 @@
     border-color 0.3s ease;
   z-index: 10;
   font-size: 0.65rem;
-  font-family: monospace;
+  font-family: var(--font-code);
   white-space: nowrap;
 }
 
@@ -141,7 +144,7 @@
   background-color: transparent;
   padding: 0;
   border-radius: 0;
-  font-family: "Consolas", "Monaco", "Courier New", monospace;
+  font-family: var(--font-code);
   font-size: 0.9em;
   line-height: 1.4;
   white-space: pre-wrap;

@@ -5,9 +5,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title id="page-title">DumbPad - Simple Notes</title>
-    <link rel="icon" type="image/svg+xml" href="Assets/dumbpad.svg">
-    <link rel="alternate icon" type="image/png" href="Assets/dumbpad.png">
-    <link rel="apple-touch-icon" href="Assets/dumbpad.png">
+    <link rel="icon" type="image/png" sizes="64x64" href="Assets/favicon-64.png">
+    <link rel="apple-touch-icon" sizes="192x192" href="Assets/dumbpad-192.png">
+    <link rel="stylesheet" href="/vendor/vditor/index.css">
     <link rel="stylesheet" href="Assets/styles.css">
     <link rel="stylesheet" href="Assets/preview-styles.css">
     <link rel="stylesheet" href="Assets/thoughts.css">
@@ -17,7 +17,6 @@
     <meta name="apple-mobile-web-app-title" content="DumbPad">
     <meta name="theme-color" content="#0f172a">
     <link rel="manifest" href="Assets/manifest.json">
-    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
     <script>
         (function () { // Initialize theme immediately - Prevents theme flicker
             let theme = JSON.parse(localStorage.getItem('dumbpad_theme'))
@@ -118,24 +117,12 @@
                             <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
                         </svg>
                     </button>
-                    <button id="theme-toggle" class="icon-button" aria-label="Toggle dark mode">
-                        <svg id="moon-icon" class="moon" width="20" height="20" viewBox="0 0 24 24" fill="none"
+                    <button id="settings-button" class="icon-button" aria-label="Settings" data-tooltip="Settings">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
                             stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                             <path stroke="none" d="M0 0h24v24H0z" fill="none" />
-                            <path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454z" />
-                        </svg>
-                        <svg id="sun-icon" class="sun" width="20" height="20" fill="none" stroke="currentColor"
-                            stroke-width="2">
-                            <path stroke="none" d="M0 0h24v24H0z" fill="none" />
-                            <path d="M14.828 14.828a4 4 0 1 0 -5.656 -5.656a4 4 0 0 0 5.656 5.656z" />
-                            <path d="M6.343 17.657l-1.414 1.414" />
-                            <path d="M6.343 6.343l-1.414 -1.414" />
-                            <path d="M17.657 6.343l1.414 -1.414" />
-                            <path d="M17.657 17.657l1.414 1.414" />
-                            <path d="M4 12h-2" />
-                            <path d="M12 4v-2" />
-                            <path d="M20 12h2" />
-                            <path d="M12 20v2" />
+                            <path d="M10.325 4.317c.426 -1.756 2.924 -1.756 3.35 0a1.724 1.724 0 0 0 2.573 1.066c1.543 -.94 3.31 .826 2.37 2.37a1.724 1.724 0 0 0 1.065 2.572c1.756 .426 1.756 2.924 0 3.35a1.724 1.724 0 0 0 -1.066 2.573c.94 1.543 -.826 3.31 -2.37 2.37a1.724 1.724 0 0 0 -2.572 1.065c-.426 1.756 -2.924 1.756 -3.35 0a1.724 1.724 0 0 0 -2.573 -1.066c-1.543 .94 -3.31 -.826 -2.37 -2.37a1.724 1.724 0 0 0 -1.065 -2.572c-1.756 -.426 -1.756 -2.924 0 -3.35a1.724 1.724 0 0 0 1.066 -2.573c-.94 -1.543 .826 -3.31 2.37 -2.37c1 .608 2.296 .07 2.572 -1.065z" />
+                            <path d="M9 12a3 3 0 1 0 6 0a3 3 0 0 0 -6 0" />
                         </svg>
                     </button>
                 </div>
@@ -209,6 +196,7 @@
                             <button class="status-pill" data-status="todo">待办</button>
                             <button class="status-pill" data-status="done">已完成</button>
                         </div>
+                        <button id="thoughts-outbox-status" class="thoughts-outbox-status" type="button" hidden>待同步 0</button>
                     </div>
                 </div>
                 <div id="thoughts-tags-filter" class="thoughts-tags-filter"></div>
@@ -292,19 +280,139 @@
             <div class="modal-content">
                 <h2>Settings</h2>
                 <div class="settings-form">
+                    <div class="settings-row">
+                        <div>
+                            <div class="settings-row-title">Theme</div>
+                            <div class="settings-row-subtitle">Switch between light and dark mode.</div>
+                        </div>
+                        <button id="theme-toggle" class="settings-icon-button" aria-label="Toggle dark mode">
+                            <svg id="moon-icon" class="moon" width="20" height="20" viewBox="0 0 24 24" fill="none"
+                                stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                                <path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454z" />
+                            </svg>
+                            <svg id="sun-icon" class="sun" width="20" height="20" fill="none" stroke="currentColor"
+                                stroke-width="2">
+                                <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                                <path d="M14.828 14.828a4 4 0 1 0 -5.656 -5.656a4 4 0 0 0 5.656 5.656z" />
+                                <path d="M6.343 17.657l-1.414 1.414" />
+                                <path d="M6.343 6.343l-1.414 -1.414" />
+                                <path d="M17.657 6.343l1.414 -1.414" />
+                                <path d="M17.657 17.657l1.414 1.414" />
+                                <path d="M4 12h-2" />
+                                <path d="M12 4v-2" />
+                                <path d="M20 12h2" />
+                                <path d="M12 20v2" />
+                            </svg>
+                        </button>
+                    </div>
                     <label class="settings-label">
                         Status Message Timing (ms) - Autosave:
                         <input id="autosave-status-interval-input" class="modal-input" type="number" min="0" value="0"
                             placeholder="Leave empty or 0 to disable messages" />
                     </label>
                     <label class="settings-label">
-                        Enable Remote Connection Messages:
-                        <input type="checkbox" id="settings-remote-connection-messages" />
-                    </label>
-                    <label class="settings-label">
                         Disable auto-expand markdown in print:
                         <input type="checkbox" id="settings-disable-print-expand" />
                     </label>
+                    <div id="settings-conflict-section" class="settings-conflict-section" tabindex="-1" hidden>
+                        <div class="settings-row-title">同步与本地缓存</div>
+                        <div class="settings-sync-state-row">
+                            <div id="startup-sync-status" class="startup-sync-status" data-state="idle" aria-live="polite"></div>
+                            <div id="settings-sync-summary" class="settings-sync-summary"></div>
+                        </div>
+                        <div id="settings-conflict-message" class="settings-row-subtitle"></div>
+                        <div class="settings-sync-meta">
+                            <span>本地版本 <strong id="settings-local-version">-</strong></span>
+                            <span>服务端版本 <strong id="settings-server-version">-</strong></span>
+                            <span>缓存时间 <strong id="settings-cache-time">-</strong></span>
+                        </div>
+                        <div id="settings-dirty-notes" class="settings-dirty-notes" hidden></div>
+                        <textarea id="settings-conflict-content" class="settings-conflict-content" readonly></textarea>
+                        <div class="settings-conflict-actions">
+                            <button id="settings-retry-local-sync" type="button">重试同步当前内容</button>
+                            <button id="settings-copy-local-content" type="button">复制本地内容</button>
+                            <button id="settings-discard-local-content" type="button" class="danger">放弃本地并加载远端</button>
+                        </div>
+                    </div>
+                    <div id="settings-data-cloud-section" class="settings-data-cloud-section">
+                        <div class="settings-panel-header">
+                            <div>
+                                <div class="settings-row-title">数据与云端</div>
+                                <div id="settings-data-cloud-subtitle" class="settings-row-subtitle">读取当前存储状态。</div>
+                            </div>
+                            <button id="settings-cloud-refresh" type="button" class="settings-icon-button" aria-label="刷新云端状态">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+                                    stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <path d="M20 11a8.1 8.1 0 0 0 -15.5 -2m-.5 -4v4h4" />
+                                    <path d="M4 13a8.1 8.1 0 0 0 15.5 2m.5 4v-4h-4" />
+                                </svg>
+                            </button>
+                        </div>
+                        <div id="settings-cloud-status" class="settings-cloud-status"></div>
+                        <div class="settings-space-panel">
+                            <div class="settings-space-head">
+                                <div>
+                                    <div class="settings-space-title">云端数据空间</div>
+                                    <div class="settings-space-subtitle">只显示 DumbPad 命名空间内的数据，点击即可切换当前读写位置。</div>
+                                </div>
+                            </div>
+                            <div id="settings-space-list" class="settings-space-list">
+                                <div class="settings-space-empty">正在读取数据空间...</div>
+                            </div>
+                        </div>
+                        <div class="settings-cloud-main-actions">
+                            <button id="settings-local-overwrite-cloud" type="button" class="settings-cloud-action danger">
+                                <span>本地覆盖云端</span>
+                                <small>先备份云端，再上传本地 data</small>
+                            </button>
+                            <button id="settings-cloud-overwrite-local" type="button" class="settings-cloud-action danger">
+                                <span>云端覆盖本地</span>
+                                <small>先备份本地，再恢复当前 prefix</small>
+                            </button>
+                            <button id="settings-auto-sync-status" type="button" class="settings-cloud-action">
+                                <span>自动同步</span>
+                                <small>后台保存与 AI 分析，不打断记录</small>
+                            </button>
+                        </div>
+                        <details class="settings-cloud-advanced">
+                            <summary>高级维护</summary>
+                            <div class="settings-cloud-grid">
+                                <label class="settings-label">
+                                    本地数据目录
+                                    <input id="settings-source-data-dir" class="modal-input" type="text"
+                                        placeholder="C:\Users\dsk\Desktop\fsdownload\data" />
+                                </label>
+                                <label class="settings-label">
+                                    当前完整路径
+                                    <input id="settings-target-prefix" class="modal-input" type="text"
+                                        placeholder="dumbpad-real-preview" />
+                                </label>
+                                <label class="settings-label">
+                                    备份数据空间
+                                    <input id="settings-backup-prefix" class="modal-input" type="text"
+                                        placeholder="dumbpad-backup-20260529" />
+                                </label>
+                                <label class="settings-label">
+                                    确认当前完整路径
+                                    <input id="settings-confirm-prefix" class="modal-input" type="text"
+                                        placeholder="执行覆盖或清空时输入当前完整路径" />
+                                </label>
+                            </div>
+                            <div class="settings-cloud-actions">
+                                <button id="settings-cloud-inventory" type="button">当前空间盘点</button>
+                                <button id="settings-import-dry-run" type="button">导入预览</button>
+                                <button id="settings-import-run" type="button" class="danger">执行导入</button>
+                                <button id="settings-backup-dry-run" type="button">备份预览</button>
+                                <button id="settings-backup-run" type="button" class="danger">执行备份</button>
+                                <button id="settings-delete-dry-run" type="button">清空预览</button>
+                                <button id="settings-delete-run" type="button" class="danger">清空当前空间</button>
+                                <button id="settings-local-overwrite-cloud-dry-run" type="button">本地覆盖云端预览</button>
+                                <button id="settings-cloud-overwrite-local-dry-run" type="button">云端覆盖本地预览</button>
+                            </div>
+                        </details>
+                        <pre id="settings-cloud-result" class="settings-cloud-result"></pre>
+                    </div>
                 </div>
                 <div class="modal-buttons">
                     <button id="settings-cancel">Cancel</button>
@@ -333,7 +441,7 @@
             </svg>
         </button>
     </div>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script src="/vendor/vditor/index.min.js"></script>
     <script src="app.js" type="module"></script>
 </body>
 

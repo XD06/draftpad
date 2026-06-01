@@ -1,9 +1,10 @@
-import { OperationsManager, OperationType } from './managers/operations.js';
-import { CollaborationManager } from './managers/collaboration.js';
+import { WSClient } from './managers/ws-client.js';
 import { ToastManager } from './managers/toaster.js';
 import StorageManager from './managers/storage.js';
 import SettingsManager from './managers/settings.js'
 import ConfirmationManager from './managers/confirmation.js';
+import NoteSyncController from './managers/note-sync-controller.js';
+import SettingsDataPanel from './managers/settings-data-panel.js';
 import { renderSidebar, renderRecentFiles, trackRecentFile, updateSidebarSelection } from './sidebar.js';
 import { HybridMarkdownEditor } from './hybrid-editor.js';
 import { ThoughtsManager } from './managers/thoughts.js';
@@ -14,11 +15,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     const THEME_KEY = 'dumbpad_theme';
     let appSettings = {};
     let isApplyingRemoteUpdate = false;
+    let hasUnsavedChanges = false;
     let editorInstance = null;
 
     const editor = {
         get value() { return editorInstance ? editorInstance.getValue() : ''; },
-        set value(val) { if (editorInstance) editorInstance.setValue(val || ''); },
+        set value(val) { if (editorInstance) editorInstance.setValue(val || '', false); },
         focus: () => editorInstance?.focus(),
         get selectionStart() { return editorInstance?.selectionStart || 0; },
         get selectionEnd() { return editorInstance?.selectionEnd || 0; },
@@ -64,18 +66,57 @@ document.addEventListener('DOMContentLoaded', async () => {
     const settingsSave = document.getElementById('settings-save');
     const settingsReset = document.getElementById('settings-reset');
     const settingsInputAutoSaveStatusInterval = document.getElementById('autosave-status-interval-input');
-    const settingsEnableRemoteConnectionMessages = document.getElementById('settings-remote-connection-messages');
+    const settingsConflictSection = document.getElementById('settings-conflict-section');
+    const settingsSyncSummary = document.getElementById('settings-sync-summary');
+    const settingsConflictMessage = document.getElementById('settings-conflict-message');
+    const settingsConflictContent = document.getElementById('settings-conflict-content');
+    const settingsLocalVersion = document.getElementById('settings-local-version');
+    const settingsServerVersion = document.getElementById('settings-server-version');
+    const settingsCacheTime = document.getElementById('settings-cache-time');
+    const settingsDirtyNotes = document.getElementById('settings-dirty-notes');
+    const settingsRetryLocalSync = document.getElementById('settings-retry-local-sync');
+    const settingsCopyLocalContent = document.getElementById('settings-copy-local-content');
+    const settingsDiscardLocalContent = document.getElementById('settings-discard-local-content');
+    const settingsDataCloudSubtitle = document.getElementById('settings-data-cloud-subtitle');
+    const settingsCloudStatus = document.getElementById('settings-cloud-status');
+    const settingsSpaceList = document.getElementById('settings-space-list');
+    const settingsSourceDataDir = document.getElementById('settings-source-data-dir');
+    const settingsTargetPrefix = document.getElementById('settings-target-prefix');
+    const settingsBackupPrefix = document.getElementById('settings-backup-prefix');
+    const settingsConfirmPrefix = document.getElementById('settings-confirm-prefix');
+    const settingsCloudResult = document.getElementById('settings-cloud-result');
+    const settingsCloudRefresh = document.getElementById('settings-cloud-refresh');
+    const settingsCloudInventory = document.getElementById('settings-cloud-inventory');
+    const settingsImportDryRun = document.getElementById('settings-import-dry-run');
+    const settingsImportRun = document.getElementById('settings-import-run');
+    const settingsBackupDryRun = document.getElementById('settings-backup-dry-run');
+    const settingsBackupRun = document.getElementById('settings-backup-run');
+    const settingsDeleteDryRun = document.getElementById('settings-delete-dry-run');
+    const settingsDeleteRun = document.getElementById('settings-delete-run');
+    const settingsLocalOverwriteCloudDryRun = document.getElementById('settings-local-overwrite-cloud-dry-run');
+    const settingsLocalOverwriteCloud = document.getElementById('settings-local-overwrite-cloud');
+    const settingsCloudOverwriteLocalDryRun = document.getElementById('settings-cloud-overwrite-local-dry-run');
+    const settingsCloudOverwriteLocal = document.getElementById('settings-cloud-overwrite-local');
+    const settingsAutoSyncStatus = document.getElementById('settings-auto-sync-status');
+    const startupSyncStatus = document.getElementById('startup-sync-status');
 
     let saveTimeout;
+    let saveRetryTimeout;
     let lastSaveTime = Date.now();
     const SAVE_INTERVAL = 2000;
     let currentNotepadId = 'default';
+    let currentNoteVersion = null;
     let currentNotepads = []; 
     let isInitialLoad = true;
     let notepadIdToDelete = null;
     let notepadIdToRename = null;
     let _siteTitle = 'DumbPad';
     let isReadingMode = false;
+    let startupSyncSnapshot = {
+        state: 'idle',
+        label: '同步状态',
+        kind: 'idle'
+    };
 
     function setHeaderTitle(text) {
         const h1 = document.getElementById('header-title')?.querySelector('h1');
@@ -87,20 +128,53 @@ document.addEventListener('DOMContentLoaded', async () => {
         setHeaderTitle(name);
     }
 
-    // Initialize managers
-    const operationsManager = new OperationsManager();
-    operationsManager.DEBUG = DEBUG;
-    
-    // Stub CursorManager since Vditor manages its own cursor
-    const cursorManager = { 
-        handleUserDisconnection: () => {}, 
-        updateCursorPosition: () => {}, 
-        updateAllCursors: () => {},
-        cleanup: () => {},
-        DEBUG: DEBUG 
-    };
+    function setStartupSyncStatus(state = 'idle', text = '') {
+        if (!startupSyncStatus) return;
+        const label = text || '同步状态';
+        const kind = getStartupSyncKind(state, label);
+        startupSyncSnapshot = { state, label, kind };
+        startupSyncStatus.dataset.state = state;
+        startupSyncStatus.dataset.kind = kind;
+        startupSyncStatus.title = label;
+        startupSyncStatus.setAttribute('aria-label', label);
+        startupSyncStatus.setAttribute('role', 'button');
+        startupSyncStatus.setAttribute('tabindex', state === 'idle' ? '-1' : '0');
+        startupSyncStatus.innerHTML = `
+            <span class="sync-status-icon" aria-hidden="true">${getStartupSyncIcon(kind)}</span>
+            <span class="sync-status-text">${escapeHtml(label)}</span>
+        `;
+    }
+
+    function getStartupSyncKind(state, text = '') {
+        if (state === 'synced') return 'synced';
+        if (state === 'syncing') return 'syncing';
+        if (state === 'error') return 'unsynced';
+        if (state === 'cached') {
+            return /未同步|本地已保留|保存失败|远端更新/.test(text) ? 'unsynced' : 'cached';
+        }
+        return 'idle';
+    }
+
+    function getStartupSyncIcon(kind) {
+        if (kind === 'unsynced') {
+            return `
+                <svg viewBox="0 0 24 24" focusable="false">
+                    <path d="M7.2 17.5H6a4 4 0 0 1-.5-8 6.2 6.2 0 0 1 11.8-1.7A4.8 4.8 0 0 1 18.2 17" />
+                    <path d="M15.5 15.5 20 20" />
+                    <path d="M20 15.5 15.5 20" />
+                </svg>
+            `;
+        }
+        return `
+            <svg viewBox="0 0 24 24" focusable="false">
+                <path d="M7 18h10.5a4.5 4.5 0 0 0 .7-8.95 6.25 6.25 0 0 0-12.15 1.4A3.85 3.85 0 0 0 7 18Z" />
+            </svg>
+        `;
+    }
 
     const storageManager = new StorageManager();
+    const noteSyncController = new NoteSyncController({ storageManager });
+    let settingsDataPanel = null;
     let currentTheme = storageManager.load(THEME_KEY);
     const settingsManager = new SettingsManager(storageManager, applySettings);
     const confirmationManager = new ConfirmationManager();
@@ -120,47 +194,348 @@ document.addEventListener('DOMContentLoaded', async () => {
         preparePrintContent: () => ({ formattedContent: marked.parse(editor.value), mainStyles: '', previewStyles: '', highlightStyles: '', printStyles: '' }) 
     };
 
-    // Generate user ID and color for collaboration
+    // Generate user ID for lightweight multi-tab update filtering.
     const userId = Math.random().toString(36).substring(2, 15);
     window.userId = userId; 
-    const userColor = getRandomColor(userId);
-
-    let collaborationManager = new CollaborationManager({
-        userId,
-        userColor,
-        currentNotepadId,
-        operationsManager,
-        editor,
-        onNotepadChange: loadNotepads,
-        onUserDisconnect: (id) => cursorManager.handleUserDisconnection(id),
-        onCursorUpdate: (id, pos, col) => cursorManager.updateCursorPosition(id, pos, col),
-        settingsManager,
-        toaster,
-        confirmationManager,
-        saveNotes,
-        renameNotepad,
-        addCopyLangButtonsToCodeBlocks: () => previewManager.addCopyLangButtonsToCodeBlocks()
+    const wsClient = new WSClient({ debug: DEBUG });
+    if (navigator.onLine) wsClient.connect();
+    window.addEventListener('online', () => {
+        wsClient.connect();
+        loadNotepads().then(syncCurrentDirtyNote).catch(err => {
+            console.warn('Error syncing after reconnect:', err);
+        });
     });
-    collaborationManager.DEBUG = DEBUG;
-    collaborationManager.setupWebSocket();
-    previewManager.collaborationManager = collaborationManager;
+    window.addEventListener('offline', () => wsClient.close());
 
-    // Helper functions
-    function getRandomColor(userId) {
-        const colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEEAD', '#D4A5A5', '#9B59B6', '#3498DB', '#E67E22', '#27AE60', '#F1C40F', '#E74C3C'];
-        let hash = 0;
-        for (let i = 0; i < userId.length; i++) hash = userId.charCodeAt(i) + ((hash << 5) - hash);
-        return colors[Math.abs(hash) % colors.length];
-    }
+    window.addEventListener('notes_update', (event) => {
+        const detail = event.detail || {};
+        if (detail.userId === userId || detail.notepadId !== currentNotepadId) return;
+        if (hasUnsavedChanges) {
+            toaster.show('内容已在其他设备更新，请刷新后再保存或复制当前内容', 'warning', true, 5000);
+            return;
+        }
+
+        isApplyingRemoteUpdate = true;
+        editor.value = detail.content || '';
+        isApplyingRemoteUpdate = false;
+        debouncedUpdateToC();
+    });
+
+    window.addEventListener('notepad_change', () => {
+        loadNotepads();
+    });
 
     async function fetchWithPin(url, options = {}) {
         options.credentials = 'same-origin';
         try {
             return await fetch(url, options); 
         } catch (error) {
-            console.error(error);
-            toaster.show(error, "error", true);
+            console.warn(error);
+            toaster.show(error?.message || String(error), "error", true);
+            throw error;
         }
+    }
+
+    async function fetchJSON(url, options = {}) {
+        const response = await fetchWithPin(url, {
+            ...options,
+            headers: {
+                'Content-Type': 'application/json',
+                ...(options.headers || {})
+            }
+        });
+        const text = await response.text();
+        const payload = text ? JSON.parse(text) : {};
+        if (!response.ok) throw new Error(payload.error || `Request failed: ${response.status}`);
+        return payload;
+    }
+
+    settingsDataPanel = new SettingsDataPanel({ requestJSON: fetchJSON });
+
+    function formatBytes(bytes = 0) {
+        const size = Number(bytes) || 0;
+        if (size < 1024) return `${size} B`;
+        if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+        return `${(size / 1024 / 1024).toFixed(1)} MB`;
+    }
+
+    function setCloudBusy(isBusy) {
+        [
+            settingsCloudRefresh,
+            settingsCloudInventory,
+            settingsImportDryRun,
+            settingsImportRun,
+            settingsBackupDryRun,
+            settingsBackupRun,
+            settingsDeleteDryRun,
+            settingsDeleteRun,
+            settingsLocalOverwriteCloudDryRun,
+            settingsLocalOverwriteCloud,
+            settingsCloudOverwriteLocalDryRun,
+            settingsCloudOverwriteLocal,
+            settingsAutoSyncStatus
+        ].forEach(button => {
+            if (button) button.disabled = isBusy;
+        });
+    }
+
+    function setCloudResult(data, label = '') {
+        if (!settingsCloudResult) return;
+        settingsCloudResult.textContent = label
+            ? `${label}\n${JSON.stringify(data, null, 2)}`
+            : JSON.stringify(data, null, 2);
+    }
+
+    function renderCloudStatus(status) {
+        if (!settingsCloudStatus) return;
+        const inventory = status.inventory || {};
+        const stats = [
+            ['当前来源', status.backend === 's3' ? '云端 S3' : '本地 data'],
+            ['存储布局', status.layout || '-'],
+            ['Bucket', status.s3?.bucket || '-'],
+            ['应用根目录', status.s3?.spaceRoot || '-'],
+            ['数据空间', status.s3?.prefix || '-'],
+            ['对象数量', Number.isFinite(inventory.objectCount) ? inventory.objectCount : '-'],
+            ['空间大小', Number.isFinite(inventory.totalBytes) ? formatBytes(inventory.totalBytes) : '-'],
+            ['区域', status.s3?.region || '-'],
+            ['本地目录', status.dataDir || '-']
+        ];
+        settingsCloudStatus.innerHTML = stats.map(([label, value]) => `
+            <div class="settings-cloud-stat">
+                <span>${escapeHtml(label)}</span>
+                <strong title="${escapeHtml(value)}">${escapeHtml(value)}</strong>
+            </div>
+        `).join('');
+        if (settingsDataCloudSubtitle) {
+            settingsDataCloudSubtitle.textContent = status.backend === 's3'
+                ? '当前正在使用 S3 云端数据源。'
+                : '当前正在使用本地数据源。';
+        }
+        if (settingsTargetPrefix && !settingsTargetPrefix.value) {
+            settingsTargetPrefix.value = status.s3?.prefix || '';
+        }
+        if (settingsSourceDataDir && !settingsSourceDataDir.value) {
+            settingsSourceDataDir.value = status.dataDir || '';
+        }
+        if (settingsBackupPrefix && !settingsBackupPrefix.value) {
+            const prefix = status.s3?.prefix || 'dumbpad';
+            const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+            settingsBackupPrefix.value = `${prefix}-backup-${stamp}`;
+        }
+    }
+
+    function formatSpaceTime(value) {
+        if (!value) return '-';
+        const timestamp = new Date(value).getTime();
+        return formatCacheTime(timestamp);
+    }
+
+    function renderSpaceList(data) {
+        if (!settingsSpaceList) return;
+        const spaces = Array.isArray(data?.spaces) ? data.spaces : [];
+        const currentPrefix = data?.currentPrefix || '';
+        if (data?.backend !== 's3') {
+            settingsSpaceList.innerHTML = '<div class="settings-space-empty">当前使用本地 data，未连接云端数据空间。</div>';
+            return;
+        }
+        if (spaces.length === 0) {
+            settingsSpaceList.innerHTML = '<div class="settings-space-empty">当前 bucket 下没有可选择的数据空间。</div>';
+            return;
+        }
+
+        settingsSpaceList.innerHTML = spaces.map(space => {
+            const isActive = space.prefix === currentPrefix;
+            const badges = [
+                space.hasNotepads ? '文章' : '',
+                space.hasThoughts ? 'Thought' : '',
+                space.hasRelations ? '关联' : ''
+            ].filter(Boolean);
+            return `
+                <button class="settings-space-item${isActive ? ' is-active' : ''}" type="button"
+                    data-prefix="${escapeHtml(space.prefix)}" ${isActive ? 'disabled' : ''}>
+                    <span class="settings-space-name">${escapeHtml(space.name || space.prefix)}</span>
+                    <span class="settings-space-path">${escapeHtml(space.prefix)}</span>
+                    <span class="settings-space-meta">
+                        ${Number.isFinite(space.objectCount) ? `${space.objectCount} 对象` : '-'}
+                        · ${Number.isFinite(space.totalBytes) ? formatBytes(space.totalBytes) : '-'}
+                        · ${formatSpaceTime(space.lastModified)}
+                    </span>
+                    <span class="settings-space-badges">
+                        ${badges.map(badge => `<span>${escapeHtml(badge)}</span>`).join('')}
+                        ${space.layout === 'nested' ? '<span>新结构</span>' : '<span>旧路径</span>'}
+                        ${isActive ? '<strong>当前使用</strong>' : '<em>点击切换</em>'}
+                    </span>
+                </button>
+            `;
+        }).join('');
+    }
+
+    async function refreshSpaceList() {
+        if (!settingsSpaceList) return null;
+        settingsSpaceList.innerHTML = '<div class="settings-space-empty">正在读取数据空间...</div>';
+        const data = await settingsDataPanel.spaces();
+        renderSpaceList(data);
+        return data;
+    }
+
+    async function selectCloudSpace(prefix) {
+        if (!prefix) return;
+        const confirmed = await confirmationManager.show({
+            title: '切换云端数据空间',
+            message: `将当前读写位置切换到「${prefix}」。页面会刷新以重新加载该数据空间。`,
+            confirmText: '切换并刷新',
+            cancelText: '取消',
+            confirmType: 'danger'
+        });
+        if (!confirmed) return;
+
+        setCloudBusy(true);
+        try {
+            const result = await settingsDataPanel.selectSpace(prefix);
+            setCloudResult(result, '数据空间已切换');
+            toaster.show('数据空间已切换，正在刷新', 'success', false, 1200);
+            setTimeout(() => window.location.reload(), 450);
+        } catch (error) {
+            toaster.show(error.message || '数据空间切换失败', 'error', false, 4000);
+            setCloudResult({ error: error.message }, '切换失败');
+        } finally {
+            setCloudBusy(false);
+        }
+    }
+
+    async function refreshCloudStatus(showToast = false) {
+        if (!settingsCloudStatus) return;
+        setCloudBusy(true);
+        try {
+            const status = await settingsDataPanel.status();
+            renderCloudStatus(status);
+            let spaces = null;
+            if (status.backend === 's3') {
+                spaces = await refreshSpaceList();
+            } else {
+                renderSpaceList({ backend: status.backend, spaces: [] });
+            }
+            setCloudResult({
+                backend: status.backend,
+                layout: status.layout,
+                dataDir: status.dataDir,
+                s3: status.s3,
+                inventory: status.inventory,
+                spaces
+            }, '当前状态');
+            if (showToast) toaster.show('云端状态已刷新', 'success');
+        } catch (error) {
+            toaster.show(error.message || '云端状态读取失败', 'error', false, 3000);
+            setCloudResult({ error: error.message }, '读取失败');
+        } finally {
+            setCloudBusy(false);
+        }
+    }
+
+    function cloudPayload({ dryRun = true } = {}) {
+        return {
+            sourceDataDir: settingsSourceDataDir?.value?.trim() || '',
+            prefix: settingsTargetPrefix?.value?.trim() || '',
+            backupPrefix: settingsBackupPrefix?.value?.trim() || '',
+            confirmPrefix: settingsConfirmPrefix?.value?.trim() || '',
+            targetDataDir: settingsSourceDataDir?.value?.trim() || '',
+            dryRun
+        };
+    }
+
+    async function runCloudAction(action) {
+        const payload = cloudPayload({ dryRun: !action.endsWith(':run') });
+        const isDanger = action.endsWith(':run');
+        if (isDanger) {
+            const confirmed = await confirmationManager.show({
+                title: '确认云端操作',
+                message: `即将执行 ${action}。确认 prefix 必须与目标 prefix 完全一致。`,
+                confirmText: '继续执行',
+                cancelText: '取消',
+                confirmType: 'danger'
+            });
+            if (!confirmed) return;
+        }
+
+        setCloudBusy(true);
+        try {
+            const result = await settingsDataPanel.runAction(action, payload);
+            setCloudResult(result, '操作结果');
+            toaster.show(payload.dryRun ? '预览完成' : '操作完成', 'success', false, 1800);
+            await refreshCloudStatus(false);
+        } catch (error) {
+            toaster.show(error.message || '云端操作失败', 'error', false, 4000);
+            setCloudResult({ error: error.message }, '操作失败');
+        } finally {
+            setCloudBusy(false);
+        }
+    }
+
+    function summarizeCloudPreview(action, result) {
+        if (action === 'local-overwrite-s3') {
+            return [
+                `目标 prefix：${result.prefix || '-'}`,
+                `云端现有对象：${result.before?.objectCount ?? '-'}`,
+                `将上传对象：${result.import?.uploaded ?? '-'}`,
+                `备份 prefix：${result.backupPrefix || '-'}`
+            ].join('\n');
+        }
+        if (action === 's3-overwrite-local') {
+            return [
+                `来源 prefix：${result.prefix || '-'}`,
+                `云端对象：${result.inventory?.objectCount ?? '-'}`,
+                `本地目录：${result.targetDataDir || '-'}`
+            ].join('\n');
+        }
+        return '预览完成。';
+    }
+
+    async function runGuidedCloudAction(action, previewAction) {
+        setCloudBusy(true);
+        try {
+            const previewPayload = cloudPayload({ dryRun: true });
+            let preview;
+            if (previewAction === 'local-overwrite-s3:dry-run') {
+                preview = await settingsDataPanel.localOverwriteS3(previewPayload);
+            } else if (previewAction === 's3-overwrite-local:dry-run') {
+                preview = await settingsDataPanel.s3OverwriteLocal(previewPayload);
+            }
+            setCloudResult(preview, '执行前预览');
+
+            const confirmed = await confirmationManager.show({
+                title: '确认数据覆盖',
+                message: `${summarizeCloudPreview(action.replace(':run', ''), preview)}\n\n确认后继续执行。`,
+                confirmText: '确认执行',
+                cancelText: '取消',
+                confirmType: 'danger'
+            });
+            if (!confirmed) return;
+
+            const runPayload = {
+                ...cloudPayload({ dryRun: false }),
+                confirmPrefix: previewPayload.prefix
+            };
+            const result = action === 'local-overwrite-s3:run'
+                ? await settingsDataPanel.localOverwriteS3(runPayload)
+                : await settingsDataPanel.s3OverwriteLocal(runPayload);
+            setCloudResult(result, '操作结果');
+            toaster.show('操作完成', 'success', false, 1800);
+            await refreshCloudStatus(false);
+        } catch (error) {
+            toaster.show(error.message || '云端操作失败', 'error', false, 4000);
+            setCloudResult({ error: error.message }, '操作失败');
+        } finally {
+            setCloudBusy(false);
+        }
+    }
+
+    async function showAutoSyncStatus() {
+        await refreshCloudStatus(false);
+        setCloudResult({
+            mode: 'auto-sync',
+            note: '基础保存、启动缓存、WebSocket 更新和 AI 后台分析由应用自动处理。需要强制覆盖时再使用本地覆盖云端或云端覆盖本地。'
+        }, '自动同步');
+        toaster.show('自动同步状态已刷新', 'success', false, 1800);
     }
 
     async function copyCurrentNotepadLink() {
@@ -183,6 +558,158 @@ document.addEventListener('DOMContentLoaded', async () => {
         window.history.pushState({ notepadName }, '', url.toString());
     }
 
+    function isValidNotepadId(id) {
+        return typeof id === 'string' && id.trim() !== '' && id !== 'undefined' && id !== 'null';
+    }
+
+    function findNotepadByIdOrName(notepadsList, value) {
+        if (!isValidNotepadId(value) || !Array.isArray(notepadsList)) return null;
+        const normalizedValue = value.toLowerCase();
+        return notepadsList.find(n => (
+            isValidNotepadId(n?.id) &&
+            (n.id === value || String(n.name || '').toLowerCase() === normalizedValue)
+        )) || null;
+    }
+
+    function getFallbackNotepadId(notepadsList) {
+        if (!Array.isArray(notepadsList)) return 'default';
+        return notepadsList.find(n => isValidNotepadId(n?.id))?.id || 'default';
+    }
+
+    function loadStartupCache() {
+        const cache = noteSyncController.loadStartupCache();
+        if (!cache) return null;
+        return {
+            ...cache,
+            notepads: cache.notepads.filter(notepad => isValidNotepadId(notepad?.id))
+        };
+    }
+
+    function saveStartupCache(patch = {}) {
+        return noteSyncController.saveStartupCache(patch);
+    }
+
+    function cacheNotepads(noteHistory) {
+        if (!Array.isArray(currentNotepads) || currentNotepads.length === 0) return;
+        noteSyncController.cacheNotepads({
+            currentNotepadId,
+            noteHistory: isValidNotepadId(noteHistory) ? noteHistory : currentNotepadId,
+            notepads: currentNotepads
+        });
+    }
+
+    function cacheNote(notepadId, content, options = {}) {
+        if (!isValidNotepadId(notepadId)) return;
+        noteSyncController.cacheNote(notepadId, content, options, { notepads: currentNotepads });
+    }
+
+    function getCachedNote(notepadId) {
+        if (!isValidNotepadId(notepadId)) return null;
+        return noteSyncController.getCachedNote(notepadId);
+    }
+
+    function getDirtyCachedNotes() {
+        const cache = loadStartupCache();
+        if (!cache?.notes || typeof cache.notes !== 'object') return [];
+        const knownNotepads = [
+            ...(Array.isArray(currentNotepads) ? currentNotepads : []),
+            ...(Array.isArray(cache.notepads) ? cache.notepads : [])
+        ];
+        const names = new Map();
+        for (const notepad of knownNotepads) {
+            if (isValidNotepadId(notepad?.id) && !names.has(notepad.id)) {
+                names.set(notepad.id, notepad.name || notepad.id);
+            }
+        }
+        return Object.entries(cache.notes)
+            .filter(([id, note]) => isValidNotepadId(id) && note?.dirty)
+            .map(([id, note]) => ({
+                id,
+                name: names.get(id) || id,
+                savedAt: note.savedAt || 0,
+                conflict: !!note.conflict || dirtyConflictNotepadIds.has(id)
+            }))
+            .sort((a, b) => Number(b.savedAt || 0) - Number(a.savedAt || 0));
+    }
+
+    function renderCachedNotepad(notepadId, content) {
+        if (!findNotepadByIdOrName(currentNotepads, notepadId)) return false;
+        currentNotepadId = notepadId;
+        isApplyingRemoteUpdate = true;
+        if (editor.value !== (content || '')) editor.value = content || '';
+        isApplyingRemoteUpdate = false;
+        hasUnsavedChanges = false;
+        const cachedNote = loadStartupCache()?.notes?.[notepadId];
+        const noteIsDirty = !!cachedNote?.dirty;
+        setCurrentNoteVersion(notepadId, cachedNote?.version);
+        setStartupSyncStatus('cached', noteIsDirty ? '本地未同步' : '本地快照');
+
+        const emptyState = document.getElementById('empty-state');
+        const hybridEditor = document.getElementById('hybrid-editor');
+        if (emptyState) emptyState.style.display = 'none';
+        if (hybridEditor) hybridEditor.style.display = 'block';
+
+        updateSidebarSelection(notepadId);
+        renderRecentFiles(notepadId, currentNotepads, selectNotepad, deleteNotepadById, renameNotepadById);
+        const name = getCurrentNotepadName();
+        updateUrlWithNotepad(name);
+        const pageTitle = document.getElementById('page-title');
+        if (pageTitle) pageTitle.textContent = `${name} - DumbPad`;
+        return true;
+    }
+
+    async function fetchNoteData(notepadId) {
+        const response = await fetchWithPin('/api/notes/' + encodeURIComponent(notepadId));
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return response.json();
+    }
+
+    let notePrefetchRun = 0;
+    async function prefetchNotepadNotes(preferredIds = []) {
+        const runId = ++notePrefetchRun;
+        const cached = loadStartupCache()?.notes || {};
+        const preferred = preferredIds.filter(Boolean);
+        const ids = [
+            ...preferred,
+            ...currentNotepads.map(note => note.id).filter(Boolean)
+        ].filter((id, index, list) => (
+            id !== currentNotepadId &&
+            list.indexOf(id) === index &&
+            !cached[id]?.dirty &&
+            !cached[id]?.content
+        ));
+        const concurrency = 2;
+        let cursor = 0;
+        const worker = async () => {
+            while (cursor < ids.length && runId === notePrefetchRun) {
+                const id = ids[cursor++];
+                try {
+                    const data = await fetchNoteData(id);
+                    const existing = getCachedNote(id);
+                    if (!existing?.dirty) {
+                        cacheNote(id, data.content || '', { version: data.version, dirty: false });
+                    }
+                } catch (error) {
+                    console.info('[sync] note prefetch skipped notepadId=%s reason=%s', id, error.message);
+                }
+            }
+        };
+        await Promise.all(Array.from({ length: concurrency }, () => worker()));
+    }
+
+    function hydrateStartupCache() {
+        const cache = loadStartupCache();
+        if (!cache || cache.notepads.length === 0) return false;
+
+        currentNotepads = cache.notepads;
+        renderSidebar(currentNotepads, currentNotepadId, selectNotepad, deleteNotepadById, renameNotepadById);
+
+        const selectedId = handleQueryParameterSelection(currentNotepads, cache.currentNotepadId || cache.noteHistory);
+        const note = selectedId ? cache.notes?.[selectedId] : null;
+        if (!selectedId || !note) return false;
+        return renderCachedNotepad(selectedId, note.content || '');
+    }
+
     function escapeHtml(value = '') {
         return String(value).replace(/[&<>"']/g, char => ({
             '&': '&amp;',
@@ -201,44 +728,118 @@ document.addEventListener('DOMContentLoaded', async () => {
         return getCurrentNotepad().name || 'Untitled';
     }
 
+    function setCurrentNoteVersion(notepadId, version) {
+        const nextVersion = Number(version);
+        if (!Number.isFinite(nextVersion)) return;
+        if (notepadId === currentNotepadId) currentNoteVersion = nextVersion;
+        const notepad = currentNotepads.find(n => n.id === notepadId);
+        if (notepad) notepad.version = nextVersion;
+    }
+
+    function formatCacheTime(timestamp) {
+        const value = Number(timestamp);
+        if (!Number.isFinite(value) || value <= 0) return '-';
+        try {
+            return new Intl.DateTimeFormat('zh-CN', {
+                month: '2-digit',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit'
+            }).format(new Date(value));
+        } catch {
+            return new Date(value).toLocaleString();
+        }
+    }
+
     function handleQueryParameterSelection(notepadsList, defaultId) {
-        if (!isInitialLoad) return defaultId;
+        if (!Array.isArray(notepadsList) || notepadsList.length === 0) return null;
+
+        if (!isInitialLoad) {
+            return findNotepadByIdOrName(notepadsList, currentNotepadId)?.id
+                || findNotepadByIdOrName(notepadsList, defaultId)?.id
+                || getFallbackNotepadId(notepadsList);
+        }
+
         const id = new URLSearchParams(window.location.search).get('id');
-        if (id) {
-            const found = notepadsList.find(n => n.id === id || n.name.toLowerCase() === id.toLowerCase());
+        if (isValidNotepadId(id)) {
+            const found = findNotepadByIdOrName(notepadsList, id);
             if (found) return found.id;
             toaster.show(`Notepad '${id}' not found`, 'error');
         }
-        return defaultId;
+
+        return findNotepadByIdOrName(notepadsList, defaultId)?.id || getFallbackNotepadId(notepadsList);
     }
 
     async function loadNotepads() {
         try {
+            if (!navigator.onLine) {
+                setStartupSyncStatus('error', '服务器不可用，本地可读');
+                return;
+            }
+            setStartupSyncStatus('syncing', '同步中');
             const response = await fetchWithPin('/api/notepads');
             const data = await response.json();
-            currentNotepads = data.notepads_list;
+            currentNotepads = Array.isArray(data.notepads_list) ? data.notepads_list : [];
             renderSidebar(currentNotepads, currentNotepadId, selectNotepad, deleteNotepadById, renameNotepadById);
             
             currentNotepadId = handleQueryParameterSelection(currentNotepads, data['note_history']);
-            if (collaborationManager) {
-                if (currentNotepads.some(n => n.id === currentNotepadId)) await selectNotepad(currentNotepadId);
-                else currentNotepadId = await selectNextNotepad(false);
-            }
+            cacheNotepads(data['note_history']);
+            if (findNotepadByIdOrName(currentNotepads, currentNotepadId)) await selectNotepad(currentNotepadId);
+            else currentNotepadId = await selectNextNotepad(false);
+            setTimeout(() => prefetchNotepadNotes(Array.isArray(data['note_history']) ? data['note_history'] : []), 300);
         } catch (err) {
-            console.error('Error loading notepads:', err);
+            console.warn('Error loading notepads:', err);
+            setStartupSyncStatus('error', '服务器不可用，本地可读');
         }
     }
 
     let loadingNotepadId = null;
+    const dirtyConflictNotepadIds = new Set();
     async function loadNotes(notepadId) { 
+        if (!findNotepadByIdOrName(currentNotepads, notepadId)) return;
+        const cachedBeforeFetch = getCachedNote(notepadId);
+        if (cachedBeforeFetch?.content || cachedBeforeFetch?.dirty) {
+            renderCachedNotepad(notepadId, cachedBeforeFetch.content || '');
+        }
+        if (!navigator.onLine) {
+            setStartupSyncStatus('error', '服务器不可用，本地可读');
+            return;
+        }
         if (loadingNotepadId === notepadId) return; // Prevent redundant loading
         loadingNotepadId = notepadId;
         try { 
-            const response = await fetchWithPin('/api/notes/' + notepadId); 
-            const data = await response.json(); 
+            const data = await fetchNoteData(notepadId);
             if (loadingNotepadId !== notepadId) return;
 
-            editor.value = data.content || '';
+            const cachedNote = getCachedNote(notepadId);
+            if (cachedNote?.dirty && currentNotepadId === notepadId) {
+                setCurrentNoteVersion(notepadId, cachedNote.version);
+                if (Number(data.version) > Number(cachedNote.version || 0)) {
+                    cacheNote(notepadId, cachedNote.content || '', {
+                        version: cachedNote.version,
+                        dirty: true,
+                        remoteVersion: data.version,
+                        conflict: true
+                    });
+                    dirtyConflictNotepadIds.add(notepadId);
+                    setStartupSyncStatus('error', '有远端更新，本地已保留');
+                    return;
+                }
+                dirtyConflictNotepadIds.delete(notepadId);
+                cacheNote(notepadId, cachedNote.content || '', {
+                    version: cachedNote.version,
+                    dirty: true
+                });
+                setStartupSyncStatus('cached', '本地未同步');
+                return;
+            }
+
+            if (editor.value !== (data.content || '')) editor.value = data.content || '';
+            hasUnsavedChanges = false;
+            dirtyConflictNotepadIds.delete(notepadId);
+            setCurrentNoteVersion(notepadId, data.version);
+            cacheNote(notepadId, data.content || '', { version: data.version, dirty: false });
+            setStartupSyncStatus('synced', '已同步');
 
             const currentNotepad = currentNotepads.find(n => n.id === notepadId); 
             if (currentNotepad) trackRecentFile(currentNotepad); 
@@ -246,7 +847,10 @@ document.addEventListener('DOMContentLoaded', async () => {
             updateSidebarSelection(notepadId);
             renderRecentFiles(notepadId, currentNotepads, selectNotepad, deleteNotepadById, renameNotepadById); 
         } catch (err) { 
-            console.error('Error loading notes:', err); 
+            console.warn('Error loading notes:', err);
+            setStartupSyncStatus('error', '服务器不可用，本地可读');
+        } finally {
+            if (loadingNotepadId === notepadId) loadingNotepadId = null;
         } 
     }
 
@@ -275,23 +879,24 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         tocContainer?.classList.add('visible');
         document.body.classList.add('toc-active');
+        editorInstance.syncRenderedHeadingIds(toc);
         tocList.innerHTML = toc.map(item => `
-            <div class="toc-item h${item.level}" data-index="${item.index}">
-                ${item.text}
+            <div class="toc-item h${item.level}" data-index="${item.line}" data-heading-id="${escapeHtml(item.id)}">
+                ${escapeHtml(item.text)}
             </div>
         `).join('');
 
         tocList.querySelectorAll('.toc-item').forEach(el => {
             el.onclick = () => {
                 const index = parseInt(el.dataset.index);
-                // Only focus/edit if NOT in reading mode
                 if (!editor.isReadingMode) {
                     editorInstance.focusLine(index, 0);
+                } else {
+                    const headingId = el.dataset.headingId || '';
+                    if (!editorInstance.scrollToHeadingId(headingId)) {
+                        editorInstance.scrollToLine(index);
+                    }
                 }
-                setTimeout(() => {
-                    const target = document.querySelector(`[data-line="${index}"]`);
-                    target?.scrollIntoView({ block: 'start', behavior: 'smooth' });
-                }, 50);
             };
         });
     }
@@ -299,15 +904,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     function initEditor() { 
         editorInstance = new HybridMarkdownEditor(document.getElementById('hybrid-editor'), {
             input: (value) => {
-                if (collaborationManager && collaborationManager.isReceivingUpdate) return;
                 if (isApplyingRemoteUpdate) return;
+                hasUnsavedChanges = true;
                 debouncedSave(value);
                 debouncedUpdateToC();
                 clearTimeout(remoteUpdateTimeout);
                 remoteUpdateTimeout = setTimeout(() => {
-                    if (collaborationManager && collaborationManager.ws && collaborationManager.ws.readyState === WebSocket.OPEN) { 
-                        collaborationManager.ws.send(JSON.stringify({ type: 'update', notepadId: currentNotepadId, content: value, userId })); 
-                    }
+                    wsClient.sendUpdate('update', { notepadId: currentNotepadId, content: value, userId });
                 }, 700);
             }
         });
@@ -326,8 +929,15 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (!newNotepad?.id) {
                 throw new Error(payload?.error || 'Create notepad succeeded but missing id');
             }
-            await loadNotepads();
-            await selectNotepad(newNotepad.id);
+            currentNotepads = [
+                ...currentNotepads.filter(note => note.id !== newNotepad.id),
+                newNotepad
+            ];
+            cacheNote(newNotepad.id, '', { version: newNotepad.version || 1, dirty: false });
+            cacheNotepads(newNotepad.id);
+            renderSidebar(currentNotepads, newNotepad.id, selectNotepad, deleteNotepadById, renameNotepadById);
+            renderCachedNotepad(newNotepad.id, '');
+            loadNotes(newNotepad.id);
             toaster.show(`New notepad: ${newNotepad.name}`, 'success');
         } catch (err) {
             console.error('Error creating notepad:', err);
@@ -355,35 +965,62 @@ document.addEventListener('DOMContentLoaded', async () => {
         
         const id = notepadIdToRename;
         try {
+            const notepad = currentNotepads.find(n => n.id === id);
             const response = await fetchWithPin(`/api/notepads/${id}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name: newName }),
+                body: JSON.stringify({ name: newName, baseVersion: notepad?.version }),
             });
             const result = await response.json();
+            if (!response.ok) {
+                throw Object.assign(new Error(result?.error || 'Error renaming notepad'), {
+                    status: response.status,
+                    payload: result
+                });
+            }
             await loadNotepads();
             if (currentNotepadId === id) {
                 updateUrlWithNotepad(result.name);
             }
-            if (collaborationManager.ws && collaborationManager.ws.readyState === WebSocket.OPEN) {
-                collaborationManager.ws.send(JSON.stringify({ type: 'notepad_rename', notepadId: id, newName: result.name }));
-            }
+            wsClient.sendUpdate('notepad_change', { action: 'rename', notepadId: id, newName: result.name });
             hideModal(renameModal);
             toaster.show('Renamed notepad');
         } catch (err) {
             console.error('Error renaming notepad:', err);
-            toaster.show('Error renaming notepad', 'error', true);
+            const message = err?.status === 409
+                ? '该 Notepad 已在其他设备更新，请刷新后再重命名'
+                : 'Error renaming notepad';
+            toaster.show(message, 'error', true);
         }
     }
 
-    async function saveNotes(content, isAutoSave, showStatus = true) {
+    async function saveNotes(content, isAutoSave, showStatus = true, retryCount = 0, targetNotepadId = currentNotepadId) {
+        let baseVersion;
         try {
-            if (!currentNotepadId) return;
-            await fetchWithPin(`/api/notes/${currentNotepadId}`, {
+            if (!findNotepadByIdOrName(currentNotepads, targetNotepadId) || currentNotepadId !== targetNotepadId) return;
+            if (!navigator.onLine) {
+                setStartupSyncStatus('error', '保存失败，本地已保留');
+                return false;
+            }
+            baseVersion = targetNotepadId === currentNotepadId
+                ? currentNoteVersion
+                : currentNotepads.find(n => n.id === targetNotepadId)?.version;
+            const payload = { content, userId };
+            if (Number.isFinite(baseVersion)) payload.baseVersion = baseVersion;
+            const response = await fetchWithPin(`/api/notes/${targetNotepadId}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ content, userId }),
+                body: JSON.stringify(payload),
             });
+            const result = await response.json().catch(() => ({}));
+            if (!response?.ok) {
+                throw Object.assign(new Error(result?.error || `Save failed (${response?.status || 'network'})`), {
+                    status: response.status,
+                    payload: result
+                });
+            }
+            clearTimeout(saveRetryTimeout);
+            saveRetryTimeout = null;
             lastSaveTime = Date.now();
             if (showStatus) {
                 if (isAutoSave) {
@@ -391,13 +1028,228 @@ document.addEventListener('DOMContentLoaded', async () => {
                     toaster.show('Saved', 'success', false, settings.saveStatusMessageInterval); 
                 } else toaster.show('Saved');
             }
+            if (currentNotepadId === targetNotepadId && editor.value === content) {
+                hasUnsavedChanges = false;
+            }
+            setCurrentNoteVersion(targetNotepadId, result.version);
+            cacheNote(targetNotepadId, content, { version: result.version, dirty: false });
+            setStartupSyncStatus('synced', '已同步');
+            dirtyConflictNotepadIds.delete(targetNotepadId);
+            return true;
         } catch (err) {
-            console.error('Error saving notes:', err);
+            console.warn('Error saving notes:', err);
+            if (err?.status === 409) {
+                dirtyConflictNotepadIds.add(targetNotepadId);
+                const remoteVersion = Number(err?.payload?.currentVersion);
+                cacheNote(targetNotepadId, content, {
+                    version: baseVersion,
+                    dirty: true,
+                    remoteVersion: Number.isFinite(remoteVersion) ? remoteVersion : undefined,
+                    conflict: true
+                });
+                setStartupSyncStatus('error', '有远端更新，本地已保留');
+                toaster.show('内容已在其他设备更新，请刷新后再保存或复制当前内容', 'error', true, 6000);
+                return false;
+            }
+            if (isAutoSave && retryCount < 3 && currentNotepadId === targetNotepadId) {
+                clearTimeout(saveRetryTimeout);
+                saveRetryTimeout = setTimeout(() => {
+                    saveNotes(content, true, false, retryCount + 1, targetNotepadId);
+                }, 1200 * (retryCount + 1));
+            }
+            setStartupSyncStatus('error', '保存失败，本地已保留');
             toaster.show('Error saving', 'error', false, 3000);
+            return false;
         }
     }
 
+    let dirtySyncInFlight = false;
+    async function syncCurrentDirtyNote() {
+        if (dirtySyncInFlight) {
+            console.info('[sync] skip dirty sync reason=in_flight');
+            return;
+        }
+        if (!navigator.onLine) {
+            console.info('[sync] skip dirty sync reason=offline');
+            return;
+        }
+        if (!isValidNotepadId(currentNotepadId)) {
+            console.info('[sync] skip dirty sync reason=invalid_notepad');
+            return;
+        }
+        const cachedNote = getCachedNote(currentNotepadId);
+        if (!cachedNote?.dirty) return;
+        if (editor.value !== cachedNote.content) {
+            console.info('[sync] skip dirty sync reason=editor_changed notepadId=%s', currentNotepadId);
+            return;
+        }
+        if (!findNotepadByIdOrName(currentNotepads, currentNotepadId)) {
+            console.info('[sync] skip dirty sync reason=notepad_missing notepadId=%s', currentNotepadId);
+            return;
+        }
+        if (dirtyConflictNotepadIds.has(currentNotepadId) || cachedNote.conflict) {
+            console.info('[sync] skip dirty sync reason=conflict notepadId=%s localVersion=%s remoteVersion=%s',
+                currentNotepadId,
+                cachedNote.version ?? '-',
+                cachedNote.remoteVersion ?? '-'
+            );
+            return;
+        }
+
+        dirtySyncInFlight = true;
+        clearTimeout(saveTimeout);
+        setCurrentNoteVersion(currentNotepadId, cachedNote.version);
+        setStartupSyncStatus('syncing', '同步本地修改');
+        try {
+            const synced = await saveNotes(cachedNote.content || '', true, false, 0, currentNotepadId);
+            if (synced) cacheNote(currentNotepadId, cachedNote.content || '', { version: currentNoteVersion, dirty: false });
+        } finally {
+            dirtySyncInFlight = false;
+        }
+    }
+
+    function updateSettingsConflictSection() {
+        if (!settingsConflictSection || !settingsConflictContent || !settingsConflictMessage) return;
+        const cachedNote = getCachedNote(currentNotepadId);
+        const hasLocalContent = !!cachedNote?.dirty;
+        const isConflict = dirtyConflictNotepadIds.has(currentNotepadId) || !!cachedNote?.conflict;
+        const isOffline = !navigator.onLine || startupSyncSnapshot.label.includes('服务器不可用');
+        const serverVersion = Number.isFinite(Number(currentNoteVersion)) ? currentNoteVersion : null;
+        const localVersion = Number.isFinite(Number(cachedNote?.version)) ? cachedNote.version : serverVersion;
+        const remoteVersion = Number.isFinite(Number(cachedNote?.remoteVersion))
+            ? Number(cachedNote.remoteVersion)
+            : serverVersion;
+        const summaryKind = isConflict
+            ? 'conflict'
+            : hasLocalContent
+                ? 'dirty'
+                : isOffline
+                    ? 'offline'
+                    : startupSyncSnapshot.kind === 'unsynced'
+                        ? 'error'
+                        : 'synced';
+        const summaryText = {
+            synced: '已同步',
+            dirty: '本地未同步',
+            conflict: '远端冲突',
+            offline: '服务器不可用',
+            error: '需要处理'
+        }[summaryKind] || '同步状态';
+
+        settingsConflictSection.hidden = false;
+        settingsConflictSection.classList.toggle('is-clean', !hasLocalContent);
+        if (settingsSyncSummary) {
+            settingsSyncSummary.dataset.kind = summaryKind;
+            settingsSyncSummary.textContent = summaryText;
+        }
+        if (settingsLocalVersion) settingsLocalVersion.textContent = localVersion ?? '-';
+        if (settingsServerVersion) settingsServerVersion.textContent = remoteVersion ?? '-';
+        if (settingsCacheTime) settingsCacheTime.textContent = formatCacheTime(cachedNote?.savedAt);
+        if (settingsDirtyNotes) {
+            const dirtyNotes = getDirtyCachedNotes();
+            settingsDirtyNotes.hidden = dirtyNotes.length === 0;
+            settingsDirtyNotes.innerHTML = dirtyNotes.length ? `
+                <div class="settings-dirty-notes-title">本地未同步：${dirtyNotes.length} 个</div>
+                ${dirtyNotes.map(note => `
+                    <button type="button" class="settings-dirty-note-item" data-sync-note-id="${escapeHtml(note.id)}">
+                        <span class="settings-dirty-note-name">${escapeHtml(note.name)}</span>
+                        <span class="settings-dirty-note-state">${note.conflict ? '远端冲突' : formatCacheTime(note.savedAt)}</span>
+                    </button>
+                `).join('')}
+            ` : '';
+        }
+        if (settingsRetryLocalSync) {
+            settingsRetryLocalSync.hidden = !hasLocalContent;
+            settingsRetryLocalSync.disabled = !hasLocalContent || isConflict || !navigator.onLine;
+            settingsRetryLocalSync.title = isConflict
+                ? '远端已有更新，不能自动覆盖'
+                : !navigator.onLine
+                    ? '服务器不可用'
+                    : hasLocalContent
+                        ? '重新保存当前本地内容'
+                        : '没有本地未同步内容';
+        }
+
+        if (!hasLocalContent) {
+            settingsConflictContent.value = '';
+            const name = getCurrentNotepadName();
+            settingsConflictMessage.textContent = `${name} 当前状态：${startupSyncSnapshot.label || '已同步'}。没有本地保留内容。`;
+            return;
+        }
+
+        const name = getCurrentNotepadName();
+        settingsConflictMessage.textContent = isConflict
+            ? `${name} 有远端更新，本地内容仍保留在浏览器中。请复制本地内容或加载远端版本。`
+            : `${name} 有本地未同步内容。`;
+        settingsConflictContent.value = cachedNote.content || '';
+    }
+
+    function openSettingsModal(options = {}) {
+        settingsManager.loadSettings();
+        updateSettingsConflictSection();
+        refreshCloudStatus(false);
+        const focusTarget = options.focusSyncPanel ? settingsConflictSection : settingsInputAutoSaveStatusInterval;
+        showModal(settingsModal, focusTarget);
+        if (options.focusSyncPanel && settingsConflictSection) {
+            settingsConflictSection.scrollIntoView({ block: 'nearest' });
+        }
+    }
+
+    async function copyCurrentLocalContent() {
+        const cachedNote = getCachedNote(currentNotepadId);
+        if (!cachedNote?.dirty) return;
+        try {
+            await navigator.clipboard.writeText(cachedNote.content || '');
+            toaster.show('Local content copied', 'success');
+        } catch (err) {
+            console.warn('Failed to copy local content:', err);
+            toaster.show('Failed to copy local content', 'error');
+        }
+    }
+
+    async function discardCurrentLocalContent() {
+        const cachedNote = getCachedNote(currentNotepadId);
+        if (!cachedNote?.dirty) return;
+        const confirmed = await confirmationManager.show({
+            title: '放弃本地保留内容',
+            message: '这会清除当前 note 的本地未同步内容，并重新加载服务器版本。建议先复制本地内容。',
+            confirmText: '加载远端',
+            cancelText: '取消',
+            confirmType: 'danger'
+        });
+        if (!confirmed) return;
+
+        cacheNote(currentNotepadId, cachedNote.content || '', { version: cachedNote.version, dirty: false });
+        dirtyConflictNotepadIds.delete(currentNotepadId);
+        await loadNotes(currentNotepadId);
+        updateSettingsConflictSection();
+        setStartupSyncStatus('synced', '已加载远端');
+    }
+
+    async function retryCurrentLocalSync() {
+        const cachedNote = getCachedNote(currentNotepadId);
+        if (!cachedNote?.dirty || dirtyConflictNotepadIds.has(currentNotepadId) || cachedNote.conflict) {
+            updateSettingsConflictSection();
+            return;
+        }
+        setStartupSyncStatus('syncing', '同步本地修改');
+        const synced = await saveNotes(cachedNote.content || '', false, true, 0, currentNotepadId);
+        if (synced) {
+            updateSettingsConflictSection();
+        } else {
+            updateSettingsConflictSection();
+        }
+    }
+
+    async function selectDirtyCachedNote(id) {
+        if (!findNotepadByIdOrName(currentNotepads, id)) return;
+        await selectNotepad(id);
+        updateSettingsConflictSection();
+    }
+
     function debouncedSave(content) {
+        cacheNote(currentNotepadId, content, { dirty: true });
+        setStartupSyncStatus('cached', '本地已保留');
         clearTimeout(saveTimeout);
         saveTimeout = setTimeout(async () => {
             await saveNotes(content, true);
@@ -405,7 +1257,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     async function deleteNotepad() {
-        if (!currentNotepadId) return;
+        if (!findNotepadByIdOrName(currentNotepads, currentNotepadId)) return;
         await deleteNotepadById(currentNotepadId);
     }
 
@@ -431,9 +1283,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         try {
             const notepad = currentNotepads.find(n => n.id === id);
             await fetchWithPin(`/api/notepads/${id}`, { method: 'DELETE' });
-            if (notepad && collaborationManager.ws && collaborationManager.ws.readyState === WebSocket.OPEN) {
-                collaborationManager.ws.send(JSON.stringify({ type: 'notepad_delete', notepadId: id, notepadName: notepad.name }));
-            }
+            if (notepad) wsClient.sendUpdate('notepad_change', { action: 'delete', notepadId: id, notepadName: notepad.name });
             await loadNotepads();
             if (currentNotepadId === id) {
                 await selectNotepad('default');
@@ -459,8 +1309,24 @@ document.addEventListener('DOMContentLoaded', async () => {
         toaster.show('Downloading...');
     }
 
+    let jsZipLoader = null;
+    async function ensureJSZip() {
+        if (typeof JSZip !== 'undefined') return JSZip;
+        jsZipLoader ||= new Promise((resolve, reject) => {
+            const script = document.createElement('script');
+            script.src = 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
+            script.async = true;
+            script.onload = () => resolve(window.JSZip);
+            script.onerror = () => reject(new Error('JSZip failed to load'));
+            document.head.appendChild(script);
+        });
+        return jsZipLoader;
+    }
+
     async function exportAllAsZip() {
-        if (typeof JSZip === 'undefined') {
+        try {
+            await ensureJSZip();
+        } catch (_error) {
             toaster.show('JSZip library not loaded', 'error');
             return;
         }
@@ -506,13 +1372,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     let selectionToken = 0;
     async function selectNotepad(id, query = "") {
         const token = ++selectionToken;
-        currentNotepadId = id;
-        collaborationManager.currentNotepadId = id;
+        const selectedNotepad = findNotepadByIdOrName(currentNotepads, id);
+        currentNotepadId = selectedNotepad?.id || null;
         
         // --- UI Visibility ---
         const emptyState = document.getElementById('empty-state');
         const hybridEditor = document.getElementById('hybrid-editor');
-        if (id) {
+        if (currentNotepadId) {
             emptyState.style.display = 'none';
             hybridEditor.style.display = 'block';
         } else {
@@ -527,7 +1393,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         document.getElementById('sidebar-left')?.classList.remove('visible');
         document.getElementById('sidebar-overlay')?.classList.remove('visible');
 
-        await loadNotes(id);
+        await loadNotes(currentNotepadId);
         if (token !== selectionToken) return;
 
         updateToC(); // Update TOC on selection
@@ -788,10 +1654,55 @@ document.addEventListener('DOMContentLoaded', async () => {
         downloadCancel.addEventListener('click', () => hideModal(downloadModal));
         if (printNotepadBtn) printNotepadBtn.addEventListener('click', printNotepad);
         if (settingsButton) {
-            settingsButton.addEventListener('click', () => { settingsManager.loadSettings(); showModal(settingsModal, settingsInputAutoSaveStatusInterval); });
+            settingsButton.addEventListener('click', () => {
+                openSettingsModal();
+            });
+        }
+        if (startupSyncStatus) {
+            startupSyncStatus.addEventListener('click', (event) => {
+                event.stopPropagation();
+                openSettingsModal({ focusSyncPanel: true });
+            });
+            startupSyncStatus.addEventListener('keydown', (event) => {
+                if (event.key !== 'Enter' && event.key !== ' ') return;
+                event.preventDefault();
+                event.stopPropagation();
+                openSettingsModal({ focusSyncPanel: true });
+            });
         }
         if (settingsCancel) settingsCancel.addEventListener('click', () => hideModal(settingsModal));
         if (settingsSave) settingsSave.addEventListener('click', () => { settingsManager.saveSettings(); hideModal(settingsModal, 'Settings Saved'); });
+        if (settingsReset) settingsReset.addEventListener('click', () => { settingsManager.saveSettings(true); settingsManager.loadSettings(); toaster.show('Settings reset', 'success'); });
+        if (settingsRetryLocalSync) settingsRetryLocalSync.addEventListener('click', retryCurrentLocalSync);
+        if (settingsDirtyNotes) {
+            settingsDirtyNotes.addEventListener('click', (event) => {
+                const item = event.target.closest('.settings-dirty-note-item');
+                if (!item?.dataset.syncNoteId) return;
+                selectDirtyCachedNote(item.dataset.syncNoteId);
+            });
+        }
+        if (settingsCopyLocalContent) settingsCopyLocalContent.addEventListener('click', copyCurrentLocalContent);
+        if (settingsDiscardLocalContent) settingsDiscardLocalContent.addEventListener('click', discardCurrentLocalContent);
+        if (settingsCloudRefresh) settingsCloudRefresh.addEventListener('click', () => refreshCloudStatus(true));
+        if (settingsSpaceList) {
+            settingsSpaceList.addEventListener('click', (event) => {
+                const item = event.target.closest('.settings-space-item');
+                if (!item || item.disabled) return;
+                selectCloudSpace(item.dataset.prefix || '');
+            });
+        }
+        if (settingsCloudInventory) settingsCloudInventory.addEventListener('click', () => runCloudAction('inventory'));
+        if (settingsImportDryRun) settingsImportDryRun.addEventListener('click', () => runCloudAction('import:dry-run'));
+        if (settingsImportRun) settingsImportRun.addEventListener('click', () => runCloudAction('import:run'));
+        if (settingsBackupDryRun) settingsBackupDryRun.addEventListener('click', () => runCloudAction('backup:dry-run'));
+        if (settingsBackupRun) settingsBackupRun.addEventListener('click', () => runCloudAction('backup:run'));
+        if (settingsDeleteDryRun) settingsDeleteDryRun.addEventListener('click', () => runCloudAction('delete:dry-run'));
+        if (settingsDeleteRun) settingsDeleteRun.addEventListener('click', () => runCloudAction('delete:run'));
+        if (settingsLocalOverwriteCloudDryRun) settingsLocalOverwriteCloudDryRun.addEventListener('click', () => runCloudAction('local-overwrite-s3:dry-run'));
+        if (settingsLocalOverwriteCloud) settingsLocalOverwriteCloud.addEventListener('click', () => runGuidedCloudAction('local-overwrite-s3:run', 'local-overwrite-s3:dry-run'));
+        if (settingsCloudOverwriteLocalDryRun) settingsCloudOverwriteLocalDryRun.addEventListener('click', () => runCloudAction('s3-overwrite-local:dry-run'));
+        if (settingsCloudOverwriteLocal) settingsCloudOverwriteLocal.addEventListener('click', () => runGuidedCloudAction('s3-overwrite-local:run', 's3-overwrite-local:dry-run'));
+        if (settingsAutoSyncStatus) settingsAutoSyncStatus.addEventListener('click', showAutoSyncStatus);
         
         const readModeBtn = document.getElementById('toggle-reading-mode');
         isReadingMode = localStorage.getItem('dumbpad_reading_mode') === 'true';
@@ -828,12 +1739,14 @@ document.addEventListener('DOMContentLoaded', async () => {
             });
         }
 
-        themeToggle.addEventListener('click', () => {
-            currentTheme = currentTheme === 'dark' ? 'light' : 'dark';
-            document.documentElement.setAttribute('data-theme', currentTheme);
-            previewManager.updateHighlightTheme(currentTheme);
-            storageManager.save(THEME_KEY, currentTheme);
-        });
+        if (themeToggle) {
+            themeToggle.addEventListener('click', () => {
+                currentTheme = currentTheme === 'dark' ? 'light' : 'dark';
+                document.documentElement.setAttribute('data-theme', currentTheme);
+                previewManager.updateHighlightTheme(currentTheme);
+                storageManager.save(THEME_KEY, currentTheme);
+            });
+        }
 
         document.addEventListener('keydown', (e) => {
             if (e.key === 'Escape') closeAllModals();
@@ -896,6 +1809,19 @@ document.addEventListener('DOMContentLoaded', async () => {
         let lastScrollY = 0;
 
         if (scrollBtn) {
+            const getActiveScrollTarget = () => {
+                const sourceEditor = document.querySelector('.typora-editor-shell.is-source-mode .typora-source-editor');
+                if (sourceEditor && sourceEditor.scrollHeight > sourceEditor.clientHeight + 2) return sourceEditor;
+
+                const wysiwyg = document.querySelector('.typora-editor-shell .vditor-wysiwyg');
+                if (wysiwyg && wysiwyg.scrollHeight > wysiwyg.clientHeight + 2) return wysiwyg;
+
+                const thoughtsArea = document.querySelector('.thoughts-scroll-area');
+                if (thoughtsArea && thoughtsArea.offsetParent !== null && thoughtsArea.scrollHeight > thoughtsArea.clientHeight + 2) return thoughtsArea;
+
+                return document.scrollingElement || document.documentElement;
+            };
+
             const updateIcon = () => {
                 if (scrollDir === 'down') {
                     scrollBtn.innerHTML = `
@@ -932,12 +1858,41 @@ document.addEventListener('DOMContentLoaded', async () => {
                 }
             }, { passive: true });
 
+            setTimeout(() => {
+                [
+                    document.querySelector('.typora-editor-shell .vditor-wysiwyg'),
+                    document.querySelector('.typora-source-editor'),
+                    document.querySelector('.thoughts-scroll-area')
+                ].filter(Boolean).forEach(el => {
+                    el.addEventListener('scroll', () => {
+                        const y = el.scrollTop;
+                        const maxScroll = el.scrollHeight - el.clientHeight;
+                        if (maxScroll <= 0) return;
+                        let dir;
+                        if (y <= 2) {
+                            dir = 'down';
+                        } else if (y >= maxScroll - 2) {
+                            dir = 'up';
+                        } else {
+                            dir = y > lastScrollY ? 'down' : 'up';
+                        }
+                        lastScrollY = y;
+                        if (scrollDir !== dir) {
+                            scrollDir = dir;
+                            updateIcon();
+                        }
+                    }, { passive: true });
+                });
+            }, 800);
+
             let scrollAnim = null;
 
             scrollBtn.addEventListener('click', () => {
-                const el = document.scrollingElement || document.documentElement;
+                const el = getActiveScrollTarget();
                 const startY = el.scrollTop;
-                const endY = scrollDir === 'down' ? el.scrollHeight - el.clientHeight : 0;
+                const maxScroll = el.scrollHeight - el.clientHeight;
+                const direction = startY >= maxScroll - 2 ? 'up' : (startY <= 2 ? 'down' : scrollDir);
+                const endY = direction === 'down' ? maxScroll : 0;
                 const distance = endY - startY;
                 if (Math.abs(distance) < 2) return;
 
@@ -991,13 +1946,14 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     function applySettings(s) {
         if (!s) return;
-        if (previewManager.toggleMarkdownPreview) previewManager.toggleMarkdownPreview(false, s.defaultMarkdownPreviewMode || 'off', false);
     }
 
     async function registerServiceWorker() {
         if (!('serviceWorker' in navigator)) return;
         try {
-            const registration = await navigator.serviceWorker.register('/service-worker.js');
+            const registration = await navigator.serviceWorker.register('/service-worker.js', {
+                updateViaCache: 'none'
+            });
 
             // Check for updates immediately and every 5 minutes
             const checkUpdate = async () => {
@@ -1056,15 +2012,24 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     }
 
-    const initializeApp = async () => {
-        addEventListeners();
-        appSettings = settingsManager.loadSettings();
+    async function loadAppConfig() {
         try {
+            if (!navigator.onLine) return;
             const config = await (await fetch('/api/config')).json();
             _siteTitle = config.siteTitle;
             if (!isReadingMode) setHeaderTitle(_siteTitle);
-            await loadNotepads();
-        } catch (err) { console.error(err); }
+        } catch (err) {
+            console.warn('Error loading config:', err);
+        }
+    }
+
+    const initializeApp = async () => {
+        addEventListeners();
+        appSettings = settingsManager.loadSettings();
+        hydrateStartupCache();
+        loadAppConfig();
+        await loadNotepads();
+        await syncCurrentDirtyNote();
         applySettings(appSettings);
         await registerServiceWorker();
         isInitialLoad = false;

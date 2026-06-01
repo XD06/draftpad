@@ -3,6 +3,7 @@ const express = require('express');
 const { marked } = require('marked');
 const cors = require('cors');
 const fs = require('fs').promises;
+const fsSync = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const cookieParser = require('cookie-parser');
@@ -19,6 +20,12 @@ const {
 } = require('./scripts/notepad-migration');
 const { TRUST_PROXY, TRUSTED_PROXY_IPS } = require('./config');
 const { getClientIp } = require('./utils/ipExtractor');
+const storage = require('./scripts/storage');
+const aiQueue = require('./scripts/ai-queue');
+const s3PrefixTools = require('./scripts/s3-prefix-tools');
+const localToS3Migration = require('./scripts/migrate-local-to-s3');
+const s3Service = require('./scripts/s3-service');
+const { registerDataManagementRoutes } = require('./routes/data-management-routes');
 const ipaddr = require('ipaddr.js');
 const HIGHLIGHT_LANGUAGES = process.env.HIGHLIGHT_LANGUAGES
     ? process.env.HIGHLIGHT_LANGUAGES.split(',').map(lang => lang.trim())
@@ -27,7 +34,7 @@ const HIGHLIGHT_LANGUAGES = process.env.HIGHLIGHT_LANGUAGES
 const app = express();
 const PORT = process.env.PORT || 3000;
 const NODE_ENV = process.env.NODE_ENV || 'development'
-const DATA_DIR = path.join(__dirname, 'data');
+const DATA_DIR = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.join(__dirname, 'data');
 const PUBLIC_DIR = path.join(__dirname, "public");
 const ASSETS_DIR = path.join(PUBLIC_DIR, "Assets");
 const NOTEPADS_FILE = path.join(DATA_DIR, 'notepads.json');
@@ -51,13 +58,45 @@ function getShareToken(id) {
 }
 
 let notepads_cache = {
-    notepads: [],
+    documents: [],
     index: null,
 };
 let indexTimer = null;
 let indexingPromise = null;
 const packageJson = require('./package.json');
 const VERSION = packageJson.version || '1.0.0';
+let BUILD_VERSION = VERSION;
+
+function collectPublicAssetStats(dir, baseDir = dir, stats = []) {
+    for (const entry of fsSync.readdirSync(dir, { withFileTypes: true })) {
+        const fullPath = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+            collectPublicAssetStats(fullPath, baseDir, stats);
+            continue;
+        }
+        const stat = fsSync.statSync(fullPath);
+        stats.push([
+            path.relative(baseDir, fullPath).replace(/\\/g, '/'),
+            stat.size,
+            Math.floor(stat.mtimeMs),
+        ].join(':'));
+    }
+    return stats;
+}
+
+function getBuildVersion() {
+    try {
+        const hash = crypto
+            .createHash('sha1')
+            .update(collectPublicAssetStats(PUBLIC_DIR).sort().join('|'))
+            .digest('hex')
+            .slice(0, 10);
+        return `${VERSION}-${hash}`;
+    } catch (error) {
+        console.warn('Unable to compute asset build version:', error);
+        return VERSION;
+    }
+}
 
 const server = app.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);
@@ -170,6 +209,16 @@ app.use('/js/marked-highlight', express.static(
 app.use('/js/@highlightjs/highlight.min.js', express.static(
     path.join(__dirname, 'node_modules/@highlightjs/cdn-assets/es/highlight.min.js')
 ));
+app.use('/vendor/vditor', express.static(
+    path.join(__dirname, 'node_modules/vditor/dist')
+));
+app.use('/vendor/vditor-package', express.static(
+    path.join(__dirname, 'node_modules/vditor')
+));
+app.use('/font', express.static(
+    path.join(__dirname, 'font'),
+    { maxAge: '30d', immutable: true }
+));
 // Dynamically serve highlight.js languages
 HIGHLIGHT_LANGUAGES.forEach(lang => {
     if (lang) {
@@ -194,6 +243,7 @@ app.use('/css/@highlightjs/github.min.css', express.static(
 
 
 generatePWAManifest(SITE_TITLE);
+BUILD_VERSION = getBuildVersion();
 
 // Dynamic service worker with correct version (must be before static middleware)
 app.get('/service-worker.js', async (req, res) => {
@@ -209,7 +259,7 @@ app.get('/service-worker.js', async (req, res) => {
         // Replace the version initialization with the actual version from package.json
         swContent = swContent.replace(
             /let APP_VERSION = ".*?";/,
-            `let APP_VERSION = "${VERSION}";`
+            `let APP_VERSION = "${BUILD_VERSION}";`
         );
         
         res.send(swContent);
@@ -234,15 +284,28 @@ const wss = new WebSocket.Server({ server, verifyClient: (info, done) => {
     }
 }});
 
-// Store all active connections with their user IDs
+// Store all active lightweight WebSocket connections.
 const clients = new Map();
 
-// Store operations history for each notepad
-const operationsHistory = new Map();
+function broadcastWebSocketMessage(message) {
+    clients.forEach((client) => {
+        if (client.readyState === WebSocket.OPEN) {
+            client.send(JSON.stringify(message));
+        }
+    });
+}
+
+aiQueue.init({ storage, broadcast: broadcastWebSocketMessage });
+setTimeout(() => {
+    aiQueue.recoverStalePendingMeta()
+        .catch(error => console.warn('[thought-ai] pending recovery failed:', error.message));
+}, 1000);
 
 // WebSocket connection handling
 wss.on('connection', (ws) => {
     console.log('New WebSocket connection established');
+    const clientId = crypto.randomUUID();
+    clients.set(clientId, ws);
     let userId = null;
 
     // Handle incoming messages
@@ -255,113 +318,23 @@ wss.on('connection', (ws) => {
                 notepadId: data.notepadId,
                 contentLength: typeof data.content === 'string' ? data.content.length : undefined
             });
-            
-            // Store userId when first received
-            if (data.userId && !userId) {
-                userId = data.userId;
-                clients.set(userId, ws);
-                console.log('User connected:', userId);
-                
-                if (clients.size > 1) {
-                    console.log('Notifying other clients about new user:', userId);
-                    clients.forEach((client, clientId) => {
-                        if (client.readyState === WebSocket.OPEN) { 
-                            client.send(JSON.stringify({
-                                type: 'user_connected',
-                                userId: userId,
-                                notepadId: data.notepadId,
-                                count: clients.size
-                            }));
-                        }
-                    })
-                }
-            }
+            if (data.userId && !userId) userId = data.userId;
 
-            // Handle different message types
-            if (data.type === 'operation' && data.notepadId) {
-                if (DEBUG_WS) console.log('Operation received from user:', userId);
-                // Store operation in history
-                if (!operationsHistory.has(data.notepadId)) {
-                    operationsHistory.set(data.notepadId, []);
-                }
-                
-                // Add server version to operation
-                const history = operationsHistory.get(data.notepadId);
-                const serverVersion = history.length;
-                const operation = {
-                    ...data.operation,
-                    serverVersion
-                };
-                history.push(operation);
-
-                // Keep only last 1000 operations
-                if (history.length > 1000) {
-                    history.splice(0, history.length - 1000);
-                }
-
-                // Send acknowledgment to the sender
-                ws.send(JSON.stringify({
-                    type: 'ack',
-                    operationId: data.operation.id,
-                    serverVersion
-                }));
-
-                // Broadcast to other clients
+            if (data.type === 'update' && data.notepadId) {
+                if (DEBUG_WS) console.log('Content update from user:', userId, 'notepad:', data.notepadId);
                 clients.forEach((client, clientId) => {
                     if (client !== ws && client.readyState === WebSocket.OPEN) {
-                        if (DEBUG_WS) console.log('Broadcasting operation to user:', clientId);
                         client.send(JSON.stringify({
-                            type: 'operation',
-                            operation,
+                            type: 'notes_update',
                             notepadId: data.notepadId,
+                            content: data.content,
                             userId: data.userId
                         }));
                     }
                 });
             }
-            else if (data.type === 'cursor' && data.notepadId) {
-                if (DEBUG_WS) console.log('Cursor update from user:', userId, 'position:', data.position);
-                // Broadcast cursor updates
-                clients.forEach((client, clientId) => {
-                    if (client !== ws && client.readyState === WebSocket.OPEN) {
-                        if (DEBUG_WS) console.log('Broadcasting cursor update to user:', clientId);
-                        client.send(JSON.stringify({
-                            type: 'cursor',
-                            userId: data.userId,
-                            color: data.color,
-                            position: data.position,
-                            notepadId: data.notepadId
-                        }));
-                    }
-                });
-            }
-            else if (data.type === 'notepad_rename') {
-                if (DEBUG_WS) console.log('Notepad rename from user:', userId, 'notepad:', data.notepadId);
-                // Broadcast rename to all clients
-                clients.forEach((client, clientId) => {
-                    if (client !== ws && client.readyState === WebSocket.OPEN) {
-                        if (DEBUG_WS) console.log('Broadcasting notepad rename to user:', clientId);
-                        client.send(JSON.stringify({
-                            type: 'notepad_rename',
-                            notepadId: data.notepadId,
-                            newName: data.newName
-                        }));
-                    }
-                });
-            }
-            else if (data.type === 'sync_request') {
-                if (DEBUG_WS) console.log('Sync request from user:', userId);
-                // Send operation history for catch-up
-                const history = operationsHistory.get(data.notepadId) || [];
-                ws.send(JSON.stringify({
-                    type: 'sync_response',
-                    operations: history,
-                    notepadId: data.notepadId
-                }));
-            }
-            else {
-                // Broadcast other types of messages
-                if (DEBUG_WS) console.log('Broadcasting other message type:', data.type);
+            else if (['thoughts_update', 'notes_update', 'relations_update', 'notepad_change'].includes(data.type)) {
+                if (DEBUG_WS) console.log('Broadcasting lightweight message type:', data.type);
                 clients.forEach((client, clientId) => {
                     if (client !== ws && client.readyState === WebSocket.OPEN) {
                         client.send(JSON.stringify(data));
@@ -375,20 +348,8 @@ wss.on('connection', (ws) => {
 
     // Handle client disconnection
     ws.on('close', () => {
-        if (userId) {
-            console.log('User disconnected:', userId);
-            clients.delete(userId);
-            // Notify other clients about disconnection
-            clients.forEach((client) => {
-                if (client.readyState === WebSocket.OPEN) {
-                    client.send(JSON.stringify({
-                        type: 'user_disconnected',
-                        userId: userId,
-                        count: clients.size
-                    }));
-                }
-            });
-        }
+        clients.delete(clientId);
+        if (DEBUG_WS) console.log('WebSocket client disconnected:', userId || clientId);
     });
 });
 
@@ -397,7 +358,7 @@ function broadcastUpdate(notepadId, content, senderId = 'api') {
     clients.forEach((client, clientId) => {
         if (client.readyState === WebSocket.OPEN) {
             client.send(JSON.stringify({
-                type: 'update',
+                type: 'notes_update',
                 notepadId: notepadId,
                 content: content,
                 userId: senderId
@@ -634,7 +595,7 @@ app.get('/api/config', (req, res) => {
     res.json({
         siteTitle: SITE_TITLE,
         baseUrl: process.env.BASE_URL,
-        version: VERSION,
+        version: BUILD_VERSION,
         highlightLanguages: HIGHLIGHT_LANGUAGES,
     });
 });
@@ -690,14 +651,11 @@ app.get('/s/:id', async (req, res) => {
     }
 
     try {
-        const fileContent = await fs.readFile(NOTEPADS_FILE, 'utf8');
-        const data = JSON.parse(fileContent);
+        const data = await storage.readNotepadsMeta();
         const notepad = data.notepads.find(n => n.id === id);
         if (!notepad) return res.status(404).send('<h1>Notepad not found.</h1>');
 
-        const sanitizedName = sanitizeFilename(notepad.name);
-        const filePath = path.join(DATA_DIR, `${sanitizedName}.txt`);
-        const content = await fs.readFile(filePath, 'utf8');
+        const content = await storage.readNoteContent(notepad);
 
         // --- PHASE 1: Tokenize Special Marks (Matches HybridMarkdownEditor logic) ---
         let marks = [];
@@ -980,6 +938,11 @@ async function loadNotepadsList() {
 }
 
 async function getNotepadsFromDir() {
+    if (storage.backend === 's3') {
+        const data = await storage.readNotepadsMeta();
+        return data.notepads || [];
+    }
+
     await ensureDataDir();
     let notepadsData = { notepads: [] };
     try {
@@ -1059,26 +1022,13 @@ async function getNotepadsFromDir() {
 // Load and index text files
 async function indexNotepads() {
     if (indexingPromise) return indexingPromise;
-    console.log("Indexing notepads...");
+    console.log("Indexing search documents...");
     indexingPromise = (async () => {
-    notepads_cache.notepads = await loadNotepadsList();
-
-    let items = await Promise.all(notepads_cache.notepads.map(async (notepad) => {
-        let content = "";
-        // console.log("id: ", notepad.id, "name:", notepad.name);
-        let filePath = await getNotepadFilePath(notepad, DATA_DIR);
-        try {
-            await fs.access(filePath); // Ensure file exists
-            content = await fs.readFile(filePath, 'utf8');
-        } catch (error) {
-            console.warn(`Could not read file: ${filePath}`);
-        }
-
-        return { id: notepad.id, name: notepad.name, content };
-    }));
+    const items = await storage.getSearchDocuments();
+    notepads_cache.documents = items;
     
     notepads_cache.index = new Fuse(items, { 
-        keys: ["name", "content"], 
+        keys: ["title", "content", "tags"],
         threshold: 0.38,        // lower thresholds mean stricter matching
         minMatchCharLength: 1,  // Ensures partial words can be matched
         ignoreLocation: true,    // Allows searching across larger texts
@@ -1087,7 +1037,7 @@ async function indexNotepads() {
     });
 
     // console.log(notepads_cache); // uncomment to debug
-    console.log("Indexing complete. Notepads indexed:", notepads_cache.notepads.length);
+    console.log("Indexing complete. Search documents indexed:", notepads_cache.documents.length);
     indexingPromise = null;
     })().catch(error => {
         indexingPromise = null;
@@ -1119,16 +1069,18 @@ function generateUniqueName(desiredName, existingNotepads) {
 }
 
 // Search function using cache
-function searchNotepads(query) {
-    if (!notepads_cache.index) indexNotepads();
+async function searchNotepads(query) {
+    if (!notepads_cache.index) await indexNotepads();
     if (!notepads_cache.index) return [];
     
     const results = notepads_cache.index.search(query).map(({ item }) => {
-        const isFilenameMatch = item.name.toLowerCase().includes(query.toLowerCase());
-        let truncatedContent = item.content;
+        const title = item.title || '';
+        const content = item.content || '';
+        const isFilenameMatch = title.toLowerCase().includes(query.toLowerCase());
+        let truncatedContent = content;
         
         if (!isFilenameMatch) {
-            const lowerContent = item.content.toLowerCase();
+            const lowerContent = content.toLowerCase();
             const matchIndex = lowerContent.indexOf(query.toLowerCase());
 
             if (matchIndex !== -1) {
@@ -1149,25 +1101,26 @@ function searchNotepads(query) {
                 }
 
                 // Extract snippet
-                truncatedContent = item.content.substring(start, end).trim();
+                truncatedContent = content.substring(start, end).trim();
                 // Add ellipsis to beginning if we truncated from somewhere
                 if (start > 0) truncatedContent = `...${truncatedContent}`;
                 // Add ellipsis to end if there is more content after the snippet
-                if (end < item.content.length) truncatedContent = `${truncatedContent}...`;
+                if (end < content.length) truncatedContent = `${truncatedContent}...`;
             } else {
-                truncatedContent = item.content.substring(0, 20).trim() + "..."; // Fallback if no match is found
+                truncatedContent = content.substring(0, 20).trim() + "..."; // Fallback if no match is found
             }
         }
 
-        let truncatedName = item.name.substring(0, 20).trim();
-        if(item.name.length >= 20) {
+        let truncatedName = title.substring(0, 20).trim();
+        if(title.length >= 20) {
             truncatedName += "...";
         }
 
         return {
             id: item.id,
-            title: item.name,
-            name: isFilenameMatch ? truncatedName : (truncatedContent || item.content.substring(0, 50)),
+            type: item.type,
+            title,
+            name: isFilenameMatch ? truncatedName : (truncatedContent || content.substring(0, 50)),
             snippet: truncatedContent || "",
             matchType: isFilenameMatch ? "title" : "content"
         };
@@ -1193,6 +1146,13 @@ fs.watch(NOTEPADS_FILE, () => scheduleIndexNotepads());
 })();
 
 /* API Endpoints */
+registerDataManagementRoutes(app, {
+    storage,
+    s3PrefixTools,
+    localToS3Migration,
+    s3Service
+});
+
 // Get list of notepads
 app.get('/api/notepads', async (req, res) => {
     try {
@@ -1229,9 +1189,9 @@ app.get('/api/notepads', async (req, res) => {
 app.post('/api/notepads', async (req, res) => {
     try {
         const { name, content } = req.body || {};
-        await ensureDataDir();
+        await storage.init();
 
-        const data = JSON.parse(await fs.readFile(NOTEPADS_FILE, 'utf8'));
+        const data = await storage.readNotepadsMeta();
         const id = Date.now().toString();
         const desiredName = name || `Notepad ${data.notepads.length + 1}`;
         const uniqueName = generateUniqueName(desiredName, data.notepads);
@@ -1239,6 +1199,7 @@ app.post('/api/notepads', async (req, res) => {
         const newNotepad = {
             id,
             name: uniqueName,
+            version: 1,
             createdAt: Date.now(),
             updatedAt: Date.now()
         };
@@ -1252,12 +1213,8 @@ app.post('/api/notepads', async (req, res) => {
             maxAge: pageHistoryCookieAge
         });
 
-        await fs.writeFile(NOTEPADS_FILE, JSON.stringify(data, null, 2), 'utf8');
-        
-        // Create file using sanitized name instead of ID
-        const sanitizedName = sanitizeFilename(uniqueName);
-        const filePath = path.join(DATA_DIR, `${sanitizedName}.txt`);
-        await fs.writeFile(filePath, content || '', 'utf8');
+        await storage.saveNotepadsMeta(data);
+        await storage.writeNoteContent(newNotepad, content || '');
         
         scheduleIndexNotepads(250); // update searching index
         res.json(newNotepad);
@@ -1279,22 +1236,20 @@ app.post('/api/upload', async (req, res) => {
             try {
                 const content = Buffer.concat(body).toString('utf8');
                 
-                const data = JSON.parse(await fs.readFile(NOTEPADS_FILE, 'utf8'));
+                const data = await storage.readNotepadsMeta();
                 const id = Date.now().toString();
                 const uniqueName = generateUniqueName(name, data.notepads);
                 
                 const newNotepad = {
                     id,
                     name: uniqueName,
+                    version: 1,
                     createdAt: Date.now(),
                     updatedAt: Date.now()
                 };
                 data.notepads.push(newNotepad);
-                await fs.writeFile(NOTEPADS_FILE, JSON.stringify(data, null, 2));
-                
-                const sanitizedName = sanitizeFilename(uniqueName);
-                const filePath = path.join(DATA_DIR, `${sanitizedName}.txt`);
-                await fs.writeFile(filePath, content);
+                await storage.saveNotepadsMeta(data);
+                await storage.writeNoteContent(newNotepad, content);
                 
                 broadcastUpdate(id, content);
                 scheduleIndexNotepads(250);
@@ -1314,61 +1269,33 @@ app.post('/api/upload', async (req, res) => {
 app.put('/api/notepads/:id', async (req, res) => {
     try {
         const { id } = req.params;
-        const { name } = req.body;
+        const { name, baseVersion } = req.body;
         const { data, notepad } = await findNotepadById(id);
         if (!notepad) {
             return res.status(404).json({ error: 'Notepad not found' });
+        }
+
+        const clientVersion = Number(baseVersion);
+        if (Number.isFinite(clientVersion) && (notepad.version || 1) > clientVersion) {
+            return res.status(409).json({
+                error: 'Notepad has been updated on another device',
+                currentVersion: notepad.version || 1
+            });
         }
         
         // Generate unique name (excluding current notepad from check)
         const otherNotepads = data.notepads.filter(n => n.id !== id);
         const uniqueName = generateUniqueName(name, otherNotepads);
         
-        // Get current file path and prepare new file path
-        const currentFilePath = await getNotepadFilePath(notepad, DATA_DIR);
-        const sanitizedNewName = sanitizeFilename(uniqueName);
-        let newFilePath = path.join(DATA_DIR, `${sanitizedNewName}.txt`);
-        
         // Skip file renaming for default notepad - it should always remain default.txt
-        const shouldRenameFile = id !== 'default' && notepad.name !== uniqueName && currentFilePath !== newFilePath;
+        const shouldRenameFile = id !== 'default' && notepad.name !== uniqueName;
         
         // Rename the file if needed (but skip for default notepad)
         if (shouldRenameFile) {
             try {
-                // Check if new path already exists
-                try {
-                    await fs.access(newFilePath);
-                    // File exists, we need to generate a different filename
-                    let counter = 1;
-                    let altPath;
-                    let foundAvailablePath = false;
-                    do {
-                        const baseName = sanitizeFilename(`${uniqueName}-${counter}`);
-                        altPath = path.join(DATA_DIR, `${baseName}.txt`);
-                        counter++;
-                        try {
-                            await fs.access(altPath);
-                            // File exists, try next number
-                        } catch {
-                            // File doesn't exist, we can use this path
-                            foundAvailablePath = true;
-                            break;
-                        }
-                    } while (counter < MAX_FILENAME_COLLISION_ATTEMPTS); // Safety limit
-                    
-                    if (!foundAvailablePath) {
-                        throw new Error(`Unable to find available filename after ${MAX_FILENAME_COLLISION_ATTEMPTS} attempts`);
-                    }
-                    
-                    newFilePath = altPath;
-                } catch {
-                    // New path doesn't exist, safe to use
-                }
-                
-                await fs.rename(currentFilePath, newFilePath);
-                console.log(`Renamed notepad file: ${currentFilePath} -> ${newFilePath}`);
+                await storage.renameNoteContent(notepad, { ...notepad, name: uniqueName });
             } catch (err) {
-                console.warn(`Failed to rename file from ${currentFilePath} to ${newFilePath}:`, err);
+                console.warn(`Failed to rename notepad file for ${notepad.name}:`, err);
                 // File rename failed - do not update the notepad name to maintain consistency
                 return res.status(500).json({ error: 'Failed to rename notepad file. Please try a different name.' });
             }
@@ -1376,7 +1303,8 @@ app.put('/api/notepads/:id', async (req, res) => {
         
         notepad.name = uniqueName;
         notepad.updatedAt = Date.now();
-        await fs.writeFile(NOTEPADS_FILE, JSON.stringify(data, null, 2));
+        notepad.version = (notepad.version || 1) + 1;
+        await storage.saveNotepadsMeta(data);
         scheduleIndexNotepads(250); // update searching index
         res.json({ ...notepad, nameChanged: uniqueName !== name });
     } catch (err) {
@@ -1392,17 +1320,15 @@ app.get('/api/notes/:id', async (req, res) => {
         // Find the notepad to get its current name
         const { notepad } = await findNotepadById(id);
         
-        let notePath;
+        let notes;
         if (notepad) {
-            // Use helper to find the correct file path
-            notePath = await getNotepadFilePath(notepad, DATA_DIR);
+            notes = await storage.readNoteContent(notepad);
         } else {
             // Fallback to ID-based path for backwards compatibility (sanitize id for security)
             const sanitizedId = sanitizeFilename(id);
-            notePath = path.join(DATA_DIR, `${sanitizedId}.txt`);
+            const notePath = path.join(DATA_DIR, `${sanitizedId}.txt`);
+            notes = await fs.readFile(notePath, 'utf8').catch(() => '');
         }
-        
-        const notes = await fs.readFile(notePath, 'utf8').catch(() => '');
         
         // Set loaded notes as the current page in cookies.
         res.cookie(PAGE_HISTORY_COOKIE, id, {
@@ -1412,7 +1338,7 @@ app.get('/api/notes/:id', async (req, res) => {
             maxAge: pageHistoryCookieAge
         });
 
-        res.json({ content: notes });
+        res.json({ content: notes, version: notepad?.version || 1 });
     } catch (err) {
         res.status(500).json({ error: 'Error reading notes' });
     }
@@ -1425,37 +1351,43 @@ app.post('/api/notes/:id', async (req, res) => {
         if (!id || id === 'undefined' || id === 'null') {
             return res.status(400).json({ error: 'Invalid notepad id' });
         }
-        await ensureDataDir();
+        await storage.init();
         
         // Find the notepad to get its current name
         const { notepad } = await findNotepadById(id);
+        const clientVersion = Number(req.body.baseVersion);
+        if (notepad && Number.isFinite(clientVersion) && (notepad.version || 1) > clientVersion) {
+            return res.status(409).json({
+                error: 'Notepad has been updated on another device',
+                currentVersion: notepad.version || 1
+            });
+        }
         
-        let notePath;
-        if (notepad) {
-            // Use helper to find the correct file path
-            notePath = await getNotepadFilePath(notepad, DATA_DIR);
-        } else {
+        if (!notepad) {
             // Fallback to ID-based path for backwards compatibility (sanitize id for security)
             const sanitizedId = sanitizeFilename(id);
-            notePath = path.join(DATA_DIR, `${sanitizedId}.txt`);
+            const notePath = path.join(DATA_DIR, `${sanitizedId}.txt`);
+            await fs.writeFile(notePath, req.body.content);
+        } else {
+            await storage.writeNoteContent(notepad, req.body.content);
         }
         
         const content = req.body.content;
         const senderId = req.body.userId || 'api';
-        await fs.writeFile(notePath, content);
 
         // Update notepad updatedAt timestamp
-        const data = JSON.parse(await fs.readFile(NOTEPADS_FILE, 'utf8'));
+        const data = await storage.readNotepadsMeta();
         const targetNotepad = data.notepads.find(n => n.id === id);
         if (targetNotepad) {
             targetNotepad.updatedAt = Date.now();
             if (!targetNotepad.createdAt) targetNotepad.createdAt = Date.now();
-            await fs.writeFile(NOTEPADS_FILE, JSON.stringify(data, null, 2));
+            targetNotepad.version = (targetNotepad.version || 1) + 1;
+            await storage.saveNotepadsMeta(data);
         }
 
         broadcastUpdate(id, content, senderId);
         scheduleIndexNotepads(); // update searching index
-        res.json({ success: true });
+        res.json({ success: true, version: targetNotepad?.version || 1 });
     } catch (err) {
         res.status(500).json({ error: 'Error saving notes' });
     }
@@ -1464,16 +1396,23 @@ app.post('/api/notes/:id', async (req, res) => {
 app.patch('/api/notes/:id', async (req, res) => {
     try {
         const { id } = req.params;
-        const { action, text, target, replacement, userId } = req.body;
+        const { action, text, target, replacement, userId, baseVersion } = req.body;
         const senderId = userId || 'api';
         
         const { notepad } = await findNotepadById(id);
         if (!notepad) {
             return res.status(404).json({ error: 'Notepad not found' });
         }
+
+        const clientVersion = Number(baseVersion);
+        if (Number.isFinite(clientVersion) && (notepad.version || 1) > clientVersion) {
+            return res.status(409).json({
+                error: 'Notepad has been updated on another device',
+                currentVersion: notepad.version || 1
+            });
+        }
         
-        const notePath = await getNotepadFilePath(notepad, DATA_DIR);
-        let content = await fs.readFile(notePath, 'utf8').catch(() => '');
+        let content = await storage.readNoteContent(notepad);
         
         let modified = false;
         switch (action) {
@@ -1524,21 +1463,25 @@ app.patch('/api/notes/:id', async (req, res) => {
         }
         
         if (modified) {
-            await fs.writeFile(notePath, content);
+            await storage.writeNoteContent(notepad, content);
             
             // Update updatedAt
-            const data = JSON.parse(await fs.readFile(NOTEPADS_FILE, 'utf8'));
+            const data = await storage.readNotepadsMeta();
             const targetNotepad = data.notepads.find(n => n.id === id);
+            let savedVersion = notepad.version || 1;
             if (targetNotepad) {
                 targetNotepad.updatedAt = Date.now();
-                await fs.writeFile(NOTEPADS_FILE, JSON.stringify(data, null, 2));
+                targetNotepad.version = (targetNotepad.version || 1) + 1;
+                savedVersion = targetNotepad.version;
+                await storage.saveNotepadsMeta(data);
             }
             
             broadcastUpdate(id, content, senderId);
             scheduleIndexNotepads();
+            return res.json({ success: true, content, modified, version: savedVersion });
         }
         
-        res.json({ success: true, content, modified });
+        res.json({ success: true, content, modified, version: notepad.version || 1 });
     } catch (err) {
         console.error('Error patching notes:', err);
         res.status(500).json({ error: 'Error patching notes' });
@@ -1550,16 +1493,11 @@ app.patch('/api/notes/:id', async (req, res) => {
 // --- Quick Thoughts API ---
 
 async function readThoughts() {
-    try {
-        const data = await fs.readFile(THOUGHTS_FILE, 'utf8');
-        return JSON.parse(data);
-    } catch (err) {
-        return [];
-    }
+    return storage.readThoughts();
 }
 
 async function saveThoughts(thoughts) {
-    await fs.writeFile(THOUGHTS_FILE, JSON.stringify(thoughts, null, 2));
+    await storage.saveThoughts(thoughts);
 }
 
 function broadcastThoughtsUpdate(action, payload) {
@@ -1573,6 +1511,214 @@ function broadcastThoughtsUpdate(action, payload) {
         }
     });
 }
+
+app.get('/api/thoughts/:id/relations', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const thought = await storage.readThought(id);
+        if (!thought) {
+            return res.json({
+                id,
+                status: 'missing',
+                relations: []
+            });
+        }
+
+        const meta = await storage.readThoughtMeta(id);
+        const relations = await storage.readRelations(id);
+        const responseRelations = [];
+        const responseSuggestions = [];
+
+        async function edgeToResponse(edge) {
+            const target = await storage.readThought(edge.targetId);
+            if (!target) return null;
+            return {
+                thought: {
+                    id: target.id,
+                    text: target.text || '',
+                    tags: Array.isArray(target.tags) ? target.tags : [],
+                    completed: !!target.completed,
+                    createdAt: target.createdAt || 0
+                },
+                score: edge.score || 0,
+                confidence: edge.confidence || 0,
+                relationType: edge.relationType || '',
+                method: edge.method || 'unknown',
+                reasons: Array.isArray(edge.reasons) ? edge.reasons : [],
+                signals: edge.signals || null
+            };
+        }
+
+        for (const edge of relations.edges || []) {
+            const item = await edgeToResponse(edge);
+            if (item) responseRelations.push(item);
+        }
+
+        for (const edge of relations.suggestions || []) {
+            const item = await edgeToResponse(edge);
+            if (item) responseSuggestions.push(item);
+        }
+
+        res.json({
+            id,
+            status: meta?.status || 'missing',
+            relations: responseRelations,
+            suggestions: responseSuggestions
+        });
+    } catch (err) {
+        console.error('Error fetching thought relations:', err);
+        res.status(500).json({ error: 'Error fetching thought relations' });
+    }
+});
+
+app.delete('/api/thoughts/:id/relations/:targetId', async (req, res) => {
+    try {
+        const { id, targetId } = req.params;
+        const relations = await storage.readRelations(id);
+        const originalLength = Array.isArray(relations.edges) ? relations.edges.length : 0;
+        relations.edges = (relations.edges || []).filter(edge => edge.targetId !== targetId);
+        relations.suggestions = (relations.suggestions || []).filter(edge => edge.targetId !== targetId);
+        relations.computedAt = Date.now();
+        await storage.writeRelations(id, relations);
+
+        const reverse = await storage.readRelations(targetId);
+        reverse.edges = (reverse.edges || []).filter(edge => edge.targetId !== id);
+        reverse.suggestions = (reverse.suggestions || []).filter(edge => edge.targetId !== id);
+        reverse.computedAt = Date.now();
+        await storage.writeRelations(targetId, reverse);
+        await storage.suppressRelation(id, targetId);
+        await storage.suppressRelation(targetId, id);
+
+        res.json({
+            success: true,
+            removed: relations.edges.length !== originalLength
+        });
+    } catch (err) {
+        console.error('Error deleting thought relation:', err);
+        res.status(500).json({ error: 'Error deleting thought relation' });
+    }
+});
+
+async function removeSuppressedPair(id, targetId) {
+    const sourceSuppressed = await storage.readSuppressedRelations(id);
+    sourceSuppressed.edges = (sourceSuppressed.edges || []).filter(edge => edge.targetId !== targetId);
+    await storage.writeSuppressedRelations(id, sourceSuppressed);
+
+    const targetSuppressed = await storage.readSuppressedRelations(targetId);
+    targetSuppressed.edges = (targetSuppressed.edges || []).filter(edge => edge.targetId !== id);
+    await storage.writeSuppressedRelations(targetId, targetSuppressed);
+}
+
+function upsertManualEdge(relations, targetId, relationType = 'manual') {
+    const now = Date.now();
+    const edges = Array.isArray(relations.edges) ? relations.edges.filter(edge => edge.targetId !== targetId) : [];
+    const suggestions = Array.isArray(relations.suggestions)
+        ? relations.suggestions.filter(edge => edge.targetId !== targetId)
+        : [];
+    edges.unshift({
+        targetId,
+        score: 1,
+        confidence: 1,
+        relationType,
+        method: 'manual',
+        source: 'manual',
+        reasons: ['manual'],
+        signals: { manual: 1 },
+        createdAt: now
+    });
+    return {
+        id: relations.id,
+        edges,
+        suggestions,
+        version: 2,
+        computedAt: now
+    };
+}
+
+app.post('/api/thoughts/:id/relations', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const targetId = String(req.body?.targetId || '').trim();
+        const relationType = String(req.body?.relationType || 'manual').trim() || 'manual';
+        if (!targetId) return res.status(400).json({ error: 'targetId is required' });
+        if (targetId === id) return res.status(400).json({ error: 'Cannot link a thought to itself' });
+
+        const sourceThought = await storage.readThought(id);
+        const targetThought = await storage.readThought(targetId);
+        if (!sourceThought || !targetThought) return res.status(404).json({ error: 'Thought not found' });
+
+        const sourceRelations = upsertManualEdge(await storage.readRelations(id), targetId, relationType);
+        const targetRelations = upsertManualEdge(await storage.readRelations(targetId), id, relationType);
+        await storage.writeRelations(id, sourceRelations);
+        await storage.writeRelations(targetId, targetRelations);
+        await removeSuppressedPair(id, targetId);
+
+        broadcastWebSocketMessage({
+            type: 'relations_update',
+            thoughtId: id,
+            relationsCount: sourceRelations.edges.length
+        });
+        broadcastWebSocketMessage({
+            type: 'relations_update',
+            thoughtId: targetId,
+            relationsCount: targetRelations.edges.length
+        });
+
+        res.status(201).json({
+            success: true,
+            relation: sourceRelations.edges.find(edge => edge.targetId === targetId),
+            relationCount: sourceRelations.edges.length
+        });
+    } catch (err) {
+        console.error('Error creating manual thought relation:', err);
+        res.status(500).json({ error: 'Error creating manual thought relation' });
+    }
+});
+
+app.post('/api/thoughts/:id/ai-process', async (req, res) => {
+    const { id } = req.params;
+    const thought = await storage.readThought(id);
+    if (!thought) return res.status(404).json({ error: 'Thought not found' });
+
+    console.info(`[thought-ai] queue reason=manual thoughtId=${id}`);
+    aiQueue.queueThought(id, 'manual');
+    res.status(202).json({ queued: true, id });
+});
+
+app.post('/api/thoughts/ai-backfill', async (req, res) => {
+    try {
+        const limit = Number(req.body?.limit);
+        const result = await aiQueue.backfillMissingMeta({
+            limit: Number.isFinite(limit) && limit > 0 ? limit : Infinity
+        });
+        res.status(202).json(result);
+    } catch (err) {
+        console.error('Error queueing AI backfill:', err);
+        res.status(500).json({ error: 'Error queueing AI backfill' });
+    }
+});
+
+app.post('/api/thoughts/relations-rebuild', async (req, res) => {
+    try {
+        const limit = Number(req.body?.limit);
+        const result = await aiQueue.rebuildRelations({
+            limit: Number.isFinite(limit) && limit > 0 ? limit : Infinity
+        });
+        res.status(202).json(result);
+    } catch (err) {
+        console.error('Error rebuilding thought relations:', err);
+        res.status(500).json({ error: 'Error rebuilding thought relations' });
+    }
+});
+
+app.get('/api/thoughts/ai-queue/status', async (req, res) => {
+    try {
+        res.json(aiQueue.getQueueStatus());
+    } catch (err) {
+        console.error('Error fetching AI queue status:', err);
+        res.status(500).json({ error: 'Error fetching AI queue status' });
+    }
+});
 
 app.get('/api/thoughts/:id', async (req, res) => {
     try {
@@ -1617,7 +1763,19 @@ app.get('/api/thoughts', async (req, res) => {
             });
         }
         
-        res.json(thoughts);
+        const thoughtsWithRelationCounts = await Promise.all(thoughts.map(async (thought) => {
+            const meta = await storage.readThoughtMeta(thought.id);
+            return {
+                ...thought,
+                relationCount: await storage.readRelationCount(thought.id),
+                aiStatus: meta?.status || 'missing',
+                aiError: meta?.error || null,
+                aiProcessedAt: meta?.ai?.processedAt || 0,
+                aiTags: Array.isArray(meta?.ai?.tags) ? meta.ai.tags : []
+            };
+        }));
+
+        res.json(thoughtsWithRelationCounts);
     } catch (err) {
         res.status(500).json({ error: 'Error fetching thoughts' });
     }
@@ -1625,7 +1783,7 @@ app.get('/api/thoughts', async (req, res) => {
 
 app.post('/api/thoughts', async (req, res) => {
     try {
-        const { text, subItems, tags } = req.body;
+        const { text, subItems, tags, completed } = req.body;
         if (!text) return res.status(400).json({ error: 'Text is required' });
         
         const thoughts = await readThoughts();
@@ -1634,31 +1792,82 @@ app.post('/api/thoughts', async (req, res) => {
             text,
             subItems: subItems || [],
             tags: tags || [],
-            completed: false,
+            completed: completed === true,
+            relationCount: 0,
+            aiStatus: 'pending',
+            version: 1,
             createdAt: Date.now(),
             updatedAt: Date.now()
         };
         
         thoughts.unshift(newThought);
         await saveThoughts(thoughts);
+        scheduleIndexNotepads(250);
         
         broadcastThoughtsUpdate('create', newThought);
+        console.info(`[thought-ai] queue reason=create thoughtId=${newThought.id}`);
+        aiQueue.queueThought(newThought.id, 'create');
         res.json(newThought);
     } catch (err) {
         res.status(500).json({ error: 'Error creating thought' });
     }
 });
 
+app.get('/api/thoughts/:id/ai-status', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const thought = await storage.readThought(id);
+        if (!thought) return res.status(404).json({ error: 'Thought not found' });
+
+        const meta = await storage.readThoughtMeta(id);
+        const relations = await storage.readRelations(id);
+        const relationEdges = Array.isArray(relations.edges) ? relations.edges : [];
+        const relationSuggestions = Array.isArray(relations.suggestions) ? relations.suggestions : [];
+        const stages = meta?.stages || {
+            queued: { status: meta ? 'ready' : 'missing' },
+            analysis: { status: meta?.status === 'ready' ? 'ready' : (meta?.status || 'missing') },
+            embedding: { status: meta?.status === 'ready' ? 'ready' : (meta?.status || 'missing') },
+            relations: relations?.diagnostics?.status ? { status: relations.diagnostics.status } : { status: 'missing' }
+        };
+        res.json({
+            id,
+            status: meta?.status || 'missing',
+            error: meta?.error || null,
+            processedAt: meta?.ai?.processedAt || 0,
+            relationCount: relationEdges.length,
+            suggestionCount: relationSuggestions.length,
+            aiTags: Array.isArray(meta?.ai?.tags) ? meta.ai.tags : [],
+            stages,
+            models: {
+                extract: meta?.ai?.extractModel || stages.analysis?.model || null,
+                embedding: meta?.ai?.model || stages.embedding?.model || null,
+                rerank: stages.relations?.model || null
+            },
+            diagnostics: relations?.diagnostics || null
+        });
+    } catch (err) {
+        console.error('Error fetching thought AI status:', err);
+        res.status(500).json({ error: 'Error fetching thought AI status' });
+    }
+});
+
 app.patch('/api/thoughts/:id', async (req, res) => {
     try {
         const { id } = req.params;
-        const { action, text, target, replacement } = req.body;
+        const { action, text, target, replacement, baseVersion } = req.body;
         const thoughts = await readThoughts();
         const index = thoughts.findIndex(t => t.id === id);
         
         if (index === -1) return res.status(404).json({ error: 'Thought not found' });
         
         const thought = thoughts[index];
+        const clientVersion = Number(baseVersion);
+        if (Number.isFinite(clientVersion) && (thought.version || 1) > clientVersion) {
+            return res.status(409).json({
+                error: 'Thought has been updated on another device',
+                currentVersion: thought.version || 1
+            });
+        }
         let modified = false;
         
         switch (action) {
@@ -1682,6 +1891,7 @@ app.patch('/api/thoughts/:id', async (req, res) => {
                 if (text !== undefined) { thought.text = text; modified = true; }
                 if (req.body.subItems !== undefined) { thought.subItems = req.body.subItems; modified = true; }
                 if (req.body.tags !== undefined) { thought.tags = req.body.tags; modified = true; }
+                if (req.body.completed !== undefined) { thought.completed = req.body.completed === true; modified = true; }
                 break;
             case 'add_subitem':
                 if (!text) return res.status(400).json({ error: 'Subitem text is required' });
@@ -1720,8 +1930,12 @@ app.patch('/api/thoughts/:id', async (req, res) => {
         
         if (modified) {
             thought.updatedAt = Date.now();
+            thought.version = (thought.version || 1) + 1;
             await saveThoughts(thoughts);
+            scheduleIndexNotepads(250);
             broadcastThoughtsUpdate('update', thought);
+            console.info(`[thought-ai] queue reason=update thoughtId=${thought.id}`);
+            aiQueue.queueThought(thought.id, 'update');
         }
         
         res.json({ success: true, thought });
@@ -1739,7 +1953,21 @@ app.delete('/api/thoughts/:id', async (req, res) => {
         
         if (thoughts.length !== initialLen) {
             await saveThoughts(thoughts);
+            await storage.deleteThoughtMeta(id);
+            await storage.deleteRelations(id);
+            await storage.deleteSuppressedRelations(id);
+            const relationCleanup = await storage.removeRelationReferences(id);
+            await storage.removeSuppressedRelationReferences(id);
+            scheduleIndexNotepads(250);
             broadcastThoughtsUpdate('delete', { id });
+            const affectedRelationIds = Array.isArray(relationCleanup?.affectedIds) ? relationCleanup.affectedIds : [];
+            for (const affectedId of affectedRelationIds) {
+                broadcastWebSocketMessage({
+                    type: 'relations_update',
+                    thoughtId: affectedId,
+                    relationsCount: await storage.readRelationCount(affectedId)
+                });
+            }
             res.json({ success: true });
         } else {
             res.status(404).json({ error: 'Thought not found' });
@@ -1777,29 +2005,10 @@ app.delete('/api/notepads/:id', async (req, res) => {
         console.log(`Removed notepad:`, removedNotepad);
         
         // Save updated notepads list
-        await fs.writeFile(NOTEPADS_FILE, JSON.stringify(data, null, 2));
+        await storage.saveNotepadsMeta(data);
         console.log('Updated notepads list saved');
 
-        // Delete the notepad file using the helper to find correct path
-        const notePath = await getNotepadFilePath(notepadToDelete, DATA_DIR);
-        try {
-            await fs.access(notePath);
-            await fs.unlink(notePath);
-            console.log(`Deleted notepad file: ${notePath}`);
-        } catch (err) {
-            console.error(`Error accessing or deleting notepad file: ${notePath}`, err);
-            
-            // Try to delete ID-based file as fallback (sanitize id for security)
-            const sanitizedId = sanitizeFilename(id);
-            const fallbackPath = path.join(DATA_DIR, `${sanitizedId}.txt`);
-            try {
-                await fs.access(fallbackPath);
-                await fs.unlink(fallbackPath);
-                console.log(`Deleted fallback notepad file: ${fallbackPath}`);
-            } catch (fallbackErr) {
-                console.error(`Error accessing or deleting fallback file: ${fallbackPath}`, fallbackErr);
-            }
-        }
+        await storage.deleteNoteContent(notepadToDelete);
 
         scheduleIndexNotepads(250); // update searching index
         res.json({ success: true, message: 'Notepad deleted successfully' });
@@ -1816,17 +2025,20 @@ app.get('/health', (req, res) => {
 
 /* Search API Endpoints */
 // Search
-app.get('/api/search', (req, res) => {
+app.get('/api/search', async (req, res) => {
     const query = req.query.query || req.query.q || '';
-    const results = searchNotepads(query);
+    const results = await searchNotepads(query);
     
     // set up for pagination
     const page = parseInt(req.query.page) || 1;
-    const pageSize = results.length; // defaults to all results for now
+    const requestedPageSize = parseInt(req.query.pageSize);
+    const pageSize = Number.isFinite(requestedPageSize) && requestedPageSize > 0
+        ? requestedPageSize
+        : (results.length || 10); // defaults to all results, with a non-zero fallback for empty searches
     const paginatedResults = results.slice((page - 1) * pageSize, page * pageSize);
     res.json({
         results: paginatedResults,
-        totalPages: Math.ceil(results.length / pageSize),
+        totalPages: results.length === 0 ? 0 : Math.ceil(results.length / pageSize),
         currentPage: page
     });
 });
@@ -1834,7 +2046,7 @@ app.get('/api/search', (req, res) => {
 // Helper function to find a notepad by ID
 async function findNotepadById(id) {
     try {
-        const data = JSON.parse(await fs.readFile(NOTEPADS_FILE, 'utf8'));
+        const data = await storage.readNotepadsMeta();
         const notepad = data.notepads.find(n => n.id === id);
         return { data, notepad };
     } catch (err) {

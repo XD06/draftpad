@@ -90,7 +90,6 @@
     border: 1px solid transparent;
     border-radius: 12px;
     transition: all 0.3s var(--ease-out-expo);
-    min-width: 0;
 }
 
 .search-bar:focus-within {
@@ -118,6 +117,24 @@
     gap: 8px;
     align-items: center;
     flex-shrink: 0;
+}
+
+.thoughts-outbox-status {
+    min-height: 32px;
+    padding: 0 10px;
+    border: 1px solid color-mix(in srgb, #dc2626 34%, var(--border-color));
+    border-radius: 999px;
+    background: color-mix(in srgb, #dc2626 9%, var(--modal-bg));
+    color: color-mix(in srgb, #dc2626 86%, var(--text-color));
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 800;
+    white-space: nowrap;
+}
+
+.thoughts-outbox-status:disabled {
+    cursor: wait;
+    opacity: 0.72;
 }
 
 .thoughts-tags-filter {
@@ -185,13 +202,75 @@
     display: flex;
     flex-wrap: wrap;
     gap: 6px;
-    margin: 8px 0 2px 0px;
+    margin: 10px 0 2px 0px;
+}
+
+.thought-tag-wrap {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
 }
 
 .thought-tag {
-    border: 1px solid rgba(var(--primary-rgb), 0.16);
+    border: 1px solid rgba(120, 128, 140, 0.12);
     background: rgba(var(--primary-rgb), 0.07);
     color: var(--primary-color);
+    border-radius: 7px;
+    padding: 4px 8px;
+    font-family: inherit;
+    font-size: 11px;
+    font-weight: 650;
+    line-height: 1;
+    cursor: pointer;
+    transition: all 0.2s var(--ease-out-expo);
+}
+
+.thought-tag:hover {
+    color: var(--primary-color);
+    background: rgba(var(--primary-rgb), 0.08);
+    border-color: rgba(var(--primary-rgb), 0.22);
+}
+
+.thought-tag-remove {
+    width: 17px;
+    height: 17px;
+    border: 1px solid rgba(120, 128, 140, 0.12);
+    background: transparent;
+    color: var(--muted-text);
+    border-radius: 50%;
+    padding: 0;
+    font-family: inherit;
+    font-size: 12px;
+    line-height: 15px;
+    cursor: pointer;
+    opacity: 0;
+    transform: scale(0.82);
+    transition: all 0.2s var(--ease-out-expo);
+}
+
+.thought-tag-wrap:hover .thought-tag-remove,
+.thought-tag-wrap:focus-within .thought-tag-remove {
+    opacity: 1;
+    transform: scale(1);
+}
+
+.thought-tag-remove:hover {
+    color: var(--danger-color, #dc2626);
+    border-color: rgba(220, 38, 38, 0.26);
+    background: rgba(220, 38, 38, 0.07);
+}
+
+.thought-ai-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin: 7px 0 2px;
+}
+
+.thought-ai-tag-suggestion {
+    border: 1px dashed rgba(var(--primary-rgb), 0.22);
+    background: transparent;
+    color: var(--muted-text);
     border-radius: 9px;
     padding: 4px 8px;
     font-family: inherit;
@@ -202,9 +281,10 @@
     transition: all 0.2s var(--ease-out-expo);
 }
 
-.thought-tag:hover {
-    background: rgba(var(--primary-rgb), 0.13);
-    border-color: rgba(var(--primary-rgb), 0.28);
+.thought-ai-tag-suggestion:hover {
+    color: var(--primary-color);
+    border-style: solid;
+    background: rgba(var(--primary-rgb), 0.07);
 }
 
 /* Status Pills */
@@ -377,19 +457,28 @@
 
 .thought-card {
     position: relative;
-    background: var(--header-bg);
-    border: 1px solid var(--border-color);
-    padding: 16px 20px 20px 20px;
-    border-radius: 20px;
+    background: linear-gradient(180deg, color-mix(in srgb, var(--header-bg) 97%, #fff 3%), var(--header-bg));
+    border: 1px solid rgba(120, 128, 140, 0.14);
+    padding: 18px 20px 22px 20px;
+    border-radius: 18px;
     margin-bottom: 24px;
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.02);
-    transition: all 0.4s cubic-bezier(0.165, 0.84, 0.44, 1);
+    box-shadow: 0 1px 1px rgba(15, 23, 42, 0.025), 0 12px 30px rgba(15, 23, 42, 0.055);
+    transition: transform 0.24s ease, box-shadow 0.24s ease, border-color 0.24s ease, background 0.24s ease;
+}
+
+.thought-card::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    pointer-events: none;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55), inset 0 -1px 0 rgba(15, 23, 42, 0.025);
 }
 
 .thought-card:hover {
-    transform: translateY(-3px) scale(1.005);
-    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.08);
-    border-color: rgba(var(--primary-rgb), 0.3);
+    transform: translateY(-2px);
+    box-shadow: 0 2px 3px rgba(15, 23, 42, 0.03), 0 18px 42px rgba(15, 23, 42, 0.075);
+    border-color: rgba(var(--primary-rgb), 0.18);
 }
 
 .timeline-node {
@@ -408,7 +497,7 @@
 .thought-card:hover .timeline-node {
     background: var(--primary-color);
     border-color: var(--primary-color);
-    box-shadow: 0 0 10px rgba(var(--primary-rgb), 0.4);
+    box-shadow: 0 0 0 4px rgba(var(--primary-rgb), 0.08), 0 0 12px rgba(var(--primary-rgb), 0.22);
     left: -28px;
 }
 
@@ -416,18 +505,18 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 8px;
+    margin-bottom: 10px;
     height: 24px;
 }
 
 .thought-time {
     font-size: 11px;
-    font-weight: 500;
+    font-weight: 650;
     color: var(--muted-text);
-    background: rgba(var(--primary-rgb), 0.05);
-    padding: 2px 8px;
+    background: transparent;
+    padding: 2px 0;
     border-radius: 20px;
-    letter-spacing: 0.2px;
+    letter-spacing: 0;
     opacity: 0.8;
 }
 
@@ -441,7 +530,7 @@
     align-items: center;
     justify-content: center;
     transition: all 0.2s ease;
-    background: white;
+    background: var(--header-bg);
     flex-shrink: 0;
 }
 
@@ -467,8 +556,8 @@
 }
 
 .thought-text {
-    font-size: 15.5px;
-    line-height: 1.65;
+    font-size: 15.25px;
+    line-height: 1.6;
     color: var(--text-color);
     white-space: pre-wrap;
     word-break: break-word;
@@ -476,7 +565,8 @@
     padding: 4px 0;
     padding-right: 28px;
     transition: all 0.3s ease;
-    font-weight: 600;
+    font-weight: 680;
+    letter-spacing: 0;
 }
 
 .thought-copy-btn {
@@ -534,9 +624,18 @@
 }
 
 .thought-card.expanded {
-    background: color-mix(in srgb, var(--header-bg) 95%, #666 5%);
+    background: color-mix(in srgb, var(--header-bg) 97%, var(--primary-color) 3%);
     border-color: rgba(var(--primary-rgb), 0.2);
-    box-shadow: 0 15px 45px rgba(0, 0, 0, 0.1);
+    box-shadow: 0 18px 46px rgba(15, 23, 42, 0.1);
+}
+
+.thought-card.relation-focus {
+    border-color: rgba(var(--primary-rgb), 0.65);
+    box-shadow: 0 0 0 3px rgba(var(--primary-rgb), 0.14), 0 16px 42px rgba(0, 0, 0, 0.12);
+}
+
+.thought-card.ai-detail-open {
+    padding-bottom: 30px;
 }
 
 .thought-card.expanded .thought-text {
@@ -544,6 +643,602 @@
     mask-image: none;
     -webkit-mask-image: none;
     padding-bottom: 12px;
+}
+
+.thought-card-footer {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 6px;
+    margin-top: 6px;
+}
+
+.thought-tool-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    min-width: 30px;
+    height: 26px;
+    padding: 0 8px;
+    border: 1px solid rgba(120, 128, 140, 0.14);
+    border-radius: 999px;
+    background: rgba(120, 128, 140, 0.035);
+    color: var(--muted-text);
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1;
+    margin-bottom: 3px;
+    cursor: pointer;
+    transition: background 0.18s ease, border-color 0.18s ease, color 0.18s ease, transform 0.18s ease;
+}
+
+.thought-ai-status {
+    min-width: 42px;
+}
+
+.thought-tool-icon {
+    width: 13px;
+    height: 13px;
+    flex: 0 0 auto;
+}
+
+.thought-tool-icon.spin {
+    animation: thoughtAiSpin 0.9s linear infinite;
+}
+
+.thought-ai-count {
+    min-width: 10px;
+    font-size: 11px;
+    font-weight: 800;
+}
+
+.thought-ai-status.pending {
+    color: var(--primary-color);
+}
+
+.thought-ai-status.ready {
+    color: var(--muted-text);
+}
+
+.thought-ai-status.empty,
+.thought-ai-status.missing {
+    color: var(--muted-text);
+}
+
+.thought-ai-status.error {
+    color: var(--danger-color);
+    background: color-mix(in srgb, var(--danger-color) 9%, transparent);
+}
+
+.thought-tool-btn:hover,
+.thought-tool-btn[aria-expanded="true"],
+.thought-relations-btn.active {
+    transform: translateY(-1px);
+    border-color: rgba(var(--primary-rgb), 0.28);
+    background: rgba(var(--primary-rgb), 0.075);
+    color: var(--primary-color);
+}
+
+.thought-ai-detail-panel {
+    margin-top: 10px;
+    width: 100%;
+    padding: 11px 12px;
+    border: 1px solid rgba(47, 125, 79, 0.13);
+    border-radius: 8px;
+    background: linear-gradient(180deg, rgba(47, 125, 79, 0.035), rgba(47, 125, 79, 0.014));
+    color: var(--text-color);
+    font-size: 12px;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.38);
+}
+
+.thought-ai-detail-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    font-weight: 800;
+    line-height: 1.25;
+}
+
+.thought-ai-detail-counts {
+    display: inline-flex;
+    align-items: center;
+    min-height: 22px;
+    margin-top: 7px;
+    padding: 0 7px;
+    border-radius: 999px;
+    background: rgba(47, 125, 79, 0.07);
+    color: var(--muted-text);
+    font-size: 11.5px;
+}
+
+.thought-ai-stage-list {
+    display: grid;
+    gap: 4px;
+    margin-top: 9px;
+}
+
+.thought-ai-stage-row {
+    display: grid;
+    grid-template-columns: 8px 42px 44px minmax(0, 1fr);
+    align-items: center;
+    gap: 7px;
+    min-height: 24px;
+    padding: 0 6px;
+    border-radius: 7px;
+    color: var(--muted-text);
+}
+
+.thought-ai-stage-row:hover {
+    background: rgba(47, 125, 79, 0.04);
+}
+
+.thought-ai-stage-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 999px;
+    background: currentColor;
+}
+
+.thought-ai-stage-row.ready {
+    color: #2f7d4f;
+}
+
+.thought-ai-stage-row.pending {
+    color: var(--primary-color);
+}
+
+.thought-ai-stage-row.pending .thought-ai-stage-dot {
+    animation: thoughtAiPulse 1.1s ease-in-out infinite;
+}
+
+.thought-ai-stage-row.error {
+    color: var(--danger-color);
+}
+
+.thought-ai-stage-status {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 18px;
+    padding: 0 6px;
+    border-radius: 999px;
+    background: rgba(47, 125, 79, 0.07);
+    font-size: 11px;
+    font-weight: 750;
+}
+
+.thought-ai-stage-row.ready .thought-ai-stage-status {
+    background: rgba(47, 125, 79, 0.09);
+}
+
+.thought-ai-stage-row.error .thought-ai-stage-status {
+    background: color-mix(in srgb, var(--danger-color) 10%, transparent);
+}
+
+.thought-ai-stage-name,
+.thought-ai-stage-status,
+.thought-ai-stage-extra {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.thought-ai-stage-extra {
+    color: var(--muted-text);
+}
+
+.thought-ai-detail-error {
+    margin-top: 8px;
+    padding: 7px 8px;
+    border-radius: 7px;
+    background: color-mix(in srgb, var(--danger-color) 8%, transparent);
+    color: var(--danger-color);
+    overflow-wrap: anywhere;
+}
+
+.thought-ai-detail-state {
+    color: var(--muted-text);
+}
+
+.thought-ai-detail-state.error {
+    color: var(--danger-color);
+}
+
+.thought-ai-detail-retry {
+    height: 22px;
+    padding: 0 8px;
+    border: 1px solid var(--border-color);
+    border-radius: 999px;
+    background: var(--card-bg);
+    color: var(--text-color);
+    font-size: 11px;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+@keyframes thoughtAiSpin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+@keyframes thoughtAiPulse {
+    0%,
+    100% {
+        opacity: 0.45;
+        transform: scale(0.8);
+    }
+
+    50% {
+        opacity: 1;
+        transform: scale(1);
+    }
+}
+
+.thought-relations-btn {
+    min-width: 36px;
+    padding: 0 9px;
+}
+
+.subtask-add-footer {
+    min-width: 30px;
+    padding: 0 8px;
+    opacity: 0.72;
+}
+
+.subtask-add-footer:hover {
+    opacity: 1 !important;
+    color: var(--primary-color);
+}
+
+.relations-icon {
+    flex: 0 0 auto;
+}
+
+.thought-relations-panel {
+    margin-top: 10px;
+    padding-top: 11px;
+    border-top: 1px solid rgba(120, 128, 140, 0.10);
+}
+
+.thought-relations-state {
+    color: var(--muted-text);
+    font-size: 12.5px;
+    padding: 8px 2px;
+}
+
+.thought-relations-state.error {
+    color: #d64545;
+}
+
+.thought-manual-relation {
+    display: grid;
+    gap: 6px;
+    margin-bottom: 9px;
+}
+
+.thought-manual-relation-input {
+    width: 100%;
+    height: 32px;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    background: var(--bg-color);
+    color: var(--text-color);
+    padding: 0 10px;
+    font-family: inherit;
+    font-size: 12px;
+    outline: none;
+}
+
+.thought-manual-relation-input:focus {
+    border-color: rgba(var(--primary-rgb), 0.38);
+    box-shadow: 0 0 0 3px rgba(var(--primary-rgb), 0.08);
+}
+
+.thought-manual-relation-results {
+    display: grid;
+    gap: 5px;
+}
+
+.thought-manual-relation-option {
+    width: 100%;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    background: rgba(var(--primary-rgb), 0.04);
+    color: var(--text-color);
+    padding: 7px 9px;
+    font-family: inherit;
+    font-size: 12px;
+    text-align: left;
+    cursor: pointer;
+}
+
+.thought-manual-relation-option:hover {
+    border-color: rgba(var(--primary-rgb), 0.35);
+    background: rgba(var(--primary-rgb), 0.09);
+    color: var(--primary-color);
+}
+
+.thought-manual-relation-empty {
+    color: var(--muted-text);
+    font-size: 12px;
+    padding: 3px 2px;
+}
+
+.thought-relations-list {
+    display: grid;
+    gap: 6px;
+}
+
+.thought-relations-section {
+    display: grid;
+    gap: 6px;
+}
+
+.thought-relations-section-title {
+    margin: 10px 0 6px;
+    color: var(--text-color);
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.thought-relations-section-title.muted {
+    color: var(--muted-text);
+}
+
+.thought-relation-item {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px;
+    align-items: start;
+    width: 100%;
+    padding: 8px 9px;
+    border: 1px solid rgba(var(--primary-rgb), 0.1);
+    border-radius: 8px;
+    background: rgba(var(--primary-rgb), 0.035);
+    color: var(--text-color);
+    text-align: left;
+    cursor: pointer;
+    transition: background 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
+    margin-bottom: 3px;
+}
+
+.thought-relation-item:hover {
+    transform: translateY(-1px);
+    border-color: rgba(var(--primary-rgb), 0.25);
+    background: rgba(var(--primary-rgb), 0.07);
+}
+
+.thought-relation-item.weak {
+    opacity: 0.82;
+}
+
+.thought-relation-main {
+    display: grid;
+    gap: 3px;
+    min-width: 0;
+}
+
+.thought-relation-head {
+    display: flex;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    overflow: hidden;
+}
+
+.thought-relation-type,
+.thought-relation-score,
+.thought-relation-confidence,
+.thought-relation-date {
+    display: inline-flex;
+    align-items: center;
+    min-height: 20px;
+    padding: 2px 6px;
+    border-radius: 6px;
+    font-size: 11px;
+    line-height: 1.2;
+}
+
+.thought-relation-type {
+    color: var(--primary-color);
+    background: rgba(var(--primary-rgb), 0.10);
+    font-weight: 700;
+}
+
+.thought-relation-score {
+    color: var(--text-color);
+    background: rgba(var(--primary-rgb), 0.065);
+}
+
+.thought-relation-confidence {
+    color: var(--muted-text);
+    background: rgba(var(--primary-rgb), 0.045);
+}
+
+.thought-relation-date {
+    color: var(--muted-text);
+    background: rgba(120, 128, 140, 0.055);
+}
+
+.thought-relation-summary {
+    display: block;
+    overflow: hidden;
+    min-width: 0;
+    font-size: 13px;
+    line-height: 1.45;
+    font-weight: 650;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.thought-relation-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    color: var(--muted-text);
+    font-size: 11.5px;
+    line-height: 1.3;
+}
+
+.thought-relation-reasons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+    color: var(--muted-text);
+    font-size: 11.5px;
+    line-height: 1.35;
+}
+
+.thought-relation-reasons span {
+    padding: 2px 5px;
+    border-radius: 5px;
+    background: rgba(var(--primary-rgb), 0.045);
+}
+
+.thought-relation-detail-line {
+    display: block;
+    overflow: hidden;
+    min-width: 0;
+    color: var(--muted-text);
+    font-size: 11.5px;
+    line-height: 1.3;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.thought-relations-more {
+    justify-self: center;
+    height: 26px;
+    padding: 0 10px;
+    border: 1px solid rgba(120, 128, 140, 0.14);
+    border-radius: 999px;
+    background: rgba(120, 128, 140, 0.04);
+    color: var(--muted-text);
+    font-size: 11.5px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease, transform 0.2s ease;
+}
+
+.thought-relations-more:hover {
+    transform: translateY(-1px);
+    border-color: rgba(var(--primary-rgb), 0.20);
+    background: rgba(var(--primary-rgb), 0.06);
+    color: var(--primary-color);
+}
+
+.thought-relation-delete {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    border-radius: 6px;
+    color: var(--muted-text);
+    opacity: 0.65;
+    transition: background 0.2s ease, color 0.2s ease, opacity 0.2s ease;
+}
+
+.thought-relation-delete:hover {
+    background: rgba(214, 69, 69, 0.1);
+    color: #d64545;
+    opacity: 1;
+}
+
+.thought-relation-delete.deleting {
+    pointer-events: none;
+    opacity: 0.35;
+}
+
+.thought-relation-suggestion {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px;
+    align-items: start;
+    padding: 8px 9px;
+    border: 1px solid rgba(47, 125, 79, 0.13);
+    border-radius: 8px;
+    background: linear-gradient(180deg, rgba(47, 125, 79, 0.032), rgba(47, 125, 79, 0.012));
+    margin-bottom: 2px;
+}
+
+.thought-relation-suggestion-main {
+    display: grid;
+    gap: 3px;
+    min-width: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--text-color);
+    text-align: left;
+    cursor: pointer;
+}
+
+.thought-relation-suggestion-main:hover .thought-relation-summary {
+    color: var(--primary-color);
+}
+
+.thought-relation-suggestion-actions {
+    display: inline-flex;
+    gap: 5px;
+    align-items: center;
+    padding: 1px;
+    border: 1px solid rgba(120, 128, 140, 0.10);
+    border-radius: 999px;
+    background: var(--card-bg);
+}
+
+.thought-relation-suggestion-confirm,
+.thought-relation-suggestion-ignore {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    border: 1px solid transparent;
+    border-radius: 999px;
+    background: transparent;
+    color: var(--muted-text);
+    cursor: pointer;
+    transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease, opacity 0.2s ease, transform 0.2s ease;
+}
+
+.thought-relation-suggestion-confirm {
+    color: #24894a;
+    background: rgba(36, 137, 74, 0.065);
+}
+
+.thought-relation-suggestion-ignore {
+    color: var(--muted-text);
+}
+
+.thought-relation-suggestion-confirm:hover {
+    transform: translateY(-1px);
+    border-color: rgba(36, 137, 74, 0.24);
+    background: rgba(36, 137, 74, 0.14);
+    color: #24894a;
+}
+
+.thought-relation-suggestion-ignore:hover {
+    transform: translateY(-1px);
+    border-color: rgba(214, 69, 69, 0.2);
+    background: rgba(214, 69, 69, 0.08);
+    color: #d64545;
+}
+
+.thought-relation-suggestion-confirm:focus-visible,
+.thought-relation-suggestion-ignore:focus-visible {
+    outline: 2px solid rgba(var(--primary-rgb), 0.28);
+    outline-offset: 2px;
+}
+
+.thought-relation-suggestion-ignore.deleting {
+    pointer-events: none;
+    opacity: 0.35;
 }
 
 /* Edit Mode */
@@ -695,7 +1390,7 @@
 }
 
 .subtask-add-inline svg {
-    margin-left: 3px;
+    margin-left: 0px;
     flex-shrink: 0;
 }
 
@@ -742,8 +1437,9 @@
 
 /* Subtask List Container */
 .subtask-list {
-    margin-top: 10px;
-    padding: 6px 0 6px 12px;
+    margin-top: 12px;
+    padding: 10px 0 6px 12px;
+    border-top: 1px solid rgba(120, 128, 140, 0.10);
 }
 
 /* Individual Subtask */
@@ -792,6 +1488,7 @@
     cursor: text;
     user-select: text;
     word-break: break-word;
+    font-family: ui-monospace;
 }
 
 .subtask-copy-btn {
@@ -915,6 +1612,9 @@
 
 /* Mobile Responsiveness */
 @media (max-width: 640px) {
+    .search-bar {
+        width: 100%;
+    }
     /* Collapsed: header takes no layout space */
     .view-container:not(.expanded) .thoughts-header-actions {
         height: 0;
@@ -1295,7 +1995,7 @@ body.quick-add-open {
 }
 
 /* When not expanded, hide the inline add subtask button if there are > 3 subtasks to keep it clean */
-.thought-card.can-expand:not(.expanded) .subtask-add-inline {
+.thought-card.can-expand:not(.expanded) .subtask-list .subtask-add-inline {
     display: none !important;
 }
 

@@ -51,25 +51,25 @@ function generatePWAManifest(siteTitle) {
         short_name: "新建",
         description: "创建一个新的草稿文档",
         url: "/?action=new",
-        icons: [{ src: "dumbpad.png", sizes: "192x192" }]
+        icons: [{ src: "dumbpad-192.png", sizes: "192x192" }]
       },
       {
         name: "全文搜索",
         short_name: "搜索",
         description: "在所有文档中搜索",
         url: "/?action=search",
-        icons: [{ src: "dumbpad.png", sizes: "192x192" }]
+        icons: [{ src: "dumbpad-192.png", sizes: "192x192" }]
       }
     ],
     icons: [
       {
-        src: "dumbpad.png",
+        src: "dumbpad-192.png",
         type: "image/png",
         sizes: "192x192",
         purpose: "any"
       },
       {
-        src: "dumbpad.png",
+        src: "dumbpad-512.png",
         type: "image/png",
         sizes: "512x512",
         purpose: "any"

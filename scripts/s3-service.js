@@ -1,0 +1,179 @@
+const {
+    S3Client,
+    PutObjectCommand,
+    GetObjectCommand,
+    DeleteObjectCommand,
+    ListObjectsV2Command,
+    HeadObjectCommand,
+    CopyObjectCommand
+} = require('@aws-sdk/client-s3');
+
+let s3Client = null;
+let s3Bucket = '';
+
+function getS3Config() {
+    return {
+        endpoint: process.env.S3_ENDPOINT,
+        region: process.env.S3_REGION || 'us-east-1',
+        bucket: process.env.S3_BUCKET,
+        accessKeyId: process.env.S3_ACCESS_KEY,
+        secretAccessKey: process.env.S3_SECRET_KEY || process.env.S3_API_KEY
+    };
+}
+
+function assertConfigured(config) {
+    const missing = [];
+    if (!config.bucket) missing.push('S3_BUCKET');
+    if (!config.accessKeyId) missing.push('S3_ACCESS_KEY');
+    if (!config.secretAccessKey) missing.push('S3_SECRET_KEY or S3_API_KEY');
+
+    if (missing.length) {
+        throw new Error(`Missing S3 configuration: ${missing.join(', ')}`);
+    }
+}
+
+function initS3(overrides = {}) {
+    if (overrides.client) {
+        s3Client = overrides.client;
+        s3Bucket = overrides.bucket || process.env.S3_BUCKET || '';
+        if (!s3Bucket) throw new Error('Missing S3 bucket');
+        return s3Client;
+    }
+
+    const config = { ...getS3Config(), ...overrides };
+    assertConfigured(config);
+
+    s3Bucket = config.bucket;
+    s3Client = new S3Client({
+        endpoint: config.endpoint || undefined,
+        region: config.region,
+        credentials: {
+            accessKeyId: config.accessKeyId,
+            secretAccessKey: config.secretAccessKey
+        },
+        forcePathStyle: true
+    });
+
+    return s3Client;
+}
+
+function ensureClient() {
+    if (!s3Client) initS3();
+    return s3Client;
+}
+
+function normalizeKey(key) {
+    return String(key || '').replace(/^\/+/, '');
+}
+
+async function bodyToString(body) {
+    if (!body) return '';
+    if (typeof body === 'string') return body;
+    if (Buffer.isBuffer(body)) return body.toString('utf8');
+    if (typeof body.transformToString === 'function') return body.transformToString();
+
+    const chunks = [];
+    for await (const chunk of body) {
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    }
+    return Buffer.concat(chunks).toString('utf8');
+}
+
+function isNotFound(error) {
+    return error?.name === 'NoSuchKey' || error?.name === 'NotFound' || error?.$metadata?.httpStatusCode === 404;
+}
+
+async function putObject(key, body, contentType = 'application/octet-stream') {
+    await ensureClient().send(new PutObjectCommand({
+        Bucket: s3Bucket,
+        Key: normalizeKey(key),
+        Body: body,
+        ContentType: contentType
+    }));
+}
+
+async function getObject(key) {
+    try {
+        const result = await ensureClient().send(new GetObjectCommand({
+            Bucket: s3Bucket,
+            Key: normalizeKey(key)
+        }));
+        return bodyToString(result.Body);
+    } catch (error) {
+        if (isNotFound(error)) return null;
+        throw error;
+    }
+}
+
+async function getJSONObject(key, fallback = null) {
+    const text = await getObject(key);
+    if (text === null) return fallback;
+    return JSON.parse(text);
+}
+
+async function deleteObject(key) {
+    await ensureClient().send(new DeleteObjectCommand({
+        Bucket: s3Bucket,
+        Key: normalizeKey(key)
+    }));
+}
+
+async function listObjects(prefix = '') {
+    const client = ensureClient();
+    const items = [];
+    let ContinuationToken;
+
+    do {
+        const result = await client.send(new ListObjectsV2Command({
+            Bucket: s3Bucket,
+            Prefix: normalizeKey(prefix),
+            ContinuationToken
+        }));
+
+        for (const item of result.Contents || []) {
+            items.push({
+                key: item.Key,
+                size: item.Size || 0,
+                lastModified: item.LastModified || null,
+                etag: item.ETag || ''
+            });
+        }
+
+        ContinuationToken = result.NextContinuationToken;
+    } while (ContinuationToken);
+
+    return items;
+}
+
+async function headObject(key) {
+    try {
+        return await ensureClient().send(new HeadObjectCommand({
+            Bucket: s3Bucket,
+            Key: normalizeKey(key)
+        }));
+    } catch (error) {
+        if (isNotFound(error)) return null;
+        throw error;
+    }
+}
+
+async function copyObject(sourceKey, destKey) {
+    const normalizedSource = normalizeKey(sourceKey);
+    const normalizedDest = normalizeKey(destKey);
+    await ensureClient().send(new CopyObjectCommand({
+        Bucket: s3Bucket,
+        CopySource: encodeURI(`${s3Bucket}/${normalizedSource}`),
+        Key: normalizedDest
+    }));
+}
+
+module.exports = {
+    initS3,
+    putObject,
+    getObject,
+    getJSONObject,
+    deleteObject,
+    listObjects,
+    headObject,
+    copyObject
+};

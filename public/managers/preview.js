@@ -286,7 +286,7 @@ export class PreviewManager {
                 break;
         }
         
-        this.collaborationManager.updateLocalCursor();
+        this.collaborationManager?.updateLocalCursor?.();
     }
 
     /**
@@ -783,7 +783,55 @@ export class PreviewManager {
         await this.loadAdditionalLanguages(content);
         
         this.previewPane.innerHTML = this.marked.parse(content);
+        this.renderDiagramBlocks();
         this.addCopyLangButtonsToCodeBlocks();
+    }
+
+    renderDiagramBlocks() {
+        if (!window.Vditor || !this.previewPane) return;
+
+        const diagramRenderers = [
+            ['mermaid', 'mermaidRender'],
+            ['flowchart', 'flowchartRender'],
+            ['graphviz', 'graphvizRender'],
+            ['plantuml', 'plantumlRender'],
+            ['markmap', 'markmapRender'],
+            ['mindmap', 'mindmapRender'],
+            ['echarts', 'chartRender'],
+            ['abc', 'abcRender'],
+            ['math', 'mathRender'],
+            ['smiles', 'SMILESRender'],
+        ];
+        const diagramLanguages = new Set(diagramRenderers.map(([language]) => language));
+
+        this.previewPane.querySelectorAll('pre > code[class*="language-"]').forEach((code) => {
+            const match = code.className.match(/language-([\w-]+)/);
+            const language = match?.[1];
+            if (!diagramLanguages.has(language)) return;
+
+            const block = document.createElement('div');
+            block.className = `language-${language}`;
+            block.textContent = code.textContent || '';
+            if (language === 'mindmap') block.dataset.code = block.textContent;
+            code.closest('pre')?.replaceWith(block);
+        });
+
+        const cdn = '/vendor/vditor-package';
+        const theme = document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'classic';
+        diagramRenderers.forEach(([language, renderer]) => {
+            if (!this.previewPane.querySelector(`.language-${language}`)) return;
+            try {
+                if (renderer === 'mathRender') {
+                    window.Vditor[renderer](this.previewPane, { cdn });
+                } else if (renderer === 'mermaidRender' || renderer === 'chartRender' || renderer === 'mindmapRender' || renderer === 'SMILESRender') {
+                    window.Vditor[renderer](this.previewPane, cdn, theme);
+                } else {
+                    window.Vditor[renderer](this.previewPane, cdn);
+                }
+            } catch (error) {
+                console.warn(`Failed to render ${language} block:`, error);
+            }
+        });
     }
 
     /**

@@ -4,18 +4,12 @@ export default class SettingsManager {
     this.SETTINGS_KEY = 'dumbpad_settings';
     this.applySettings = applySettings
     this.settingsInputAutoSaveStatusInterval = document.getElementById('autosave-status-interval-input');
-    this.settingsEnableRemoteConnectionMessages = document.getElementById('settings-remote-connection-messages');
-    this.settingsDefaultPreviewEditor = document.getElementById('settings-default-preview-editor');
-    this.settingsDefaultPreviewSplit = document.getElementById('settings-default-preview-split');
-    this.settingsDefaultPreviewFull = document.getElementById('settings-default-preview-full');
     this.settingsDisablePrintExpand = document.getElementById('settings-disable-print-expand');
   }
   
   defaultSettings() {
     return { // Add additional default settings in here:
       saveStatusMessageInterval: 500,
-      enableRemoteConnectionMessages: false,
-      defaultMarkdownPreviewMode: 'off', // 'off', 'split', or 'preview-only'
       disablePrintExpand: false,
     }
   }
@@ -57,24 +51,6 @@ export default class SettingsManager {
         this.settingsInputAutoSaveStatusInterval.value = currentSettings.saveStatusMessageInterval;
       }
 
-      appSettings.enableRemoteConnectionMessages = currentSettings.enableRemoteConnectionMessages;
-      if (this.settingsEnableRemoteConnectionMessages) {
-        this.settingsEnableRemoteConnectionMessages.checked = currentSettings.enableRemoteConnectionMessages;
-      }
-
-      appSettings.defaultMarkdownPreviewMode = currentSettings.defaultMarkdownPreviewMode || 'off';
-      switch (currentSettings.defaultMarkdownPreviewMode) {
-        case 'split':
-          if (this.settingsDefaultPreviewSplit) this.settingsDefaultPreviewSplit.checked = true;
-          break;
-        case 'preview-only':
-          if (this.settingsDefaultPreviewFull) this.settingsDefaultPreviewFull.checked = true;
-          break;
-        default:
-          if (this.settingsDefaultPreviewEditor) this.settingsDefaultPreviewEditor.checked = true;
-          break;
-      }
-
       appSettings.disablePrintExpand = currentSettings.disablePrintExpand;
       if (this.settingsDisablePrintExpand) {
         this.settingsDisablePrintExpand.checked = currentSettings.disablePrintExpand;
@@ -97,18 +73,6 @@ export default class SettingsManager {
       appSettings.saveStatusMessageInterval = newInterval;
     }
 
-    if (this.settingsEnableRemoteConnectionMessages) {
-      appSettings.enableRemoteConnectionMessages = this.settingsEnableRemoteConnectionMessages.checked;
-    }
-
-    if (this.settingsDefaultPreviewEditor && this.settingsDefaultPreviewEditor.checked) {
-      appSettings.defaultMarkdownPreviewMode = 'off';
-    } else if (this.settingsDefaultPreviewSplit && this.settingsDefaultPreviewSplit.checked) {
-      appSettings.defaultMarkdownPreviewMode = 'split';
-    } else if (this.settingsDefaultPreviewFull && this.settingsDefaultPreviewFull.checked) {
-      appSettings.defaultMarkdownPreviewMode = 'preview-only';
-    }
-    
     if (this.settingsDisablePrintExpand) {
       appSettings.disablePrintExpand = this.settingsDisablePrintExpand.checked;
     }

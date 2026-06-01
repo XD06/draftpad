@@ -1,3 +1,15 @@
 {
-  "ignore": ["asset-manifest.json", "manifest.json"]
+  "watch": [
+    "server.js",
+    "scripts",
+    "public"
+  ],
+  "ignore": [
+    "data/**",
+    ".playwright-cli/**",
+    "public/Assets/asset-manifest.json",
+    "public/Assets/manifest.json",
+    "*.log"
+  ],
+  "ext": "js,json,css,html"
 }

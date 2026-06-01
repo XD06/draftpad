@@ -2,6 +2,35 @@ let APP_VERSION = "1.0.0";
 let CURRENT_CACHE_NAME = "DUMBPAD_CACHE_1.0.0";
 
 const getCacheName = (version) => `DUMBPAD_CACHE_${version}`;
+const CORE_ASSETS = [
+  "/index.html",
+  "/app.js",
+  "/hybrid-editor.js",
+  "/sidebar.js",
+  "/Assets/styles.css",
+  "/Assets/preview-styles.css",
+  "/Assets/thoughts.css",
+  "/Assets/ios-theme.css",
+  "/Assets/manifest.json",
+  "/Assets/dumbpad.png",
+  "/Assets/dumbpad-192.png",
+  "/Assets/dumbpad-512.png",
+  "/Assets/favicon-64.png",
+  "/vendor/vditor/index.css",
+  "/vendor/vditor/index.min.js",
+  "/vendor/vditor-package/dist/js/i18n/zh_CN.js",
+  "/vendor/vditor-package/dist/js/lute/lute.min.js",
+  "/js/marked/marked.esm.js",
+  "/css/@highlightjs/github.min.css",
+  "/css/@highlightjs/github-dark.min.css",
+  "/managers/confirmation.js",
+  "/managers/preview.js",
+  "/managers/settings.js",
+  "/managers/storage.js",
+  "/managers/thoughts.js",
+  "/managers/toaster.js",
+  "/managers/ws-client.js",
+];
 
 const getConfig = async () => {
   try {
@@ -33,15 +62,7 @@ const getAppVersion = async () => {
 
 const getCurrentCacheVersion = async () => {
   const cacheNames = await caches.keys();
-  const dumbpadCaches = cacheNames.filter(name => name.startsWith('DUMBPAD_CACHE_') || name.startsWith('DUMBPAD_PWA_CACHE'));
-  
-  if (dumbpadCaches.length === 0) {
-    return null; // No cache exists
-  }
-  
-  // Extract version from cache name (e.g., "DUMBPAD_CACHE_1.0.1" -> "1.0.1")
-  const latestCache = dumbpadCaches[dumbpadCaches.length - 1];
-  return latestCache.replace('DUMBPAD_CACHE_', '');
+  return cacheNames.includes(CURRENT_CACHE_NAME) ? APP_VERSION : null;
 };
 
 const installNewCache = async (version) => {
@@ -52,32 +73,8 @@ const installNewCache = async (version) => {
   const cache = await caches.open(cacheName);
   
   try {
-    const response = await fetch("/asset-manifest.json");
-    const assets = await response.json();
-    const assetsToCache = [
-      ...assets,
-      // Dynamically added packages
-      "/js/marked/marked.esm.js",
-      "/js/marked-extended-tables/index.js",
-      "/js/marked-alert/index.js",
-      "/js/@highlightjs/highlight.min.js",
-      "/css/@highlightjs/github.min.css",
-      "/css/@highlightjs/github-dark.min.css",
-    ];
-
-    // If needed, cache highlight.js languages dynamically
-    const configData = await getConfig();
-    const highlightLanguages = configData?.highlightLanguages;
-    if (highlightLanguages) {
-      highlightLanguages.forEach(lang => {
-        if (lang.trim()) {
-          assetsToCache.push(`/js/@highlightjs/languages/${lang.trim()}.min.js`);
-        }
-      });
-    }
-    
-    console.log("Assets to cache:", { assetsToCache });
-    await cache.addAll(assetsToCache);
+    console.log("Core assets to cache:", { assetsToCache: CORE_ASSETS });
+    await cache.addAll(CORE_ASSETS);
     console.log("Cache installation complete for version:", version);
   } catch (error) {
     console.error("Failed to install cache:", error);
@@ -171,6 +168,48 @@ self.addEventListener("activate", (event) => {
   );
 });
 
+const putInCache = async (request, response) => {
+  if (!response || !response.ok) return;
+  const cache = await caches.open(CURRENT_CACHE_NAME);
+  await cache.put(request, response.clone());
+};
+
+const findCachedFallback = async (fallbackRequests = []) => {
+  for (const fallbackRequest of fallbackRequests) {
+    const response = await caches.match(fallbackRequest);
+    if (response) return response;
+  }
+  return null;
+};
+
+const networkFirstWithTimeout = async (request, options = {}) => {
+  const { timeout = 2500, fetchOptions = {}, fallbackRequests = [] } = options;
+  const networkRequest = fetch(request, fetchOptions).then((response) => {
+    putInCache(request, response).catch(() => {});
+    return response;
+  });
+
+  try {
+    return await Promise.race([
+      networkRequest,
+      new Promise((_, reject) => setTimeout(() => reject(new Error("network timeout")), timeout)),
+    ]);
+  } catch (_error) {
+    const cachedResponse = await caches.match(request);
+    if (cachedResponse) return cachedResponse;
+
+    const fallbackResponse = await findCachedFallback(fallbackRequests);
+    if (fallbackResponse) return fallbackResponse;
+
+    return networkRequest.catch(() => {
+      return new Response("", {
+        status: 504,
+        statusText: "Gateway Timeout",
+      });
+    });
+  }
+};
+
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
 
@@ -187,33 +226,30 @@ self.addEventListener("fetch", (event) => {
   if (isNavigation) {
     // Always fetch fresh index.html, fallback to cache only when offline
     event.respondWith(
-      fetch(event.request, { cache: "no-store" })
-        .then((response) => {
-          const copy = response.clone();
-          caches.open(CURRENT_CACHE_NAME).then(cache => cache.put(event.request, copy));
-          return response;
-        })
-        .catch(() => caches.match(event.request))
+      networkFirstWithTimeout(event.request, {
+        timeout: 2500,
+        fetchOptions: { cache: "no-store" },
+        fallbackRequests: ["/index.html"],
+      })
     );
     return;
   }
 
   if (isNetworkFirstAsset) {
     event.respondWith(
-      fetch(event.request)
-        .then((response) => {
-          const copy = response.clone();
-          caches.open(CURRENT_CACHE_NAME).then(cache => cache.put(event.request, copy));
-          return response;
-        })
-        .catch(() => caches.match(event.request))
+      networkFirstWithTimeout(event.request, { timeout: 2500 })
     );
     return;
   }
 
   event.respondWith(
     caches.match(event.request).then((cachedResponse) => {
-      return cachedResponse || fetch(event.request);
+      return cachedResponse || fetch(event.request).catch(() => {
+        return new Response("", {
+          status: 504,
+          statusText: "Gateway Timeout",
+        });
+      });
     })
   );
 });

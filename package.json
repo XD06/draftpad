@@ -5,10 +5,23 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "nodemon server.js",
+    "dev": "nodemon --ignore data/** --ignore .playwright-cli/** --ignore public/Assets/asset-manifest.json --ignore public/Assets/manifest.json server.js",
+    "check": "node scripts/check-js.js",
+    "test:ai-provider": "node test_ai_provider.js",
+    "test:ai-queue": "node test_ai_queue_relations.js",
+    "test:relations": "node test_relations_calculator.js",
+    "test:api": "node test_api_regression.js",
+    "test:thoughts-migration": "node test_migrate_thoughts_local.js",
+    "test:s3-migration": "node test_migrate_local_to_s3_cli.js",
+    "test:s3-storage": "node test_s3_storage_regression.js",
+    "test:s3-prefix": "node test_s3_prefix_tools.js",
+    "test:s3-real": "node test_s3_real_smoke.js",
+    "ai:backfill-prefix": "node scripts/ai-backfill-prefix.js",
     "generate-icons": "node scripts/generate-png.js"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1055.0",
+    "@aws-sdk/s3-request-presigner": "^3.1055.0",
     "@highlightjs/cdn-assets": "^11.11.1",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
@@ -20,6 +33,7 @@
     "marked-alert": "^2.1.2",
     "marked-extended-tables": "^2.0.1",
     "marked-highlight": "^2.2.2",
+    "vditor": "^3.11.2",
     "ws": "^8.18.2"
   },
   "devDependencies": {

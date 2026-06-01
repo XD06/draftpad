@@ -17,8 +17,8 @@
     --modal-bg: #ffffff;
 
     /* iOS 导航栏 */
-    --nav-bg: rgba(255, 255, 255, 0.45);
-    --nav-separator: rgba(60, 60, 67, 0.12);
+    --nav-bg: rgba(255, 255, 255, 0.28);
+    --nav-separator: rgba(60, 60, 67, 0.16);
 
     /* iOS 文字色 */
     --text-color: #1c1c1e;
@@ -57,7 +57,9 @@
 
     /* iOS 字体 */
     --font-system: -apple-system, BlinkMacSystemFont, "SF Pro", "SF Pro Text", "Helvetica Neue", sans-serif;
-    --font-mono: "SF Mono", SFMono-Regular, "JetBrains Mono", monospace;
+    --font-reading: "DumbPad Reading", "Source Han Sans SC", "Noto Serif SC", "Microsoft YaHei", sans-serif;
+    --font-code: "DumbPad Code", "Fira Code", "SF Mono", SFMono-Regular, "JetBrains Mono", monospace;
+    --font-mono: var(--font-code);
 
     /* 保留兼容 */
     --code-markdown: rgba(229, 161, 0, 0.12);
@@ -72,8 +74,8 @@
     --textarea-bg: #2c2c2e;
     --surface-subtle: #1c1c1e;
     --modal-bg: #2c2c2e;
-    --nav-bg: rgba(28, 28, 30, 0.45);
-    --nav-separator: rgba(255, 255, 255, 0.10);
+    --nav-bg: rgba(28, 28, 30, 0.30);
+    --nav-separator: rgba(255, 255, 255, 0.14);
     --text-color: #ffffff;
     --muted-text: #8e8e93;
     --primary-color: #FFD60A;
@@ -148,19 +150,20 @@ header {
     left: 12px;
     right: 12px;
     width: auto;
-    background: var(--nav-bg) !important;
-    backdrop-filter: blur(40px) saturate(200%);
-    -webkit-backdrop-filter: blur(40px) saturate(200%);
+    background: linear-gradient(180deg, color-mix(in srgb, var(--nav-bg) 88%, transparent), color-mix(in srgb, var(--nav-bg) 72%, transparent)) !important;
+    backdrop-filter: blur(16px) saturate(185%) contrast(106%);
+    -webkit-backdrop-filter: blur(16px) saturate(185%) contrast(106%);
     border: none !important;
     border-bottom: 0.5px solid var(--nav-separator) !important;
     border-radius: 14px !important;
     padding: 6px 16px !important;
     margin-bottom: 0 !important;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04) !important;
+    box-shadow: 0 1px 1px rgba(15, 23, 42, 0.03), 0 8px 24px rgba(15, 23, 42, 0.055) !important;
     min-height: 52px;
     z-index: 1000;
     display: flex;
     flex-direction: column;
+    isolation: isolate;
 }
 
 /* header-top / header-left / header-right 必须透明，不能遮挡毛玻璃 */
@@ -277,7 +280,7 @@ header {
 .thought-card.completed {
     opacity: 0.55;
     background: #f8f8f8;
-    box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.04);
+    box-shadow: 0 0 0 2.5px rgba(0, 0, 0, 0.04);
 }
 
 /* 时间戳 */
@@ -487,7 +490,7 @@ body::before {
     }
 
     .fab-btn {
-        bottom: 20px;
+        bottom: 60px;
         right: 20px;
         width: 48px;
         height: 48px;
@@ -552,6 +555,21 @@ main {
     min-height: calc(100vh - 140px);
 }
 
+@media (min-width: 981px) {
+    .three-column-layout {
+        height: calc(100vh - 92px) !important;
+        min-height: 0;
+    }
+
+    .editor-main,
+    .hybrid-editor.typora-editor-shell,
+    .typora-editor-shell .vditor-content,
+    .typora-editor-shell .vditor-wysiwyg {
+        height: 100% !important;
+        min-height: 0;
+    }
+}
+
 .editor-container,
 .preview-container {
     height: auto !important;
@@ -606,4 +624,101 @@ main {
 
 [data-theme="dark"] .thought-dot {
     border-color: rgba(255, 255, 255, 0.15);
+}
+
+@media (min-width: 981px) {
+    .three-column-layout {
+        height: calc(100vh - 92px) !important;
+        min-height: 0 !important;
+        max-height: calc(100vh - 92px) !important;
+        overflow: hidden !important;
+        align-items: stretch !important;
+    }
+
+    .editor-main,
+    .hybrid-editor.typora-editor-shell,
+    .hybrid-editor.typora-editor-shell.vditor,
+    .typora-editor-shell .vditor {
+        height: calc(100vh - 92px) !important;
+        min-height: 0 !important;
+        max-height: calc(100vh - 92px) !important;
+    }
+
+    .typora-editor-shell .vditor-content,
+    .typora-editor-shell .vditor-wysiwyg {
+        height: 100% !important;
+        min-height: 0 !important;
+        max-height: 100% !important;
+    }
+
+    .editor-main,
+    .hybrid-editor.typora-editor-shell {
+        flex: 1 1 0 !important;
+        overflow: hidden !important;
+    }
+
+    .typora-editor-shell .vditor-content {
+        overflow: hidden !important;
+    }
+
+    .typora-editor-shell .vditor-wysiwyg {
+        overflow-x: hidden !important;
+        overflow-y: auto !important;
+        overscroll-behavior: contain;
+    }
+
+    .sidebar {
+        height: calc(100vh - 92px);
+        max-height: calc(100vh - 92px);
+        align-self: stretch;
+    }
+}
+
+.typora-editor-shell .vditor-reset .has-annotation sub,
+.typora-editor-shell .vditor-reset sub[data-note-label] {
+    display: none !important;
+}
+
+.typora-editor-shell .has-annotation {
+    cursor: pointer;
+}
+
+.typora-editor-shell .vditor-wysiwyg__block[data-type="code-block"]::before {
+    content: none !important;
+    display: none !important;
+}
+
+.typora-editor-shell.is-source-mode {
+    background: transparent;
+}
+
+.typora-editor-shell.is-source-mode .typora-source-editor {
+    display: block;
+    position: absolute;
+    top: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 100%;
+    max-width: 760px;
+    height: 100%;
+    margin: 0 auto;
+    padding: 10px 35px 110px;
+    overflow: auto;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    box-shadow: 0 10px 30px rgba(15, 23, 42, 0.05);
+    background: var(--textarea-bg);
+    box-sizing: border-box;
+    white-space: pre-wrap;
+}
+
+@media (max-width: 720px) {
+    .typora-editor-shell.is-source-mode .typora-source-editor {
+        left: 0;
+        transform: none;
+        width: 100%;
+        max-width: none;
+        padding: 14px 18px 90px;
+        border-radius: 0;
+    }
 }
