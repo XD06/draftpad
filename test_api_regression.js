@@ -198,8 +198,10 @@ function assertThoughtsFrontendRegressions() {
         iosThemeCss.includes('right: 18px;') &&
         iosThemeCss.includes('left: auto;') &&
         iosThemeCss.includes('padding-bottom: max(20px, env(safe-area-inset-bottom, 0px));') &&
+        iosThemeCss.includes('#fab-add-thought') &&
+        iosThemeCss.includes('transform 0.2s cubic-bezier') &&
         !iosThemeCss.includes('padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 104px);'),
-        'mobile Thought FAB should stay on the right and the scroll area should not reserve a large blank bottom gutter'
+        'mobile Thought FAB should stay on the right without animating position and the scroll area should not reserve a large blank bottom gutter'
     );
     const initializeStart = appSource.indexOf('const initializeApp = async () =>');
     const initializeSource = initializeStart >= 0 ? appSource.slice(initializeStart) : '';

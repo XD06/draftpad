@@ -445,6 +445,17 @@ body::before {
     z-index: 100;
 }
 
+#fab-add-thought {
+    top: auto;
+    left: auto;
+    right: 30px;
+    bottom: 30px;
+    transition:
+        transform 0.2s cubic-bezier(0.22, 1, 0.36, 1),
+        box-shadow 0.2s ease,
+        background-color 0.2s ease;
+}
+
 .floating-btn {
     background: var(--header-bg);
     border: none;
@@ -495,6 +506,13 @@ body::before {
         width: 48px;
         height: 48px;
         border-radius: 16px;
+    }
+
+    #fab-add-thought {
+        top: auto;
+        left: auto;
+        right: 18px;
+        bottom: max(18px, calc(env(safe-area-inset-bottom, 0px) + 18px));
     }
 }
 
