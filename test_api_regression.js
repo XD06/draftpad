@@ -203,6 +203,16 @@ function assertThoughtsFrontendRegressions() {
         !iosThemeCss.includes('padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 104px);'),
         'mobile Thought FAB should stay on the right without animating position and the scroll area should not reserve a large blank bottom gutter'
     );
+    const thoughtFadeInStart = thoughtsCss.indexOf('@keyframes thoughtFadeIn');
+    const thoughtFadeInEnd = thoughtFadeInStart >= 0 ? thoughtsCss.indexOf('}', thoughtsCss.indexOf('to {', thoughtFadeInStart)) : -1;
+    const thoughtFadeInSource = thoughtFadeInStart >= 0 && thoughtFadeInEnd > thoughtFadeInStart
+        ? thoughtsCss.slice(thoughtFadeInStart, thoughtFadeInEnd)
+        : '';
+    assert(
+        thoughtFadeInSource &&
+        !thoughtFadeInSource.includes('transform:'),
+        'Thought view fade-in should not transform the view container because fixed FAB children drift with transformed ancestors'
+    );
     const initializeStart = appSource.indexOf('const initializeApp = async () =>');
     const initializeSource = initializeStart >= 0 ? appSource.slice(initializeStart) : '';
     assert(
