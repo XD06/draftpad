@@ -1016,9 +1016,9 @@ main {
     }
 
     body.thoughts-mode #fab-add-thought {
-        left: 18px;
-        right: auto;
-        bottom: calc(env(safe-area-inset-bottom, 0px) + 18px);
+        left: auto;
+        right: 18px;
+        bottom: max(18px, calc(env(safe-area-inset-bottom, 0px) + 18px));
         width: 48px;
         height: 48px;
         border-radius: 999px;
@@ -1028,7 +1028,7 @@ main {
     }
 
     body.thoughts-mode .thoughts-scroll-area {
-        padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 104px);
+        padding-bottom: max(20px, env(safe-area-inset-bottom, 0px));
     }
 
     body.quick-add-open #fab-add-thought,

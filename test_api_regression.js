@@ -53,6 +53,7 @@ function assertThoughtsFrontendRegressions() {
     const thoughtApiClientSource = fs.readFileSync(path.join(ROOT, 'public', 'managers', 'thought-api-client.js'), 'utf8');
     const thoughtOutboxSource = fs.readFileSync(path.join(ROOT, 'public', 'managers', 'thought-outbox.js'), 'utf8');
     const thoughtsCss = fs.readFileSync(path.join(ROOT, 'public', 'Assets', 'thoughts.css'), 'utf8');
+    const iosThemeCss = fs.readFileSync(path.join(ROOT, 'public', 'Assets', 'ios-theme.css'), 'utf8');
     const indexSource = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
     assert(
         !thoughtsSource.includes('statusEl.outerHTML = this.renderAIStatus'),
@@ -191,6 +192,14 @@ function assertThoughtsFrontendRegressions() {
         thoughtsCss.includes('.relations-count.has-count') &&
         thoughtsCss.includes('[data-theme=\"dark\"] .relations-count.has-count'),
         'AI and relation count badges should expose zero/non-zero classes with theme-aware colors'
+    );
+    assert(
+        iosThemeCss.includes('body.thoughts-mode #fab-add-thought') &&
+        iosThemeCss.includes('right: 18px;') &&
+        iosThemeCss.includes('left: auto;') &&
+        iosThemeCss.includes('padding-bottom: max(20px, env(safe-area-inset-bottom, 0px));') &&
+        !iosThemeCss.includes('padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 104px);'),
+        'mobile Thought FAB should stay on the right and the scroll area should not reserve a large blank bottom gutter'
     );
     const initializeStart = appSource.indexOf('const initializeApp = async () =>');
     const initializeSource = initializeStart >= 0 ? appSource.slice(initializeStart) : '';
