@@ -769,6 +769,7 @@ export class ThoughtsManager {
             } else {
                 lastTap = now;
                 tapTimeout = setTimeout(() => {
+                    if (this.scrollFirstSearchHighlight(card)) return;
                     if (isLong) card.classList.toggle('expanded');
                 }, DOUBLE_TAP_DELAY);
             }
@@ -890,6 +891,23 @@ export class ThoughtsManager {
             event.target.closest('.thought-link') ||
             card.classList.contains('editing')
         );
+    }
+
+    scrollFirstSearchHighlight(card) {
+        const query = String(this.searchInput?.value || '').trim();
+        if (!query || !card) return false;
+        const target = card.querySelector('.thought-highlight');
+        if (!target) return false;
+
+        card.classList.add('expanded');
+        setTimeout(() => {
+            target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            target.classList.remove('is-jump-target');
+            void target.offsetWidth;
+            target.classList.add('is-jump-target');
+            setTimeout(() => target.classList.remove('is-jump-target'), 1800);
+        }, 30);
+        return true;
     }
 
     copyTextWithFeedback(button, text) {

@@ -122,6 +122,13 @@ function assertThoughtsFrontendRegressions() {
         'manual relation search should be debounced, lightweight, stale-safe, and keyword-highlighted'
     );
     assert(
+        thoughtsSource.includes('scrollFirstSearchHighlight(card)') &&
+        thoughtsSource.includes("card.querySelector('.thought-highlight')") &&
+        thoughtsSource.includes("target.scrollIntoView({ behavior: 'smooth', block: 'center' })") &&
+        thoughtsSource.includes("target.classList.add('is-jump-target')"),
+        'clicking a searched thought should jump to the first highlighted keyword'
+    );
+    assert(
         (thoughtsSource.match(/renderTagFilters\(\)\s*\{/g) || []).length === 1,
         'ThoughtsManager should not contain duplicate renderTagFilters definitions'
     );
