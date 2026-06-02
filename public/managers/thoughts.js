@@ -81,6 +81,8 @@ export class ThoughtsManager {
         this.outboxInFlight = false;
         this.manualRelationSearchTimer = null;
         this.manualRelationSearchSeq = 0;
+        this.openRelationsPanelIds = new Set();
+        this.openAIStatusPanelIds = new Set();
 
         this.initDateFilter();
         this.initEventListeners();
@@ -736,6 +738,25 @@ export class ThoughtsManager {
 
             this.timeline.appendChild(card);
         });
+        this.restoreOpenPanelsAfterRender();
+    }
+
+    restoreOpenPanelsAfterRender() {
+        this.openRelationsPanelIds.forEach((thoughtId) => {
+            const thought = this.thoughts.find(item => item.id === thoughtId);
+            const card = this.timeline.querySelector(`.thought-card[data-id="${CSS.escape(thoughtId)}"]`);
+            if (thought && card && !card.querySelector('.thought-relations-panel')) {
+                this.openRelationsPanel(card, thought);
+            }
+        });
+
+        this.openAIStatusPanelIds.forEach((thoughtId) => {
+            const thought = this.thoughts.find(item => item.id === thoughtId);
+            const card = this.timeline.querySelector(`.thought-card[data-id="${CSS.escape(thoughtId)}"]`);
+            if (thought && card && !card.querySelector('.thought-ai-detail-panel')) {
+                this.openAIStatusPanel(card, thought);
+            }
+        });
     }
 
     bindThoughtCardEvents({ card, thought, bodyText, isLong }) {
@@ -1015,15 +1036,27 @@ export class ThoughtsManager {
 
     async toggleAIStatusPanel(card, thought) {
         const existing = card.querySelector('.thought-ai-detail-panel');
-        const button = card.querySelector('.thought-ai-status');
 
         if (existing) {
-            existing.remove();
-            card.classList.remove('ai-detail-open');
-            button?.setAttribute('aria-expanded', 'false');
+            this.closeAIStatusPanel(card, thought);
             return;
         }
 
+        this.openAIStatusPanel(card, thought);
+    }
+
+    closeAIStatusPanel(card, thought) {
+        const existing = card?.querySelector('.thought-ai-detail-panel');
+        const button = card?.querySelector('.thought-ai-status');
+        existing?.remove();
+        card?.classList.remove('ai-detail-open');
+        button?.setAttribute('aria-expanded', 'false');
+        if (thought?.id) this.openAIStatusPanelIds.delete(thought.id);
+    }
+
+    async openAIStatusPanel(card, thought) {
+        if (!card || !thought?.id || card.querySelector('.thought-ai-detail-panel')) return;
+        const button = card.querySelector('.thought-ai-status');
         const panel = document.createElement('div');
         panel.className = 'thought-ai-detail-panel';
         panel.innerHTML = renderAIStatusLoading();
@@ -1036,12 +1069,15 @@ export class ThoughtsManager {
         card.appendChild(panel);
         card.classList.add('ai-detail-open');
         button?.setAttribute('aria-expanded', 'true');
+        this.openAIStatusPanelIds.add(thought.id);
 
         try {
             const detail = await this.apiClient.getAIStatus(thought.id);
+            if (!panel.isConnected) return;
             panel.innerHTML = this.renderAIStatusDetail(detail);
         } catch (err) {
             console.error('Failed to fetch thought AI status:', err);
+            if (!panel.isConnected) return;
             panel.innerHTML = renderAIStatusError();
         }
     }
@@ -1076,15 +1112,27 @@ export class ThoughtsManager {
 
     async toggleRelationsPanel(card, thought) {
         const existing = card.querySelector('.thought-relations-panel');
-        const button = card.querySelector('.thought-relations-btn');
 
         if (existing) {
-            existing.remove();
-            button?.classList.remove('active');
-            button?.setAttribute('aria-expanded', 'false');
+            this.closeRelationsPanel(card, thought);
             return;
         }
 
+        this.openRelationsPanel(card, thought);
+    }
+
+    closeRelationsPanel(card, thought) {
+        const existing = card?.querySelector('.thought-relations-panel');
+        const button = card?.querySelector('.thought-relations-btn');
+        existing?.remove();
+        button?.classList.remove('active');
+        button?.setAttribute('aria-expanded', 'false');
+        if (thought?.id) this.openRelationsPanelIds.delete(thought.id);
+    }
+
+    async openRelationsPanel(card, thought) {
+        if (!card || !thought?.id || card.querySelector('.thought-relations-panel')) return;
+        const button = card.querySelector('.thought-relations-btn');
         const panel = document.createElement('div');
         panel.className = 'thought-relations-panel';
         panel.innerHTML = '<div class="thought-relations-state">正在加载关联...</div>';
@@ -1092,11 +1140,13 @@ export class ThoughtsManager {
         card.appendChild(panel);
         button?.classList.add('active');
         button?.setAttribute('aria-expanded', 'true');
+        this.openRelationsPanelIds.add(thought.id);
 
         try {
             await this.refreshRelationsPanel(panel, thought);
         } catch (err) {
             console.warn('Failed to fetch thought relations:', err);
+            if (!panel.isConnected) return;
             panel.innerHTML = '<div class="thought-relations-state error">关联加载失败</div>';
         }
     }
@@ -1172,9 +1222,11 @@ export class ThoughtsManager {
             data = await this.apiClient.getRelations(thought.id);
         } catch (err) {
             if (err.status !== 404) throw err;
+            if (!panel.isConnected) return;
             panel.innerHTML = '<div class="thought-relations-state">暂无关联想法</div>';
             return;
         }
+        if (!panel.isConnected) return;
         panel.innerHTML = this.renderRelationsPanelContent(
             thought.id,
             this.normalizeAIStatus(data.status),
@@ -1219,7 +1271,7 @@ export class ThoughtsManager {
 
     async searchManualRelationTargets(panel, sourceId, query, searchSeq = this.manualRelationSearchSeq) {
         const resultsEl = panel.querySelector('.thought-manual-relation-results');
-        if (!resultsEl) return;
+        if (!panel.isConnected || !resultsEl) return;
         const q = String(query || '').trim();
         if (!q) {
             resultsEl.innerHTML = '';
@@ -1229,6 +1281,7 @@ export class ThoughtsManager {
         try {
             const thoughts = await this.apiClient.list({ query: q, limit: 8, light: true });
             if (searchSeq !== this.manualRelationSearchSeq) return;
+            if (!panel.isConnected || !resultsEl.isConnected) return;
             const linkedIds = new Set(
                 Array.from(panel.querySelectorAll('.thought-relation-item'))
                     .map(item => item.dataset.relationTarget)
@@ -1242,6 +1295,7 @@ export class ThoughtsManager {
             });
         } catch (err) {
             if (searchSeq !== this.manualRelationSearchSeq) return;
+            if (!panel.isConnected || !resultsEl.isConnected) return;
             console.warn('Failed to search manual relation targets:', err);
             resultsEl.innerHTML = '<div class="thought-manual-relation-empty">搜索失败</div>';
         }
@@ -1259,7 +1313,7 @@ export class ThoughtsManager {
             }
 
             const relationsData = await this.apiClient.getRelations(thought.id);
-            if (panel) {
+            if (panel?.isConnected) {
                 panel.innerHTML = this.renderRelationsPanelContent(
                     thought.id,
                     this.normalizeAIStatus(relationsData.status),

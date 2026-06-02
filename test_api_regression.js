@@ -143,6 +143,16 @@ function assertThoughtsFrontendRegressions() {
         'clicking a searched thought should jump to the first highlighted keyword'
     );
     assert(
+        thoughtsSource.includes('openRelationsPanelIds = new Set()') &&
+        thoughtsSource.includes('openAIStatusPanelIds = new Set()') &&
+        thoughtsSource.includes('restoreOpenPanelsAfterRender()') &&
+        thoughtsSource.includes('this.restoreOpenPanelsAfterRender();') &&
+        thoughtsSource.includes('async openRelationsPanel(card, thought)') &&
+        thoughtsSource.includes('async openAIStatusPanel(card, thought)') &&
+        thoughtsSource.includes('if (!panel.isConnected) return'),
+        'thought relation and AI detail panels should stay open across cached/network re-renders and ignore stale async panel updates'
+    );
+    assert(
         (thoughtsSource.match(/renderTagFilters\(\)\s*\{/g) || []).length === 1,
         'ThoughtsManager should not contain duplicate renderTagFilters definitions'
     );
