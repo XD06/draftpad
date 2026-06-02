@@ -1771,55 +1771,42 @@
 
 }
 
-/* Quick Add Bar - Centered Modal */
+/* Quick Add Bar */
 .quick-add-bar {
     position: fixed;
     inset: 0;
     z-index: 9999;
     display: flex;
-    align-items: center;
+    align-items: flex-end;
     justify-content: center;
-    padding: 20px;
+    padding: 18px;
+    padding-bottom: max(18px, env(safe-area-inset-bottom));
     animation: qaFadeIn 0.25s ease;
 }
 
 .quick-add-backdrop {
     position: absolute;
     inset: 0;
-    background: rgba(0, 0, 0, 0.35);
-    backdrop-filter: blur(12px) saturate(150%);
-    -webkit-backdrop-filter: blur(12px) saturate(150%);
+    background: rgba(0, 0, 0, 0.24);
 }
 
 .quick-add-inner {
     position: relative;
     width: 100%;
-    max-width: 480px;
-    background: linear-gradient(135deg, color-mix(in srgb, var(--header-bg) 95%, white) 0%, var(--header-bg) 100%);
-    backdrop-filter: blur(40px) saturate(200%);
-    -webkit-backdrop-filter: blur(40px) saturate(200%);
-    border: 1px solid color-mix(in srgb, var(--border-color) 70%, transparent);
-    border-radius: 28px;
-    padding: 28px;
+    max-width: 640px;
+    background: var(--header-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 16px;
+    padding: 16px;
     display: flex;
     flex-direction: column;
-    gap: 16px;
-    box-shadow:
-        0 32px 64px rgba(0, 0, 0, 0.2),
-        0 0 0 1px rgba(255, 255, 255, 0.05) inset,
-        0 1px 0 rgba(255, 255, 255, 0.1) inset;
+    gap: 10px;
+    box-shadow: 0 18px 48px rgba(0, 0, 0, 0.18);
     animation: qaPopIn 0.4s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .quick-add-inner::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 24px;
-    right: 24px;
-    height: 1px;
-    background: linear-gradient(90deg, transparent, rgba(var(--primary-rgb), 0.3), transparent);
-    border-radius: 1px;
+    content: none;
 }
 
 .quick-add-header {
@@ -1831,9 +1818,9 @@
 
 .quick-add-title {
     font-size: 15px;
-    font-weight: 600;
+    font-weight: 750;
     color: var(--text-color);
-    letter-spacing: 0.3px;
+    letter-spacing: 0;
 }
 
 .quick-add-hint {
@@ -1845,27 +1832,26 @@
 
 .quick-add-body {
     display: flex;
-    gap: 12px;
-    align-items: flex-end;
+    gap: 10px;
+    align-items: stretch;
 }
 
 .quick-add-inner textarea {
     flex: 1;
     background: var(--bg-color);
-    border: 1.5px solid var(--border-color);
-    border-radius: 20px;
-    padding: 16px 20px;
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    padding: 12px 14px;
     font-family: inherit;
-    font-size: 16px;
-    line-height: 1.65;
+    font-size: 15px;
+    line-height: 1.5;
     color: var(--text-color);
     outline: none;
     resize: none;
-    max-height: 160px;
-    min-height: 60px;
+    max-height: 180px;
+    min-height: 74px;
     -webkit-appearance: none;
     transition: all 0.25s cubic-bezier(0.22, 1, 0.36, 1);
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04) inset;
 }
 
 .quick-add-inner textarea::placeholder {
@@ -1887,6 +1873,7 @@
     align-items: flex-start;
     gap: 8px;
     flex-wrap: wrap;
+    padding-top: 2px;
 }
 
 .quick-add-tags-list {
@@ -1973,9 +1960,9 @@
 }
 
 .quick-add-btn {
-    width: 56px;
-    height: 56px;
-    border-radius: 20px;
+    width: 44px;
+    height: 44px;
+    border-radius: 12px;
     border: none;
     background: linear-gradient(135deg, var(--primary-color) 0%, color-mix(in srgb, var(--primary-color) 80%, #000) 100%);
     color: white;
@@ -1984,10 +1971,8 @@
     justify-content: center;
     cursor: pointer;
     flex-shrink: 0;
-    transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-    box-shadow:
-        0 4px 14px rgba(var(--primary-rgb), 0.3),
-        0 0 0 1px rgba(255, 255, 255, 0.1) inset;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+    box-shadow: 0 4px 14px rgba(var(--primary-rgb), 0.22);
     position: relative;
     overflow: hidden;
 }
@@ -2008,10 +1993,8 @@
 }
 
 .quick-add-btn:hover {
-    transform: scale(1.08) translateY(-2px);
-    box-shadow:
-        0 8px 24px rgba(var(--primary-rgb), 0.4),
-        0 0 0 1px rgba(255, 255, 255, 0.15) inset;
+    transform: translateY(-1px);
+    box-shadow: 0 8px 20px rgba(var(--primary-rgb), 0.28);
 }
 
 .quick-add-btn:active {
@@ -2314,10 +2297,10 @@ body.quick-add-open {
 
 /* Quick add uses existing tag selection only */
 .quick-add-inner {
-    max-width: 520px;
-    border-radius: 24px;
-    padding: 24px;
-    gap: 14px;
+    max-width: 640px;
+    border-radius: 16px;
+    padding: 16px;
+    gap: 10px;
 }
 
 .quick-add-header {
@@ -2325,26 +2308,26 @@ body.quick-add-open {
 }
 
 .quick-add-body {
-    gap: 14px;
+    gap: 10px;
 }
 
 .quick-add-inner textarea {
-    border-radius: 18px;
-    min-height: 60px;
-    padding: 15px 18px;
+    border-radius: 12px;
+    min-height: 74px;
+    padding: 12px 14px;
 }
 
 .quick-add-btn {
-    width: 54px;
-    height: 54px;
-    border-radius: 18px;
+    width: 44px;
+    height: 44px;
+    border-radius: 12px;
 }
 
 .quick-add-tags-container {
-    display: block;
-    padding: 14px 16px;
-    border-radius: 18px;
-    background: color-mix(in srgb, var(--bg-color) 86%, var(--header-bg));
+    display: flex;
+    padding: 2px 0 0;
+    border-radius: 0;
+    background: transparent;
 }
 
 .quick-add-tags-container::before {
@@ -2396,5 +2379,10 @@ body.quick-add-open {
 }
 
 .quick-add-tag-input-wrapper {
+    display: none;
+}
+
+.quick-add-tags-container::before {
+    content: none;
     display: none;
 }

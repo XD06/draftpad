@@ -90,6 +90,20 @@ function assertThoughtsFrontendRegressions() {
         'thought create, overwrite, and relation operations should be covered by the outbox'
     );
     assert(
+        thoughtsSource.includes("e.key === 'Enter' && (e.ctrlKey || e.metaKey)") &&
+        !thoughtsSource.includes("e.key === 'Enter' && !e.shiftKey") &&
+        thoughtsSource.includes('const tempThought = createLocalPendingThought') &&
+        thoughtsSource.includes('this.thoughts.unshift(tempThought)') &&
+        thoughtsSource.indexOf('this.closeQuickAdd();') < thoughtsSource.indexOf('await this.apiClient.create'),
+        'Quick Add should support multiline input and optimistically insert local pending thoughts before network completion'
+    );
+    assert(
+        thoughtsSource.includes('this.exitEditMode(card);') &&
+        thoughtsSource.includes('this.apiClient.overwrite(thought.id, thought)') &&
+        !thoughtsSource.includes('await this.apiClient.overwrite(thought.id, thought);'),
+        'thought editing should exit immediately and save in the background'
+    );
+    assert(
         thoughtOutboxSource.includes("completed: thought.completed === true"),
         'thought overwrite outbox payload should preserve completed state'
     );

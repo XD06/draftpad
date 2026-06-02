@@ -107,10 +107,11 @@ export class ThoughtsManager {
             this.quickAddBar.querySelector('.quick-add-backdrop').addEventListener('click', () => this.closeQuickAdd());
             this.quickAddSubmit.addEventListener('click', (e) => { e.stopPropagation(); this.submitQuickAdd(); });
             this.quickAddInput.addEventListener('keydown', (e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
+                if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
                     e.preventDefault();
                     this.submitQuickAdd();
                 } else if (e.key === 'Escape') {
+                    e.preventDefault();
                     this.closeQuickAdd();
                 }
             });
@@ -401,51 +402,51 @@ export class ThoughtsManager {
         }
         if (this.isAdding) return;
         this.isAdding = true;
-        this.quickAddSubmit.disabled = true;
+        const tags = [...this.quickAddTags];
+        const tempThought = createLocalPendingThought({
+            text,
+            tags,
+            now: Date.now()
+        });
+
+        this.thoughts.unshift(tempThought);
+        this.syncTagsFromThoughts([tempThought]);
+        this.render();
+        this.closeQuickAdd();
+        this.isAdding = false;
+
+        setTimeout(() => {
+            const card = document.querySelector(`.thought-card[data-id="${CSS.escape(tempThought.id)}"]`);
+            if (card) card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }, 50);
 
         try {
             const data = markCreatedThoughtPending(
-                await this.apiClient.create({ text, tags: this.quickAddTags })
+                await this.apiClient.create({ text, tags })
             );
-            // Race-condition guard: if WebSocket already added this thought, skip
-            const exists = this.thoughts.some(t => t.id === data.id);
-            if (!exists) {
-                this.thoughts.unshift(data);
-                this.pendingCreateIds.add(data.id);
-            }
+            this.pendingCreateIds.add(data.id);
+            const tempIndex = this.thoughts.findIndex(t => t.id === tempThought.id);
+            this.thoughts = this.thoughts.filter(t => t.id !== tempThought.id && t.id !== data.id);
+            this.thoughts.splice(tempIndex >= 0 ? tempIndex : 0, 0, data);
             this.syncTagsFromThoughts([data]);
             this.render();
-            this.closeQuickAdd();
 
-            // Scroll new item into view
             setTimeout(() => {
-                const card = document.querySelector(`.thought-card[data-id="${data.id}"]`);
+                const card = document.querySelector(`.thought-card[data-id="${CSS.escape(data.id)}"]`);
                 if (card) card.scrollIntoView({ behavior: 'smooth', block: 'center' });
             }, 50);
 
-            // Clear pending after a safe window
             setTimeout(() => this.pendingCreateIds.delete(data.id), 2000);
         } catch (err) {
             console.error('Failed to add thought:', err);
-            const tempThought = createLocalPendingThought({
-                text,
-                tags: [...this.quickAddTags],
-                now: Date.now()
-            });
             this.handleOutboxResult(this.outbox.enqueueCreate(buildQuickAddCreateOutboxItem({
                 text,
-                tags: this.quickAddTags,
+                tags,
                 tempThought
             })));
-            this.thoughts.unshift(tempThought);
-            this.syncTagsFromThoughts([tempThought]);
             this.render();
-            this.closeQuickAdd();
         } finally {
             this.isAdding = false;
-            if (this.quickAddBar.style.display !== 'none') {
-                this.quickAddSubmit.disabled = false;
-            }
         }
     }
 
@@ -1465,7 +1466,10 @@ export class ThoughtsManager {
         textarea.parentNode.insertBefore(panel, textarea.nextSibling);
 
         // --- Save logic ---
-        const saveAndExit = async () => {
+        let saveStarted = false;
+        const saveAndExit = () => {
+            if (saveStarted) return;
+            saveStarted = true;
             const newText = textarea.value.trim();
             const nextSubItems = cleanSubItems(subtasks);
 
@@ -1475,12 +1479,19 @@ export class ThoughtsManager {
             if (hasTextChanged || hasSubsChanged) {
                 thought.text = newText;
                 thought.subItems = nextSubItems;
-                try {
-                    await this.apiClient.overwrite(thought.id, thought);
-                } catch (err) {
-                    console.error('Failed to save thought:', err);
-                    this.enqueueThoughtOverwrite(thought);
-                }
+                thought.updatedAt = Date.now();
+                this.exitEditMode(card);
+                this.render();
+                this.apiClient.overwrite(thought.id, thought)
+                    .then(data => {
+                        if (data?.thought) Object.assign(thought, data.thought);
+                    })
+                    .catch(err => {
+                        console.error('Failed to save thought:', err);
+                        this.enqueueThoughtOverwrite(thought);
+                        this.render();
+                    });
+                return;
             }
             this.exitEditMode(card);
             this.render();
