@@ -260,7 +260,7 @@ class OpenAICompatibleProvider extends AIProvider {
             'https://api.siliconflow.cn/v1'
         );
         this.embeddingApiKey = options.embeddingApiKey || process.env.AI_EMBEDDING_API_KEY || process.env.SILICON_API_KEY || this.chatApiKey;
-        this.embeddingModel = options.embeddingModel || process.env.AI_EMBEDDING_MODEL || process.env.SILICON_EMBEDDING_MODEL || 'BAAI/bge-m3';
+        this.embeddingModel = options.embeddingModel || process.env.AI_EMBEDDING_MODEL || process.env.SILICON_EMBEDDING_MODEL || 'Qwen/Qwen3-Embedding-0.6B';
         this.rerankBaseUrl = trimTrailingSlash(
             options.rerankBaseUrl ||
             process.env.AI_RERANK_BASE_URL ||
@@ -299,7 +299,10 @@ class OpenAICompatibleProvider extends AIProvider {
 
             const payload = await response.json().catch(() => ({}));
             if (!response.ok) {
-                const message = payload?.error?.message || `AI request failed with status ${response.status}`;
+                const detail = payload?.error?.message || JSON.stringify(payload);
+                const message = detail && detail !== '{}'
+                    ? `AI request failed with status ${response.status}: ${detail}`
+                    : `AI request failed with status ${response.status}`;
                 throw new Error(message);
             }
             return payload;

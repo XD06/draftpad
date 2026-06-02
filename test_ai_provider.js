@@ -73,6 +73,27 @@ async function run() {
     assert(scored[0].signals.reranker === 0.93, 'dedicated reranker score should be stored in signals');
     assert(endpoint('https://chat.example/v1/chat/completions', '/chat/completions') === 'https://chat.example/v1/chat/completions', 'full chat endpoint should not be appended twice');
     assert(endpoint('https://api.siliconflow.cn/v1/embeddings', '/embeddings') === 'https://api.siliconflow.cn/v1/embeddings', 'full embedding endpoint should not be appended twice');
+
+    const failingEmbeddingProvider = new OpenAICompatibleProvider({
+        embeddingBaseUrl: 'https://embedding.example/v1',
+        embeddingApiKey: 'embedding-key',
+        embeddingModel: 'bad-embedding-model',
+        fetchImpl: async () => ({
+            ok: false,
+            status: 500,
+            json: async () => ({ data: null })
+        })
+    });
+    let embeddingError = null;
+    try {
+        await failingEmbeddingProvider.getEmbedding('test');
+    } catch (error) {
+        embeddingError = error;
+    }
+    assert(
+        embeddingError?.message.includes('AI request failed with status 500: {"data":null}'),
+        'embedding failures should include the provider response body'
+    );
     const prompt = createPrompt('tag context test', { tagVocabulary: ['DumbPad', 'AI关联'] });
     assert(prompt.includes('可用用户标签参考'), 'prompt should include user tag context when available');
     assert(prompt.includes('DumbPad') && prompt.includes('AI关联'), 'prompt should include existing tag values');
@@ -98,7 +119,7 @@ async function run() {
     const defaultProvider = createDefaultProvider();
     assert(defaultProvider instanceof OpenAICompatibleProvider, 'OPENCODE_API_KEY/SILICON_API_KEY should enable real provider');
     assert(defaultProvider.chatModel === 'deepseek-v4-flash', 'default chat model should match ai_config.txt');
-    assert(defaultProvider.embeddingModel === 'BAAI/bge-m3', 'default embedding model should match ai_config.txt');
+    assert(defaultProvider.embeddingModel === 'Qwen/Qwen3-Embedding-0.6B', 'default embedding model should use the current SiliconFlow-compatible embedding model');
     Object.entries(previousEnv).forEach(([key, value]) => {
         if (value === undefined) delete process.env[key];
         else process.env[key] = value;
