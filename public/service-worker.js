@@ -24,6 +24,7 @@ const CORE_ASSETS = [
   "/css/@highlightjs/github.min.css",
   "/css/@highlightjs/github-dark.min.css",
   "/managers/confirmation.js",
+  "/managers/hybrid-display-sanitizer.js",
   "/managers/preview.js",
   "/managers/settings.js",
   "/managers/settings-data-panel.js",

@@ -1,3 +1,5 @@
+import { stripHybridDisplayArtifacts } from './managers/hybrid-display-sanitizer.js';
+
 const HEADING_RE = /^(#{1,6})\s+(.+?)\s*#*\s*$/;
 const MARK_PROTECTED_SELECTOR = [
     'pre:not(.vditor-reset)',
@@ -115,12 +117,12 @@ export class HybridMarkdownEditor {
 
     getValue() {
         if (this.sourceMode && this.sourceTextarea) return this.sourceTextarea.value;
-        if (!this.ready || !this.editor?.getValue) return this.pendingValue || this._lastValue || '';
-        return this._lastValue || this.pendingValue || '';
+        if (!this.ready || !this.editor?.getValue) return this.stripDisplayGuards(this.pendingValue || this._lastValue || '');
+        return this.stripDisplayGuards(this._lastValue || this.pendingValue || '');
     }
 
     setValue(value = '', emit = true) {
-        const normalized = String(value || '');
+        const normalized = this.stripDisplayGuards(value);
         this._lastValue = normalized;
         if (this.ready && this.editor?.setValue) {
             if (!emit) this.suppressProgrammaticInput();
@@ -208,7 +210,7 @@ export class HybridMarkdownEditor {
     }
 
     stripDisplayGuards(value = '') {
-        return String(value || '').replace(/\u200B(?=\s*<(?:mark\b|span\s+data-(?:draw|note)\b))/gi, '');
+        return stripHybridDisplayArtifacts(value);
     }
 
     generateToC() {

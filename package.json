@@ -20,6 +20,7 @@
     "test:thought-text-formatting": "node test_thought_text_formatting.js",
     "test:thought-modules": "npm run test:thought-ai-status && npm run test:thought-card-renderer && npm run test:thought-editor && npm run test:thought-quick-add && npm run test:thought-relations-panel && npm run test:thought-relations-state && npm run test:thought-tags && npm run test:thought-text-formatting",
     "test:note-sync": "node test_note_sync_controller.js",
+    "test:hybrid-display-sanitizer": "node test_hybrid_display_sanitizer.js",
     "test:pwa-cache": "node test_pwa_cache_regression.js",
     "test:api": "node test_api_regression.js",
     "test:thoughts-migration": "node test_migrate_thoughts_local.js",
