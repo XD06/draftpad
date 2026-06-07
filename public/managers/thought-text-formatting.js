@@ -11,10 +11,8 @@ export function escapeRegExp(string) {
     return String(string || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-export function linkifyText(text, escapeHtmlFn = escapeHtml) {
-    if (!text) return '';
-    const escaped = escapeHtmlFn(text);
-    return escaped.replace(/((?:https?:\/\/|www\.)[^\s<>'"]+)/gi, (match) => {
+function linkifyEscapedHtml(escaped = '') {
+    return String(escaped || '').replace(/((?:https?:\/\/|www\.)[^\s<>'"]+)/gi, (match) => {
         let url = match;
         let trailing = '';
         const punctuation = /[.,;:!?\)]$/;
@@ -40,4 +38,29 @@ export function linkifyText(text, escapeHtmlFn = escapeHtml) {
         }
         return `<a href="${href}" target="_blank" rel="noopener noreferrer" class="thought-link">${url}</a>${trailing}`;
     });
+}
+
+function renderThoughtInlineMarkers(escaped = '') {
+    let html = String(escaped || '');
+    html = html.replace(
+        /&lt;span data-note=&quot;([^&]*)&quot;[\s\S]*?&gt;([\s\S]*?)&lt;\/span&gt;\s*&lt;sub[\s\S]*?&gt;[\s\S]*?&lt;\/sub&gt;/g,
+        (_match, comment, markedText) => `<span class="thought-note-line" title="${comment}">${markedText}</span>`
+    );
+    html = html.replace(
+        /&lt;span data-draw[\s\S]*?&gt;([\s\S]*?)&lt;\/span&gt;/g,
+        '<span class="thought-draw-line">$1</span>'
+    );
+    html = html.replace(/&lt;mark&gt;([\s\S]*?)&lt;\/mark&gt;/g, '<mark class="thought-inline-highlight">$1</mark>');
+    html = html.replace(/==([^=\n]+?)==/g, '<mark class="thought-inline-highlight">$1</mark>');
+    return html;
+}
+
+export function formatThoughtText(text, escapeHtmlFn = escapeHtml) {
+    if (!text) return '';
+    return linkifyEscapedHtml(renderThoughtInlineMarkers(escapeHtmlFn(text)));
+}
+
+export function linkifyText(text, escapeHtmlFn = escapeHtml) {
+    if (!text) return '';
+    return linkifyEscapedHtml(escapeHtmlFn(text));
 }

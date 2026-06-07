@@ -643,6 +643,30 @@
     padding-bottom: 12px;
 }
 
+.thought-inline-highlight {
+    padding: 1px 4px;
+    border-radius: 5px;
+    background: color-mix(in srgb, #facc15 34%, transparent);
+    color: color-mix(in srgb, var(--text-color) 88%, #7c5600);
+    box-decoration-break: clone;
+    -webkit-box-decoration-break: clone;
+}
+
+.thought-draw-line,
+.thought-note-line {
+    text-decoration-line: underline;
+    text-decoration-style: solid;
+    text-decoration-thickness: 2px;
+    text-underline-offset: 4px;
+    text-decoration-color: color-mix(in srgb, var(--primary-color) 78%, transparent);
+}
+
+.thought-note-line {
+    text-decoration-style: wavy;
+    text-decoration-color: #e74c3c;
+    cursor: help;
+}
+
 .thought-card-footer {
     display: flex;
     align-items: center;
@@ -1532,10 +1556,12 @@
     transition: background 0.15s ease;
     user-select: none;
     position: relative;
+    border-left: 2px solid transparent;
 }
 
 .subtask:hover {
     background: rgba(var(--primary-rgb), 0.04);
+    border-left-color: rgba(var(--primary-rgb), 0.22);
 }
 
 .subtask+.subtask {
@@ -1558,6 +1584,7 @@
     height: 15px;
     flex-shrink: 0;
     margin: 0;
+    filter: drop-shadow(0 1px 1px rgba(15, 23, 42, 0.08));
 }
 
 .subtask-text {
@@ -1565,7 +1592,8 @@
     cursor: text;
     user-select: text;
     word-break: break-word;
-    font-family: ui-monospace;
+    font-family: var(--font-code);
+    line-height: 1.48;
 }
 
 .subtask-copy-btn {

@@ -221,6 +221,14 @@ function assertThoughtsFrontendRegressions() {
         'reading mode click guard should allow code block copy buttons before blocking editor clicks'
     );
     assert(
+        thoughtsSource.includes('expandedThoughtIds = new Set()') &&
+        thoughtsSource.includes("this.expandedThoughtIds.has(thought.id)") &&
+        thoughtsSource.includes('setThoughtCardExpanded(card, thought.id') &&
+        thoughtsSource.includes('this.focusExpandedThought(id);') &&
+        thoughtsSource.indexOf('this.focusExpandedThought(id);') < thoughtsSource.indexOf("if (subId.startsWith('legacy_')"),
+        'expanded thought cards should remain expanded across subtask completion renders'
+    );
+    assert(
         iosThemeCss.includes('body:not(.thoughts-mode) .floating-actions') &&
         iosThemeCss.includes('bottom: calc(env(safe-area-inset-bottom, 0px) + 18px);') &&
         iosThemeCss.includes('min-height: 48px;') &&

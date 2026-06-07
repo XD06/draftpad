@@ -43,7 +43,7 @@ import {
     renderAIStatusLoading
 } from './thought-ai-status.js';
 import { renderThoughtCard } from './thought-card-renderer.js';
-import { escapeHtml as escapeThoughtHtml, linkifyText } from './thought-text-formatting.js';
+import { escapeHtml as escapeThoughtHtml, formatThoughtText } from './thought-text-formatting.js';
 import { buildQuickAddCreateOutboxItem, createLocalPendingThought, markCreatedThoughtPending } from './thought-quick-add.js';
 
 const THOUGHTS_CACHE_KEY = 'dumbpad_thoughts_cache_v1';
@@ -83,6 +83,7 @@ export class ThoughtsManager {
         this.manualRelationSearchSeq = 0;
         this.openRelationsPanelIds = new Set();
         this.openAIStatusPanelIds = new Set();
+        this.expandedThoughtIds = new Set();
 
         this.initDateFilter();
         this.initEventListeners();
@@ -171,6 +172,7 @@ export class ThoughtsManager {
                 expandedCards.forEach(card => {
                     if (!card.contains(e.target) && !card.classList.contains('editing')) {
                         card.classList.remove('expanded');
+                        if (card.dataset.id) this.expandedThoughtIds.delete(card.dataset.id);
                     }
                 });
             });
@@ -732,6 +734,7 @@ export class ThoughtsManager {
             });
             const { bodyText, isLong } = renderedCard;
             if (isLong) card.classList.add('can-expand');
+            if (this.expandedThoughtIds.has(thought.id)) card.classList.add('expanded');
             card.innerHTML = renderedCard.html;
 
             this.bindThoughtCardEvents({ card, thought, bodyText, isLong });
@@ -757,6 +760,31 @@ export class ThoughtsManager {
                 this.openAIStatusPanel(card, thought);
             }
         });
+    }
+
+    setThoughtCardExpanded(card, thoughtId, expanded, { collapseOthers = false } = {}) {
+        if (!card || !thoughtId) return;
+        if (collapseOthers) {
+            this.timeline.querySelectorAll('.thought-card.expanded').forEach((item) => {
+                if (item === card) return;
+                item.classList.remove('expanded');
+                if (item.dataset.id) this.expandedThoughtIds.delete(item.dataset.id);
+            });
+        }
+        card.classList.toggle('expanded', expanded);
+        if (expanded) {
+            this.expandedThoughtIds.add(thoughtId);
+        } else {
+            this.expandedThoughtIds.delete(thoughtId);
+        }
+    }
+
+    focusExpandedThought(thoughtId) {
+        if (!thoughtId) return;
+        Array.from(this.expandedThoughtIds).forEach((id) => {
+            if (id !== thoughtId) this.expandedThoughtIds.delete(id);
+        });
+        this.expandedThoughtIds.add(thoughtId);
     }
 
     bindThoughtCardEvents({ card, thought, bodyText, isLong }) {
@@ -792,7 +820,9 @@ export class ThoughtsManager {
                 lastTap = now;
                 tapTimeout = setTimeout(() => {
                     if (this.scrollFirstSearchHighlight(card)) return;
-                    if (isLong) card.classList.toggle('expanded');
+                    if (isLong) {
+                        this.setThoughtCardExpanded(card, thought.id, !card.classList.contains('expanded'), { collapseOthers: true });
+                    }
                 }, DOUBLE_TAP_DELAY);
             }
         };
@@ -889,7 +919,7 @@ export class ThoughtsManager {
         if (summaryRow) {
             summaryRow.onclick = (e) => {
                 e.stopPropagation();
-                card.classList.add('expanded');
+                this.setThoughtCardExpanded(card, thought.id, true, { collapseOthers: true });
             };
         }
     }
@@ -921,7 +951,7 @@ export class ThoughtsManager {
         const target = card.querySelector('.thought-highlight');
         if (!target) return false;
 
-        card.classList.add('expanded');
+        this.setThoughtCardExpanded(card, card.dataset.id, true, { collapseOthers: true });
         setTimeout(() => {
             target.scrollIntoView({ behavior: 'smooth', block: 'center' });
             target.classList.remove('is-jump-target');
@@ -1450,7 +1480,7 @@ export class ThoughtsManager {
     enterEditMode(card, thought) {
         if (card.classList.contains('editing')) return;
         card.classList.add('editing');
-        card.classList.add('expanded');
+        this.setThoughtCardExpanded(card, thought.id, true, { collapseOthers: true });
 
         const textEl = card.querySelector('.thought-text');
 
@@ -1733,6 +1763,7 @@ export class ThoughtsManager {
     async toggleSubtask(id, subId) {
         const thought = this.thoughts.find(t => t.id === id);
         if (!thought) return;
+        this.focusExpandedThought(id);
 
         // If legacy data (subtask parsed from text), migrate on toggle
         if (subId.startsWith('legacy_') && !(thought.subItems || []).length) {
@@ -1766,7 +1797,7 @@ export class ThoughtsManager {
     }
 
     linkify(text) {
-        return linkifyText(text, value => this.escapeHtml(value));
+        return formatThoughtText(text, value => this.escapeHtml(value));
     }
 
     highlightSearch(htmlString, query) {
