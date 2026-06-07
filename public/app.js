@@ -582,9 +582,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     function compactTrashThoughtTitle(title) {
         const text = String(title || '').replace(/\s+/g, ' ').trim();
-        if (!text) return 'Thought';
+        if (!text) return '未命名';
         const limit = 16;
-        return `Thought · ${text.length > limit ? `${text.slice(0, limit)}...` : text}`;
+        return text.length > limit ? `${text.slice(0, limit)}...` : text;
     }
 
     function renderTrashItems(items = []) {

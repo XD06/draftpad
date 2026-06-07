@@ -73,7 +73,8 @@ function assertThoughtsFrontendRegressions() {
         !appSource.includes('settings-trash-preview') &&
         !appSource.includes('item.preview ||') &&
         appSource.includes('function compactTrashThoughtTitle') &&
-        appSource.includes("item.type === 'thought' ? compactTrashThoughtTitle(item.title)"),
+        appSource.includes("item.type === 'thought' ? compactTrashThoughtTitle(item.title)") &&
+        !appSource.includes('return `Thought · ${text.length'),
         'settings trash list should not render deleted item body previews and should only expose a compact thought title'
     );
     assert(
