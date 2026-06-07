@@ -462,6 +462,8 @@
     margin-bottom: 24px;
     box-shadow: 0 1px 1px rgba(15, 23, 42, 0.025), 0 12px 30px rgba(15, 23, 42, 0.055);
     transition: transform 0.24s ease, box-shadow 0.24s ease, border-color 0.24s ease, background 0.24s ease;
+    touch-action: pan-y;
+    transform: translateX(var(--swipe-x, 0));
 }
 
 .thought-card::before {
@@ -474,9 +476,53 @@
 }
 
 .thought-card:hover {
-    transform: translateY(-2px);
+    transform: translateX(var(--swipe-x, 0)) translateY(-2px);
     box-shadow: 0 2px 3px rgba(15, 23, 42, 0.03), 0 18px 42px rgba(15, 23, 42, 0.075);
     border-color: rgba(var(--primary-rgb), 0.18);
+}
+
+.thought-card.swiping {
+    transition: transform 0.08s linear, box-shadow 0.18s ease, border-color 0.18s ease, background 0.18s ease;
+    box-shadow: -16px 0 0 rgba(231, 76, 60, 0.12), 0 18px 42px rgba(15, 23, 42, 0.08);
+    border-color: rgba(231, 76, 60, 0.25);
+}
+
+.thought-card.swiping::after {
+    content: "松开删除";
+    position: absolute;
+    left: -112px;
+    top: 50%;
+    width: 86px;
+    height: 36px;
+    transform: translateY(-50%);
+    border-radius: 999px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(231, 76, 60, 0.12);
+    color: #e74c3c;
+    font-size: 12px;
+    font-weight: 800;
+    pointer-events: none;
+    opacity: 0.88;
+}
+
+.thought-card.swipe-ready::after {
+    content: "确认删除";
+    background: #e74c3c;
+    color: #fff;
+    opacity: 1;
+}
+
+.thought-card.swipe-deleting {
+    transform: translateX(120%) scale(0.96);
+    opacity: 0;
+    max-height: 0;
+    margin-bottom: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+    overflow: hidden;
+    transition: transform 0.22s ease, opacity 0.18s ease, max-height 0.22s ease, margin 0.22s ease, padding 0.22s ease;
 }
 
 .timeline-node {
@@ -641,6 +687,39 @@
     mask-image: none;
     -webkit-mask-image: none;
     padding-bottom: 12px;
+}
+
+.thought-selection-toolbar {
+    position: absolute;
+    z-index: 1300;
+    display: inline-flex;
+    gap: 4px;
+    padding: 5px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--header-bg) 92%, #000 8%);
+    border: 1px solid rgba(120, 128, 140, 0.22);
+    box-shadow: 0 12px 30px rgba(15, 23, 42, 0.2);
+}
+
+.thought-selection-toolbar[hidden] {
+    display: none;
+}
+
+.thought-selection-toolbar button {
+    width: 30px;
+    height: 28px;
+    border: none;
+    border-radius: 999px;
+    background: transparent;
+    color: var(--text-color);
+    font-size: 13px;
+    font-weight: 850;
+    cursor: pointer;
+}
+
+.thought-selection-toolbar button:hover {
+    background: rgba(var(--primary-rgb), 0.12);
+    color: var(--primary-color);
 }
 
 .thought-inline-highlight {

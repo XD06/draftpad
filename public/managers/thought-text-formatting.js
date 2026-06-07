@@ -55,6 +55,31 @@ function renderThoughtInlineMarkers(escaped = '') {
     return html;
 }
 
+function stripThoughtInlineMarkers(text = '') {
+    let source = String(text || '');
+    source = source.replace(/<span data-note="[^"]*"[^>]*>([\s\S]*?)<\/span>\s*<sub[^>]*>[\s\S]*?<\/sub>/g, '$1');
+    source = source.replace(/<span data-draw[^>]*>([\s\S]*?)<\/span>/g, '$1');
+    source = source.replace(/<mark>([\s\S]*?)<\/mark>/g, '$1');
+    source = source.replace(/==([^=\n]+?)==/g, '$1');
+    return source;
+}
+
+export function applyThoughtTextStyle(source, selectedText, style) {
+    const text = String(source || '');
+    const selected = String(selectedText || '').trim();
+    if (!text || !selected) return text;
+
+    const cleared = stripThoughtInlineMarkers(text);
+    const index = cleared.indexOf(selected);
+    if (index === -1) return text;
+    if (style === 'clear') return cleared;
+
+    const replacement = style === 'draw'
+        ? `<span data-draw>${selected}</span>`
+        : `<mark>${selected}</mark>`;
+    return `${cleared.slice(0, index)}${replacement}${cleared.slice(index + selected.length)}`;
+}
+
 export function formatThoughtText(text, escapeHtmlFn = escapeHtml) {
     if (!text) return '';
     return linkifyEscapedHtml(renderThoughtInlineMarkers(escapeHtmlFn(text)));

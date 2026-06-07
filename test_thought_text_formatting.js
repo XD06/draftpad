@@ -9,7 +9,7 @@ function loadTextFormatting() {
     const sourcePath = path.join(ROOT, 'public', 'managers', 'thought-text-formatting.js');
     const source = fs.readFileSync(sourcePath, 'utf8')
         .replace(/export function /g, 'function ')
-        + '\nmodule.exports = { escapeHtml, escapeRegExp, formatThoughtText, linkifyText };\n';
+        + '\nmodule.exports = { applyThoughtTextStyle, escapeHtml, escapeRegExp, formatThoughtText, linkifyText };\n';
     const context = {
         module: { exports: {} },
         exports: {}
@@ -19,7 +19,7 @@ function loadTextFormatting() {
 }
 
 function run() {
-    const { escapeHtml, escapeRegExp, formatThoughtText, linkifyText } = loadTextFormatting();
+    const { applyThoughtTextStyle, escapeHtml, escapeRegExp, formatThoughtText, linkifyText } = loadTextFormatting();
 
     assert(escapeHtml(null) === '', 'escapeHtml should match DOM escaping for nullish values');
     assert(escapeHtml('<tag attr="x">&') === '&lt;tag attr=&quot;x&quot;&gt;&amp;', 'escapeHtml should escape HTML-sensitive characters');
@@ -49,6 +49,18 @@ function run() {
     assert(
         formatThoughtText('<span data-note="测试">功能</span><sub data-note-label>（测试）</sub>').includes('<span class="thought-note-line" title="测试">功能</span>'),
         'formatThoughtText should render note markers with tooltip'
+    );
+    assert(
+        applyThoughtTextStyle('先做重点再复盘', '重点', 'highlight') === '先做<mark>重点</mark>再复盘',
+        'applyThoughtTextStyle should wrap selected text in a highlight marker'
+    );
+    assert(
+        applyThoughtTextStyle('先做重点再复盘', '重点', 'draw') === '先做<span data-draw>重点</span>再复盘',
+        'applyThoughtTextStyle should wrap selected text in a draw marker'
+    );
+    assert(
+        applyThoughtTextStyle('先做<mark>重点</mark>再复盘', '重点', 'clear') === '先做重点再复盘',
+        'applyThoughtTextStyle should clear existing thought style markers'
     );
 
     console.log('Thought text formatting checks passed');

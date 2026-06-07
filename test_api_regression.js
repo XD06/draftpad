@@ -220,13 +220,34 @@ function assertThoughtsFrontendRegressions() {
             hybridEditorSource.indexOf("target.closest('.vditor-reset')"),
         'reading mode click guard should allow code block copy buttons before blocking editor clicks'
     );
+    const toggleSubtaskStart = thoughtsSource.indexOf('async toggleSubtask(id, subId)');
+    const toggleSubtaskSource = toggleSubtaskStart >= 0 ? thoughtsSource.slice(toggleSubtaskStart) : '';
     assert(
         thoughtsSource.includes('expandedThoughtIds = new Set()') &&
         thoughtsSource.includes("this.expandedThoughtIds.has(thought.id)") &&
         thoughtsSource.includes('setThoughtCardExpanded(card, thought.id') &&
-        thoughtsSource.includes('this.focusExpandedThought(id);') &&
-        thoughtsSource.indexOf('this.focusExpandedThought(id);') < thoughtsSource.indexOf("if (subId.startsWith('legacy_')"),
+        toggleSubtaskSource.includes('this.focusExpandedThought(id);') &&
+        toggleSubtaskSource.indexOf('this.focusExpandedThought(id);') < toggleSubtaskSource.indexOf("if (subId.startsWith('legacy_')"),
         'expanded thought cards should remain expanded across subtask completion renders'
+    );
+    assert(
+        thoughtsSource.includes('bindThoughtSelectionFormatting(card, thought)') &&
+        thoughtsSource.includes('applySelectedThoughtStyle') &&
+        thoughtsSource.includes('data-thought-style="highlight"') &&
+        thoughtsSource.includes('data-thought-style="draw"') &&
+        !thoughtsSource.includes('startLongPress') &&
+        !thoughtsSource.includes("textEl.addEventListener('touchstart'"),
+        'Thought text styling should use selected text controls instead of long-press delete on the text body'
+    );
+    assert(
+        thoughtsSource.includes('bindThoughtSwipeDelete(card, thought)') &&
+        thoughtsSource.includes('deltaX > 14') &&
+        thoughtsSource.includes('deltaX >= threshold') &&
+        thoughtsSource.includes('confirmAndDeleteThought(thought.id, { skipConfirm: true })') &&
+        thoughtsCss.includes('.thought-card.swiping') &&
+        thoughtsCss.includes('.thought-card.swipe-ready') &&
+        thoughtsCss.includes('.thought-card.swipe-deleting'),
+        'Thought cards should support right-swipe delete with a confirmation and deletion animation'
     );
     assert(
         iosThemeCss.includes('body:not(.thoughts-mode) .floating-actions') &&

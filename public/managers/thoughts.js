@@ -43,7 +43,7 @@ import {
     renderAIStatusLoading
 } from './thought-ai-status.js';
 import { renderThoughtCard } from './thought-card-renderer.js';
-import { escapeHtml as escapeThoughtHtml, formatThoughtText } from './thought-text-formatting.js';
+import { applyThoughtTextStyle, escapeHtml as escapeThoughtHtml, formatThoughtText } from './thought-text-formatting.js';
 import { buildQuickAddCreateOutboxItem, createLocalPendingThought, markCreatedThoughtPending } from './thought-quick-add.js';
 
 const THOUGHTS_CACHE_KEY = 'dumbpad_thoughts_cache_v1';
@@ -84,6 +84,8 @@ export class ThoughtsManager {
         this.openRelationsPanelIds = new Set();
         this.openAIStatusPanelIds = new Set();
         this.expandedThoughtIds = new Set();
+        this.activeThoughtSelection = null;
+        this.thoughtSelectionToolbar = null;
 
         this.initDateFilter();
         this.initEventListeners();
@@ -663,14 +665,16 @@ export class ThoughtsManager {
     }
 
     async deleteThought(id) {
+        return this.confirmAndDeleteThought(id);
+    }
+
+    async confirmAndDeleteThought(id, { skipConfirm = false } = {}) {
         if (!this.pendingDeletes) this.pendingDeletes = new Set();
         if (this.pendingDeletes.has(id)) return;
         
         this.pendingDeletes.add(id);
 
-        const confirmed = await this.app.confirmationManager.show(
-            '确定要永久删除这条灵感记录吗？'
-        );
+        const confirmed = skipConfirm ? true : await this.app.confirmationManager.show('确定要永久删除这条灵感记录吗？');
         
         if (!confirmed) {
             this.pendingDeletes.delete(id);
@@ -804,6 +808,9 @@ export class ThoughtsManager {
             });
         }
 
+        this.bindThoughtSelectionFormatting(card, thought);
+        this.bindThoughtSwipeDelete(card, thought);
+
         let lastTap = 0;
         let tapTimeout;
         const handleGesture = (e) => {
@@ -866,26 +873,6 @@ export class ThoughtsManager {
             });
         });
 
-        let longPressTimer;
-        let isPressing = false;
-        const startLongPress = () => {
-            if (isPressing) return;
-            isPressing = true;
-            longPressTimer = setTimeout(() => {
-                this.deleteThought(thought.id);
-            }, 800);
-        };
-        const cancelLongPress = () => {
-            isPressing = false;
-            clearTimeout(longPressTimer);
-        };
-
-        textEl.addEventListener('mousedown', startLongPress);
-        textEl.addEventListener('touchstart', startLongPress, { passive: true });
-        textEl.addEventListener('mouseup', cancelLongPress);
-        textEl.addEventListener('touchend', cancelLongPress);
-        textEl.addEventListener('touchmove', cancelLongPress);
-
         card.querySelectorAll('.subtask-check').forEach((check) => {
             const subtaskEl = check.closest('.subtask');
             const subId = subtaskEl.dataset.subid;
@@ -926,6 +913,7 @@ export class ThoughtsManager {
 
     shouldIgnoreCardGesture(event, card) {
         return (
+            this.hasActiveThoughtSelection() ||
             event.target.closest('.thought-dot') ||
             event.target.closest('.thought-copy-btn') ||
             event.target.closest('.thought-relations-btn') ||
@@ -943,6 +931,215 @@ export class ThoughtsManager {
             event.target.closest('.thought-link') ||
             card.classList.contains('editing')
         );
+    }
+
+    hasActiveThoughtSelection() {
+        const selection = window.getSelection?.();
+        return !!selection && !selection.isCollapsed && String(selection.toString() || '').trim().length > 0;
+    }
+
+    bindThoughtSelectionFormatting(card, thought) {
+        const selectableNodes = card.querySelectorAll('.thought-text, .subtask-text');
+        selectableNodes.forEach((node) => {
+            const captureSelection = (event) => {
+                event.stopPropagation();
+                setTimeout(() => this.captureThoughtSelection(card, thought, node), 0);
+            };
+            node.addEventListener('mouseup', captureSelection);
+            node.addEventListener('touchend', captureSelection);
+        });
+    }
+
+    captureThoughtSelection(card, thought, node) {
+        const selection = window.getSelection?.();
+        const selectedText = String(selection?.toString() || '').trim();
+        if (!selection || selection.isCollapsed || !selectedText || !node.contains(selection.anchorNode) || !node.contains(selection.focusNode)) {
+            this.hideThoughtSelectionToolbar();
+            return;
+        }
+
+        const range = selection.getRangeAt(0);
+        const rect = range.getBoundingClientRect();
+        this.activeThoughtSelection = {
+            thoughtId: thought.id,
+            selectedText,
+            subId: node.closest('.subtask')?.dataset.subid || '',
+            card
+        };
+        this.showThoughtSelectionToolbar(rect);
+    }
+
+    showThoughtSelectionToolbar(rect) {
+        const toolbar = this.ensureThoughtSelectionToolbar();
+        toolbar.hidden = false;
+        const toolbarWidth = toolbar.offsetWidth || 150;
+        const left = Math.max(12, Math.min(window.innerWidth - toolbarWidth - 12, rect.left + rect.width / 2 - toolbarWidth / 2));
+        const top = Math.max(12, rect.top + window.scrollY - 46);
+        toolbar.style.left = `${left}px`;
+        toolbar.style.top = `${top}px`;
+    }
+
+    ensureThoughtSelectionToolbar() {
+        if (this.thoughtSelectionToolbar) return this.thoughtSelectionToolbar;
+        const toolbar = document.createElement('div');
+        toolbar.className = 'thought-selection-toolbar';
+        toolbar.hidden = true;
+        toolbar.innerHTML = `
+            <button type="button" data-thought-style="highlight" title="高亮">H</button>
+            <button type="button" data-thought-style="draw" title="画线">U</button>
+            <button type="button" data-thought-style="clear" title="清除样式">×</button>
+        `;
+        toolbar.addEventListener('click', (event) => {
+            const button = event.target.closest('[data-thought-style]');
+            if (!button) return;
+            event.preventDefault();
+            event.stopPropagation();
+            this.applySelectedThoughtStyle(button.dataset.thoughtStyle);
+        });
+        document.body.appendChild(toolbar);
+        document.addEventListener('selectionchange', () => {
+            const selection = window.getSelection?.();
+            if (!selection || selection.isCollapsed) this.hideThoughtSelectionToolbar();
+        });
+        document.addEventListener('click', (event) => {
+            if (!toolbar.contains(event.target)) this.hideThoughtSelectionToolbar();
+        });
+        this.thoughtSelectionToolbar = toolbar;
+        return toolbar;
+    }
+
+    hideThoughtSelectionToolbar() {
+        if (this.thoughtSelectionToolbar) this.thoughtSelectionToolbar.hidden = true;
+        this.activeThoughtSelection = null;
+    }
+
+    async applySelectedThoughtStyle(style) {
+        const selection = this.activeThoughtSelection;
+        if (!selection) return;
+        const thought = this.thoughts.find(item => item.id === selection.thoughtId);
+        if (!thought) return;
+
+        window.getSelection?.().removeAllRanges();
+        this.hideThoughtSelectionToolbar();
+
+        if (selection.subId) {
+            await this.applySelectedSubtaskStyle(thought, selection.subId, selection.selectedText, style);
+            return;
+        }
+
+        const nextText = applyThoughtTextStyle(thought.text, selection.selectedText, style);
+        if (nextText === thought.text) return;
+        thought.text = nextText;
+        thought.updatedAt = Date.now();
+        this.render();
+        this.apiClient.overwrite(thought.id, thought)
+            .catch(err => {
+                console.error('Failed to style thought text:', err);
+                this.enqueueThoughtOverwrite(thought);
+                this.render();
+            });
+    }
+
+    async applySelectedSubtaskStyle(thought, subId, selectedText, style) {
+        if (subId.startsWith('legacy_') && !(thought.subItems || []).length) {
+            const nextText = applyThoughtTextStyle(thought.text, selectedText, style);
+            if (nextText === thought.text) return;
+            thought.text = nextText;
+            this.render();
+            this.apiClient.overwrite(thought.id, thought)
+                .catch(err => {
+                    console.error('Failed to style legacy subtask text:', err);
+                    this.enqueueThoughtOverwrite(thought);
+                    this.render();
+                });
+            return;
+        }
+
+        const subItem = (thought.subItems || []).find(item => item.id === subId);
+        if (!subItem) return;
+        const nextText = applyThoughtTextStyle(subItem.text, selectedText, style);
+        if (nextText === subItem.text) return;
+        subItem.text = nextText;
+        this.focusExpandedThought(thought.id);
+        this.render();
+        try {
+            await this.apiClient.updateSubitem(thought.id, subId, nextText);
+        } catch (err) {
+            console.error('Failed to style subtask text:', err);
+            this.enqueueThoughtOverwrite(thought);
+            this.render();
+        }
+    }
+
+    bindThoughtSwipeDelete(card, thought) {
+        let startX = 0;
+        let startY = 0;
+        let deltaX = 0;
+        let isDragging = false;
+        let tracking = false;
+        const threshold = 88;
+
+        const resetSwipe = () => {
+            card.classList.remove('swiping', 'swipe-ready');
+            card.style.removeProperty('--swipe-x');
+            tracking = false;
+            isDragging = false;
+            deltaX = 0;
+        };
+
+        card.addEventListener('pointerdown', (event) => {
+            if (card.classList.contains('editing') || event.target.closest('button, input, textarea, a, .thought-selection-toolbar')) return;
+            if (this.hasActiveThoughtSelection()) return;
+            if (event.pointerType === 'mouse' && event.target.closest('.thought-text, .subtask-text')) return;
+            startX = event.clientX;
+            startY = event.clientY;
+            deltaX = 0;
+            tracking = true;
+        });
+
+        card.addEventListener('pointermove', (event) => {
+            if (!tracking) return;
+            deltaX = event.clientX - startX;
+            const deltaY = Math.abs(event.clientY - startY);
+            if (!isDragging && deltaX > 14 && deltaX > deltaY * 1.4) {
+                isDragging = true;
+                card.classList.add('swiping');
+                card.setPointerCapture?.(event.pointerId);
+            }
+            if (!isDragging) return;
+            event.preventDefault();
+            const swipeX = Math.min(132, Math.max(0, deltaX));
+            card.style.setProperty('--swipe-x', `${swipeX}px`);
+            card.classList.toggle('swipe-ready', swipeX >= threshold);
+        });
+
+        const finishSwipe = async (event) => {
+            if (!tracking) return;
+            const shouldDelete = isDragging && deltaX >= threshold;
+            card.releasePointerCapture?.(event.pointerId);
+            if (!shouldDelete) {
+                resetSwipe();
+                return;
+            }
+
+            card.classList.add('swipe-ready');
+            card.style.setProperty('--swipe-x', '104px');
+            const confirmed = await this.app.confirmationManager.show('确认删除这条 Thought 吗？');
+            if (!confirmed) {
+                resetSwipe();
+                return;
+            }
+
+            card.classList.add('swipe-deleting');
+            await new Promise(resolve => setTimeout(resolve, 220));
+            await this.confirmAndDeleteThought(thought.id, { skipConfirm: true });
+        };
+
+        card.addEventListener('pointerup', finishSwipe);
+        card.addEventListener('pointercancel', resetSwipe);
+        card.addEventListener('pointerleave', (event) => {
+            if (tracking && !isDragging) resetSwipe(event);
+        });
     }
 
     scrollFirstSearchHighlight(card) {
