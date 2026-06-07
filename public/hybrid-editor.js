@@ -883,6 +883,7 @@ export class HybridMarkdownEditor {
             if (!this.isReadingMode) return;
             const target = event.target;
             if (target.closest('.has-annotation, [data-note], .md-mark, [data-draw]')) return;
+            if (target.closest('.vditor-copy, .code-lang-copy-button')) return;
             if (target.closest('.vditor-reset')) {
                 event.preventDefault();
                 event.stopPropagation();

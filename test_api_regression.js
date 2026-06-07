@@ -52,6 +52,7 @@ function assertThoughtsFrontendRegressions() {
     const thoughtRelationsPanelSource = fs.readFileSync(path.join(ROOT, 'public', 'managers', 'thought-relations-panel.js'), 'utf8');
     const thoughtApiClientSource = fs.readFileSync(path.join(ROOT, 'public', 'managers', 'thought-api-client.js'), 'utf8');
     const thoughtOutboxSource = fs.readFileSync(path.join(ROOT, 'public', 'managers', 'thought-outbox.js'), 'utf8');
+    const hybridEditorSource = fs.readFileSync(path.join(ROOT, 'public', 'hybrid-editor.js'), 'utf8');
     const thoughtsCss = fs.readFileSync(path.join(ROOT, 'public', 'Assets', 'thoughts.css'), 'utf8');
     const iosThemeCss = fs.readFileSync(path.join(ROOT, 'public', 'Assets', 'ios-theme.css'), 'utf8');
     const indexSource = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
@@ -212,6 +213,12 @@ function assertThoughtsFrontendRegressions() {
         thoughtFadeInSource &&
         !thoughtFadeInSource.includes('transform:'),
         'Thought view fade-in should not transform the view container because fixed FAB children drift with transformed ancestors'
+    );
+    assert(
+        hybridEditorSource.includes("target.closest('.vditor-copy, .code-lang-copy-button')") &&
+        hybridEditorSource.indexOf("target.closest('.vditor-copy, .code-lang-copy-button')") <
+            hybridEditorSource.indexOf("target.closest('.vditor-reset')"),
+        'reading mode click guard should allow code block copy buttons before blocking editor clicks'
     );
     const initializeStart = appSource.indexOf('const initializeApp = async () =>');
     const initializeSource = initializeStart >= 0 ? appSource.slice(initializeStart) : '';
