@@ -2235,8 +2235,7 @@ body.reading-mode-active .toc-container * {
     white-space: nowrap;
 }
 
-.settings-trash-meta,
-.settings-trash-preview {
+.settings-trash-meta {
     overflow: hidden;
     color: var(--muted-text);
     font-size: 12px;

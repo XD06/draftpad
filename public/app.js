@@ -590,13 +590,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (settingsTrashEmpty) settingsTrashEmpty.disabled = false;
         settingsTrashList.innerHTML = items.map(item => {
             const typeLabel = item.type === 'thought' ? 'Thought' : '文章';
+            const displayTitle = item.type === 'thought' ? 'Thought' : item.title || 'Untitled';
             const deletedAt = item.deletedAt ? formatCacheTime(item.deletedAt) : '-';
             return `
                 <div class="settings-trash-item" data-trash-id="${escapeHtml(item.trashId)}">
                     <div class="settings-trash-main">
-                        <div class="settings-trash-title">${escapeHtml(item.title || 'Untitled')}</div>
+                        <div class="settings-trash-title">${escapeHtml(displayTitle)}</div>
                         <div class="settings-trash-meta">${typeLabel} · 删除于 ${escapeHtml(deletedAt)}</div>
-                        <div class="settings-trash-preview">${escapeHtml(item.preview || '')}</div>
                     </div>
                     <div class="settings-trash-actions">
                         <button type="button" data-trash-action="restore">恢复</button>

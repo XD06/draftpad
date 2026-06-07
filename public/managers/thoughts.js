@@ -939,6 +939,12 @@ export class ThoughtsManager {
         return !!selection && !selection.isCollapsed && String(selection.toString() || '').trim().length > 0;
     }
 
+    clearThoughtSelectionForSwipe() {
+        const selection = window.getSelection?.();
+        if (selection && !selection.isCollapsed) selection.removeAllRanges();
+        this.hideThoughtSelectionToolbar();
+    }
+
     bindThoughtSelectionFormatting(card, thought) {
         const selectableNodes = card.querySelectorAll('.thought-text, .subtask-text');
         selectableNodes.forEach((node) => {
@@ -1101,8 +1107,33 @@ export class ThoughtsManager {
         let tracking = false;
         let threshold = 0;
         let maxSwipe = 0;
+        let capturedPointerId = null;
+        let suppressNextClick = false;
 
-        const resetSwipe = () => {
+        const captureSwipePointer = (event) => {
+            capturedPointerId = event.pointerId;
+            try {
+                card.setPointerCapture?.(event.pointerId);
+            } catch {
+                capturedPointerId = null;
+            }
+        };
+
+        const releaseSwipePointer = (event) => {
+            const pointerId = event?.pointerId ?? capturedPointerId;
+            if (pointerId === null || pointerId === undefined) return;
+            try {
+                if (!card.hasPointerCapture || card.hasPointerCapture(pointerId)) {
+                    card.releasePointerCapture?.(pointerId);
+                }
+            } catch {
+                // Pointer capture can already be gone after browser cancellation.
+            }
+            if (pointerId === capturedPointerId) capturedPointerId = null;
+        };
+
+        const resetSwipe = (event) => {
+            releaseSwipePointer(event);
             card.classList.remove('swiping', 'swipe-ready');
             card.style.removeProperty('--swipe-x');
             card.style.removeProperty('--swipe-icon-opacity');
@@ -1114,7 +1145,7 @@ export class ThoughtsManager {
 
         card.addEventListener('pointerdown', (event) => {
             if (card.classList.contains('editing') || event.target.closest('button, input, textarea, a, .thought-selection-toolbar')) return;
-            if (this.hasActiveThoughtSelection()) return;
+            if (this.hasActiveThoughtSelection()) this.clearThoughtSelectionForSwipe();
             if (event.pointerType === 'mouse' && event.target.closest('.thought-text, .subtask-text')) return;
             startX = event.clientX;
             startY = event.clientY;
@@ -1122,6 +1153,7 @@ export class ThoughtsManager {
             threshold = card.offsetWidth * 0.5;
             maxSwipe = Math.max(threshold + 28, card.offsetWidth * 0.58);
             tracking = true;
+            captureSwipePointer(event);
         });
 
         card.addEventListener('pointermove', (event) => {
@@ -1131,7 +1163,6 @@ export class ThoughtsManager {
             if (!isDragging && deltaX > 14 && deltaX > deltaY * 1.4) {
                 isDragging = true;
                 card.classList.add('swiping');
-                card.setPointerCapture?.(event.pointerId);
             }
             if (!isDragging) return;
             event.preventDefault();
@@ -1147,7 +1178,8 @@ export class ThoughtsManager {
         const finishSwipe = async (event) => {
             if (!tracking) return;
             const shouldDelete = isDragging && deltaX >= threshold;
-            card.releasePointerCapture?.(event.pointerId);
+            if (isDragging) suppressNextClick = true;
+            releaseSwipePointer(event);
             if (!shouldDelete) {
                 resetSwipe();
                 return;
@@ -1168,10 +1200,17 @@ export class ThoughtsManager {
             await this.confirmAndDeleteThought(thought.id, { skipConfirm: true });
         };
 
+        card.addEventListener('click', (event) => {
+            if (!suppressNextClick) return;
+            suppressNextClick = false;
+            event.preventDefault();
+            event.stopPropagation();
+        }, true);
         card.addEventListener('pointerup', finishSwipe);
         card.addEventListener('pointercancel', resetSwipe);
         card.addEventListener('pointerleave', (event) => {
-            if (tracking && !isDragging) resetSwipe(event);
+            const isCaptured = capturedPointerId !== null && card.hasPointerCapture?.(capturedPointerId);
+            if (tracking && !isDragging && !isCaptured) resetSwipe(event);
         });
     }
 

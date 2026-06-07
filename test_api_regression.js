@@ -70,6 +70,18 @@ function assertThoughtsFrontendRegressions() {
         'settings trash should be wired through backend routes and storage-backed trash index/payload files'
     );
     assert(
+        !appSource.includes('settings-trash-preview') &&
+        !appSource.includes('item.preview ||') &&
+        appSource.includes("const displayTitle = item.type === 'thought' ? 'Thought'"),
+        'settings trash list should not render deleted item body previews or full thought text'
+    );
+    assert(
+        thoughtsSource.includes('clearThoughtSelectionForSwipe') &&
+        thoughtsSource.includes('captureSwipePointer(event)') &&
+        thoughtsSource.includes('suppressNextClick'),
+        'thought swipe delete should clear stale text selection, capture pointer from pointerdown, and suppress follow-up clicks'
+    );
+    assert(
         !thoughtsSource.includes('statusEl.outerHTML = this.renderAIStatus'),
         'AI status relation update should not replace the button without rebinding click events'
     );
