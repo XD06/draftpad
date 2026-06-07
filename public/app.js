@@ -580,6 +580,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         toaster.show('自动同步状态已刷新', 'success', false, 1800);
     }
 
+    function compactTrashThoughtTitle(title) {
+        const text = String(title || '').replace(/\s+/g, ' ').trim();
+        if (!text) return 'Thought';
+        const limit = 16;
+        return `Thought · ${text.length > limit ? `${text.slice(0, limit)}...` : text}`;
+    }
+
     function renderTrashItems(items = []) {
         if (!settingsTrashList) return;
         if (!Array.isArray(items) || items.length === 0) {
@@ -590,7 +597,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (settingsTrashEmpty) settingsTrashEmpty.disabled = false;
         settingsTrashList.innerHTML = items.map(item => {
             const typeLabel = item.type === 'thought' ? 'Thought' : '文章';
-            const displayTitle = item.type === 'thought' ? 'Thought' : item.title || 'Untitled';
+            const displayTitle = item.type === 'thought' ? compactTrashThoughtTitle(item.title) : item.title || 'Untitled';
             const deletedAt = item.deletedAt ? formatCacheTime(item.deletedAt) : '-';
             return `
                 <div class="settings-trash-item" data-trash-id="${escapeHtml(item.trashId)}">
