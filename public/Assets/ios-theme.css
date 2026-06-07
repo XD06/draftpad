@@ -803,7 +803,7 @@ main {
     }
 
     .sidebar-left {
-        top: calc(env(safe-area-inset-top, 0px) + 76px) !important;
+        top: calc(env(safe-area-inset-top, 0px) + 64px) !important;
         bottom: calc(env(safe-area-inset-bottom, 0px) + 16px) !important;
         left: 12px !important;
         width: min(326px, calc(100vw - 32px)) !important;
