@@ -674,7 +674,7 @@ export class ThoughtsManager {
         
         this.pendingDeletes.add(id);
 
-        const confirmed = skipConfirm ? true : await this.app.confirmationManager.show('确定要永久删除这条灵感记录吗？');
+        const confirmed = skipConfirm ? true : await this.app.confirmationManager.show('确定将这条 Thought 移入垃圾桶吗？');
         
         if (!confirmed) {
             this.pendingDeletes.delete(id);
@@ -1157,7 +1157,7 @@ export class ThoughtsManager {
             card.style.setProperty('--swipe-x', `${threshold}px`);
             card.style.setProperty('--swipe-rail-opacity', '1');
             card.style.setProperty('--swipe-icon-opacity', '0.95');
-            const confirmed = await this.app.confirmationManager.show('确认删除这条 Thought 吗？');
+            const confirmed = await this.app.confirmationManager.show('确认移入垃圾桶吗？');
             if (!confirmed) {
                 resetSwipe();
                 return;

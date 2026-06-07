@@ -47,6 +47,8 @@ function assertThoughtsFrontendRegressions() {
     const thoughtsSource = fs.readFileSync(path.join(ROOT, 'public', 'managers', 'thoughts.js'), 'utf8');
     const serverSource = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
     const thoughtRoutesSource = fs.readFileSync(path.join(ROOT, 'routes', 'thought-routes.js'), 'utf8');
+    const trashRoutesSource = fs.readFileSync(path.join(ROOT, 'routes', 'trash-routes.js'), 'utf8');
+    const storageSource = fs.readFileSync(path.join(ROOT, 'scripts', 'storage.js'), 'utf8');
     const thoughtAIStatusSource = fs.readFileSync(path.join(ROOT, 'public', 'managers', 'thought-ai-status.js'), 'utf8');
     const thoughtCardRendererSource = fs.readFileSync(path.join(ROOT, 'public', 'managers', 'thought-card-renderer.js'), 'utf8');
     const thoughtRelationsPanelSource = fs.readFileSync(path.join(ROOT, 'public', 'managers', 'thought-relations-panel.js'), 'utf8');
@@ -56,6 +58,17 @@ function assertThoughtsFrontendRegressions() {
     const thoughtsCss = fs.readFileSync(path.join(ROOT, 'public', 'Assets', 'thoughts.css'), 'utf8');
     const iosThemeCss = fs.readFileSync(path.join(ROOT, 'public', 'Assets', 'ios-theme.css'), 'utf8');
     const indexSource = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
+    assert(
+        serverSource.includes("registerTrashRoutes(app") &&
+        trashRoutesSource.includes("app.get('/api/trash'") &&
+        trashRoutesSource.includes("app.post('/api/trash/:trashId/restore'") &&
+        storageSource.includes("s3WriteJSON('trash/index.json'") &&
+        storageSource.includes('function trashPayloadKey') &&
+        storageSource.includes("const folder = type === 'thought' ? 'thoughts' : 'notepads'") &&
+        indexSource.includes('id="settings-trash-section"') &&
+        appSource.includes('refreshTrashList(false)'),
+        'settings trash should be wired through backend routes and storage-backed trash index/payload files'
+    );
     assert(
         !thoughtsSource.includes('statusEl.outerHTML = this.renderAIStatus'),
         'AI status relation update should not replace the button without rebinding click events'
@@ -926,6 +939,8 @@ async function run() {
 
         result = await request(`/api/thoughts/${thoughtId}`, { method: 'DELETE' });
         assert(result.response.ok, 'DELETE /api/thoughts/:id should succeed');
+        assert(result.body.trashItem?.type === 'thought', 'DELETE /api/thoughts/:id should return a thought trash item');
+        let deletedThoughtTrashId = result.body.trashItem.trashId;
         result = await request(`/api/thoughts/${targetThoughtId}/relations`);
         assert(result.response.ok, 'GET target relations after source delete should succeed');
         assert(
@@ -937,14 +952,68 @@ async function run() {
             'deleting a thought should remove suggested relation references from other thoughts'
         );
 
+        result = await request(`/api/trash/${deletedThoughtTrashId}/restore`, { method: 'POST', body: JSON.stringify({}) });
+        assert(result.response.ok, 'POST /api/trash/:id/restore should restore related thought');
+        const restoredRelatedThoughtId = result.body.restored.item.id;
+        result = await request(`/api/thoughts/${restoredRelatedThoughtId}/relations`);
+        assert(result.response.ok, 'GET restored thought relations should succeed');
+        assert(
+            result.body.relations.some(relation => relation.thought.id === targetThoughtId),
+            'trash restore should restore the thought relation payload'
+        );
+        result = await request(`/api/thoughts/${targetThoughtId}/relations`);
+        assert(result.response.ok, 'GET target relations after trash restore should succeed');
+        assert(
+            result.body.relations.some(relation => relation.thought.id === restoredRelatedThoughtId),
+            'trash restore should restore reverse relation references'
+        );
+
+        result = await request(`/api/thoughts/${restoredRelatedThoughtId}`, { method: 'DELETE' });
+        assert(result.response.ok, 'DELETE restored related thought should succeed');
+        deletedThoughtTrashId = result.body.trashItem?.trashId;
+        assert(deletedThoughtTrashId, 're-deleting restored related thought should create a new trash item');
+
         result = await request(`/api/thoughts/${targetThoughtId}`, { method: 'DELETE' });
         assert(result.response.ok, 'DELETE relation target thought should succeed');
 
         result = await request(`/api/thoughts/${completedThoughtId}`, { method: 'DELETE' });
         assert(result.response.ok, 'DELETE completed thought should succeed');
+        const completedThoughtTrashId = result.body.trashItem?.trashId;
+        assert(completedThoughtTrashId, 'DELETE completed thought should create a trash item');
+
+        result = await request('/api/trash');
+        assert(result.response.ok, 'GET /api/trash should succeed');
+        assert(
+            result.body.items.some(item => item.trashId === deletedThoughtTrashId && item.type === 'thought'),
+            'trash list should include deleted thought'
+        );
+
+        result = await request(`/api/trash/${completedThoughtTrashId}/restore`, { method: 'POST', body: JSON.stringify({}) });
+        assert(result.response.ok, 'POST /api/trash/:id/restore should restore thought');
+        assert(result.body.restored.type === 'thought', 'trash restore should identify restored thought type');
+        result = await request(`/api/thoughts/${result.body.restored.item.id}`);
+        assert(result.response.ok, 'restored thought should be readable');
 
         result = await request(`/api/notepads/${notepadId}`, { method: 'DELETE' });
         assert(result.response.ok, 'DELETE /api/notepads/:id should succeed');
+        assert(result.body.trashItem?.type === 'notepad', 'DELETE /api/notepads/:id should return a notepad trash item');
+        const notepadTrashId = result.body.trashItem.trashId;
+
+        result = await request('/api/trash');
+        assert(result.response.ok, 'GET /api/trash after notepad delete should succeed');
+        assert(
+            result.body.items.some(item => item.trashId === notepadTrashId && item.type === 'notepad'),
+            'trash list should include deleted notepad'
+        );
+        result = await request(`/api/trash/${notepadTrashId}/restore`, { method: 'POST', body: JSON.stringify({}) });
+        assert(result.response.ok, 'POST /api/trash/:id/restore should restore notepad');
+        const restoredNotepadId = result.body.restored.item.id;
+        result = await request(`/api/notes/${restoredNotepadId}`);
+        assert(result.response.ok, 'restored notepad content should be readable');
+        assert(result.body.content === 'hello world', 'restored notepad should keep original content');
+
+        result = await request(`/api/trash/${deletedThoughtTrashId}`, { method: 'DELETE' });
+        assert(result.response.ok, 'DELETE /api/trash/:id should permanently remove trash item');
 
         console.log('API regression checks passed');
     } catch (error) {

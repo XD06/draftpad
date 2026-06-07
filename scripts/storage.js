@@ -16,6 +16,10 @@ const META_DIR = path.join(DATA_DIR, 'thoughts.meta');
 const RELATIONS_DIR = path.join(DATA_DIR, 'relations');
 const SUPPRESSED_RELATIONS_DIR = path.join(DATA_DIR, 'relations.suppressed');
 const INDEX_DIR = path.join(DATA_DIR, 'indexes');
+const TRASH_DIR = path.join(DATA_DIR, 'trash');
+const TRASH_NOTEPADS_DIR = path.join(TRASH_DIR, 'notepads');
+const TRASH_THOUGHTS_DIR = path.join(TRASH_DIR, 'thoughts');
+const TRASH_INDEX_FILE = path.join(TRASH_DIR, 'index.json');
 const STORAGE_LAYOUT = process.env.STORAGE_LAYOUT === 'split' ? 'split' : 'legacy';
 const STORAGE_BACKEND = process.env.STORAGE_BACKEND === 's3' ? 's3' : 'local';
 const STORAGE_STATE_FILE = path.join(__dirname, '..', 'config', 'storage-state.json');
@@ -118,6 +122,129 @@ function thoughtIndexFrom(thoughts) {
     };
 }
 
+function createTrashId(type, sourceId) {
+    return `${Date.now()}-${type}-${safeId(sourceId) || 'item'}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function normalizeTrashIndex(index) {
+    const items = Array.isArray(index?.items) ? index.items.filter(item => item && item.trashId && item.type) : [];
+    return {
+        version: 1,
+        updatedAt: Number.isFinite(Number(index?.updatedAt)) ? Number(index.updatedAt) : Date.now(),
+        items: items.sort((a, b) => (b.deletedAt || 0) - (a.deletedAt || 0))
+    };
+}
+
+function trashPayloadKey(type, trashId) {
+    const folder = type === 'thought' ? 'thoughts' : 'notepads';
+    return `trash/${folder}/${safeId(trashId)}.json`;
+}
+
+function trashPayloadPath(type, trashId) {
+    const dir = type === 'thought' ? TRASH_THOUGHTS_DIR : TRASH_NOTEPADS_DIR;
+    return path.join(dir, `${safeId(trashId)}.json`);
+}
+
+async function readTrashIndex() {
+    await init();
+    if (isS3Backend()) return normalizeTrashIndex(await s3ReadJSON('trash/index.json', { version: 1, items: [] }));
+    return normalizeTrashIndex(await readJSON(TRASH_INDEX_FILE, { version: 1, items: [] }));
+}
+
+async function writeTrashIndex(index) {
+    const payload = normalizeTrashIndex({ ...index, updatedAt: Date.now() });
+    if (isS3Backend()) {
+        await s3WriteJSON('trash/index.json', payload);
+        return payload;
+    }
+    await writeJSON(TRASH_INDEX_FILE, payload);
+    return payload;
+}
+
+async function writeTrashPayload(type, trashId, payload) {
+    if (isS3Backend()) {
+        await s3WriteJSON(trashPayloadKey(type, trashId), payload);
+        return;
+    }
+    await writeJSON(trashPayloadPath(type, trashId), payload);
+}
+
+async function readTrashPayload(type, trashId) {
+    if (isS3Backend()) return s3ReadJSON(trashPayloadKey(type, trashId), null);
+    return readJSON(trashPayloadPath(type, trashId), null);
+}
+
+async function deleteTrashPayload(type, trashId) {
+    if (isS3Backend()) {
+        await s3.deleteObject(s3Key(trashPayloadKey(type, trashId)));
+        return;
+    }
+    await fs.rm(trashPayloadPath(type, trashId), { force: true });
+}
+
+function trashPreview(text) {
+    return String(text || '').replace(/\s+/g, ' ').trim().slice(0, 160);
+}
+
+async function addTrashItem({ type, sourceId, title, preview, payload }) {
+    const now = Date.now();
+    const trashId = createTrashId(type, sourceId);
+    const item = {
+        trashId,
+        type,
+        sourceId: String(sourceId || ''),
+        title: String(title || 'Untitled'),
+        preview: trashPreview(preview),
+        deletedAt: now,
+        originalUpdatedAt: payload?.notepad?.updatedAt || payload?.thought?.updatedAt || payload?.notepad?.createdAt || payload?.thought?.createdAt || 0,
+        payloadKey: trashPayloadKey(type, trashId)
+    };
+    await writeTrashPayload(type, trashId, {
+        version: 1,
+        trashId,
+        type,
+        sourceId: item.sourceId,
+        deletedAt: now,
+        payload
+    });
+    const index = await readTrashIndex();
+    index.items = [item, ...index.items.filter(existing => existing.trashId !== trashId)];
+    await writeTrashIndex(index);
+    return item;
+}
+
+async function listTrashItems() {
+    const index = await readTrashIndex();
+    return index.items;
+}
+
+async function getTrashItem(trashId) {
+    const index = await readTrashIndex();
+    const item = index.items.find(entry => entry.trashId === trashId);
+    if (!item) return null;
+    const payload = await readTrashPayload(item.type, item.trashId);
+    return payload ? { item, payload } : null;
+}
+
+async function deleteTrashItem(trashId) {
+    const index = await readTrashIndex();
+    const item = index.items.find(entry => entry.trashId === trashId);
+    if (!item) return false;
+    await deleteTrashPayload(item.type, item.trashId);
+    index.items = index.items.filter(entry => entry.trashId !== trashId);
+    await writeTrashIndex(index);
+    return true;
+}
+
+async function emptyTrash() {
+    const index = await readTrashIndex();
+    for (const item of index.items) {
+        await deleteTrashPayload(item.type, item.trashId);
+    }
+    await writeTrashIndex({ version: 1, items: [] });
+    return { success: true, deleted: index.items.length };
+}
+
 async function writeThoughtIndex(thoughts) {
     await writeIndex('thoughts-index', thoughtIndexFrom(thoughts));
 }
@@ -214,6 +341,8 @@ async function init() {
     await fs.mkdir(RELATIONS_DIR, { recursive: true });
     await fs.mkdir(SUPPRESSED_RELATIONS_DIR, { recursive: true });
     await fs.mkdir(INDEX_DIR, { recursive: true });
+    await fs.mkdir(TRASH_NOTEPADS_DIR, { recursive: true });
+    await fs.mkdir(TRASH_THOUGHTS_DIR, { recursive: true });
 
     if (!await pathExists(NOTEPADS_FILE)) {
         const now = Date.now();
@@ -638,6 +767,220 @@ async function deleteNoteContent(notepad) {
     }
 }
 
+function uniqueRestoredName(name, notepads) {
+    const base = String(name || 'Restored Notepad');
+    if (!notepads.some(item => item.name === base)) return base;
+    let counter = 1;
+    let candidate = `${base} restored`;
+    while (notepads.some(item => item.name === candidate)) {
+        counter++;
+        candidate = `${base} restored ${counter}`;
+    }
+    return candidate;
+}
+
+function uniqueRestoredId(id, existingIds) {
+    const base = safeId(id) || `restored-${Date.now()}`;
+    if (!existingIds.has(base)) return base;
+    let counter = 1;
+    let candidate = `${base}-restored`;
+    while (existingIds.has(candidate)) {
+        counter++;
+        candidate = `${base}-restored-${counter}`;
+    }
+    return candidate;
+}
+
+async function moveNotepadToTrash(notepad) {
+    if (!notepad?.id) throw new Error('moveNotepadToTrash requires a notepad');
+    const content = await readNoteContent(notepad);
+    return addTrashItem({
+        type: 'notepad',
+        sourceId: notepad.id,
+        title: notepad.name || notepad.id,
+        preview: content,
+        payload: {
+            notepad: { ...notepad },
+            content: content || ''
+        }
+    });
+}
+
+async function moveThoughtToTrash(thought) {
+    if (!thought?.id) throw new Error('moveThoughtToTrash requires a thought');
+    const meta = await readThoughtMeta(thought.id);
+    const relations = await readRelations(thought.id);
+    const suppressed = await readSuppressedRelations(thought.id);
+    const subText = (thought.subItems || []).map(item => item.text || '').join(' ');
+    return addTrashItem({
+        type: 'thought',
+        sourceId: thought.id,
+        title: String(thought.text || '').split('\n')[0].slice(0, 80) || 'Thought',
+        preview: [thought.text || '', subText].filter(Boolean).join(' '),
+        payload: {
+            thought: { ...thought },
+            meta,
+            relations,
+            suppressed
+        }
+    });
+}
+
+function normalizeRestoredRelations(relations, ownerId, validTargetIds, now) {
+    const normalized = { ...(relations || {}) };
+    const cleanEdges = (items) => (Array.isArray(items) ? items : [])
+        .filter(edge => edge && validTargetIds.has(String(edge.targetId)) && String(edge.targetId) !== ownerId)
+        .map(edge => ({ ...edge, targetId: String(edge.targetId), restoredAt: now }));
+
+    normalized.id = ownerId;
+    normalized.edges = cleanEdges(normalized.edges);
+    normalized.suggestions = cleanEdges(normalized.suggestions);
+    normalized.version = normalized.version || 2;
+    normalized.computedAt = now;
+    normalized.restoredAt = now;
+    return normalized;
+}
+
+function upsertRestoredEdge(edges, edge, targetId, now) {
+    const id = String(targetId);
+    const next = (Array.isArray(edges) ? edges : []).filter(existing => String(existing?.targetId || '') !== id);
+    next.unshift({ ...edge, targetId: id, restoredAt: now });
+    return next;
+}
+
+async function restoreReverseRelations(restoredId, relations, now) {
+    const affectedIds = new Set();
+    const byTarget = new Map();
+
+    function collect(kind) {
+        for (const edge of Array.isArray(relations?.[kind]) ? relations[kind] : []) {
+            const targetId = String(edge.targetId || '');
+            if (!targetId) continue;
+            if (!byTarget.has(targetId)) byTarget.set(targetId, { edges: [], suggestions: [] });
+            byTarget.get(targetId)[kind].push(edge);
+        }
+    }
+
+    collect('edges');
+    collect('suggestions');
+
+    for (const [targetId, lists] of byTarget.entries()) {
+        const reverse = await readRelations(targetId);
+        reverse.id = targetId;
+        if (lists.edges.length > 0) {
+            reverse.edges = upsertRestoredEdge(reverse.edges, lists.edges[0], restoredId, now);
+        }
+        if (lists.suggestions.length > 0) {
+            reverse.suggestions = upsertRestoredEdge(reverse.suggestions, lists.suggestions[0], restoredId, now);
+        }
+        reverse.computedAt = now;
+        reverse.version = reverse.version || 2;
+        reverse.restoredAt = now;
+        await writeRelations(targetId, reverse);
+        affectedIds.add(targetId);
+    }
+
+    return Array.from(affectedIds);
+}
+
+function normalizeRestoredSuppressed(suppressed, ownerId, validTargetIds, now) {
+    return {
+        ...(suppressed || {}),
+        id: ownerId,
+        edges: (Array.isArray(suppressed?.edges) ? suppressed.edges : [])
+            .filter(edge => edge && validTargetIds.has(String(edge.targetId)) && String(edge.targetId) !== ownerId)
+            .map(edge => ({ ...edge, targetId: String(edge.targetId), restoredAt: now, updatedAt: now })),
+        updatedAt: now,
+        restoredAt: now
+    };
+}
+
+async function restoreReverseSuppressed(restoredId, suppressed, now) {
+    for (const edge of Array.isArray(suppressed?.edges) ? suppressed.edges : []) {
+        const targetId = String(edge.targetId || '');
+        if (!targetId) continue;
+        const reverse = await readSuppressedRelations(targetId);
+        reverse.edges = upsertRestoredEdge(reverse.edges, { ...edge, updatedAt: now }, restoredId, now);
+        reverse.updatedAt = now;
+        reverse.restoredAt = now;
+        await writeSuppressedRelations(targetId, reverse);
+    }
+}
+
+async function restoreTrashItem(trashId) {
+    const trash = await getTrashItem(trashId);
+    if (!trash) return null;
+    const now = Date.now();
+
+    if (trash.item.type === 'notepad') {
+        const original = trash.payload.payload?.notepad;
+        if (!original?.id) return null;
+        const meta = await readNotepadsMeta();
+        const existingIds = new Set(meta.notepads.map(item => item.id));
+        const restored = {
+            ...original,
+            id: uniqueRestoredId(original.id, existingIds),
+            name: uniqueRestoredName(original.name, meta.notepads),
+            restoredAt: now,
+            updatedAt: now,
+            version: (original.version || 1) + 1
+        };
+        meta.notepads.push(restored);
+        await saveNotepadsMeta(meta);
+        await writeNoteContent(restored, trash.payload.payload?.content || '');
+        await deleteTrashItem(trashId);
+        await rebuildIndexes();
+        return { type: 'notepad', item: restored };
+    }
+
+    if (trash.item.type === 'thought') {
+        const original = trash.payload.payload?.thought;
+        if (!original?.id) return null;
+        const thoughts = await readThoughts();
+        const existingIds = new Set(thoughts.map(item => item.id));
+        const validRelationTargetIds = new Set(thoughts.map(item => String(item.id)));
+        const restored = {
+            ...original,
+            id: uniqueRestoredId(original.id, existingIds),
+            restoredAt: now,
+            updatedAt: now,
+            version: (original.version || 1) + 1
+        };
+        await writeThought(restored);
+        if (trash.payload.payload?.meta) {
+            await writeThoughtMeta(restored.id, { ...trash.payload.payload.meta, id: restored.id, restoredAt: now });
+        }
+        const affectedRelationIds = new Set([restored.id]);
+        if (trash.payload.payload?.relations) {
+            const restoredRelations = normalizeRestoredRelations(
+                trash.payload.payload.relations,
+                restored.id,
+                validRelationTargetIds,
+                now
+            );
+            await writeRelations(restored.id, restoredRelations);
+            for (const affectedId of await restoreReverseRelations(restored.id, restoredRelations, now)) {
+                affectedRelationIds.add(affectedId);
+            }
+        }
+        if (trash.payload.payload?.suppressed) {
+            const restoredSuppressed = normalizeRestoredSuppressed(
+                trash.payload.payload.suppressed,
+                restored.id,
+                validRelationTargetIds,
+                now
+            );
+            await writeSuppressedRelations(restored.id, restoredSuppressed);
+            await restoreReverseSuppressed(restored.id, restoredSuppressed, now);
+        }
+        await deleteTrashItem(trashId);
+        await rebuildIndexes();
+        return { type: 'thought', item: restored, affectedRelationIds: Array.from(affectedRelationIds) };
+    }
+
+    return null;
+}
+
 async function renameNoteContent(oldNotepad, newNotepad) {
     await init();
     if (!oldNotepad || !newNotepad) {
@@ -768,6 +1111,13 @@ module.exports = {
     writeNoteContent,
     deleteNoteContent,
     renameNoteContent,
+    moveNotepadToTrash,
+    moveThoughtToTrash,
+    listTrashItems,
+    getTrashItem,
+    restoreTrashItem,
+    deleteTrashItem,
+    emptyTrash,
     readIndex,
     writeIndex,
     rebuildIndexes,
@@ -780,7 +1130,9 @@ module.exports = {
         META_DIR,
         RELATIONS_DIR,
         SUPPRESSED_RELATIONS_DIR,
-        INDEX_DIR
+        INDEX_DIR,
+        TRASH_DIR,
+        TRASH_INDEX_FILE
     },
     getS3Prefix,
     setS3Prefix,

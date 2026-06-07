@@ -32,6 +32,7 @@ const { registerSearchRoutes } = require('./routes/search-routes');
 const { registerShareRoutes } = require('./routes/share-routes');
 const { registerStaticRoutes } = require('./routes/static-routes');
 const { registerThoughtRoutes } = require('./routes/thought-routes');
+const { registerTrashRoutes } = require('./routes/trash-routes');
 const ipaddr = require('ipaddr.js');
 
 function getAvailableHighlightLanguages() {
@@ -512,6 +513,12 @@ registerDataManagementRoutes(app, {
 registerThoughtRoutes(app, {
     storage,
     aiQueue,
+    scheduleIndexNotepads,
+    broadcastWebSocketMessage
+});
+
+registerTrashRoutes(app, {
+    storage,
     scheduleIndexNotepads,
     broadcastWebSocketMessage
 });

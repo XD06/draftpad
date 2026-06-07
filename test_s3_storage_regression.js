@@ -283,6 +283,23 @@ async function waitForSearch(query) {
     assert(result.response.ok, 'S3 public share route should render');
     assert(String(result.body).includes('needle content'), 'S3 share route should include note content');
 
+    result = await request(`/api/notepads/${notepadId}`, { method: 'DELETE' });
+    assert(result.response.ok, 'S3 DELETE notepad should succeed');
+    assert(result.body.trashItem?.type === 'notepad', 'S3 DELETE notepad should create trash item');
+    const trashIndex = JSON.parse(objects.get('trash/index.json'));
+    const trashEntry = trashIndex.items.find(item => item.trashId === result.body.trashItem.trashId);
+    assert(trashEntry, 'S3 trash index should include deleted notepad');
+    assert(objects.has(trashEntry.payloadKey), 'S3 trash payload should be written separately');
+    result = await request(`/api/trash/${trashEntry.trashId}/restore`, {
+        method: 'POST',
+        body: JSON.stringify({})
+    });
+    assert(result.response.ok, 'S3 trash restore should succeed');
+    const restoredNotepadId = result.body.restored.item.id;
+    result = await request(`/api/notes/${restoredNotepadId}`);
+    assert(result.response.ok, 'S3 restored notepad should be readable');
+    assert(result.body.content === 'needle content', 'S3 restored notepad should keep content');
+
     result = await request('/api/thoughts', {
         method: 'POST',
         body: JSON.stringify({ text: 'S3 thought source', subItems: [] })

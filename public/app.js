@@ -96,6 +96,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     const settingsCloudOverwriteLocalDryRun = document.getElementById('settings-cloud-overwrite-local-dry-run');
     const settingsCloudOverwriteLocal = document.getElementById('settings-cloud-overwrite-local');
     const settingsAutoSyncStatus = document.getElementById('settings-auto-sync-status');
+    const settingsTrashRefresh = document.getElementById('settings-trash-refresh');
+    const settingsTrashList = document.getElementById('settings-trash-list');
+    const settingsTrashEmpty = document.getElementById('settings-trash-empty');
     const startupSyncStatus = document.getElementById('startup-sync-status');
 
     let saveTimeout;
@@ -575,6 +578,92 @@ document.addEventListener('DOMContentLoaded', async () => {
             note: '基础保存、启动缓存、WebSocket 更新和 AI 后台分析由应用自动处理。需要强制覆盖时再使用本地覆盖云端或云端覆盖本地。'
         }, '自动同步');
         toaster.show('自动同步状态已刷新', 'success', false, 1800);
+    }
+
+    function renderTrashItems(items = []) {
+        if (!settingsTrashList) return;
+        if (!Array.isArray(items) || items.length === 0) {
+            settingsTrashList.innerHTML = '<div class="settings-trash-empty">垃圾桶为空。</div>';
+            if (settingsTrashEmpty) settingsTrashEmpty.disabled = true;
+            return;
+        }
+        if (settingsTrashEmpty) settingsTrashEmpty.disabled = false;
+        settingsTrashList.innerHTML = items.map(item => {
+            const typeLabel = item.type === 'thought' ? 'Thought' : '文章';
+            const deletedAt = item.deletedAt ? formatCacheTime(item.deletedAt) : '-';
+            return `
+                <div class="settings-trash-item" data-trash-id="${escapeHtml(item.trashId)}">
+                    <div class="settings-trash-main">
+                        <div class="settings-trash-title">${escapeHtml(item.title || 'Untitled')}</div>
+                        <div class="settings-trash-meta">${typeLabel} · 删除于 ${escapeHtml(deletedAt)}</div>
+                        <div class="settings-trash-preview">${escapeHtml(item.preview || '')}</div>
+                    </div>
+                    <div class="settings-trash-actions">
+                        <button type="button" data-trash-action="restore">恢复</button>
+                        <button type="button" class="danger" data-trash-action="delete">永久删除</button>
+                    </div>
+                </div>
+            `;
+        }).join('');
+    }
+
+    async function refreshTrashList(showToast = false) {
+        if (!settingsDataPanel || !settingsTrashList) return;
+        settingsTrashList.innerHTML = '<div class="settings-trash-empty">正在读取垃圾桶...</div>';
+        try {
+            const data = await settingsDataPanel.trashList();
+            renderTrashItems(data.items || []);
+            if (showToast) toaster.show('垃圾桶已刷新', 'success', false, 1400);
+        } catch (error) {
+            settingsTrashList.innerHTML = `<div class="settings-trash-empty">读取失败：${escapeHtml(error.message || '未知错误')}</div>`;
+            toaster.show(error.message || '垃圾桶读取失败', 'error', false, 2600);
+        }
+    }
+
+    async function restoreTrashItem(trashId) {
+        const confirmed = await confirmationManager.show({
+            title: '恢复项目',
+            message: '恢复后会重新写入当前数据空间，并从垃圾桶移除。',
+            confirmText: '恢复',
+            cancelText: '取消'
+        });
+        if (!confirmed) return;
+        const result = await settingsDataPanel.restoreTrashItem(trashId);
+        await refreshTrashList(false);
+        if (result.restored?.type === 'notepad') {
+            await loadNotepads();
+        } else if (thoughtsManager?.isActive) {
+            await thoughtsManager.fetchThoughts();
+        }
+        toaster.show('已恢复', 'success', false, 1600);
+    }
+
+    async function deleteTrashItemPermanently(trashId) {
+        const confirmed = await confirmationManager.show({
+            title: '永久删除',
+            message: '此操作会从垃圾桶中移除备份，无法再恢复。',
+            confirmText: '永久删除',
+            cancelText: '取消',
+            confirmType: 'danger'
+        });
+        if (!confirmed) return;
+        await settingsDataPanel.deleteTrashItem(trashId);
+        await refreshTrashList(false);
+        toaster.show('已永久删除', 'success', false, 1600);
+    }
+
+    async function emptyTrash() {
+        const confirmed = await confirmationManager.show({
+            title: '清空垃圾桶',
+            message: '垃圾桶中的文章和 Thought 备份都会被永久删除。',
+            confirmText: '清空',
+            cancelText: '取消',
+            confirmType: 'danger'
+        });
+        if (!confirmed) return;
+        await settingsDataPanel.emptyTrash();
+        await refreshTrashList(false);
+        toaster.show('垃圾桶已清空', 'success', false, 1600);
     }
 
     async function copyCurrentNotepadLink() {
@@ -1223,6 +1312,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         settingsManager.loadSettings();
         updateSettingsConflictSection();
         refreshCloudStatus(false);
+        refreshTrashList(false);
         const focusTarget = options.focusSyncPanel ? settingsConflictSection : settingsInputAutoSaveStatusInterval;
         showModal(settingsModal, focusTarget);
         if (options.focusSyncPanel && settingsConflictSection) {
@@ -1308,7 +1398,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         document.getElementById('sidebar-overlay')?.classList.remove('visible');
 
         const messageEl = deleteModal.querySelector('.modal-message');
-        if (messageEl) messageEl.textContent = `Are you sure you want to delete '${notepad.name}'? This action cannot be undone.`;
+        if (messageEl) messageEl.textContent = `确定将 '${notepad.name}' 移入垃圾桶吗？之后可以在设置里恢复。`;
         showModal(deleteModal, deleteCancel);
     }
 
@@ -1325,7 +1415,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
             deleteModal.classList.remove('visible');
             notepadIdToDelete = null;
-            toaster.show('Notepad deleted');
+            toaster.show('已移入垃圾桶');
         } catch (err) {
             console.error('Error deleting notepad:', err);
             toaster.show('Error deleting notepad', 'error', true);
@@ -1749,6 +1839,20 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (settingsCloudOverwriteLocalDryRun) settingsCloudOverwriteLocalDryRun.addEventListener('click', () => runCloudAction('s3-overwrite-local:dry-run'));
         if (settingsCloudOverwriteLocal) settingsCloudOverwriteLocal.addEventListener('click', () => runGuidedCloudAction('s3-overwrite-local:run', 's3-overwrite-local:dry-run'));
         if (settingsAutoSyncStatus) settingsAutoSyncStatus.addEventListener('click', showAutoSyncStatus);
+        if (settingsTrashRefresh) settingsTrashRefresh.addEventListener('click', () => refreshTrashList(true));
+        if (settingsTrashEmpty) settingsTrashEmpty.addEventListener('click', emptyTrash);
+        if (settingsTrashList) {
+            settingsTrashList.addEventListener('click', (event) => {
+                const button = event.target.closest('[data-trash-action]');
+                const item = event.target.closest('[data-trash-id]');
+                if (!button || !item) return;
+                if (button.dataset.trashAction === 'restore') {
+                    restoreTrashItem(item.dataset.trashId);
+                } else if (button.dataset.trashAction === 'delete') {
+                    deleteTrashItemPermanently(item.dataset.trashId);
+                }
+            });
+        }
         
         const readModeBtn = document.getElementById('toggle-reading-mode');
         isReadingMode = localStorage.getItem('dumbpad_reading_mode') === 'true';

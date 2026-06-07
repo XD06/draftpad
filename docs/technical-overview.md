@@ -13,15 +13,16 @@
 
 ## 2. 后端边界
 
-`server.js` 是当前后端入口，仍集中注册静态资源、鉴权、WebSocket、分享页、Notepad API、Thought API 和搜索 API。数据管理 API 已拆到 `routes/data-management-routes.js`，由 `server.js` 通过显式 context 注册。后续继续拆分 route 时应保持 URL、HTTP status、response body 和 WebSocket 副作用不变。
+`server.js` 是当前后端入口，仍集中注册静态资源、鉴权、WebSocket、分享页、Notepad API、Thought API、Trash API 和搜索 API。数据管理 API 已拆到 `routes/data-management-routes.js`，Trash API 已拆到 `routes/trash-routes.js`，都由 `server.js` 通过显式 context 注册。后续继续拆分 route 时应保持 URL、HTTP status、response body 和 WebSocket 副作用不变。
 
 关键模块：
 
-- `scripts/storage.js`：唯一的用户数据读写边界。调用方通过同一套方法读写 Notepad、Thought、AI meta、relations、indexes，不直接关心 local/S3 或 legacy/split layout。
+- `scripts/storage.js`：唯一的用户数据读写边界。调用方通过同一套方法读写 Notepad、Thought、Trash、AI meta、relations、indexes，不直接关心 local/S3 或 legacy/split layout。
 - `scripts/ai-provider.js`：封装 AI provider。没有可用配置时降级为 noop provider。
 - `scripts/ai-queue.js`：负责后台 AI 队列、pending meta、extract、embedding、relations、rebuild 和状态广播。
 - `scripts/s3-service.js`、`scripts/s3-prefix-tools.js`：负责 S3 对象操作、prefix inventory、backup、delete 和 data space 列表。
 - `routes/data-management-routes.js`：负责 `/api/data-management/*` 路由，包含状态读取、数据空间列表/切换、inventory、backup、delete、本地导入 S3、双向覆盖。
+- `routes/trash-routes.js`：负责 `/api/trash/*` 路由，恢复和永久删除都只调用 storage 边界，不在 route 层拼接本地路径或 S3 key。
 
 ## 3. 前端边界
 
@@ -45,7 +46,7 @@ Thought 前端 helper 拆分模块有聚合测试入口：`npm run test:thought-
 - `public/managers/thought-text-formatting.js`：Thought 文本格式化 helper。负责 HTML 转义、URL linkify 和正则转义；DOM 依赖的搜索高亮仍保留在 `ThoughtsManager`。
 - `public/managers/thought-relations-state.js`：Thought 关系本地状态 helper。负责关系计数归一化、手动关联成功/失败和删除成功/失败时的本地 relation count/localPending/ready 状态变更；API、panel 刷新和 outbox 协调仍保留在 `ThoughtsManager`。
 - `public/managers/note-sync-controller.js`：启动缓存与 Note cache 读写控制器，避免缓存细节继续散落在 `app.js`。
-- `public/managers/settings-data-panel.js`：设置页数据空间和云端维护 API adapter。
+- `public/managers/settings-data-panel.js`：设置页数据空间、垃圾桶和云端维护 API adapter。
 - `public/managers/ws-client.js`：轻量 WebSocket 客户端，把服务端事件转成浏览器 `CustomEvent`。
 
 ## 4. Thought 写入流程

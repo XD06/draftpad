@@ -178,6 +178,7 @@ function registerNotepadRoutes(app, context) {
             }
 
             const notepadToDelete = notepad;
+            const trashItem = await storage.moveNotepadToTrash(notepadToDelete);
 
             const notepadIndex = data.notepads.findIndex(n => n.id === id);
             const removedNotepad = data.notepads.splice(notepadIndex, 1)[0];
@@ -189,7 +190,7 @@ function registerNotepadRoutes(app, context) {
             await storage.deleteNoteContent(notepadToDelete);
 
             scheduleIndexNotepads(250);
-            res.json({ success: true, message: 'Notepad deleted successfully' });
+            res.json({ success: true, message: 'Notepad moved to trash', trashItem });
         } catch (err) {
             console.error('Error in delete notepad endpoint:', err);
             res.status(500).json({ error: 'Error deleting notepad' });

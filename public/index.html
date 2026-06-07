@@ -256,10 +256,10 @@
         <div id="delete-modal" class="modal">
             <div class="modal-content">
                 <h2>Delete Notepad</h2>
-                <p class="modal-message">Are you sure you want to delete this notepad? This action cannot be undone.</p>
+                <p class="modal-message">确定将这篇文章移入垃圾桶吗？之后可以在设置里恢复。</p>
                 <div class="modal-buttons">
                     <button id="delete-cancel">Cancel</button>
-                    <button id="delete-confirm" class="danger">Delete</button>
+                    <button id="delete-confirm" class="danger">移入垃圾桶</button>
                 </div>
             </div>
         </div>
@@ -333,6 +333,27 @@
                             <button id="settings-retry-local-sync" type="button">重试同步当前内容</button>
                             <button id="settings-copy-local-content" type="button">复制本地内容</button>
                             <button id="settings-discard-local-content" type="button" class="danger">放弃本地并加载远端</button>
+                        </div>
+                    </div>
+                    <div id="settings-trash-section" class="settings-trash-section">
+                        <div class="settings-panel-header">
+                            <div>
+                                <div class="settings-row-title">垃圾桶</div>
+                                <div class="settings-row-subtitle">已删除的文章和 Thought 会保留在当前数据空间，支持 S3 同步。</div>
+                            </div>
+                            <button id="settings-trash-refresh" type="button" class="settings-icon-button" aria-label="刷新垃圾桶">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+                                    stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <path d="M20 11a8.1 8.1 0 0 0 -15.5 -2m-.5 -4v4h4" />
+                                    <path d="M4 13a8.1 8.1 0 0 0 15.5 2m.5 4v-4h-4" />
+                                </svg>
+                            </button>
+                        </div>
+                        <div id="settings-trash-list" class="settings-trash-list">
+                            <div class="settings-trash-empty">正在读取垃圾桶...</div>
+                        </div>
+                        <div class="settings-trash-footer">
+                            <button id="settings-trash-empty" type="button" class="danger" disabled>清空垃圾桶</button>
                         </div>
                     </div>
                     <div id="settings-data-cloud-section" class="settings-data-cloud-section">

@@ -42,6 +42,22 @@ export default class SettingsDataPanel {
         return this.post('/api/data-management/s3-overwrite-local', payload);
     }
 
+    trashList() {
+        return this.requestJSON('/api/trash');
+    }
+
+    restoreTrashItem(trashId) {
+        return this.post(`/api/trash/${encodeURIComponent(trashId)}/restore`, {});
+    }
+
+    deleteTrashItem(trashId) {
+        return this.requestJSON(`/api/trash/${encodeURIComponent(trashId)}`, { method: 'DELETE' });
+    }
+
+    emptyTrash() {
+        return this.requestJSON('/api/trash', { method: 'DELETE' });
+    }
+
     runAction(action, payload) {
         if (action === 'inventory') return this.inventory(payload);
         if (action === 'import:dry-run' || action === 'import:run') return this.importLocalToS3(payload);

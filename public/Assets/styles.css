@@ -2191,6 +2191,89 @@ body.reading-mode-active .toc-container * {
     gap: 12px;
 }
 
+.settings-trash-section {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 12px;
+    border: 1px solid color-mix(in srgb, var(--border-color) 86%, var(--primary-color) 14%);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--modal-bg) 82%, transparent);
+}
+
+.settings-trash-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-height: 260px;
+    overflow: auto;
+}
+
+.settings-trash-item,
+.settings-trash-empty {
+    min-width: 0;
+    padding: 10px;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--modal-bg) 88%, transparent);
+}
+
+.settings-trash-item {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 10px;
+    align-items: center;
+}
+
+.settings-trash-title {
+    overflow: hidden;
+    color: var(--text-color);
+    font-size: 13px;
+    font-weight: 800;
+    line-height: 1.35;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.settings-trash-meta,
+.settings-trash-preview {
+    overflow: hidden;
+    color: var(--muted-text);
+    font-size: 12px;
+    line-height: 1.4;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.settings-trash-actions,
+.settings-trash-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 6px;
+}
+
+.settings-trash-actions button,
+.settings-trash-footer button {
+    padding: 7px 10px;
+    border: 1px solid var(--border-color);
+    border-radius: 7px;
+    background: var(--button-bg);
+    color: var(--text-color);
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.settings-trash-actions button.danger,
+.settings-trash-footer button.danger {
+    color: var(--danger-color);
+}
+
+.settings-trash-footer button:disabled {
+    cursor: not-allowed;
+    opacity: 0.45;
+}
+
 .settings-cloud-status {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -2506,6 +2589,10 @@ body.reading-mode-active .toc-container * {
     .settings-space-list,
     .settings-cloud-main-actions,
     .settings-cloud-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .settings-trash-item {
         grid-template-columns: 1fr;
     }
 

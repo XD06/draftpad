@@ -534,10 +534,12 @@ function registerThoughtRoutes(app, context) {
         try {
             const { id } = req.params;
             let thoughts = await readThoughts();
+            const thoughtToDelete = thoughts.find(t => t.id === id);
             const initialLen = thoughts.length;
             thoughts = thoughts.filter(t => t.id !== id);
 
             if (thoughts.length !== initialLen) {
+                const trashItem = await storage.moveThoughtToTrash(thoughtToDelete);
                 await saveThoughts(thoughts);
                 await storage.deleteThoughtMeta(id);
                 await storage.deleteRelations(id);
@@ -554,7 +556,7 @@ function registerThoughtRoutes(app, context) {
                         relationsCount: await storage.readRelationCount(affectedId)
                     });
                 }
-                res.json({ success: true });
+                res.json({ success: true, trashItem });
             } else {
                 res.status(404).json({ error: 'Thought not found' });
             }

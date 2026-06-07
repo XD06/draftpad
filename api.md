@@ -143,14 +143,24 @@ Notepad 是文章元数据；正文内容通过 Note API 读写。
 
 ### DELETE /api/notepads/:id
 
-删除文章。`default` 文章不能删除。
+将文章移入垃圾桶。`default` 文章不能删除。
 
 **响应：**
 
 ```json
 {
   "success": true,
-  "message": "Notepad deleted successfully"
+  "message": "Notepad moved to trash",
+  "trashItem": {
+    "trashId": "1778966669000-notepad-abc123",
+    "type": "notepad",
+    "sourceId": "abc123",
+    "title": "新文章",
+    "preview": "# Hello",
+    "deletedAt": 1778966669000,
+    "originalUpdatedAt": 1778966668430,
+    "payloadKey": "trash/notepads/1778966669000-notepad-abc123.json"
+  }
 }
 ```
 
@@ -473,9 +483,26 @@ curl -X POST http://localhost:3000/api/thoughts \
 
 ### DELETE /api/thoughts/:id
 
-删除 Thought。
+将 Thought 移入垃圾桶，并清理活动 relation 引用。
 
-**响应：** `{ "success": true }`  
+**响应：**
+
+```json
+{
+  "success": true,
+  "trashItem": {
+    "trashId": "1778966669000-thought-1778966668430",
+    "type": "thought",
+    "sourceId": "1778966668430",
+    "title": "完成项目报告",
+    "preview": "完成项目报告 收集数据",
+    "deletedAt": 1778966669000,
+    "originalUpdatedAt": 1778966668486,
+    "payloadKey": "trash/thoughts/1778966669000-thought-1778966668430.json"
+  }
+}
+```
+
 **错误：** `404` — Thought 不存在
 
 ```bash
@@ -693,6 +720,83 @@ loosely_related
   "queueSize": 0,
   "processing": 0,
   "concurrency": 3
+}
+```
+
+---
+
+## Trash API
+
+垃圾桶保存已删除的文章和 Thought。它属于用户数据，local 和 S3 backend 都通过 `scripts/storage.js` 写入同一组逻辑路径：
+
+- `trash/index.json`
+- `trash/notepads/<trashId>.json`
+- `trash/thoughts/<trashId>.json`
+
+### GET /api/trash
+
+读取垃圾桶轻量列表。
+
+**响应：**
+
+```json
+{
+  "items": [
+    {
+      "trashId": "1778966669000-notepad-abc123",
+      "type": "notepad",
+      "sourceId": "abc123",
+      "title": "新文章",
+      "preview": "# Hello",
+      "deletedAt": 1778966669000,
+      "originalUpdatedAt": 1778966668430,
+      "payloadKey": "trash/notepads/1778966669000-notepad-abc123.json"
+    }
+  ]
+}
+```
+
+### GET /api/trash/:trashId
+
+读取单个垃圾桶项目和完整 payload。Notepad payload 包含 `{ notepad, content }`；Thought payload 包含 `{ thought, meta, relations, suppressed }`。
+
+### POST /api/trash/:trashId/restore
+
+恢复垃圾桶项目。恢复后会重新写入当前数据空间，并从垃圾桶删除对应 payload 和 index 记录。若恢复 Notepad 时 id 或标题冲突，服务端会生成恢复用 id/标题；恢复 Thought 时会过滤已经不存在的 relation 目标，并补回仍存在目标的反向 relation。
+
+**响应：**
+
+```json
+{
+  "success": true,
+  "restored": {
+    "type": "thought",
+    "item": {
+      "id": "1778966668430",
+      "text": "完成项目报告",
+      "restoredAt": 1778966669500
+    },
+    "affectedRelationIds": ["1778966668430", "1778966668500"]
+  }
+}
+```
+
+### DELETE /api/trash/:trashId
+
+永久删除一个垃圾桶项目。只删除垃圾桶 index 记录和 payload，不影响活动数据。
+
+**响应：** `{ "success": true }`
+
+### DELETE /api/trash
+
+清空垃圾桶。
+
+**响应：**
+
+```json
+{
+  "success": true,
+  "deleted": 3
 }
 ```
 
