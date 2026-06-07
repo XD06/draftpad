@@ -463,7 +463,8 @@
     box-shadow: 0 1px 1px rgba(15, 23, 42, 0.025), 0 12px 30px rgba(15, 23, 42, 0.055);
     transition: transform 0.24s ease, box-shadow 0.24s ease, border-color 0.24s ease, background 0.24s ease;
     touch-action: pan-y;
-    transform: translateX(var(--swipe-x, 0));
+    transform: translate3d(var(--swipe-x, 0), 0, 0);
+    will-change: transform;
 }
 
 .thought-card::before {
@@ -476,15 +477,15 @@
 }
 
 .thought-card:hover {
-    transform: translateX(var(--swipe-x, 0)) translateY(-2px);
+    transform: translate3d(var(--swipe-x, 0), -2px, 0);
     box-shadow: 0 2px 3px rgba(15, 23, 42, 0.03), 0 18px 42px rgba(15, 23, 42, 0.075);
     border-color: rgba(var(--primary-rgb), 0.18);
 }
 
 .thought-card.swiping {
-    transition: transform 0.08s linear, box-shadow 0.18s ease, border-color 0.18s ease, background 0.18s ease;
-    box-shadow: -56px 0 0 rgba(231, 76, 60, 0.075), 0 16px 38px rgba(15, 23, 42, 0.07);
-    border-color: rgba(231, 76, 60, 0.16);
+    transition: transform 0.06s linear, box-shadow 0.18s ease, border-color 0.18s ease, background 0.18s ease;
+    box-shadow: -34px 0 0 rgba(231, 76, 60, 0.052), -82px 0 30px rgba(231, 76, 60, 0.042), 0 16px 38px rgba(15, 23, 42, 0.065);
+    border-color: rgba(231, 76, 60, 0.13);
 }
 
 .thought-card.swiping::after {
@@ -502,7 +503,8 @@
     background-position: center;
     background-size: 17px 17px;
     pointer-events: none;
-    opacity: 0.82;
+    opacity: var(--swipe-icon-opacity, 0);
+    transition: opacity 0.12s ease, background-color 0.16s ease;
 }
 
 .thought-card.swipe-ready::after {
@@ -512,7 +514,7 @@
 }
 
 .thought-card.swipe-deleting {
-    transform: translateX(120%) scale(0.96);
+    transform: translate3d(120%, 0, 0) scale(0.96);
     opacity: 0;
     max-height: 0;
     margin-bottom: 0;

@@ -1105,6 +1105,7 @@ export class ThoughtsManager {
         const resetSwipe = () => {
             card.classList.remove('swiping', 'swipe-ready');
             card.style.removeProperty('--swipe-x');
+            card.style.removeProperty('--swipe-icon-opacity');
             tracking = false;
             isDragging = false;
             deltaX = 0;
@@ -1134,7 +1135,9 @@ export class ThoughtsManager {
             if (!isDragging) return;
             event.preventDefault();
             const swipeX = Math.min(maxSwipe, Math.max(0, deltaX));
+            const iconOpacity = Math.min(0.95, Math.max(0, (swipeX - 42) / 56));
             card.style.setProperty('--swipe-x', `${swipeX}px`);
+            card.style.setProperty('--swipe-icon-opacity', String(iconOpacity));
             card.classList.toggle('swipe-ready', swipeX >= threshold);
         });
 
@@ -1149,6 +1152,7 @@ export class ThoughtsManager {
 
             card.classList.add('swipe-ready');
             card.style.setProperty('--swipe-x', `${threshold}px`);
+            card.style.setProperty('--swipe-icon-opacity', '0.95');
             const confirmed = await this.app.confirmationManager.show('确认删除这条 Thought 吗？');
             if (!confirmed) {
                 resetSwipe();
