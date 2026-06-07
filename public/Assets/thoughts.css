@@ -693,9 +693,11 @@
     gap: 4px;
     padding: 5px;
     border-radius: 999px;
-    background: color-mix(in srgb, var(--header-bg) 92%, #000 8%);
-    border: 1px solid rgba(120, 128, 140, 0.22);
-    box-shadow: 0 12px 30px rgba(15, 23, 42, 0.2);
+    background: color-mix(in srgb, var(--header-bg) 66%, transparent);
+    border: 1px solid rgba(120, 128, 140, 0.16);
+    box-shadow: 0 10px 26px rgba(15, 23, 42, 0.13), inset 0 1px 0 rgba(255, 255, 255, 0.28);
+    backdrop-filter: blur(16px) saturate(1.25);
+    -webkit-backdrop-filter: blur(16px) saturate(1.25);
 }
 
 .thought-selection-toolbar[hidden] {
@@ -707,7 +709,7 @@
     height: 28px;
     border: none;
     border-radius: 999px;
-    background: transparent;
+    background: rgba(255, 255, 255, 0.02);
     color: var(--text-color);
     font-size: 13px;
     font-weight: 850;
