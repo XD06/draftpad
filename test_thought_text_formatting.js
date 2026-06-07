@@ -62,6 +62,10 @@ function run() {
         applyThoughtTextStyle('先做<mark>重点</mark>再复盘', '重点', 'clear') === '先做重点再复盘',
         'applyThoughtTextStyle should clear existing thought style markers'
     );
+    assert(
+        applyThoughtTextStyle('先做<mark>重点</mark>再<span data-draw>复盘</span>', '重点', 'clear') === '先做重点再<span data-draw>复盘</span>',
+        'applyThoughtTextStyle should only clear the selected style marker'
+    );
 
     console.log('Thought text formatting checks passed');
 }

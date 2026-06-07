@@ -483,34 +483,31 @@
 
 .thought-card.swiping {
     transition: transform 0.08s linear, box-shadow 0.18s ease, border-color 0.18s ease, background 0.18s ease;
-    box-shadow: -16px 0 0 rgba(231, 76, 60, 0.12), 0 18px 42px rgba(15, 23, 42, 0.08);
+    box-shadow: -72px 0 0 rgba(231, 76, 60, 0.12), 0 18px 42px rgba(15, 23, 42, 0.08);
     border-color: rgba(231, 76, 60, 0.25);
 }
 
 .thought-card.swiping::after {
-    content: "松开删除";
+    content: "";
     position: absolute;
-    left: -112px;
+    left: -54px;
     top: 50%;
-    width: 86px;
-    height: 36px;
+    width: 38px;
+    height: 38px;
     transform: translateY(-50%);
-    border-radius: 999px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: rgba(231, 76, 60, 0.12);
-    color: #e74c3c;
-    font-size: 12px;
-    font-weight: 800;
+    border-radius: 12px;
+    background-color: rgba(231, 76, 60, 0.16);
+    background-image: url("data:image/svg+xml,%3Csvg width='22' height='22' viewBox='0 0 24 24' fill='none' stroke='%23e74c3c' stroke-width='2.35' stroke-linecap='round' stroke-linejoin='round' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M3 6h18'/%3E%3Cpath d='M8 6V4h8v2'/%3E%3Cpath d='M19 6l-1 16H6L5 6'/%3E%3Cpath d='M10 11v6'/%3E%3Cpath d='M14 11v6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: center;
+    background-size: 21px 21px;
     pointer-events: none;
     opacity: 0.88;
 }
 
 .thought-card.swipe-ready::after {
-    content: "确认删除";
-    background: #e74c3c;
-    color: #fff;
+    background-color: #e74c3c;
+    background-image: url("data:image/svg+xml,%3Csvg width='22' height='22' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2.35' stroke-linecap='round' stroke-linejoin='round' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M3 6h18'/%3E%3Cpath d='M8 6V4h8v2'/%3E%3Cpath d='M19 6l-1 16H6L5 6'/%3E%3Cpath d='M10 11v6'/%3E%3Cpath d='M14 11v6'/%3E%3C/svg%3E");
     opacity: 1;
 }
 
@@ -720,6 +717,12 @@
 .thought-selection-toolbar button:hover {
     background: rgba(var(--primary-rgb), 0.12);
     color: var(--primary-color);
+}
+
+.thought-selection-toolbar[data-mode="format"] [data-thought-style="clear"],
+.thought-selection-toolbar[data-mode="clear"] [data-thought-style="highlight"],
+.thought-selection-toolbar[data-mode="clear"] [data-thought-style="draw"] {
+    display: none;
 }
 
 .thought-inline-highlight {

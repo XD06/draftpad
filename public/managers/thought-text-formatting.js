@@ -55,12 +55,20 @@ function renderThoughtInlineMarkers(escaped = '') {
     return html;
 }
 
-function stripThoughtInlineMarkers(text = '') {
-    let source = String(text || '');
-    source = source.replace(/<span data-note="[^"]*"[^>]*>([\s\S]*?)<\/span>\s*<sub[^>]*>[\s\S]*?<\/sub>/g, '$1');
-    source = source.replace(/<span data-draw[^>]*>([\s\S]*?)<\/span>/g, '$1');
-    source = source.replace(/<mark>([\s\S]*?)<\/mark>/g, '$1');
-    source = source.replace(/==([^=\n]+?)==/g, '$1');
+function escapeRegExpLiteral(value = '') {
+    return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function clearSelectedThoughtInlineMarker(source, selected) {
+    const escapedSelected = escapeRegExpLiteral(selected);
+    const replacements = [
+        new RegExp(`<mark>${escapedSelected}<\\/mark>`),
+        new RegExp(`<span data-draw[^>]*>${escapedSelected}<\\/span>`),
+        new RegExp(`<span data-note="[^"]*"[^>]*>${escapedSelected}<\\/span>\\s*<sub[^>]*>[\\s\\S]*?<\\/sub>`)
+    ];
+    for (const pattern of replacements) {
+        if (pattern.test(source)) return source.replace(pattern, selected);
+    }
     return source;
 }
 
@@ -69,10 +77,11 @@ export function applyThoughtTextStyle(source, selectedText, style) {
     const selected = String(selectedText || '').trim();
     if (!text || !selected) return text;
 
-    const cleared = stripThoughtInlineMarkers(text);
+    const cleared = clearSelectedThoughtInlineMarker(text, selected);
+    if (style === 'clear') return cleared;
+
     const index = cleared.indexOf(selected);
     if (index === -1) return text;
-    if (style === 'clear') return cleared;
 
     const replacement = style === 'draw'
         ? `<span data-draw>${selected}</span>`

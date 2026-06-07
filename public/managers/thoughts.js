@@ -809,6 +809,7 @@ export class ThoughtsManager {
         }
 
         this.bindThoughtSelectionFormatting(card, thought);
+        this.bindThoughtInlineStyleClearing(card, thought);
         this.bindThoughtSwipeDelete(card, thought);
 
         let lastTap = 0;
@@ -966,11 +967,12 @@ export class ThoughtsManager {
             subId: node.closest('.subtask')?.dataset.subid || '',
             card
         };
-        this.showThoughtSelectionToolbar(rect);
+        this.showThoughtSelectionToolbar(rect, { mode: 'format' });
     }
 
-    showThoughtSelectionToolbar(rect) {
+    showThoughtSelectionToolbar(rect, { mode = 'format' } = {}) {
         const toolbar = this.ensureThoughtSelectionToolbar();
+        toolbar.dataset.mode = mode;
         toolbar.hidden = false;
         const toolbarWidth = toolbar.offsetWidth || 150;
         const left = Math.max(12, Math.min(window.innerWidth - toolbarWidth - 12, rect.left + rect.width / 2 - toolbarWidth / 2));
@@ -1069,6 +1071,24 @@ export class ThoughtsManager {
             this.enqueueThoughtOverwrite(thought);
             this.render();
         }
+    }
+
+    bindThoughtInlineStyleClearing(card, thought) {
+        card.querySelectorAll('.thought-inline-highlight, .thought-draw-line, .thought-note-line').forEach((styledNode) => {
+            styledNode.addEventListener('click', (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                const selectedText = String(styledNode.textContent || '').trim();
+                if (!selectedText) return;
+                this.activeThoughtSelection = {
+                    thoughtId: thought.id,
+                    selectedText,
+                    subId: styledNode.closest('.subtask')?.dataset.subid || '',
+                    card
+                };
+                this.showThoughtSelectionToolbar(styledNode.getBoundingClientRect(), { mode: 'clear' });
+            });
+        });
     }
 
     bindThoughtSwipeDelete(card, thought) {

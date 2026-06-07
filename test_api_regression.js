@@ -232,12 +232,16 @@ function assertThoughtsFrontendRegressions() {
     );
     assert(
         thoughtsSource.includes('bindThoughtSelectionFormatting(card, thought)') &&
+        thoughtsSource.includes('bindThoughtInlineStyleClearing(card, thought)') &&
         thoughtsSource.includes('applySelectedThoughtStyle') &&
         thoughtsSource.includes('data-thought-style="highlight"') &&
         thoughtsSource.includes('data-thought-style="draw"') &&
+        thoughtsSource.includes("this.showThoughtSelectionToolbar(styledNode.getBoundingClientRect(), { mode: 'clear' })") &&
+        thoughtsCss.includes('.thought-selection-toolbar[data-mode="format"] [data-thought-style="clear"]') &&
+        thoughtsCss.includes('.thought-selection-toolbar[data-mode="clear"] [data-thought-style="highlight"]') &&
         !thoughtsSource.includes('startLongPress') &&
         !thoughtsSource.includes("textEl.addEventListener('touchstart'"),
-        'Thought text styling should use selected text controls instead of long-press delete on the text body'
+        'Thought text styling should use selected text controls, and clear style should appear only when clicking styled text'
     );
     assert(
         thoughtsSource.includes('bindThoughtSwipeDelete(card, thought)') &&
@@ -246,8 +250,11 @@ function assertThoughtsFrontendRegressions() {
         thoughtsSource.includes('confirmAndDeleteThought(thought.id, { skipConfirm: true })') &&
         thoughtsCss.includes('.thought-card.swiping') &&
         thoughtsCss.includes('.thought-card.swipe-ready') &&
-        thoughtsCss.includes('.thought-card.swipe-deleting'),
-        'Thought cards should support right-swipe delete with a confirmation and deletion animation'
+        thoughtsCss.includes('.thought-card.swipe-deleting') &&
+        thoughtsCss.includes("background-image: url(\"data:image/svg+xml") &&
+        !thoughtsCss.includes('松开删除') &&
+        !thoughtsCss.includes('确认删除'),
+        'Thought cards should support right-swipe delete with an icon-only confirmation and deletion animation'
     );
     assert(
         iosThemeCss.includes('body:not(.thoughts-mode) .floating-actions') &&
