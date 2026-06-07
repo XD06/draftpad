@@ -220,6 +220,15 @@ function assertThoughtsFrontendRegressions() {
             hybridEditorSource.indexOf("target.closest('.vditor-reset')"),
         'reading mode click guard should allow code block copy buttons before blocking editor clicks'
     );
+    assert(
+        iosThemeCss.includes('body:not(.thoughts-mode) .floating-actions') &&
+        iosThemeCss.includes('bottom: calc(env(safe-area-inset-bottom, 0px) + 18px);') &&
+        iosThemeCss.includes('min-height: 48px;') &&
+        iosThemeCss.includes('.typora-source-toggle') &&
+        iosThemeCss.includes('bottom: calc(env(safe-area-inset-bottom, 0px) + 21px) !important;') &&
+        iosThemeCss.includes('height: 42px;'),
+        'mobile source toggle should be vertically center-aligned with the floating action pill'
+    );
     const initializeStart = appSource.indexOf('const initializeApp = async () =>');
     const initializeSource = initializeStart >= 0 ? appSource.slice(initializeStart) : '';
     assert(

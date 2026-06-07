@@ -1112,7 +1112,7 @@ main {
 
     .typora-source-toggle {
         right: 18px !important;
-        bottom: calc(env(safe-area-inset-bottom, 0px) + 22px) !important;
+        bottom: calc(env(safe-area-inset-bottom, 0px) + 21px) !important;
         width: 42px;
         height: 42px;
         border-radius: 999px;
