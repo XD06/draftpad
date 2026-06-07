@@ -943,6 +943,7 @@ export class ThoughtsManager {
         const selectableNodes = card.querySelectorAll('.thought-text, .subtask-text');
         selectableNodes.forEach((node) => {
             const captureSelection = (event) => {
+                if (event.target.closest('.thought-inline-highlight, .thought-draw-line, .thought-note-line')) return;
                 event.stopPropagation();
                 setTimeout(() => this.captureThoughtSelection(card, thought, node), 0);
             };
@@ -1098,7 +1099,8 @@ export class ThoughtsManager {
         let deltaX = 0;
         let isDragging = false;
         let tracking = false;
-        const threshold = 88;
+        let threshold = 0;
+        let maxSwipe = 0;
 
         const resetSwipe = () => {
             card.classList.remove('swiping', 'swipe-ready');
@@ -1115,6 +1117,8 @@ export class ThoughtsManager {
             startX = event.clientX;
             startY = event.clientY;
             deltaX = 0;
+            threshold = card.offsetWidth * 0.5;
+            maxSwipe = Math.max(threshold + 28, card.offsetWidth * 0.58);
             tracking = true;
         });
 
@@ -1129,7 +1133,7 @@ export class ThoughtsManager {
             }
             if (!isDragging) return;
             event.preventDefault();
-            const swipeX = Math.min(132, Math.max(0, deltaX));
+            const swipeX = Math.min(maxSwipe, Math.max(0, deltaX));
             card.style.setProperty('--swipe-x', `${swipeX}px`);
             card.classList.toggle('swipe-ready', swipeX >= threshold);
         });
@@ -1144,7 +1148,7 @@ export class ThoughtsManager {
             }
 
             card.classList.add('swipe-ready');
-            card.style.setProperty('--swipe-x', '104px');
+            card.style.setProperty('--swipe-x', `${threshold}px`);
             const confirmed = await this.app.confirmationManager.show('确认删除这条 Thought 吗？');
             if (!confirmed) {
                 resetSwipe();

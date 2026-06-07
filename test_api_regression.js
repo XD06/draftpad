@@ -236,7 +236,9 @@ function assertThoughtsFrontendRegressions() {
         thoughtsSource.includes('applySelectedThoughtStyle') &&
         thoughtsSource.includes('data-thought-style="highlight"') &&
         thoughtsSource.includes('data-thought-style="draw"') &&
+        thoughtsSource.includes("event.target.closest('.thought-inline-highlight, .thought-draw-line, .thought-note-line')") &&
         thoughtsSource.includes("this.showThoughtSelectionToolbar(styledNode.getBoundingClientRect(), { mode: 'clear' })") &&
+        thoughtsSource.includes("toolbar.dataset.mode === 'clear' && this.activeThoughtSelection") &&
         thoughtsCss.includes('.thought-selection-toolbar[data-mode="format"] [data-thought-style="clear"]') &&
         thoughtsCss.includes('.thought-selection-toolbar[data-mode="clear"] [data-thought-style="highlight"]') &&
         !thoughtsSource.includes('startLongPress') &&
@@ -246,7 +248,9 @@ function assertThoughtsFrontendRegressions() {
     assert(
         thoughtsSource.includes('bindThoughtSwipeDelete(card, thought)') &&
         thoughtsSource.includes('deltaX > 14') &&
+        thoughtsSource.includes('threshold = card.offsetWidth * 0.5') &&
         thoughtsSource.includes('deltaX >= threshold') &&
+        !thoughtsSource.includes('const threshold = 88') &&
         thoughtsSource.includes('confirmAndDeleteThought(thought.id, { skipConfirm: true })') &&
         thoughtsCss.includes('.thought-card.swiping') &&
         thoughtsCss.includes('.thought-card.swipe-ready') &&
