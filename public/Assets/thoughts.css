@@ -484,31 +484,43 @@
 
 .thought-card.swiping {
     transition: transform 0.06s linear, box-shadow 0.18s ease, border-color 0.18s ease, background 0.18s ease;
-    box-shadow: -34px 0 0 rgba(231, 76, 60, 0.052), -82px 0 30px rgba(231, 76, 60, 0.042), 0 16px 38px rgba(15, 23, 42, 0.065);
-    border-color: rgba(231, 76, 60, 0.13);
+    box-shadow: 0 16px 38px rgba(15, 23, 42, 0.065);
+    border-color: rgba(231, 76, 60, 0.12);
+}
+
+.thought-card.swiping::before {
+    inset: 8px auto 8px -58px;
+    width: 46px;
+    border-radius: 14px;
+    background: rgba(231, 76, 60, 0.075);
+    border: 1px solid rgba(231, 76, 60, 0.10);
+    box-shadow: 0 10px 26px rgba(231, 76, 60, 0.09), inset 0 1px 0 rgba(255, 255, 255, 0.22);
+    opacity: var(--swipe-rail-opacity, 0);
+    backdrop-filter: blur(12px) saturate(1.18);
+    -webkit-backdrop-filter: blur(12px) saturate(1.18);
 }
 
 .thought-card.swiping::after {
     content: "";
     position: absolute;
-    left: -42px;
+    left: -48px;
     top: 50%;
-    width: 30px;
-    height: 30px;
+    width: 26px;
+    height: 26px;
     transform: translateY(-50%);
-    border-radius: 10px;
-    background-color: rgba(231, 76, 60, 0.105);
+    border-radius: 9px;
+    background-color: rgba(231, 76, 60, 0.12);
     background-image: url("data:image/svg+xml,%3Csvg width='22' height='22' viewBox='0 0 24 24' fill='none' stroke='%23e74c3c' stroke-width='2.35' stroke-linecap='round' stroke-linejoin='round' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M3 6h18'/%3E%3Cpath d='M8 6V4h8v2'/%3E%3Cpath d='M19 6l-1 16H6L5 6'/%3E%3Cpath d='M10 11v6'/%3E%3Cpath d='M14 11v6'/%3E%3C/svg%3E");
     background-repeat: no-repeat;
     background-position: center;
-    background-size: 17px 17px;
+    background-size: 15px 15px;
     pointer-events: none;
     opacity: var(--swipe-icon-opacity, 0);
     transition: opacity 0.12s ease, background-color 0.16s ease;
 }
 
 .thought-card.swipe-ready::after {
-    background-color: rgba(231, 76, 60, 0.88);
+    background-color: rgba(231, 76, 60, 0.82);
     background-image: url("data:image/svg+xml,%3Csvg width='22' height='22' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2.35' stroke-linecap='round' stroke-linejoin='round' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M3 6h18'/%3E%3Cpath d='M8 6V4h8v2'/%3E%3Cpath d='M19 6l-1 16H6L5 6'/%3E%3Cpath d='M10 11v6'/%3E%3Cpath d='M14 11v6'/%3E%3C/svg%3E");
     opacity: 0.95;
 }
