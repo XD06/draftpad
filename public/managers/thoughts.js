@@ -1001,6 +1001,7 @@ export class ThoughtsManager {
         document.body.appendChild(toolbar);
         document.addEventListener('selectionchange', () => {
             const selection = window.getSelection?.();
+            if (toolbar.dataset.mode === 'clear' && this.activeThoughtSelection) return;
             if (!selection || selection.isCollapsed) this.hideThoughtSelectionToolbar();
         });
         document.addEventListener('click', (event) => {
