@@ -23,6 +23,8 @@ function runMigration(dataDir, sourcePath, extraArgs = []) {
             OPENCODE_API_KEY: '',
             SILICON_API_KEY: '',
             AI_API_KEY: '',
+            AI_INSIGHT_API_KEY: '',
+            AI_INSIGHT_MODEL: '',
             AI_EMBEDDING_API_KEY: ''
         },
         encoding: 'utf8'

@@ -190,6 +190,50 @@ async function run() {
         'AI rebuild should preserve manual reverse relations'
     );
 
+    const emptyBroadcasts = [];
+    const emptyRelationStore = {
+        'empty-source': {
+            id: 'empty-source',
+            edges: [{ targetId: 'empty-target', score: 1, method: 'manual', source: 'manual', relationType: 'manual' }]
+        },
+        'empty-target': {
+            id: 'empty-target',
+            edges: [{ targetId: 'empty-source', score: 1, method: 'manual', source: 'manual', relationType: 'manual' }]
+        }
+    };
+    aiQueue.init({
+        storage: {
+            readThought: async id => ({ id, text: '', tags: [], subItems: [] }),
+            readThoughts: async () => [
+                { id: 'empty-source', text: '', tags: [], subItems: [] },
+                { id: 'empty-target', text: 'target', tags: [], subItems: [] }
+            ],
+            readThoughtMeta: async id => ({ id, insight: { status: 'ready', markdown: '保留 insight' } }),
+            writeThoughtMeta: async () => {},
+            readRelations: async id => emptyRelationStore[id] || { id, edges: [] },
+            writeRelations: async (id, nextRelations) => {
+                emptyRelationStore[id] = nextRelations;
+            },
+            readSuppressedRelations: async id => ({ id, edges: [] })
+        },
+        aiProvider: {
+            extract: async () => {
+                throw new Error('empty thought should not call extract');
+            },
+            getEmbedding: async () => {
+                throw new Error('empty thought should not call embedding');
+            },
+            rerankRelations: async () => []
+        },
+        broadcast: message => emptyBroadcasts.push(message)
+    });
+    const emptyResult = await aiQueue.processThought('empty-source');
+    assert(emptyResult.relations.length === 1, 'empty thought processing should return preserved manual relations');
+    assert(
+        emptyBroadcasts.some(message => message.type === 'ai_status_update' && message.relationsCount === 1),
+        'empty thought processing should broadcast preserved manual relation count'
+    );
+
     const now = Date.now();
     const recoveryThoughts = [
         { id: 'stale-pending', text: 'stale pending should recover', tags: [], subItems: [] },
@@ -229,6 +273,112 @@ async function run() {
         recoveryWrites.some(write => write.id === 'stale-pending' && write.reason === 'recover-pending'),
         'stale pending recovery should mark recovered job reason'
     );
+
+    const insightThoughts = [
+        { id: 'insight-source', text: '需要为当前想法生成 AI 思考扩展', tags: ['AI'], subItems: [{ text: '控制 token' }], createdAt: 1 },
+        { id: 'insight-target', text: '手动触发可以避免无用 token 消耗', tags: ['AI'], subItems: [], createdAt: 2 },
+        { id: 'insight-related', text: 'Markdown 折叠展示需要保留一两行预览', tags: ['UI'], subItems: [], createdAt: 3 }
+    ];
+    const insightMetas = {
+        'insight-source': {
+            id: 'insight-source',
+            status: 'ready',
+            ai: {
+                summary: 'AI 思考扩展',
+                entities: ['DumbPad'],
+                topics: ['AI'],
+                keywords: ['token', 'Markdown'],
+                tags: ['AI']
+            }
+        },
+        'insight-target': {
+            id: 'insight-target',
+            status: 'ready',
+            ai: {
+                summary: '手动触发减少 token',
+                entities: ['DumbPad'],
+                topics: ['AI'],
+                keywords: ['token']
+            }
+        },
+        'insight-related': {
+            id: 'insight-related',
+            status: 'ready',
+            ai: {
+                summary: '折叠 Markdown 预览',
+                topics: ['UI'],
+                keywords: ['Markdown']
+            }
+        }
+    };
+    aiQueue.init({
+        storage: {
+            readThought: async id => insightThoughts.find(thought => thought.id === id) || null,
+            readThoughts: async () => insightThoughts,
+            readThoughtMeta: async id => insightMetas[id],
+            writeThoughtMeta: async (id, meta) => {
+                insightMetas[id] = meta;
+            },
+            readRelations: async id => ({
+                id,
+                edges: [{
+                    targetId: 'insight-target',
+                    score: 1,
+                    source: 'manual',
+                    method: 'manual',
+                    relationType: 'manual',
+                    reasons: ['用户确认']
+                }]
+            }),
+            getSearchDocuments: async () => [{
+                id: 'note-ai',
+                type: 'notepad',
+                title: 'AI token 设计',
+                content: '手动触发 AI insight 可以结合少量已有关联和文章摘要，避免上下文爆炸。',
+                updatedAt: 4
+            }]
+        },
+        aiProvider: {
+            insightModel: 'insight-model',
+            isInsightReady: () => true,
+            generateThoughtInsight: async (context) => {
+                assert(context.current.id === 'insight-source', 'insight context should include current thought');
+                assert(context.relations.length === 1, 'insight context should include confirmed relations');
+                assert(context.relations[0].thought.id === 'insight-target', 'insight context should include relation target summary');
+                assert(context.relatedThoughts.length <= 3, 'insight context should keep fallback related thoughts bounded');
+                assert(context.notepads.length === 1, 'insight context should include bounded notepad snippets');
+                assert(context.contextIds.includes('thought:insight-target'), 'insight context should track thought context ids');
+                assert(context.contextIds.includes('notepad:note-ai'), 'insight context should track notepad context ids');
+                return '**扩展**：先验证最小上下文是否足够。';
+            }
+        },
+        broadcast: () => {}
+    });
+    const insight = await aiQueue.generateThoughtInsight('insight-source');
+    assert(insight.status === 'ready', 'manual insight generation should write ready insight status');
+    assert(insight.model === 'insight-model', 'manual insight should record the dedicated model');
+    assert(insight.markdown.includes('**扩展**'), 'manual insight should store markdown output');
+    assert(insightMetas['insight-source'].status === 'ready', 'manual insight should preserve existing AI meta status');
+    assert(insightMetas['insight-source'].insight.contextIds.length >= 2, 'manual insight should store context ids');
+
+    aiQueue.init({
+        storage: {
+            readThought: async () => insightThoughts[0],
+            readThoughtMeta: async () => null,
+            writeThoughtMeta: async () => {}
+        },
+        aiProvider: {
+            isInsightReady: () => false
+        },
+        broadcast: () => {}
+    });
+    let insightConfigError = null;
+    try {
+        await aiQueue.generateThoughtInsight('insight-source');
+    } catch (error) {
+        insightConfigError = error;
+    }
+    assert(insightConfigError?.code === 'AI_INSIGHT_NOT_CONFIGURED', 'manual insight should require a configured dedicated model');
 
     console.log('AI queue relations checks passed');
 }

@@ -644,6 +644,40 @@ loosely_related
 
 ---
 
+### POST /api/thoughts/:id/ai-insight
+
+手动为当前 Thought 生成“思考扩展”。该接口不会进入后台关系队列，也不会改写 Thought 正文、标签或子任务；结果写入 Thought meta 的 `insight` 字段。
+
+该功能必须配置独立模型 `AI_INSIGHT_MODEL`，并且不能与 `AI_CHAT_MODEL` 相同。未配置时返回 `503`，不会回退到原 Chat/抽取模型。
+
+**响应：**
+
+```json
+{
+  "success": true,
+  "insight": {
+    "status": "ready",
+    "markdown": "**下一步**：先验证最小上下文是否足够支持判断。",
+    "generatedAt": 1778966669000,
+    "updatedAt": 1778966669000,
+    "model": "dedicated-insight-model",
+    "contextIds": [
+      "thought:1778966668000",
+      "notepad:research"
+    ],
+    "error": null
+  }
+}
+```
+
+**错误：**
+
+- `404` — Thought 不存在。
+- `503` — 未配置独立 insight 模型，或 insight 模型复用了原 Chat 模型。
+- `500` — provider 请求失败或返回内容异常；失败信息会写入 `meta.insight.error`。
+
+---
+
 ### POST /api/thoughts/ai-backfill
 
 将缺失或非 ready 的 Thought 加入 AI 处理队列。
@@ -700,10 +734,26 @@ loosely_related
 {
   "id": "1778966668430",
   "status": "ready",
-  "meta": { "...": "..." },
-  "pending": null,
-  "relationsCount": 3,
-  "suggestionsCount": 1
+  "relationCount": 3,
+  "suggestionCount": 1,
+  "aiTags": ["产品"],
+  "stages": { "...": "..." },
+  "models": {
+    "extract": "deepseek-v4-flash",
+    "embedding": "Qwen/Qwen3-Embedding-0.6B",
+    "rerank": null,
+    "insight": "dedicated-insight-model"
+  },
+  "insight": {
+    "status": "ready",
+    "markdown": "**下一步**：先验证最小上下文是否足够支持判断。",
+    "generatedAt": 1778966669000,
+    "updatedAt": 1778966669000,
+    "model": "dedicated-insight-model",
+    "contextIds": ["thought:1778966668000"],
+    "error": null
+  },
+  "diagnostics": { "...": "..." }
 }
 ```
 

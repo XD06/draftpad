@@ -75,6 +75,8 @@ function runServerSmokeCheck() {
                 STORAGE_LAYOUT: 'legacy',
                 DUMBPAD_PIN: '',
                 AI_API_KEY: '',
+                AI_INSIGHT_API_KEY: '',
+                AI_INSIGHT_MODEL: '',
                 AI_EMBEDDING_API_KEY: '',
                 AI_RERANK_API_KEY: '',
                 OPENCODE_API_KEY: '',

@@ -130,6 +130,9 @@ AI 关联使用 OpenAI-compatible 接口；不配置 Key 时自动使用 noop pr
 AI_BASE_URL=https://example.com/v1
 AI_API_KEY=your-api-key
 AI_CHAT_MODEL=deepseek-v4-flash
+AI_INSIGHT_BASE_URL=https://example.com/v1
+AI_INSIGHT_API_KEY=your-insight-api-key
+AI_INSIGHT_MODEL=your-dedicated-insight-model
 AI_EMBEDDING_BASE_URL=https://example.com/v1
 AI_EMBEDDING_API_KEY=your-embedding-key
 AI_EMBEDDING_MODEL=Qwen/Qwen3-Embedding-0.6B
@@ -143,7 +146,8 @@ AI_BACKFILL_TIMEOUT_MS=900000
 ```
 
 AI 运行规则：
-- 创建或更新 Thought 后，AI 在后端队列异步运行，不阻塞快速记录。
+- 创建 Thought 后，关系分析 AI 在后端队列异步运行，不阻塞快速记录；修改 Thought 后由用户在 AI 面板中手动重新运行。
+- Thought 思考扩展只由用户在 AI 面板中手动触发，必须配置 `AI_INSIGHT_MODEL`，且不能复用 `AI_CHAT_MODEL`。
 - `AI_QUEUE_CONCURRENCY` 控制后台并发，个人机器建议保持 `2-4`。
 - 关系重建优先使用已有 ready meta；需要强制重新分析时使用 backfill 脚本的 `--force`。
 

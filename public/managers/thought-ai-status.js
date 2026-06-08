@@ -1,5 +1,6 @@
 export const AI_PENDING_MIN_VISIBLE_MS = 1200;
 const AI_RUN_COMMAND_ICON_SRC = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAACXBIWXMAAAsTAAALEwEAmpwYAAAAeElEQVR4nGNgGGxAlIGB4T8J+BUDiRrQ8X5KDZiC7oWpUIlmAl5tg6rLQpfYD5UIIGDATqg6e1xekIUqRBeHgVdQvigDrpDFY4ACFnVg4ACV2MaAHwQjxwAyyCYxAKfgcmYAkQEIj4H/ZGJwDCADWMgSi8ExMPAAAJoqcdFU9JHGAAAAAElFTkSuQmCC';
+const AI_INSIGHT_ICON_SVG = '<svg class="thought-ai-insight-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.15" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3a4 4 0 0 0-4 4v.3A4.5 4.5 0 0 0 6 16h1"></path><path d="M12 3a4 4 0 0 1 4 4v.3A4.5 4.5 0 0 1 18 16h-1"></path><path d="M9 12h6"></path><path d="M10 16h4"></path><path d="M12 16v5"></path><path d="M8 21h8"></path></svg>';
 
 export function normalizeAIStatus(status = '') {
     return ['pending', 'ready', 'empty', 'error', 'missing'].includes(status) ? status : 'missing';
@@ -37,6 +38,10 @@ export function applyAIStatusDetail(thought, detail = {}, { normalizeTag = value
 
 export function normalizeAIStageStatus(status = '') {
     return ['pending', 'ready', 'skipped', 'error', 'missing'].includes(status) ? status : 'missing';
+}
+
+export function normalizeAIInsightStatus(status = '') {
+    return ['missing', 'pending', 'ready', 'error'].includes(status) ? status : 'missing';
 }
 
 export function aiStatusLabel(status, relationCount = 0) {
@@ -104,7 +109,51 @@ export function renderAIStageRow({ label, stage = {}, escapeHtml }) {
         `;
 }
 
-export function renderAIStatusDetail({ detail = {}, escapeHtml }) {
+function plainMarkdownFallback(markdown = '', escapeHtml) {
+    return escapeHtml(markdown).replace(/\n/g, '<br>');
+}
+
+export function renderAIInsightSection({ insight = {}, escapeHtml, renderedMarkdownHtml = '' }) {
+    const status = normalizeAIInsightStatus(insight?.status);
+    const isPending = status === 'pending';
+    const actionLabel = status === 'ready' ? '重新生成思考扩展' : '生成思考扩展';
+    const model = insight?.model ? `<span class="thought-ai-insight-model">${escapeHtml(insight.model)}</span>` : '';
+    const body = (() => {
+        if (status === 'pending') {
+            return '<div class="thought-ai-insight-state">正在思考...</div>';
+        }
+        if (status === 'error') {
+            const message = insight?.error?.message || '生成失败';
+            return `<div class="thought-ai-insight-state error">思考失败：${escapeHtml(message)}</div>`;
+        }
+        if (status === 'ready' && insight?.markdown) {
+            const html = renderedMarkdownHtml || plainMarkdownFallback(insight.markdown, escapeHtml);
+            return `
+                <div class="thought-ai-insight-content" data-insight-toggle role="button" tabindex="0" aria-expanded="false">
+                    <div class="thought-ai-insight-markdown" data-ai-insight-markdown>${html}</div>
+                </div>
+            `;
+        }
+        return '<div class="thought-ai-insight-state">尚未生成</div>';
+    })();
+
+    return `
+            <div class="thought-ai-insight ${escapeHtml(status)}" data-ai-insight-status="${escapeHtml(status)}">
+                <div class="thought-ai-insight-head">
+                    <span>思考扩展</span>
+                    <div class="thought-ai-insight-actions">
+                        ${model}
+                        <button type="button" class="thought-ai-insight-run" title="${escapeHtml(actionLabel)}" aria-label="${escapeHtml(actionLabel)}" ${isPending ? 'disabled' : ''}>
+                            ${AI_INSIGHT_ICON_SVG}
+                        </button>
+                    </div>
+                </div>
+                <div class="thought-ai-insight-body">${body}</div>
+            </div>
+        `;
+}
+
+export function renderAIStatusDetail({ detail = {}, escapeHtml, renderedInsightHtml = '' }) {
     const stageRows = [
         ['queued', '排队'],
         ['analysis', '分析'],
@@ -129,6 +178,7 @@ export function renderAIStatusDetail({ detail = {}, escapeHtml }) {
             </div>
             <div class="thought-ai-detail-counts">${escapeHtml(counts)}</div>
             <div class="thought-ai-stage-list">${stageRows}</div>
+            ${renderAIInsightSection({ insight: detail.insight, escapeHtml, renderedMarkdownHtml: renderedInsightHtml })}
             ${error}
         `;
 }

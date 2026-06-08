@@ -900,7 +900,7 @@ main {
         min-width: 38px;
         min-height: 38px;
         padding: 7px;
-        color: color-mix(in srgb, var(--primary-color) 82%, var(--text-color));
+        color: var(--primary-color);
         opacity: 0.92;
     }
 

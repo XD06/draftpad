@@ -6,10 +6,11 @@
 
 AI pipeline 当前由两个主要模块承担：
 
-- `scripts/ai-provider.js`：封装 chat、embedding、rerank provider。无配置时返回 noop provider。
-- `scripts/ai-queue.js`：调度后台任务，生成 meta、embedding、relation candidates、confirmed relations、suggestions 和 diagnostics。
+- `scripts/ai-provider.js`：封装 chat、embedding、rerank provider，以及手动 Thought insight provider。无配置时返回 noop provider。
+- `scripts/ai-queue.js`：调度后台任务，生成 meta、embedding、relation candidates、confirmed relations、suggestions 和 diagnostics；同时提供手动 insight 生成函数，但 insight 不进入自动后台队列。
 
 AI pipeline 必须异步运行，不进入 Thought 创建、编辑、删除的关键路径。
+Thought insight 必须由用户在前端手动触发，使用独立 `AI_INSIGHT_MODEL`，不得回退或复用 `AI_CHAT_MODEL`。
 
 ## 输入
 
@@ -20,12 +21,14 @@ AI pipeline 可以读取：
 - 已有 Thought meta。
 - 已有 relations。
 - suppressed relations。
+- 手动 insight 额外可以读取少量 Notepad 搜索文档摘要，用于补充上下文。
 
 ## 输出
 
 AI pipeline 可以写入：
 
 - Thought meta：摘要、实体、主题、意图、关键词、AI tags、embedding 状态。
+- Thought meta insight：`status`、`markdown`、`model`、`contextIds`、`generatedAt`、`error`。
 - relation candidates。
 - confirmed relations。
 - suggestions。
@@ -49,10 +52,13 @@ AI pipeline 不能改写：
 - suppressed relation 不能被 rebuild 立即重新推荐。
 - AI 失败时，Thought 保存仍应成功。
 - provider 不可用时，noop provider 应保持接口可用。
+- insight 失败只能更新 `meta.insight.error` 和前端提示，不能影响 Thought 本体或关系。
 
 ## 调度约束
 
-- 创建或修改 Thought 后只入队，不等待 AI 完成。
+- 创建 Thought 后只入队，不等待 AI 完成。
+- 修改 Thought 后不自动重新运行 AI；用户可在 Thought AI 面板手动触发关系重跑。
+- Thought insight 不自动入队，只能通过 `POST /api/thoughts/:id/ai-insight` 手动运行。
 - 队列错误应写入 meta/diagnostics 或日志，不应抛回前端保存请求。
 - WebSocket 可通知前端刷新 AI 状态，但不能要求前端阻塞等待。
 

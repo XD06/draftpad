@@ -1035,6 +1035,150 @@
     display: block;
 }
 
+.thought-ai-insight {
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid rgba(120, 128, 140, 0.12);
+}
+
+.thought-ai-insight-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    color: var(--text-color);
+    font-size: 12px;
+    font-weight: 800;
+}
+
+.thought-ai-insight-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+}
+
+.thought-ai-insight-model {
+    max-width: 120px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--muted-text);
+    font-size: 10.5px;
+    font-weight: 650;
+}
+
+.thought-ai-insight-run {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 24px;
+    padding: 0;
+    border: 1px solid rgba(120, 128, 140, 0.16);
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.24);
+    color: var(--primary-color);
+    cursor: pointer;
+    backdrop-filter: blur(12px) saturate(1.15);
+    -webkit-backdrop-filter: blur(12px) saturate(1.15);
+    transition: background 0.18s ease, border-color 0.18s ease, transform 0.18s ease, opacity 0.18s ease;
+}
+
+.thought-ai-insight-run:hover {
+    background: rgba(var(--primary-rgb), 0.10);
+    border-color: rgba(var(--primary-rgb), 0.24);
+    transform: translateY(-1px);
+}
+
+.thought-ai-insight-run:disabled {
+    cursor: wait;
+    opacity: 0.56;
+    transform: none;
+}
+
+.thought-ai-insight-icon {
+    width: 15px;
+    height: 15px;
+}
+
+.thought-ai-insight-body {
+    margin-top: 7px;
+}
+
+.thought-ai-insight-state {
+    min-height: 24px;
+    padding: 6px 8px;
+    border-radius: 7px;
+    background: rgba(120, 128, 140, 0.06);
+    color: var(--muted-text);
+    line-height: 1.45;
+}
+
+.thought-ai-insight-state.error {
+    background: color-mix(in srgb, var(--danger-color) 8%, transparent);
+    color: var(--danger-color);
+}
+
+.thought-ai-insight-content {
+    cursor: pointer;
+    border-radius: 7px;
+    outline: none;
+}
+
+.thought-ai-insight-content:focus-visible {
+    box-shadow: 0 0 0 3px rgba(var(--primary-rgb), 0.12);
+}
+
+.thought-ai-insight-markdown {
+    position: relative;
+    max-height: 3.2em;
+    overflow: hidden;
+    color: var(--text-color);
+    line-height: 1.6;
+    overflow-wrap: anywhere;
+    transition: max-height 0.24s ease;
+}
+
+.thought-ai-insight:not(.expanded) .thought-ai-insight-markdown::after {
+    content: "";
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    height: 1.6em;
+    pointer-events: none;
+    background: linear-gradient(to bottom, transparent, color-mix(in srgb, var(--header-bg) 92%, transparent));
+}
+
+.thought-ai-insight.expanded .thought-ai-insight-markdown {
+    max-height: 420px;
+    overflow-y: auto;
+}
+
+.thought-ai-insight-markdown p {
+    margin: 0 0 6px;
+}
+
+.thought-ai-insight-markdown p:last-child {
+    margin-bottom: 0;
+}
+
+.thought-ai-insight-markdown ul,
+.thought-ai-insight-markdown ol {
+    margin: 4px 0 6px 1.2em;
+    padding: 0;
+}
+
+.thought-ai-insight-markdown li {
+    margin: 2px 0;
+}
+
+.thought-ai-insight-markdown strong {
+    font-weight: 850;
+    color: color-mix(in srgb, var(--primary-color) 78%, var(--text-color));
+}
+
 @keyframes thoughtAiSpin {
     to {
         transform: rotate(360deg);
@@ -2098,6 +2242,7 @@
     transition: transform 0.2s ease, box-shadow 0.2s ease;
     box-shadow: 0 4px 14px rgba(var(--primary-rgb), 0.22);
     position: relative;
+    top: 10px;
     overflow: hidden;
 }
 

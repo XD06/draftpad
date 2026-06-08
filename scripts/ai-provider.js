@@ -14,6 +14,14 @@ class AIProvider {
     async scoreRelationCandidates(_source, candidates = []) {
         return candidates;
     }
+
+    isInsightReady() {
+        return false;
+    }
+
+    async generateThoughtInsight() {
+        throw new Error('AIProvider.generateThoughtInsight is not implemented');
+    }
 }
 
 class NoopAIProvider extends AIProvider {
@@ -26,17 +34,19 @@ class NoopAIProvider extends AIProvider {
     }
 
     async rerankRelations(_source, candidates = []) {
-        return normalizeRerankItems(candidates.map(candidate => ({
-            targetId: candidate.targetId || candidate.meta?.id,
-            score: candidate.score,
-            confidence: candidate.score,
-            relationType: 'related_context',
-            reasons: candidate.method && candidate.method !== 'none' ? [candidate.method] : []
-        })));
+        return fallbackRerankRelations(candidates);
     }
 
     async scoreRelationCandidates(_source, candidates = []) {
         return candidates;
+    }
+
+    isInsightReady() {
+        return false;
+    }
+
+    async generateThoughtInsight() {
+        throw new Error('AI insight model is not configured');
     }
 }
 
@@ -180,6 +190,16 @@ function normalizeRerankItems(items) {
         .filter(Boolean);
 }
 
+function fallbackRerankRelations(candidates = []) {
+    return normalizeRerankItems(candidates.map(candidate => ({
+        targetId: candidate.targetId || candidate.meta?.id,
+        score: candidate.score,
+        confidence: candidate.score,
+        relationType: 'related_context',
+        reasons: candidate.method && candidate.method !== 'none' ? [candidate.method] : []
+    })));
+}
+
 function createRerankPrompt(source, candidates = []) {
     const payload = {
         source,
@@ -213,6 +233,39 @@ function createRerankPrompt(source, candidates = []) {
         JSON.stringify(payload),
         '',
         '返回格式：{"relations":[{"targetId":"","score":0.8,"confidence":0.8,"relationType":"supports","reasons":[]}]}'
+    ].join('\n');
+}
+
+function normalizeInsightMarkdown(content, limit = 500) {
+    const normalized = String(content || '')
+        .trim()
+        .replace(/^```(?:markdown|md)?/i, '')
+        .replace(/```$/i, '')
+        .trim()
+        .replace(/\n{3,}/g, '\n\n');
+    return Array.from(normalized).slice(0, limit).join('').trim();
+}
+
+function createInsightPrompt(context = {}) {
+    const payload = {
+        current: context.current || {},
+        relations: Array.isArray(context.relations) ? context.relations : [],
+        relatedThoughts: Array.isArray(context.relatedThoughts) ? context.relatedThoughts : [],
+        notepads: Array.isArray(context.notepads) ? context.notepads : []
+    };
+
+    return [
+        '你是一个个人知识管理中的深度思考助手。请基于给定上下文，对当前 Thought 做扩展思考。',
+        '',
+        '输出要求：',
+        '- 使用中文 Markdown。',
+        '- 总字数不超过 500 个中文字符。',
+        '- 直接给出有见解的延展、风险、下一步或可连接的问题，不要复述原文。',
+        '- 只能基于上下文推断；证据不足时明确写出“需要补充”。',
+        '- 不要输出 JSON，不要解释你的工作过程。',
+        '',
+        '上下文：',
+        JSON.stringify(payload)
     ].join('\n');
 }
 
@@ -259,7 +312,9 @@ class OpenAICompatibleProvider extends AIProvider {
             process.env.SILICON_BASE_URL ||
             'https://api.siliconflow.cn/v1'
         );
-        this.embeddingApiKey = options.embeddingApiKey || process.env.AI_EMBEDDING_API_KEY || process.env.SILICON_API_KEY || this.chatApiKey;
+        this.embeddingApiKey = Object.prototype.hasOwnProperty.call(options, 'embeddingApiKey')
+            ? options.embeddingApiKey
+            : (process.env.AI_EMBEDDING_API_KEY || process.env.SILICON_API_KEY || '');
         this.embeddingModel = options.embeddingModel || process.env.AI_EMBEDDING_MODEL || process.env.SILICON_EMBEDDING_MODEL || 'Qwen/Qwen3-Embedding-0.6B';
         this.rerankBaseUrl = trimTrailingSlash(
             options.rerankBaseUrl ||
@@ -270,16 +325,57 @@ class OpenAICompatibleProvider extends AIProvider {
         );
         this.rerankApiKey = options.rerankApiKey || process.env.AI_RERANK_API_KEY || process.env.SILICON_API_KEY || '';
         this.rerankModel = options.rerankModel || process.env.AI_RERANK_MODEL || process.env.SILICON_RERANK_MODEL || 'BAAI/bge-reranker-v2-m3';
+        this.insightBaseUrl = trimTrailingSlash(
+            options.insightBaseUrl ||
+            process.env.AI_INSIGHT_BASE_URL ||
+            process.env.AI_BASE_URL ||
+            process.env.OPENCODE_BASE_URL ||
+            'https://opencode.ai/zen/go/v1'
+        );
+        this.insightApiKey = options.insightApiKey || process.env.AI_INSIGHT_API_KEY || process.env.AI_API_KEY || process.env.OPENCODE_API_KEY;
+        this.insightModel = Object.prototype.hasOwnProperty.call(options, 'insightModel')
+            ? options.insightModel
+            : (process.env.AI_INSIGHT_MODEL || '');
         this.timeoutMs = Number(options.timeoutMs || process.env.AI_TIMEOUT_MS || 60000);
         this.fetchImpl = options.fetchImpl || globalThis.fetch;
     }
 
     assertReady(kind) {
-        const baseUrl = kind === 'embedding' ? this.embeddingBaseUrl : this.chatBaseUrl;
-        const apiKey = kind === 'embedding' ? this.embeddingApiKey : this.chatApiKey;
+        const baseUrl = kind === 'embedding'
+            ? this.embeddingBaseUrl
+            : kind === 'insight'
+                ? this.insightBaseUrl
+                : this.chatBaseUrl;
+        const apiKey = kind === 'embedding'
+            ? this.embeddingApiKey
+            : kind === 'insight'
+                ? this.insightApiKey
+                : this.chatApiKey;
         if (!baseUrl) throw new Error(`${kind} base URL is not configured`);
         if (!apiKey) throw new Error(`${kind} API key is not configured`);
+        if (kind === 'insight' && !this.insightModel) throw new Error('AI insight model is not configured');
+        if (kind === 'insight' && this.insightModel === this.chatModel) {
+            throw new Error('AI insight model must be configured separately from AI chat model');
+        }
         if (typeof this.fetchImpl !== 'function') throw new Error('fetch is not available');
+    }
+
+    isInsightReady() {
+        return Boolean(
+            this.insightBaseUrl &&
+            this.insightApiKey &&
+            this.insightModel &&
+            this.insightModel !== this.chatModel &&
+            typeof this.fetchImpl === 'function'
+        );
+    }
+
+    isChatReady() {
+        return Boolean(this.chatBaseUrl && this.chatApiKey && typeof this.fetchImpl === 'function');
+    }
+
+    isEmbeddingReady() {
+        return Boolean(this.embeddingBaseUrl && this.embeddingApiKey && typeof this.fetchImpl === 'function');
     }
 
     async requestJSON(url, apiKey, body) {
@@ -312,6 +408,7 @@ class OpenAICompatibleProvider extends AIProvider {
     }
 
     async extract(text, options = {}) {
+        if (!this.isChatReady()) return createEmptyExtraction();
         this.assertReady('chat');
         const payload = await this.requestJSON(endpoint(this.chatBaseUrl, '/chat/completions'), this.chatApiKey, {
             model: this.chatModel,
@@ -328,6 +425,7 @@ class OpenAICompatibleProvider extends AIProvider {
     }
 
     async getEmbedding(text) {
+        if (!this.isEmbeddingReady()) return [];
         this.assertReady('embedding');
         const payload = await this.requestJSON(endpoint(this.embeddingBaseUrl, '/embeddings'), this.embeddingApiKey, {
             model: this.embeddingModel,
@@ -384,6 +482,7 @@ class OpenAICompatibleProvider extends AIProvider {
     }
 
     async rerankRelations(source, candidates = []) {
+        if (!this.isChatReady()) return fallbackRerankRelations(candidates);
         this.assertReady('chat');
         if (!Array.isArray(candidates) || candidates.length === 0) return [];
 
@@ -405,11 +504,28 @@ class OpenAICompatibleProvider extends AIProvider {
         const parsed = JSON.parse(raw);
         return normalizeRerankItems(parsed.relations);
     }
+
+    async generateThoughtInsight(context = {}) {
+        this.assertReady('insight');
+        const payload = await this.requestJSON(endpoint(this.insightBaseUrl, '/chat/completions'), this.insightApiKey, {
+            model: this.insightModel,
+            messages: [
+                { role: 'system', content: 'Return concise Chinese Markdown only.' },
+                { role: 'user', content: createInsightPrompt(context) }
+            ],
+            temperature: 0.35
+        });
+
+        const content = payload?.choices?.[0]?.message?.content;
+        if (!content) throw new Error('AI insight response did not include message content');
+        return normalizeInsightMarkdown(content, 500);
+    }
 }
 
 function createDefaultProvider() {
     const hasAnyConfiguredKey = Boolean(
         process.env.AI_API_KEY ||
+        process.env.AI_INSIGHT_API_KEY ||
         process.env.AI_EMBEDDING_API_KEY ||
         process.env.OPENCODE_API_KEY ||
         process.env.SILICON_API_KEY
@@ -426,7 +542,10 @@ module.exports = {
     OpenAICompatibleProvider,
     createDefaultProvider,
     createEmptyExtraction,
+    createInsightPrompt,
     endpoint,
     createPrompt,
+    normalizeInsightMarkdown,
+    fallbackRerankRelations,
     normalizeRerankItems
 };

@@ -108,6 +108,10 @@ export default class ThoughtApiClient {
         return this.request(this.thoughtUrl(id, '/ai-process'), { method: 'POST' });
     }
 
+    generateInsight(id) {
+        return this.request(this.thoughtUrl(id, '/ai-insight'), { method: 'POST' });
+    }
+
     getRelations(id) {
         return this.request(this.thoughtUrl(id, '/relations'));
     }

@@ -17,11 +17,13 @@ module.exports = {
     getAIStatusPendingDelay,
     normalizeAIStatus,
     normalizeAIStageStatus,
+    normalizeAIInsightStatus,
     aiStatusLabel,
     aiStageLabel,
     aiStatusIcon,
     renderAIStatusButton,
     renderAIStageRow,
+    renderAIInsightSection,
     renderAIStatusDetail,
     renderAIStatusLoading,
     renderAIStatusError
@@ -50,6 +52,8 @@ function run() {
     assert(ai.normalizeAIStatus('unknown') === 'missing', 'unknown AI status should normalize to missing');
     assert(ai.normalizeAIStageStatus('skipped') === 'skipped', 'known AI stage status should pass through');
     assert(ai.normalizeAIStageStatus('unknown') === 'missing', 'unknown AI stage status should normalize to missing');
+    assert(ai.normalizeAIInsightStatus('ready') === 'ready', 'known AI insight status should pass through');
+    assert(ai.normalizeAIInsightStatus('unknown') === 'missing', 'unknown AI insight status should normalize to missing');
     assert(ai.AI_PENDING_MIN_VISIBLE_MS === 1200, 'pending minimum visible delay should preserve existing duration');
 
     const pendingThought = { aiStatus: 'pending', aiPendingSince: 1000 };
@@ -132,6 +136,35 @@ function run() {
     assert(detail.includes('thought-ai-detail-retry'), 'detail should include manual AI rerun action');
     assert(detail.includes('alt="run-command"'), 'manual AI rerun action should use the run-command icon');
     assert(detail.includes('1536维'), 'detail should include embedding dimensions');
+    assert(detail.includes('thought-ai-insight'), 'detail should include the manual insight section');
+    assert(detail.includes('thought-ai-insight-run'), 'detail should include the manual insight run action');
+
+    const insightSection = ai.renderAIInsightSection({
+        insight: {
+            status: 'ready',
+            markdown: '**扩展**：继续拆小验证。',
+            model: 'insight-model'
+        },
+        renderedMarkdownHtml: '<p><strong>扩展</strong>：继续拆小验证。</p>',
+        escapeHtml
+    });
+    assert(insightSection.includes('思考扩展'), 'insight section should include its heading');
+    assert(insightSection.includes('thought-ai-insight ready'), 'insight section should expose ready state class');
+    assert(insightSection.includes('data-insight-toggle'), 'ready insight should be clickable for expand/collapse');
+    assert(insightSection.includes('insight-model'), 'insight section should show the dedicated model label');
+
+    const pendingInsight = ai.renderAIInsightSection({
+        insight: { status: 'pending', model: 'insight-model' },
+        escapeHtml
+    });
+    assert(pendingInsight.includes('disabled'), 'pending insight run action should be disabled');
+    assert(pendingInsight.includes('正在思考'), 'pending insight should render a waiting state');
+
+    const errorInsight = ai.renderAIInsightSection({
+        insight: { status: 'error', error: { message: '<failed>' } },
+        escapeHtml
+    });
+    assert(errorInsight.includes('&lt;failed&gt;'), 'insight error messages should be escaped');
 
     const errorDetail = ai.renderAIStatusDetail({
         detail: {

@@ -8,7 +8,7 @@
 - 前端：Vanilla JS ES modules、CSS、Vditor、Marked。
 - 存储：本地 JSON/txt 文件或 S3 兼容对象存储。
 - 搜索：服务端 Fuse.js，数据由 `storage.getSearchDocuments()` 汇总。
-- AI：OpenAI-compatible chat、embedding、可选 rerank；无 key 时使用 noop provider。
+- AI：OpenAI-compatible chat、embedding、可选 rerank、手动 Thought insight；无 key 时使用 noop provider。
 - PWA：运行时生成 manifest 和 asset manifest，service worker 负责缓存静态资源。
 
 ## 2. 后端边界
@@ -18,8 +18,8 @@
 关键模块：
 
 - `scripts/storage.js`：唯一的用户数据读写边界。调用方通过同一套方法读写 Notepad、Thought、Trash、AI meta、relations、indexes，不直接关心 local/S3 或 legacy/split layout。
-- `scripts/ai-provider.js`：封装 AI provider。没有可用配置时降级为 noop provider。
-- `scripts/ai-queue.js`：负责后台 AI 队列、pending meta、extract、embedding、relations、rebuild 和状态广播。
+- `scripts/ai-provider.js`：封装 AI provider。关系分析使用 chat/embedding/rerank；手动 Thought insight 使用独立 `AI_INSIGHT_MODEL`，没有可用配置时降级为 noop provider。
+- `scripts/ai-queue.js`：负责后台 AI 队列、pending meta、extract、embedding、relations、rebuild 和状态广播；同时提供手动 insight 生成函数，但 insight 不进入自动队列。
 - `scripts/s3-service.js`、`scripts/s3-prefix-tools.js`：负责 S3 对象操作、prefix inventory、backup、delete 和 data space 列表。
 - `routes/data-management-routes.js`：负责 `/api/data-management/*` 路由，包含状态读取、数据空间列表/切换、inventory、backup、delete、本地导入 S3、双向覆盖。
 - `routes/trash-routes.js`：负责 `/api/trash/*` 路由，恢复和永久删除都只调用 storage 边界，不在 route 层拼接本地路径或 S3 key。
@@ -36,7 +36,7 @@ Thought 前端 helper 拆分模块有聚合测试入口：`npm run test:thought-
 - `public/managers/thoughts.js`：Thought UI 协调层。负责 DOM 插入、每卡事件绑定、乐观更新、toast、筛选、AI/relations 面板入口；全局事件初始化按 Quick Add、视图切换、搜索筛选、outbox、socket 分段，`render()` 负责列表生成，单卡交互集中在 `bindThoughtCardEvents()`，relation panel 事件分发集中在 `handleRelationsPanelClick()`，inline 子任务编辑的输入替换和提交协调分开维护。
 - `public/managers/thought-api-client.js`：Thought HTTP client。负责 URL 拼接、`encodeURIComponent`、JSON 请求和带 `status` 的错误。
 - `public/managers/thought-outbox.js`：Thought 本地 outbox。负责 localStorage key、队列合并、create/patch/delete/relation 队列项构造、服务端列表合并和 retry。
-- `public/managers/thought-ai-status.js`：Thought AI 状态边界。负责 AI 状态/阶段归一化、pending 最短显示时间计算、socket detail 应用到 Thought 对象、标签文案、按钮图标、状态详情 HTML、loading/error 片段；`ThoughtsManager` 只保留 timer 调度、点击、拉取状态和重试协调。
+- `public/managers/thought-ai-status.js`：Thought AI 状态边界。负责 AI 状态/阶段归一化、pending 最短显示时间计算、socket detail 应用到 Thought 对象、标签文案、按钮图标、状态详情 HTML、手动 insight 区块、loading/error 片段；`ThoughtsManager` 保留 timer 调度、点击、拉取状态、Markdown hydrate、重试和 insight 触发协调。
 - `public/managers/thought-card-renderer.js`：Thought 卡片纯 HTML 渲染边界。负责正文、legacy checkbox 子任务、标签、AI 状态入口、关系计数和折叠子任务摘要；`ThoughtsManager` 只保留 DOM 插入、复制文本和交互事件绑定。
 - `public/managers/thought-relations-panel.js`：关系面板纯渲染 helper。负责关系列表、推荐列表、手动关联输入控件、候选摘要截断/高亮和空状态 HTML；保留事件、防抖、API 协调在 `ThoughtsManager`。
 - `public/managers/thought-editor.js`：Thought 编辑 helper。负责 legacy 子任务解析、编辑态正文/子任务拆分、子任务清理/排序、编辑行与 inline 新增子任务输入 HTML 片段，以及新增/修改/删除/toggle 子任务的本地对象变更；保存触发、失焦、快捷键和 API 协调仍保留在 `ThoughtsManager`。

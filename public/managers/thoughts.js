@@ -86,6 +86,7 @@ export class ThoughtsManager {
         this.expandedThoughtIds = new Set();
         this.activeThoughtSelection = null;
         this.thoughtSelectionToolbar = null;
+        this.markedLoader = null;
 
         this.initDateFilter();
         this.initEventListeners();
@@ -1362,7 +1363,25 @@ export class ThoughtsManager {
         panel.addEventListener('click', (e) => {
             e.stopPropagation();
             const retry = e.target.closest('.thought-ai-detail-retry');
-            if (retry) this.retryAIProcessing(thought.id);
+            if (retry) {
+                this.retryAIProcessing(thought.id);
+                return;
+            }
+            const insightRun = e.target.closest('.thought-ai-insight-run');
+            if (insightRun) {
+                this.generateThoughtInsight(panel, thought.id);
+                return;
+            }
+            const insightToggle = e.target.closest('[data-insight-toggle]');
+            if (insightToggle && !e.target.closest('a')) {
+                this.toggleAIInsight(panel);
+            }
+        });
+        panel.addEventListener('keydown', (e) => {
+            const insightToggle = e.target.closest('[data-insight-toggle]');
+            if (!insightToggle || !['Enter', ' '].includes(e.key)) return;
+            e.preventDefault();
+            this.toggleAIInsight(panel);
         });
 
         card.appendChild(panel);
@@ -1371,9 +1390,7 @@ export class ThoughtsManager {
         this.openAIStatusPanelIds.add(thought.id);
 
         try {
-            const detail = await this.apiClient.getAIStatus(thought.id);
-            if (!panel.isConnected) return;
-            panel.innerHTML = this.renderAIStatusDetail(detail);
+            await this.refreshAIStatusPanel(panel, thought.id);
         } catch (err) {
             console.error('Failed to fetch thought AI status:', err);
             if (!panel.isConnected) return;
@@ -1381,11 +1398,120 @@ export class ThoughtsManager {
         }
     }
 
-    renderAIStatusDetail(detail = {}) {
+    renderAIStatusDetail(detail = {}, renderedInsightHtml = '') {
         return renderAIStatusDetailHtml({
             detail,
+            renderedInsightHtml,
             escapeHtml: value => this.escapeHtml(value)
         });
+    }
+
+    async refreshAIStatusPanel(panel, thoughtId) {
+        const detail = await this.apiClient.getAIStatus(thoughtId);
+        if (!panel.isConnected) return null;
+        panel.innerHTML = this.renderAIStatusDetail(detail);
+        await this.hydrateAIInsightMarkdown(panel, detail.insight);
+        return detail;
+    }
+
+    async renderAIInsightMarkdown(markdown = '') {
+        this.markedLoader ||= import('/js/marked/marked.esm.js');
+        const { marked } = await this.markedLoader;
+        const safeMarkdown = String(markdown || '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;');
+        const container = document.createElement('div');
+        container.innerHTML = marked.parse(safeMarkdown);
+        container.querySelectorAll('script,style,iframe,object,embed').forEach(node => node.remove());
+        container.querySelectorAll('a').forEach((link) => {
+            const href = String(link.getAttribute('href') || '').trim();
+            if (!/^(https?:|mailto:|#)/i.test(href)) {
+                link.removeAttribute('href');
+                return;
+            }
+            link.setAttribute('target', '_blank');
+            link.setAttribute('rel', 'noopener noreferrer');
+        });
+        return container.innerHTML;
+    }
+
+    async hydrateAIInsightMarkdown(panel, insight = {}) {
+        const target = panel?.querySelector('[data-ai-insight-markdown]');
+        const markdown = insight?.status === 'ready' ? String(insight.markdown || '') : '';
+        if (!target || !markdown) return;
+        try {
+            const html = await this.renderAIInsightMarkdown(markdown);
+            if (!panel.isConnected) return;
+            target.innerHTML = html;
+        } catch (err) {
+            console.warn('Failed to render thought AI insight markdown:', err);
+        }
+    }
+
+    toggleAIInsight(panel) {
+        const section = panel?.querySelector('.thought-ai-insight');
+        const toggle = panel?.querySelector('[data-insight-toggle]');
+        if (!section || !toggle) return;
+        const expanded = !section.classList.contains('expanded');
+        section.classList.toggle('expanded', expanded);
+        toggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+    }
+
+    setAIInsightPending(panel) {
+        const section = panel?.querySelector('.thought-ai-insight');
+        if (!section) return;
+        section.classList.remove('missing', 'ready', 'error', 'expanded');
+        section.classList.add('pending');
+        section.dataset.aiInsightStatus = 'pending';
+        const button = section.querySelector('.thought-ai-insight-run');
+        if (button) button.disabled = true;
+        const body = section.querySelector('.thought-ai-insight-body');
+        if (body) body.innerHTML = '<div class="thought-ai-insight-state">正在思考...</div>';
+    }
+
+    renderAIInsightError(panel, message) {
+        const section = panel?.querySelector('.thought-ai-insight');
+        if (!section) return;
+        section.classList.remove('missing', 'ready', 'pending', 'expanded');
+        section.classList.add('error');
+        section.dataset.aiInsightStatus = 'error';
+        const button = section.querySelector('.thought-ai-insight-run');
+        if (button) button.disabled = false;
+        const body = section.querySelector('.thought-ai-insight-body');
+        if (body) {
+            body.innerHTML = `<div class="thought-ai-insight-state error">思考失败：${this.escapeHtml(message || '生成失败')}</div>`;
+        }
+    }
+
+    async generateThoughtInsight(panel, thoughtId) {
+        if (!thoughtId || !panel?.isConnected) return;
+        this.setAIInsightPending(panel);
+        try {
+            await this.apiClient.generateInsight(thoughtId);
+            await this.refreshAIStatusPanel(panel, thoughtId);
+        } catch (err) {
+            console.error('Failed to generate thought AI insight:', err);
+            const message = this.formatAIInsightError(err);
+            try {
+                const detail = await this.refreshAIStatusPanel(panel, thoughtId);
+                if (!detail?.insight || ['missing', 'pending'].includes(detail.insight.status)) {
+                    this.renderAIInsightError(panel, message);
+                }
+            } catch (_refreshError) {
+                this.renderAIInsightError(panel, message);
+            }
+        }
+    }
+
+    formatAIInsightError(err) {
+        const raw = err?.body?.message || err?.body?.error || err?.message || '生成失败';
+        if (raw.includes('must be configured separately')) {
+            return 'AI 思考模型不能复用原 Chat 模型，请更换 AI_INSIGHT_MODEL';
+        }
+        if (err?.status === 503 || raw.includes('not configured')) {
+            return 'AI 思考模型未配置，请设置 AI_INSIGHT_MODEL，并确保它不同于原 Chat 模型';
+        }
+        return `AI 思考扩展失败：${raw}`;
     }
 
     async retryAIProcessing(thoughtId) {

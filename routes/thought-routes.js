@@ -43,6 +43,23 @@ function registerThoughtRoutes(app, context) {
         return status;
     }
 
+    function normalizeInsight(insight) {
+        const status = ['missing', 'pending', 'ready', 'error'].includes(insight?.status)
+            ? insight.status
+            : 'missing';
+        if (status === 'missing') return { status: 'missing' };
+        return {
+            status,
+            markdown: String(insight?.markdown || ''),
+            generatedAt: insight?.generatedAt || 0,
+            updatedAt: insight?.updatedAt || 0,
+            requestedAt: insight?.requestedAt || 0,
+            model: insight?.model || null,
+            contextIds: Array.isArray(insight?.contextIds) ? insight.contextIds : [],
+            error: insight?.error || null
+        };
+    }
+
     function createThoughtId(existingThoughts = []) {
         const existingIds = new Set(existingThoughts.map(thought => String(thought.id)));
         let id = '';
@@ -250,6 +267,45 @@ function registerThoughtRoutes(app, context) {
         res.status(202).json({ queued: true, id });
     });
 
+    app.post('/api/thoughts/:id/ai-insight', async (req, res) => {
+        try {
+            const { id } = req.params;
+            const thought = await storage.readThought(id);
+            if (!thought) return res.status(404).json({ error: 'Thought not found' });
+
+            console.info(`[thought-ai] insight reason=manual thoughtId=${id}`);
+            if (typeof aiQueue.isInsightReady === 'function' && !aiQueue.isInsightReady()) {
+                const provider = typeof aiQueue.getInsightProviderStatus === 'function'
+                    ? aiQueue.getInsightProviderStatus()
+                    : null;
+                console.info(`[thought-ai] insight skipped thoughtId=${id} reason=${provider?.reason || 'not-ready'} model=${provider?.model || 'not-configured'}`);
+                return res.status(503).json({
+                    error: provider?.reason === 'same-as-chat-model'
+                        ? 'AI insight model must be configured separately from AI chat model'
+                        : 'AI insight model is not configured',
+                    provider
+                });
+            }
+
+            const insight = await aiQueue.generateThoughtInsight(id);
+            if (!insight) return res.status(404).json({ error: 'Thought not found' });
+            res.json({
+                success: true,
+                insight: normalizeInsight(insight)
+            });
+        } catch (err) {
+            console.error('Error generating thought AI insight:', err);
+            if (err.code === 'AI_INSIGHT_NOT_CONFIGURED') {
+                return res.status(503).json({ error: err.message, provider: err.provider || null });
+            }
+            res.status(500).json({
+                error: 'Error generating thought AI insight',
+                message: err.message,
+                insight: normalizeInsight(err.insight)
+            });
+        }
+    });
+
     app.post('/api/thoughts/ai-backfill', async (req, res) => {
         try {
             const limit = Number(req.body?.limit);
@@ -425,8 +481,10 @@ function registerThoughtRoutes(app, context) {
                 models: {
                     extract: meta?.ai?.extractModel || stages.analysis?.model || null,
                     embedding: meta?.ai?.model || stages.embedding?.model || null,
-                    rerank: stages.relations?.model || null
+                    rerank: stages.relations?.model || null,
+                    insight: meta?.insight?.model || null
                 },
+                insight: normalizeInsight(meta?.insight),
                 diagnostics: relations?.diagnostics || null
             });
         } catch (err) {

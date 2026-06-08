@@ -92,6 +92,32 @@ function assertThoughtsFrontendRegressions() {
         'AI detail counts should use user-facing 待评估 wording instead of 候选'
     );
     assert(
+        thoughtRoutesSource.includes("app.post('/api/thoughts/:id/ai-insight'") &&
+        thoughtRoutesSource.includes('AI insight model is not configured') &&
+        thoughtRoutesSource.includes('insight: normalizeInsight(meta?.insight)') &&
+        thoughtApiClientSource.includes('generateInsight(id)') &&
+        thoughtAIStatusSource.includes('thought-ai-insight-run') &&
+        thoughtAIStatusSource.includes('data-insight-toggle') &&
+        thoughtsSource.includes('hydrateAIInsightMarkdown') &&
+        thoughtsSource.includes('formatAIInsightError') &&
+        thoughtsSource.includes('AI_INSIGHT_MODEL'),
+        'manual Thought insight should be wired through a dedicated route, API client, AI detail panel, markdown hydrate, and explicit config error hint'
+    );
+    const insightGenerateStart = thoughtsSource.indexOf('async generateThoughtInsight(panel, thoughtId)');
+    const insightGenerateEnd = thoughtsSource.indexOf('formatAIInsightError', insightGenerateStart);
+    const insightGenerateSource = insightGenerateStart >= 0 && insightGenerateEnd > insightGenerateStart
+        ? thoughtsSource.slice(insightGenerateStart, insightGenerateEnd)
+        : '';
+    assert(
+        insightGenerateSource && !insightGenerateSource.includes('toaster?.show'),
+        'manual Thought insight failures should render inline in the AI detail panel without showing a toast'
+    );
+    assert(
+        thoughtsSource.indexOf("raw.includes('must be configured separately')") <
+            thoughtsSource.indexOf("err?.status === 503"),
+        'manual Thought insight should show the dedicated same-model error before the generic 503 missing-config hint'
+    );
+    assert(
         thoughtsCss.includes('.thought-card.can-expand:not(.expanded) .subtask-list .subtask-add-inline'),
         'collapsed long cards should only hide subtask-list inline add buttons'
     );
@@ -530,6 +556,8 @@ function startServer(dataDir) {
             STORAGE_LAYOUT: 'legacy',
             DUMBPAD_PIN: '',
             AI_API_KEY: '',
+            AI_INSIGHT_API_KEY: '',
+            AI_INSIGHT_MODEL: '',
             AI_EMBEDDING_API_KEY: '',
             OPENCODE_API_KEY: '',
             SILICON_API_KEY: '',
@@ -768,6 +796,7 @@ async function run() {
         assert(result.body.stages?.relations?.confirmedCount === 1, 'ai-status should include relation stage counts');
         assert(result.body.diagnostics?.candidateCount === 2, 'ai-status should include relation diagnostics');
         assert(result.body.suggestionCount === 1, 'ai-status should include suggestion count');
+        assert(result.body.insight?.status === 'missing', 'ai-status should include missing insight state before manual generation');
 
         result = await request('/api/thoughts/__missing_thought__/relations');
         assert(result.response.ok, 'GET missing thought relations should not produce a browser-visible 404');
@@ -906,6 +935,13 @@ async function run() {
         result = await request(`/api/thoughts/${thoughtId}/ai-process`, { method: 'POST' });
         assert(result.response.status === 202, 'POST /api/thoughts/:id/ai-process should return 202');
         assert(result.body.queued === true, 'ai-process should report queued');
+
+        result = await request(`/api/thoughts/${thoughtId}/ai-insight`, { method: 'POST' });
+        assert(result.response.status === 503, 'POST /api/thoughts/:id/ai-insight should require a dedicated model');
+        assert(
+            result.body.error.includes('AI insight model is not configured'),
+            'ai-insight should explain that the dedicated insight model is missing'
+        );
 
         result = await request('/api/thoughts/ai-backfill', {
             method: 'POST',

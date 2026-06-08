@@ -16,6 +16,9 @@ const FINAL_RELATION_LIMIT = 8;
 const FINAL_RELATION_THRESHOLD = 0.72;
 const SUGGESTED_RELATION_LIMIT = 6;
 const SUGGESTED_RELATION_THRESHOLD = 0.62;
+const INSIGHT_RELATION_LIMIT = 5;
+const INSIGHT_RELATED_THOUGHT_LIMIT = 3;
+const INSIGHT_NOTEPAD_LIMIT = 2;
 const DEFAULT_PENDING_RECOVERY_MS = Number(process.env.AI_PENDING_RECOVERY_MS || 120000);
 const DEFAULT_QUEUE_CONCURRENCY = Math.max(1, Number(process.env.AI_QUEUE_CONCURRENCY || 3));
 let relationWriteLock = Promise.resolve();
@@ -35,9 +38,10 @@ function init(options = {}) {
     relationWriteLock = Promise.resolve();
     logAI('provider:init', {
         provider: aiProvider.constructor?.name || 'unknown',
-        chatModel: aiProvider.chatModel || 'noop',
-        embeddingModel: aiProvider.embeddingModel || 'noop',
+        chatModel: providerModelLabel('chat'),
+        embeddingModel: providerModelLabel('embedding'),
         rerankModel: aiProvider.rerankModel || 'noop',
+        insightModel: aiProvider.insightModel || 'not-configured',
         hasReranker: Boolean(aiProvider.rerankBaseUrl && aiProvider.rerankApiKey)
     });
 }
@@ -46,8 +50,24 @@ function ensureInitialized() {
     if (!storage || !aiProvider) init();
 }
 
+function providerModelLabel(kind) {
+    if (!aiProvider) return 'noop';
+    if (kind === 'chat') {
+        return typeof aiProvider.isChatReady === 'function' && !aiProvider.isChatReady()
+            ? 'noop'
+            : (aiProvider.chatModel || 'noop');
+    }
+    if (kind === 'embedding') {
+        return typeof aiProvider.isEmbeddingReady === 'function' && !aiProvider.isEmbeddingReady()
+            ? 'noop'
+            : (aiProvider.embeddingModel || 'noop');
+    }
+    return 'noop';
+}
+
 async function writePendingMeta(thoughtId, reason = 'process') {
     if (!thoughtId) return null;
+    const existingMeta = await storage.readThoughtMeta(thoughtId);
     const meta = {
         id: thoughtId,
         status: 'pending',
@@ -63,6 +83,7 @@ async function writePendingMeta(thoughtId, reason = 'process') {
         },
         error: null
     };
+    if (existingMeta?.insight) meta.insight = existingMeta.insight;
     await storage.writeThoughtMeta(thoughtId, meta);
     logAI('pending', { thoughtId, reason });
     broadcast({
@@ -71,6 +92,13 @@ async function writePendingMeta(thoughtId, reason = 'process') {
         status: 'pending',
         reason
     });
+    return meta;
+}
+
+async function attachLatestInsight(thoughtId, meta, fallbackInsight = null) {
+    const latestMeta = await storage.readThoughtMeta(thoughtId);
+    const insight = latestMeta?.insight || fallbackInsight;
+    if (insight) meta.insight = insight;
     return meta;
 }
 
@@ -130,6 +158,192 @@ function userTagVocabulary(thoughts = []) {
         }
     }
     return Array.from(tags.values()).slice(0, 80);
+}
+
+function compactText(value = '', limit = 420) {
+    const text = String(value || '').replace(/\s+/g, ' ').trim();
+    return Array.from(text).slice(0, limit).join('');
+}
+
+function cleanInsightTerms(values = []) {
+    const terms = new Map();
+    for (const raw of values) {
+        const value = String(raw || '').trim();
+        if (!value) continue;
+        const parts = value.match(/[A-Za-z0-9_#.+-]{2,}|[\u4e00-\u9fff]{2,}/g) || [value];
+        for (const part of parts) {
+            const term = String(part || '').trim();
+            if (term.length < 2 || term.length > 32) continue;
+            terms.set(term.toLowerCase(), term);
+        }
+    }
+    return Array.from(terms.values()).slice(0, 40);
+}
+
+function insightTermsFrom(thought, meta) {
+    const ai = meta?.ai || {};
+    return cleanInsightTerms([
+        ...(Array.isArray(thought?.tags) ? thought.tags : []),
+        ...(Array.isArray(ai.entities) ? ai.entities : []),
+        ...(Array.isArray(ai.topics) ? ai.topics : []),
+        ...(Array.isArray(ai.keywords) ? ai.keywords : []),
+        ...(Array.isArray(ai.tags) ? ai.tags : []),
+        compactText(thoughtText(thought), 260)
+    ]);
+}
+
+function thoughtInsightSummary(thought, meta = {}, limit = 420) {
+    const ai = meta?.ai || {};
+    return {
+        id: thought?.id || meta?.id || '',
+        text: compactText(thoughtText(thought), limit),
+        tags: Array.isArray(thought?.tags) ? thought.tags.slice(0, 8) : [],
+        completed: thought?.completed === true,
+        updatedAt: thought?.updatedAt || thought?.createdAt || 0,
+        ai: {
+            summary: compactText(ai.summary || '', 80),
+            entities: Array.isArray(ai.entities) ? ai.entities.slice(0, 8) : [],
+            topics: Array.isArray(ai.topics) ? ai.topics.slice(0, 6) : [],
+            intent: ai.intent || '',
+            keywords: Array.isArray(ai.keywords) ? ai.keywords.slice(0, 10) : [],
+            tags: Array.isArray(ai.tags) ? ai.tags.slice(0, 6) : []
+        }
+    };
+}
+
+function relationPriority(edge) {
+    if (edge?.source === 'manual' || edge?.method === 'manual') return 2;
+    if (edge?.source === 'ai') return 1;
+    return 0;
+}
+
+function termHits(text, terms = []) {
+    const source = String(text || '').toLowerCase();
+    if (!source) return 0;
+    return terms.reduce((count, term) => (
+        source.includes(String(term || '').toLowerCase()) ? count + 1 : count
+    ), 0);
+}
+
+function scoreInsightThought(currentTerms, thought, meta) {
+    const ai = meta?.ai || {};
+    const tagText = (Array.isArray(thought?.tags) ? thought.tags : []).join(' ');
+    const aiText = [
+        ai.summary,
+        ...(Array.isArray(ai.entities) ? ai.entities : []),
+        ...(Array.isArray(ai.topics) ? ai.topics : []),
+        ...(Array.isArray(ai.keywords) ? ai.keywords : []),
+        ...(Array.isArray(ai.tags) ? ai.tags : [])
+    ].join(' ');
+    return (
+        termHits(tagText, currentTerms) * 3 +
+        termHits(aiText, currentTerms) * 2 +
+        termHits(thoughtText(thought), currentTerms)
+    );
+}
+
+function snippetAroundTerms(content, terms = [], limit = 260) {
+    const text = compactText(content, 3000);
+    if (!text) return '';
+    const lower = text.toLowerCase();
+    let index = -1;
+    for (const term of terms) {
+        const hit = lower.indexOf(String(term || '').toLowerCase());
+        if (hit >= 0 && (index === -1 || hit < index)) index = hit;
+    }
+    if (index === -1) return compactText(text, limit);
+    const start = Math.max(0, index - Math.floor(limit / 3));
+    return compactText(text.slice(start), limit);
+}
+
+async function buildThoughtInsightContext(thoughtId) {
+    const thought = await storage.readThought(thoughtId);
+    if (!thought) return null;
+
+    const meta = await storage.readThoughtMeta(thoughtId) || { id: thoughtId };
+    const currentTerms = insightTermsFrom(thought, meta);
+    const relations = await storage.readRelations(thoughtId);
+    const relationEdges = (Array.isArray(relations?.edges) ? relations.edges : [])
+        .filter(edge => edge?.targetId && edge.targetId !== thoughtId)
+        .sort((a, b) => (
+            relationPriority(b) - relationPriority(a) ||
+            Number(b.score || 0) - Number(a.score || 0)
+        ))
+        .slice(0, INSIGHT_RELATION_LIMIT);
+
+    const relationContexts = [];
+    const relationTargetIds = new Set();
+    for (const edge of relationEdges) {
+        const target = await storage.readThought(edge.targetId);
+        if (!target) continue;
+        relationTargetIds.add(target.id);
+        const targetMeta = await storage.readThoughtMeta(target.id) || { id: target.id };
+        relationContexts.push({
+            relationType: edge.relationType || edge.method || 'related_context',
+            source: edge.source || edge.method || 'ai',
+            score: Number.isFinite(Number(edge.score)) ? Number(edge.score) : null,
+            reasons: Array.isArray(edge.reasons) ? edge.reasons.slice(0, 4) : [],
+            thought: thoughtInsightSummary(target, targetMeta, 360)
+        });
+    }
+
+    const relatedThoughts = [];
+    const thoughts = await storage.readThoughts();
+    for (const candidate of thoughts) {
+        if (!candidate?.id || candidate.id === thoughtId || relationTargetIds.has(candidate.id)) continue;
+        const candidateMeta = await storage.readThoughtMeta(candidate.id) || { id: candidate.id };
+        const score = scoreInsightThought(currentTerms, candidate, candidateMeta);
+        if (score <= 0) continue;
+        relatedThoughts.push({
+            score,
+            thought: thoughtInsightSummary(candidate, candidateMeta, 320)
+        });
+    }
+    relatedThoughts.sort((a, b) => (
+        b.score - a.score ||
+        Number(b.thought.updatedAt || 0) - Number(a.thought.updatedAt || 0)
+    ));
+
+    const notepads = [];
+    if (typeof storage.getSearchDocuments === 'function' && currentTerms.length > 0) {
+        try {
+            const documents = await storage.getSearchDocuments();
+            const scoredDocuments = (Array.isArray(documents) ? documents : [])
+                .filter(doc => doc?.type === 'notepad')
+                .map(doc => ({
+                    doc,
+                    score: termHits(`${doc.title || ''}\n${doc.content || ''}`, currentTerms)
+                }))
+                .filter(item => item.score > 0)
+                .sort((a, b) => (
+                    b.score - a.score ||
+                    Number(b.doc.updatedAt || 0) - Number(a.doc.updatedAt || 0)
+                ))
+                .slice(0, INSIGHT_NOTEPAD_LIMIT);
+            for (const item of scoredDocuments) {
+                notepads.push({
+                    id: item.doc.id,
+                    title: compactText(item.doc.title || '', 80),
+                    snippet: snippetAroundTerms(item.doc.content || '', currentTerms, 260),
+                    updatedAt: item.doc.updatedAt || 0
+                });
+            }
+        } catch (error) {
+            logAI('insight:notepads:error', { thoughtId, message: error.message });
+        }
+    }
+
+    return {
+        current: thoughtInsightSummary(thought, meta, 1000),
+        relations: relationContexts,
+        relatedThoughts: relatedThoughts.slice(0, INSIGHT_RELATED_THOUGHT_LIMIT),
+        notepads,
+        contextIds: [
+            ...relationContexts.map(item => `thought:${item.thought.id}`),
+            ...relatedThoughts.slice(0, INSIGHT_RELATED_THOUGHT_LIMIT).map(item => `thought:${item.thought.id}`),
+            ...notepads.map(item => `notepad:${item.id}`)
+        ]
+    };
 }
 
 function localRelationType(candidate) {
@@ -309,7 +523,7 @@ async function buildRelations(currentMeta) {
     try {
         logAI('rerank:judge:start', {
             thoughtId: currentMeta.id,
-            model: aiProvider.chatModel || 'noop',
+            model: providerModelLabel('chat'),
             candidates: explanationCandidates.length
         });
         reranked = await aiProvider.rerankRelations(source, explanationCandidates);
@@ -396,7 +610,8 @@ async function processThought(thoughtId) {
     const startedAt = Date.now();
     const thought = await storage.readThought(thoughtId);
     if (!thought) return null;
-    await writePendingMeta(thoughtId, 'processing');
+    const pendingMeta = await writePendingMeta(thoughtId, 'processing');
+    const preservedInsight = pendingMeta?.insight || null;
 
     const text = thoughtText(thought);
     const tagVocabulary = userTagVocabulary(await storage.readThoughts());
@@ -420,8 +635,8 @@ async function processThought(thoughtId) {
                 timeScope: 'reference',
                 tags: [],
                 embedding: [],
-                model: aiProvider.embeddingModel || 'noop',
-                extractModel: aiProvider.chatModel || 'noop',
+                model: providerModelLabel('embedding'),
+                extractModel: providerModelLabel('chat'),
                 schemaVersion: 2,
                 processedAt: Date.now()
             },
@@ -433,6 +648,7 @@ async function processThought(thoughtId) {
             },
             error: null
         };
+        await attachLatestInsight(thoughtId, emptyMeta, preservedInsight);
         const existingRelations = await storage.readRelations(thoughtId);
         const manualEdges = (existingRelations.edges || []).filter(isManualRelation);
         await storage.writeThoughtMeta(thoughtId, emptyMeta);
@@ -453,17 +669,17 @@ async function processThought(thoughtId) {
             type: 'ai_status_update',
             thoughtId,
             status: 'empty',
-            relationsCount: 0,
+            relationsCount: manualEdges.length,
             aiTags: []
         });
-        return { meta: emptyMeta, relations: [] };
+        return { meta: emptyMeta, relations: manualEdges };
     }
 
     let currentStage = 'analysis';
     try {
         logAI('extract:start', {
             thoughtId,
-            model: aiProvider.chatModel || 'noop'
+            model: providerModelLabel('chat')
         });
         const extracted = normalizeExtraction(await aiProvider.extract(text, { tagVocabulary }));
         logAI('extract:done', {
@@ -476,7 +692,7 @@ async function processThought(thoughtId) {
         currentStage = 'embedding';
         logAI('embedding:start', {
             thoughtId,
-            model: aiProvider.embeddingModel || 'noop'
+            model: providerModelLabel('embedding')
         });
         const embedding = await aiProvider.getEmbedding(text);
         logAI('embedding:done', {
@@ -495,8 +711,8 @@ async function processThought(thoughtId) {
                 timeScope: extracted.timeScope,
                 tags: extracted.tags,
                 embedding: embedding || [],
-                model: aiProvider.embeddingModel || 'noop',
-                extractModel: aiProvider.chatModel || 'noop',
+                model: providerModelLabel('embedding'),
+                extractModel: providerModelLabel('chat'),
                 schemaVersion: 2,
                 processedAt: Date.now()
             },
@@ -504,17 +720,18 @@ async function processThought(thoughtId) {
                 queued: { status: 'ready' },
                 analysis: {
                     status: 'ready',
-                    model: aiProvider.chatModel || 'noop'
+                    model: providerModelLabel('chat')
                 },
                 embedding: {
                     status: 'ready',
-                    model: aiProvider.embeddingModel || 'noop',
+                    model: providerModelLabel('embedding'),
                     dims: Array.isArray(embedding) ? embedding.length : 0
                 },
                 relations: { status: 'pending' }
             },
             error: null
         };
+        await attachLatestInsight(thoughtId, meta, preservedInsight);
 
         await storage.writeThoughtMeta(thoughtId, meta);
         const relations = await withRelationWriteLock(() => buildRelations(meta));
@@ -527,6 +744,7 @@ async function processThought(thoughtId) {
             suggestionCount: Array.isArray(relations.suggestions) ? relations.suggestions.length : 0,
             errors: relations.diagnostics?.errors || []
         };
+        await attachLatestInsight(thoughtId, meta, preservedInsight);
         await storage.writeThoughtMeta(thoughtId, meta);
         logAI('process:ready', {
             thoughtId,
@@ -572,6 +790,7 @@ async function processThought(thoughtId) {
                 lastFailedAt: Date.now()
             }
         };
+        await attachLatestInsight(thoughtId, meta, preservedInsight);
         await storage.writeThoughtMeta(thoughtId, meta);
         logAI('process:error', {
             thoughtId,
@@ -725,6 +944,114 @@ async function rebuildRelations({ limit = Infinity } = {}) {
     return { rebuilt };
 }
 
+function isInsightReady() {
+    ensureInitialized();
+    return typeof aiProvider?.isInsightReady === 'function' && aiProvider.isInsightReady();
+}
+
+function getInsightProviderStatus() {
+    ensureInitialized();
+    const model = aiProvider?.insightModel || '';
+    let reason = null;
+    if (!aiProvider?.insightBaseUrl) reason = 'missing-base-url';
+    else if (!aiProvider?.insightApiKey) reason = 'missing-api-key';
+    else if (!model) reason = 'missing-model';
+    else if (model === aiProvider?.chatModel) reason = 'same-as-chat-model';
+    else if (!isInsightReady()) reason = 'unavailable';
+    return {
+        ready: !reason,
+        model: model || null,
+        provider: aiProvider?.constructor?.name || 'unknown',
+        reason
+    };
+}
+
+function insightNotConfiguredError() {
+    const status = getInsightProviderStatus();
+    const error = new Error(
+        status.reason === 'same-as-chat-model'
+            ? 'AI insight model must be configured separately from AI chat model'
+            : 'AI insight model is not configured'
+    );
+    error.code = 'AI_INSIGHT_NOT_CONFIGURED';
+    error.provider = status;
+    return error;
+}
+
+async function writeThoughtInsight(thoughtId, insight) {
+    const meta = await storage.readThoughtMeta(thoughtId) || { id: thoughtId };
+    const nextInsight = {
+        ...(meta.insight || {}),
+        ...insight,
+        schemaVersion: 1,
+        updatedAt: Date.now()
+    };
+    meta.id = thoughtId;
+    meta.insight = nextInsight;
+    await storage.writeThoughtMeta(thoughtId, meta);
+    return nextInsight;
+}
+
+async function generateThoughtInsight(thoughtId) {
+    ensureInitialized();
+    if (!isInsightReady()) throw insightNotConfiguredError();
+
+    const thought = await storage.readThought(thoughtId);
+    if (!thought) return null;
+
+    const startedAt = Date.now();
+    const model = aiProvider.insightModel || 'not-configured';
+    await writeThoughtInsight(thoughtId, {
+        status: 'pending',
+        markdown: '',
+        model,
+        contextIds: [],
+        requestedAt: Date.now(),
+        error: null
+    });
+    logAI('insight:start', { thoughtId, model });
+
+    try {
+        const context = await buildThoughtInsightContext(thoughtId);
+        if (!context) return null;
+        const markdown = await aiProvider.generateThoughtInsight(context);
+        if (!markdown) throw new Error('AI insight response was empty');
+        const insight = await writeThoughtInsight(thoughtId, {
+            status: 'ready',
+            markdown,
+            model,
+            contextIds: context.contextIds,
+            generatedAt: Date.now(),
+            error: null
+        });
+        logAI('insight:ready', {
+            thoughtId,
+            chars: Array.from(markdown).length,
+            contextIds: context.contextIds.length,
+            durationMs: Date.now() - startedAt
+        });
+        return insight;
+    } catch (error) {
+        const insight = await writeThoughtInsight(thoughtId, {
+            status: 'error',
+            markdown: '',
+            model,
+            contextIds: [],
+            error: {
+                message: error.message,
+                lastFailedAt: Date.now()
+            }
+        });
+        error.insight = insight;
+        logAI('insight:error', {
+            thoughtId,
+            message: error.message,
+            durationMs: Date.now() - startedAt
+        });
+        throw error;
+    }
+}
+
 module.exports = {
     init,
     queueThought,
@@ -732,12 +1059,18 @@ module.exports = {
     backfillMissingMeta,
     recoverStalePendingMeta,
     rebuildRelations,
+    generateThoughtInsight,
+    getInsightProviderStatus,
+    isInsightReady,
     getQueueStatus,
     _private: {
         thoughtText,
         normalizeExtraction,
         localRerankFallback,
         buildRelations,
+        buildThoughtInsightContext,
+        compactText,
+        insightTermsFrom,
         syncReverseRelations,
         userTagVocabulary,
         isManualRelation,
