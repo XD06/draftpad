@@ -9,15 +9,18 @@ RUN npm ci --omit=dev
 
 COPY . .
 
-# Ensure dirs exist and set ownership using stable names
-RUN mkdir -p /app/data /app/public/Assets \
+# Install curl for healthcheck, create data/assets dirs, set ownership
+RUN apk add --no-cache curl \
+  && mkdir -p /app/data /app/public/Assets \
   && chown -R node:node /app/data /app/public/Assets
 
 USER node
 
-# Create data directory and ensure it's a volume
 VOLUME /app/data
 
 EXPOSE 3000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+  CMD curl -f http://localhost:$PORT/health || exit 1
 
 CMD ["npm", "start"]
