@@ -10,8 +10,9 @@ let currentJobs = [];
 let lastError = null;
 const queue = [];
 const queuedIds = new Set();
-const LOCAL_CANDIDATE_LIMIT = 30;
-const LLM_RERANK_CANDIDATE_LIMIT = 8;
+const LOCAL_CANDIDATE_LIMIT = 50;
+const LLM_RERANK_CANDIDATE_LIMIT = 12;
+const LOCAL_CANDIDATE_THRESHOLD = 0.16;
 const FINAL_RELATION_LIMIT = 8;
 const FINAL_RELATION_THRESHOLD = 0.72;
 const SUGGESTED_RELATION_LIMIT = 6;
@@ -479,7 +480,7 @@ async function buildRelations(currentMeta) {
     }
 
     const candidates = findCandidates(currentMeta, metas, {
-        threshold: 0.25,
+        threshold: LOCAL_CANDIDATE_THRESHOLD,
         limit: LOCAL_CANDIDATE_LIMIT
     });
     logAI('relations:candidates', {
@@ -680,6 +681,7 @@ async function processThought(thoughtId) {
     }
 
     let currentStage = 'analysis';
+    let embeddingStage = { status: 'pending' };
     try {
         logAI('extract:start', {
             thoughtId,
@@ -698,11 +700,31 @@ async function processThought(thoughtId) {
             thoughtId,
             model: providerModelLabel('embedding')
         });
-        const embedding = await aiProvider.getEmbedding(text);
-        logAI('embedding:done', {
-            thoughtId,
-            dims: Array.isArray(embedding) ? embedding.length : 0
-        });
+        let embedding = [];
+        try {
+            embedding = await aiProvider.getEmbedding(text);
+            embeddingStage = {
+                status: 'ready',
+                model: providerModelLabel('embedding'),
+                dims: Array.isArray(embedding) ? embedding.length : 0
+            };
+            logAI('embedding:done', {
+                thoughtId,
+                dims: embeddingStage.dims
+            });
+        } catch (embeddingError) {
+            embedding = [];
+            embeddingStage = {
+                status: 'error',
+                model: providerModelLabel('embedding'),
+                message: embeddingError.message
+            };
+            logAI('embedding:error', {
+                thoughtId,
+                model: providerModelLabel('embedding'),
+                message: embeddingError.message
+            });
+        }
         const meta = {
             id: thoughtId,
             status: 'ready',
@@ -726,11 +748,7 @@ async function processThought(thoughtId) {
                     status: 'ready',
                     model: providerModelLabel('chat')
                 },
-                embedding: {
-                    status: 'ready',
-                    model: providerModelLabel('embedding'),
-                    dims: Array.isArray(embedding) ? embedding.length : 0
-                },
+                embedding: embeddingStage,
                 relations: { status: 'pending' }
             },
             error: null
@@ -738,6 +756,7 @@ async function processThought(thoughtId) {
         await attachLatestInsight(thoughtId, meta, preservedInsight);
 
         await storage.writeThoughtMeta(thoughtId, meta);
+        currentStage = 'relations';
         const relations = await withRelationWriteLock(() => buildRelations(meta));
         meta.stages.relations = {
             status: 'ready',
@@ -785,8 +804,8 @@ async function processThought(thoughtId) {
             stages: {
                 queued: { status: 'ready' },
                 analysis: { status: currentStage === 'analysis' ? 'error' : 'ready' },
-                embedding: { status: currentStage === 'embedding' ? 'error' : 'pending' },
-                relations: { status: 'pending' }
+                embedding: currentStage === 'analysis' ? { status: 'pending' } : embeddingStage,
+                relations: { status: currentStage === 'relations' ? 'error' : 'pending' }
             },
             error: {
                 stage: currentStage,

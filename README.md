@@ -141,7 +141,7 @@ S3_PREFIX=optional-prefix
 - `STORAGE_LAYOUT=legacy` 会把 Thought 保存在 `thoughts.json`，适合本地单机。
 - `STORAGE_LAYOUT=split` 会把 Thought 拆到 `thoughts/<id>.json`，推荐配合 S3 使用，避免大文件频繁读写。
 - `S3_PREFIX` 是数据集隔离边界，测试数据、真实数据、备份数据应使用不同 prefix。
-- `S3_SECRET_KEY` 可用 `S3_API_KEY` 代替；前端不会直接连接 S3，所有云端操作都走后端 API。
+- 前端不会直接连接 S3，所有云端操作都走后端 API。
 
 AI 关联使用 OpenAI-compatible 接口；不配置 Key 时自动使用 noop provider：
 
@@ -158,16 +158,11 @@ AI_EMBEDDING_MODEL=Qwen/Qwen3-Embedding-0.6B
 AI_RERANK_BASE_URL=https://api.siliconflow.cn/v1
 AI_RERANK_API_KEY=your-rerank-key
 AI_RERANK_MODEL=BAAI/bge-reranker-v2-m3
-AI_TIMEOUT_MS=60000
-AI_QUEUE_CONCURRENCY=3
-AI_PENDING_RECOVERY_MS=120000
-AI_BACKFILL_TIMEOUT_MS=900000
 ```
 
 AI 运行规则：
 - 创建 Thought 后，关系分析 AI 在后端队列异步运行，不阻塞快速记录；修改 Thought 后由用户在 AI 面板中手动重新运行。
 - Thought 思考扩展只由用户在 AI 面板中手动触发，必须配置 `AI_INSIGHT_MODEL`，且不能复用 `AI_CHAT_MODEL`。
-- `AI_QUEUE_CONCURRENCY` 控制后台并发，个人机器建议保持 `2-4`。
 - 关系重建优先使用已有 ready meta；需要强制重新分析时使用 backfill 脚本的 `--force`。
 
 Relations 重建接口只使用已有 ready meta，不重新提取 Thought，不重新生成 embedding：

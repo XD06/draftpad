@@ -1059,8 +1059,8 @@ export class HybridMarkdownEditor {
         const before = String(node.nodeValue || '').slice(0, offset);
         if (!before.endsWith(TIME_COMMAND)) return null;
         const commandStart = offset - TIME_COMMAND.length;
-        const charBeforeCommand = commandStart > 0 ? before[commandStart - 1] : '';
-        if (charBeforeCommand && !/\s/.test(charBeforeCommand)) return null;
+        const charAfterCommand = String(node.nodeValue || '')[offset] || '';
+        if (/^[A-Za-z0-9_-]$/.test(charAfterCommand)) return null;
 
         const commandRange = document.createRange();
         commandRange.setStart(node, commandStart);

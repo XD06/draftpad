@@ -37,6 +37,9 @@ function readStorageState() {
 }
 
 let activeS3Prefix = cleanPrefix(readStorageState().activeS3Prefix || process.env.S3_PREFIX || '');
+const s3NotepadKeyCache = new Map();
+let storageInitialized = false;
+let storageInitPromise = null;
 
 function isS3Backend() {
     return STORAGE_BACKEND === 's3';
@@ -76,6 +79,9 @@ async function setS3Prefix(prefix) {
     const clean = cleanPrefix(prefix);
     if (!clean) throw new Error('S3 prefix is required');
     activeS3Prefix = clean;
+    s3NotepadKeyCache.clear();
+    storageInitialized = false;
+    storageInitPromise = null;
     await fs.mkdir(path.dirname(STORAGE_STATE_FILE), { recursive: true });
     await fs.writeFile(STORAGE_STATE_FILE, JSON.stringify({ activeS3Prefix: clean, updatedAt: Date.now() }, null, 2), 'utf8');
     return activeS3Prefix;
@@ -313,7 +319,7 @@ async function saveS3SplitThoughts(thoughts) {
     await writeThoughtIndex(nextThoughts);
 }
 
-async function init() {
+async function initStorage() {
     if (isS3Backend()) {
         s3.initS3();
 
@@ -356,6 +362,21 @@ async function init() {
     if (!await pathExists(THOUGHTS_FILE)) {
         await writeJSON(THOUGHTS_FILE, []);
     }
+}
+
+async function init() {
+    if (storageInitialized) return;
+    if (!storageInitPromise) {
+        storageInitPromise = initStorage()
+            .then(() => {
+                storageInitialized = true;
+            })
+            .catch(error => {
+                storageInitPromise = null;
+                throw error;
+            });
+    }
+    await storageInitPromise;
 }
 
 async function readThoughts() {
@@ -712,9 +733,19 @@ async function getS3NotepadKey(notepad) {
 
     const nameKey = `${sanitizeFilename(notepad.name)}.txt`;
     const idKey = `${sanitizeFilename(notepad.id)}.txt`;
+    const cacheKey = `${activeS3Prefix}:${notepad?.id || ''}:${notepad?.name || ''}`;
+    const cachedKey = s3NotepadKeyCache.get(cacheKey);
+    if (cachedKey) return cachedKey;
 
-    if (await s3PathExists(nameKey)) return nameKey;
-    if (await s3PathExists(idKey)) return idKey;
+    if (await s3PathExists(nameKey)) {
+        s3NotepadKeyCache.set(cacheKey, nameKey);
+        return nameKey;
+    }
+    if (await s3PathExists(idKey)) {
+        s3NotepadKeyCache.set(cacheKey, idKey);
+        return idKey;
+    }
+    s3NotepadKeyCache.set(cacheKey, nameKey);
     return nameKey;
 }
 

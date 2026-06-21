@@ -50,9 +50,19 @@ function run() {
     assert(result.value === '记录 [[time:create:2026-06-21 09:08:07]]', 'replaceTimeCommandBeforeCursor should replace trailing /time');
     assert(result.selectionStart === result.value.length, 'replaceTimeCommandBeforeCursor should move cursor after marker');
 
+    const inlineResult = replaceTimeCommandBeforeCursor('记录/time', '记录/time'.length, '记录/time'.length, { now: () => fixed });
     assert(
-        replaceTimeCommandBeforeCursor('记录/time', '记录/time'.length, '记录/time'.length, { now: () => fixed }) === null,
-        'replaceTimeCommandBeforeCursor should not replace /time inside a word'
+        inlineResult.value === '记录[[time:create:2026-06-21 09:08:07]]',
+        'replaceTimeCommandBeforeCursor should replace inline /time without requiring a leading space'
+    );
+    const middleResult = replaceTimeCommandBeforeCursor('记录/time内容', '记录/time'.length, '记录/time'.length, { now: () => fixed });
+    assert(
+        middleResult.value === '记录[[time:create:2026-06-21 09:08:07]]内容',
+        'replaceTimeCommandBeforeCursor should replace /time before CJK text'
+    );
+    assert(
+        replaceTimeCommandBeforeCursor('记录/timeabc', '记录/time'.length, '记录/time'.length, { now: () => fixed }) === null,
+        'replaceTimeCommandBeforeCursor should not replace /time before an ASCII word suffix'
     );
     assert(
         replaceTimeCommandBeforeCursor('/time', 0, 0, { now: () => fixed }) === null,

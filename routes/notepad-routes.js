@@ -42,11 +42,17 @@ function registerNotepadRoutes(app, context) {
 
     app.post('/api/notepads', async (req, res) => {
         try {
-            const { name, content } = req.body || {};
+            const { name, content, id: requestedId } = req.body || {};
             await storage.init();
 
             const data = await storage.readNotepadsMeta();
-            const id = Date.now().toString();
+            const safeRequestedId = typeof requestedId === 'string' && /^[A-Za-z0-9_-]{3,96}$/.test(requestedId)
+                ? requestedId
+                : '';
+            const idExists = safeRequestedId && data.notepads.some(notepad => notepad.id === safeRequestedId);
+            const id = safeRequestedId && !idExists
+                ? safeRequestedId
+                : `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
             const desiredName = name || `Notepad ${data.notepads.length + 1}`;
             const uniqueName = generateUniqueName(desiredName, data.notepads);
 

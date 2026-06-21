@@ -108,6 +108,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     let saveTimeout;
     let saveRetryTimeout;
     const saveNotesInFlight = new Map();
+    const pendingNoteSaveIds = new Set();
     let noteConflictToastEl = null;
     let lastSaveTime = Date.now();
     const SAVE_INTERVAL = 2000;
@@ -124,6 +125,22 @@ document.addEventListener('DOMContentLoaded', async () => {
         label: '同步状态',
         kind: 'idle'
     };
+
+    function createSaveId() {
+        const randomPart = window.crypto?.randomUUID?.() || Math.random().toString(36).slice(2);
+        return `${userId}-${Date.now()}-${randomPart}`;
+    }
+
+    function createClientNotepadId() {
+        const uuid = window.crypto?.randomUUID?.();
+        const randomPart = uuid ? uuid.slice(0, 8) : Math.random().toString(36).slice(2, 10);
+        return `note-${Date.now()}-${randomPart}`;
+    }
+
+    function noteContentMatches(detail, localContent) {
+        if (typeof detail.content === 'string') return detail.content === localContent;
+        return false;
+    }
 
     function setHeaderTitle(text) {
         const h1 = document.getElementById('header-title')?.querySelector('h1');
@@ -254,8 +271,39 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     window.addEventListener('notes_update', (event) => {
         const detail = event.detail || {};
-        if (detail.userId === userId || detail.notepadId !== currentNotepadId) return;
+        if (detail.notepadId !== currentNotepadId) return;
+        const remoteVersion = Number(detail.version);
+        const isSavedUpdate = Number.isFinite(remoteVersion);
+        const isOwnAck = detail.userId === userId || (detail.saveId && pendingNoteSaveIds.has(detail.saveId));
+        if (detail.saveId) pendingNoteSaveIds.delete(detail.saveId);
+        if (isOwnAck) {
+            if (isSavedUpdate) {
+                setCurrentNoteVersion(currentNotepadId, remoteVersion);
+                if (noteContentMatches(detail, editor.value)) {
+                    hasUnsavedChanges = false;
+                    cacheSyncedNote(currentNotepadId, editor.value, { version: remoteVersion });
+                    dirtyConflictNotepadIds.delete(currentNotepadId);
+                    hideNoteConflictToast();
+                    setStartupSyncStatus('synced', '已同步');
+                }
+            }
+            return;
+        }
+
+        if (!isSavedUpdate) {
+            return;
+        }
+
         if (hasUnsavedChanges) {
+            if (noteContentMatches(detail, editor.value)) {
+                hasUnsavedChanges = false;
+                setCurrentNoteVersion(currentNotepadId, remoteVersion);
+                cacheSyncedNote(currentNotepadId, editor.value, { version: remoteVersion });
+                dirtyConflictNotepadIds.delete(currentNotepadId);
+                hideNoteConflictToast();
+                setStartupSyncStatus('synced', '已同步');
+                return;
+            }
             showNoteConflictToast('warning', 5000);
             return;
         }
@@ -263,13 +311,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         isApplyingRemoteUpdate = true;
         editor.value = detail.content || '';
         isApplyingRemoteUpdate = false;
-        const remoteVersion = Number(detail.version);
-        if (Number.isFinite(remoteVersion)) {
-            setCurrentNoteVersion(currentNotepadId, remoteVersion);
-            cacheSyncedNote(currentNotepadId, detail.content || '', { version: remoteVersion });
-            dirtyConflictNotepadIds.delete(currentNotepadId);
-            setStartupSyncStatus('synced', '已同步');
-        }
+        setCurrentNoteVersion(currentNotepadId, remoteVersion);
+        cacheSyncedNote(currentNotepadId, detail.content || '', { version: remoteVersion });
+        dirtyConflictNotepadIds.delete(currentNotepadId);
+        setStartupSyncStatus('synced', '已同步');
         debouncedUpdateToC();
     });
 
@@ -734,11 +779,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         return noteSyncController.saveStartupCache(patch);
     }
 
-    function cacheNotepads(noteHistory) {
+    function cacheNotepads(noteHistory, selectedId = currentNotepadId) {
         if (!Array.isArray(currentNotepads) || currentNotepads.length === 0) return;
         noteSyncController.cacheNotepads({
-            currentNotepadId,
-            noteHistory: isValidNotepadId(noteHistory) ? noteHistory : currentNotepadId,
+            currentNotepadId: selectedId,
+            noteHistory: isValidNotepadId(noteHistory) ? noteHistory : selectedId,
             notepads: currentNotepads
         });
     }
@@ -770,6 +815,12 @@ document.addEventListener('DOMContentLoaded', async () => {
             ...options,
             notepads: currentNotepads
         });
+    }
+
+    function renderNotepadLists(selectedId = currentNotepadId, noteHistory = selectedId) {
+        renderSidebar(currentNotepads, selectedId, selectNotepad, deleteNotepadById, renameNotepadById);
+        renderRecentFiles(selectedId, currentNotepads, selectNotepad, deleteNotepadById, renameNotepadById);
+        cacheNotepads(noteHistory, selectedId);
     }
 
     function getCachedNote(notepadId) {
@@ -985,6 +1036,15 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (cachedNote?.dirty && currentNotepadId === notepadId) {
                 setCurrentNoteVersion(notepadId, cachedNote.version);
                 if (Number(data.version) > Number(cachedNote.version || 0)) {
+                    if ((data.content || '') === (cachedNote.content || '')) {
+                        dirtyConflictNotepadIds.delete(notepadId);
+                        cacheSyncedNote(notepadId, cachedNote.content || '', { version: data.version });
+                        setCurrentNoteVersion(notepadId, data.version);
+                        hasUnsavedChanges = false;
+                        hideNoteConflictToast();
+                        setStartupSyncStatus('synced', '已同步');
+                        return;
+                    }
                     cacheConflictNote(notepadId, cachedNote.content || '', {
                         localVersion: cachedNote.version,
                         remoteVersion: data.version
@@ -1145,8 +1205,33 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     async function createNotepad() {
+        const previousNotepads = [...currentNotepads];
+        const previousNotepadId = currentNotepadId;
+        const now = Date.now();
+        const optimisticNotepad = {
+            id: createClientNotepadId(),
+            name: `Notepad ${currentNotepads.length + 1}`,
+            version: 1,
+            createdAt: now,
+            updatedAt: now
+        };
+
+        currentNotepads = [
+            optimisticNotepad,
+            ...currentNotepads.filter(note => note.id !== optimisticNotepad.id)
+        ];
+        currentNotepadId = optimisticNotepad.id;
+        currentNoteVersion = 1;
+        cacheSyncedNote(optimisticNotepad.id, '', { version: 1 });
+        renderNotepadLists(optimisticNotepad.id);
+        renderCachedNotepad(optimisticNotepad.id, '');
+
         try {
-            const response = await fetchWithPin('/api/notepads', { method: 'POST' });
+            const response = await fetchWithPin('/api/notepads', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id: optimisticNotepad.id, name: optimisticNotepad.name, content: '' })
+            });
             if (!response) throw new Error('Network error');
             const payload = await response.json().catch(() => ({}));
             if (!response.ok) {
@@ -1158,17 +1243,23 @@ document.addEventListener('DOMContentLoaded', async () => {
                 throw new Error(payload?.error || 'Create notepad succeeded but missing id');
             }
             currentNotepads = [
-                ...currentNotepads.filter(note => note.id !== newNotepad.id),
-                newNotepad
+                { ...optimisticNotepad, ...newNotepad },
+                ...currentNotepads.filter(note => note.id !== optimisticNotepad.id && note.id !== newNotepad.id)
             ];
             cacheSyncedNote(newNotepad.id, '', { version: newNotepad.version || 1 });
-            cacheNotepads(newNotepad.id);
-            renderSidebar(currentNotepads, newNotepad.id, selectNotepad, deleteNotepadById, renameNotepadById);
-            renderCachedNotepad(newNotepad.id, '');
-            loadNotes(newNotepad.id);
+            renderNotepadLists(newNotepad.id);
+            if (currentNotepadId === optimisticNotepad.id || currentNotepadId === newNotepad.id) {
+                renderCachedNotepad(newNotepad.id, editor.value || '');
+                setCurrentNoteVersion(newNotepad.id, newNotepad.version || 1);
+            }
             toaster.show(`New notepad: ${newNotepad.name}`, 'success');
         } catch (err) {
             console.error('Error creating notepad:', err);
+            currentNotepads = previousNotepads;
+            renderNotepadLists(previousNotepadId);
+            if (findNotepadByIdOrName(currentNotepads, previousNotepadId)) {
+                await selectNotepad(previousNotepadId);
+            }
             toaster.show(err?.message || 'Error creating notepad', 'error', true);
         }
     }
@@ -1192,12 +1283,27 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (!newName || !notepadIdToRename) return;
         
         const id = notepadIdToRename;
+        const notepad = currentNotepads.find(n => n.id === id);
+        if (!notepad) return;
+        const previousNotepad = { ...notepad };
+        Object.assign(notepad, {
+            name: newName,
+            updatedAt: Date.now(),
+            version: (notepad.version || 1) + 1
+        });
+        renderNotepadLists(currentNotepadId);
+        if (currentNotepadId === id) {
+            updateUrlWithNotepad(newName);
+            const pageTitle = document.getElementById('page-title');
+            if (pageTitle) pageTitle.textContent = `${newName} - DumbPad`;
+        }
+        hideModal(renameModal);
+
         try {
-            const notepad = currentNotepads.find(n => n.id === id);
             const response = await fetchWithPin(`/api/notepads/${id}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name: newName, baseVersion: notepad?.version }),
+                body: JSON.stringify({ name: newName, baseVersion: previousNotepad.version }),
             });
             const result = await response.json();
             if (!response.ok) {
@@ -1206,15 +1312,24 @@ document.addEventListener('DOMContentLoaded', async () => {
                     payload: result
                 });
             }
-            await loadNotepads();
+            Object.assign(notepad, result);
+            renderNotepadLists(currentNotepadId);
             if (currentNotepadId === id) {
                 updateUrlWithNotepad(result.name);
+                const pageTitle = document.getElementById('page-title');
+                if (pageTitle) pageTitle.textContent = `${result.name} - DumbPad`;
             }
             wsClient.sendUpdate('notepad_change', { action: 'rename', notepadId: id, newName: result.name });
-            hideModal(renameModal);
             toaster.show('Renamed notepad');
         } catch (err) {
             console.error('Error renaming notepad:', err);
+            Object.assign(notepad, previousNotepad);
+            renderNotepadLists(currentNotepadId);
+            if (currentNotepadId === id) {
+                updateUrlWithNotepad(previousNotepad.name);
+                const pageTitle = document.getElementById('page-title');
+                if (pageTitle) pageTitle.textContent = `${previousNotepad.name} - DumbPad`;
+            }
             const message = err?.status === 409
                 ? '该 Notepad 已在其他设备更新，请刷新后再重命名'
                 : 'Error renaming notepad';
@@ -1240,6 +1355,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     async function performSaveNotes(content, isAutoSave, showStatus = true, retryCount = 0, targetNotepadId = currentNotepadId) {
         let baseVersion;
+        let saveId;
         try {
             if (!findNotepadByIdOrName(currentNotepads, targetNotepadId) || currentNotepadId !== targetNotepadId) return;
             if (!navigator.onLine) {
@@ -1249,7 +1365,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             baseVersion = targetNotepadId === currentNotepadId
                 ? currentNoteVersion
                 : currentNotepads.find(n => n.id === targetNotepadId)?.version;
-            const payload = { content, userId };
+            saveId = createSaveId();
+            pendingNoteSaveIds.add(saveId);
+            const payload = { content, userId, saveId };
             if (Number.isFinite(baseVersion)) payload.baseVersion = baseVersion;
             const response = await fetchWithPin(`/api/notes/${targetNotepadId}`, {
                 method: 'POST',
@@ -1263,6 +1381,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     payload: result
                 });
             }
+            pendingNoteSaveIds.delete(saveId);
             clearTimeout(saveRetryTimeout);
             saveRetryTimeout = null;
             lastSaveTime = Date.now();
@@ -1286,6 +1405,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
             return true;
         } catch (err) {
+            if (saveId) pendingNoteSaveIds.delete(saveId);
             console.warn('Error saving notes:', err);
             if (err?.status === 409) {
                 dirtyConflictNotepadIds.add(targetNotepadId);
@@ -1524,19 +1644,39 @@ document.addEventListener('DOMContentLoaded', async () => {
     async function doDeleteNotepad() {
         if (!notepadIdToDelete) return;
         const id = notepadIdToDelete;
+        const previousNotepads = [...currentNotepads];
+        const previousNotepadId = currentNotepadId;
+        const previousContent = currentNotepadId === id ? editor.value : (getCachedNote(id)?.content || '');
+        const notepad = currentNotepads.find(n => n.id === id);
+        currentNotepads = currentNotepads.filter(note => note.id !== id);
+        const nextNotepadId = currentNotepadId === id
+            ? (currentNotepads[0]?.id || 'default')
+            : currentNotepadId;
+        currentNotepadId = nextNotepadId;
+        deleteModal.classList.remove('visible');
+        notepadIdToDelete = null;
+        renderNotepadLists(nextNotepadId);
+        if (previousNotepadId === id && findNotepadByIdOrName(currentNotepads, nextNotepadId)) {
+            const cachedNext = getCachedNote(nextNotepadId);
+            if (cachedNext) renderCachedNotepad(nextNotepadId, cachedNext.content || '');
+            else await selectNotepad(nextNotepadId);
+        }
+
         try {
-            const notepad = currentNotepads.find(n => n.id === id);
-            await fetchWithPin(`/api/notepads/${id}`, { method: 'DELETE' });
-            if (notepad) wsClient.sendUpdate('notepad_change', { action: 'delete', notepadId: id, notepadName: notepad.name });
-            await loadNotepads();
-            if (currentNotepadId === id) {
-                await selectNotepad('default');
+            const response = await fetchWithPin(`/api/notepads/${id}`, { method: 'DELETE' });
+            if (!response.ok) {
+                const payload = await response.json().catch(() => ({}));
+                throw new Error(payload?.error || 'Error deleting notepad');
             }
-            deleteModal.classList.remove('visible');
-            notepadIdToDelete = null;
+            if (notepad) wsClient.sendUpdate('notepad_change', { action: 'delete', notepadId: id, notepadName: notepad.name });
             toaster.show('已移入垃圾桶');
         } catch (err) {
             console.error('Error deleting notepad:', err);
+            currentNotepads = previousNotepads;
+            renderNotepadLists(previousNotepadId);
+            if (previousNotepadId === id) {
+                renderCachedNotepad(id, previousContent);
+            }
             toaster.show('Error deleting notepad', 'error', true);
         }
     }

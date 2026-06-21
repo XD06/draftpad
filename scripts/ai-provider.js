@@ -209,7 +209,7 @@ function createRerankPrompt(source, candidates = []) {
             method: candidate.method,
             signals: candidate.signals || candidate.parts,
             ai: candidate.meta?.ai || candidate.meta || {},
-            thought: candidate.thought || null
+            thought: candidate.thought || candidate.meta?.thought || null
         }))
     };
 
@@ -545,6 +545,7 @@ module.exports = {
     createInsightPrompt,
     endpoint,
     createPrompt,
+    createRerankPrompt,
     normalizeInsightMarkdown,
     fallbackRerankRelations,
     normalizeRerankItems

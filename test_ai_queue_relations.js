@@ -190,6 +190,45 @@ async function run() {
         'a high dedicated reranker score should promote an obvious semantic relation even when the local overlap score is below the display threshold'
     );
 
+    const entityOnlyThoughts = [
+        { id: 'entity-source', text: 'DumbPad 需要优化同步体验', tags: [], createdAt: 20 },
+        { id: 'entity-target', text: 'DumbPad 的文章保存误冲突需要自动合并', tags: [], createdAt: 21 }
+    ];
+    const entityOnlyMetas = {
+        'entity-source': { id: 'entity-source', status: 'ready', ai: { entities: ['DumbPad'], topics: [], keywords: [], tags: [], embedding: [] } },
+        'entity-target': { id: 'entity-target', status: 'ready', ai: { entities: ['DumbPad'], topics: [], keywords: [], tags: [], embedding: [] } }
+    };
+    const entityOnlyStore = {
+        'entity-source': { id: 'entity-source', edges: [] },
+        'entity-target': { id: 'entity-target', edges: [] }
+    };
+    aiQueue.init({
+        storage: {
+            readThoughts: async () => entityOnlyThoughts,
+            readThoughtMeta: async id => entityOnlyMetas[id],
+            readSuppressedRelations: async id => ({ id, edges: [] }),
+            readRelations: async id => entityOnlyStore[id] || { id, edges: [] },
+            writeRelations: async (id, relations) => {
+                entityOnlyStore[id] = relations;
+            }
+        },
+        aiProvider: {
+            rerankRelations: async (_source, candidates) => candidates.map(candidate => ({
+                targetId: candidate.meta.id,
+                score: 0.85,
+                confidence: 0.82,
+                relationType: 'same_project',
+                reasons: ['同一产品问题']
+            }))
+        },
+        broadcast: () => {}
+    });
+    const entityOnlyRelations = await aiQueue._private.buildRelations(entityOnlyMetas['entity-source']);
+    assert(
+        entityOnlyRelations.edges.some(edge => edge.targetId === 'entity-target'),
+        'entity-only but specific same-product thoughts should reach the AI judge instead of being filtered before rerank'
+    );
+
     relationStore.source = { id: 'source', edges: [{ targetId: 'target-strong', score: 0.91 }] };
     relationStore['target-strong'] = { id: 'target-strong', edges: [{ targetId: 'source', score: 0.91 }] };
     aiQueue.init({
@@ -301,6 +340,70 @@ async function run() {
     assert(
         emptyBroadcasts.some(message => message.type === 'ai_status_update' && message.relationsCount === 1),
         'empty thought processing should broadcast preserved manual relation count'
+    );
+
+    const embeddingFailureThoughts = [
+        { id: 'embedding-source', text: 'DumbPad 保存冲突需要自动合并', tags: [], subItems: [] },
+        { id: 'embedding-target', text: 'DumbPad 多端同步误报冲突', tags: [], subItems: [] }
+    ];
+    const embeddingFailureMetas = {
+        'embedding-target': {
+            id: 'embedding-target',
+            status: 'ready',
+            ai: {
+                entities: ['DumbPad'],
+                topics: ['sync'],
+                keywords: ['conflict'],
+                tags: [],
+                embedding: []
+            }
+        }
+    };
+    const embeddingFailureRelations = {
+        'embedding-source': { id: 'embedding-source', edges: [] },
+        'embedding-target': { id: 'embedding-target', edges: [] }
+    };
+    aiQueue.init({
+        storage: {
+            readThought: async id => embeddingFailureThoughts.find(thought => thought.id === id) || null,
+            readThoughts: async () => embeddingFailureThoughts,
+            readThoughtMeta: async id => embeddingFailureMetas[id],
+            writeThoughtMeta: async (id, meta) => {
+                embeddingFailureMetas[id] = meta;
+            },
+            readRelations: async id => embeddingFailureRelations[id] || { id, edges: [] },
+            writeRelations: async (id, relations) => {
+                embeddingFailureRelations[id] = relations;
+            },
+            readSuppressedRelations: async id => ({ id, edges: [] })
+        },
+        aiProvider: {
+            extract: async () => ({
+                summary: '保存冲突自动合并',
+                entities: ['DumbPad'],
+                topics: ['sync'],
+                keywords: ['conflict'],
+                tags: []
+            }),
+            getEmbedding: async () => {
+                throw new Error('AI request failed with status 500');
+            },
+            rerankRelations: async (_source, candidates) => candidates.map(candidate => ({
+                targetId: candidate.meta.id,
+                score: 0.86,
+                confidence: 0.84,
+                relationType: 'same_project',
+                reasons: ['同一同步问题']
+            }))
+        },
+        broadcast: () => {}
+    });
+    const embeddingFailureResult = await aiQueue.processThought('embedding-source');
+    assert(embeddingFailureResult.meta.status === 'ready', 'embedding failure should not fail the whole AI process');
+    assert(embeddingFailureResult.meta.stages.embedding.status === 'error', 'embedding failure should be recorded on the embedding stage');
+    assert(
+        embeddingFailureRelations['embedding-source'].edges.some(edge => edge.targetId === 'embedding-target'),
+        'relations should still be generated from extraction signals when embedding fails'
     );
 
     const now = Date.now();

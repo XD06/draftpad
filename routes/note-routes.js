@@ -1,6 +1,11 @@
 const fs = require('fs').promises;
 const path = require('path');
+const crypto = require('crypto');
 const { sanitizeFilename } = require('../scripts/notepad-migration');
+
+function hashContent(content) {
+    return crypto.createHash('sha256').update(String(content || '')).digest('hex');
+}
 
 function registerNoteRoutes(app, context) {
     const {
@@ -53,7 +58,21 @@ function registerNoteRoutes(app, context) {
 
             const { notepad } = await findNotepadById(id);
             const clientVersion = Number(req.body.baseVersion);
+            const content = req.body.content;
+            const senderId = req.body.userId || 'api';
+            const saveId = typeof req.body.saveId === 'string' ? req.body.saveId : undefined;
+            const contentHash = hashContent(content);
             if (notepad && Number.isFinite(clientVersion) && (notepad.version || 1) > clientVersion) {
+                const currentContent = await storage.readNoteContent(notepad);
+                if (currentContent === content) {
+                    return res.json({
+                        success: true,
+                        version: notepad.version || 1,
+                        saveId,
+                        contentHash,
+                        unchanged: true
+                    });
+                }
                 return res.status(409).json({
                     error: 'Notepad has been updated on another device',
                     currentVersion: notepad.version || 1
@@ -68,9 +87,6 @@ function registerNoteRoutes(app, context) {
                 await storage.writeNoteContent(notepad, req.body.content);
             }
 
-            const content = req.body.content;
-            const senderId = req.body.userId || 'api';
-
             const data = await storage.readNotepadsMeta();
             const targetNotepad = data.notepads.find(n => n.id === id);
             if (targetNotepad) {
@@ -80,9 +96,9 @@ function registerNoteRoutes(app, context) {
                 await storage.saveNotepadsMeta(data);
             }
 
-            broadcastUpdate(id, content, senderId, targetNotepad?.version || 1);
+            broadcastUpdate(id, content, senderId, targetNotepad?.version || 1, { saveId, contentHash });
             scheduleIndexNotepads();
-            res.json({ success: true, version: targetNotepad?.version || 1 });
+            res.json({ success: true, version: targetNotepad?.version || 1, saveId, contentHash });
         } catch (err) {
             res.status(500).json({ error: 'Error saving notes' });
         }
@@ -170,7 +186,7 @@ function registerNoteRoutes(app, context) {
                     await storage.saveNotepadsMeta(data);
                 }
 
-            broadcastUpdate(id, content, senderId, targetNotepad.version);
+                broadcastUpdate(id, content, senderId, targetNotepad.version, { contentHash: hashContent(content) });
                 scheduleIndexNotepads();
                 return res.json({ success: true, content, modified, version: savedVersion });
             }

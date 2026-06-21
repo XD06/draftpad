@@ -4,6 +4,7 @@ const {
     createDefaultProvider,
     createInsightPrompt,
     createPrompt,
+    createRerankPrompt,
     endpoint,
     normalizeInsightMarkdown,
     normalizeRerankItems
@@ -84,6 +85,13 @@ async function run() {
     );
     assert(scored[0].meta.id === 'b', 'dedicated reranker should reorder candidates');
     assert(scored[0].signals.reranker === 0.93, 'dedicated reranker score should be stored in signals');
+    assert(
+        createRerankPrompt(
+            { id: 'source', thought: { text: 'source thought body' } },
+            [{ meta: { id: 'target', thought: { text: 'target thought body' }, ai: { keywords: ['sync'] } }, score: 0.3 }]
+        ).includes('target thought body'),
+        'relation judge prompt should include target thought text, not only extracted metadata'
+    );
     assert(endpoint('https://chat.example/v1/chat/completions', '/chat/completions') === 'https://chat.example/v1/chat/completions', 'full chat endpoint should not be appended twice');
     assert(endpoint('https://api.siliconflow.cn/v1/embeddings', '/embeddings') === 'https://api.siliconflow.cn/v1/embeddings', 'full embedding endpoint should not be appended twice');
 

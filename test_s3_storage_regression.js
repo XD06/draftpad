@@ -30,9 +30,11 @@ console.error = (...args) => {
 };
 
 const objects = new Map();
+const commandCounts = new Map();
 const fakeS3 = {
     async send(command) {
         const name = command.constructor.name;
+        commandCounts.set(name, (commandCounts.get(name) || 0) + 1);
         const input = command.input;
 
         if (name === 'HeadObjectCommand') {
@@ -275,6 +277,16 @@ async function waitForSearch(query) {
     result = await request(`/api/notes/${notepadId}`);
     assert(result.response.ok, 'S3 GET /api/notes/:id should succeed');
     assert(result.body.content === 'needle content', 'S3 note content should be readable');
+
+    const headCountBeforeRepeatedRead = commandCounts.get('HeadObjectCommand') || 0;
+    result = await request(`/api/notes/${notepadId}`);
+    assert(result.response.ok, 'S3 repeated GET /api/notes/:id should succeed');
+    result = await request(`/api/notes/${notepadId}`);
+    assert(result.response.ok, 'S3 second repeated GET /api/notes/:id should succeed');
+    assert(
+        (commandCounts.get('HeadObjectCommand') || 0) === headCountBeforeRepeatedRead,
+        'S3 repeated note reads should use the resolved notepad key cache instead of repeated HEAD requests'
+    );
 
     await waitForSearch('needle');
 

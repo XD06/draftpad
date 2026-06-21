@@ -54,6 +54,24 @@ function assertSaveNotesConflictScope() {
         /(activeToasts|toastKey|dedupeKey|conflictToastEl|noteConflictToast)/.test(`${appSource}\n${toasterSource}`),
         'static conflict toasts should be deduplicated instead of stacking repeated identical conflict messages'
     );
+
+    const createStart = appSource.indexOf('async function createNotepad()');
+    const renameStart = appSource.indexOf('async function renameNotepad()');
+    const deleteStart = appSource.indexOf('async function doDeleteNotepad()');
+    const downloadStart = appSource.indexOf('function downloadNotepad', deleteStart);
+    const createSource = createStart >= 0 && renameStart > createStart ? appSource.slice(createStart, renameStart) : '';
+    const renameSource = renameStart >= 0 && deleteStart > renameStart ? appSource.slice(renameStart, deleteStart) : '';
+    const deleteSource = deleteStart >= 0 && downloadStart > deleteStart ? appSource.slice(deleteStart, downloadStart) : '';
+    assert(
+        appSource.includes('function createClientNotepadId()') &&
+        appSource.includes('function renderNotepadLists') &&
+        createSource.includes('optimisticNotepad') &&
+        createSource.includes('body: JSON.stringify({ id: optimisticNotepad.id') &&
+        !createSource.includes('await loadNotepads()') &&
+        !renameSource.includes('await loadNotepads()') &&
+        !deleteSource.includes('await loadNotepads()'),
+        'notepad create, rename, and delete should update local UI immediately instead of blocking on a full notepad reload'
+    );
 }
 
 function assertThoughtsFrontendRegressions() {
@@ -411,12 +429,15 @@ function assertDataSpaceSettingsRegression() {
         'WebSocket setup and broadcast helpers should live in the websocket server module'
     );
     assert(
-        websocketSource.includes('function broadcastUpdate(notepadId, content, senderId = \'api\', version = undefined)') &&
-        websocketSource.includes('version') &&
+        websocketSource.includes('function broadcastUpdate(notepadId, content, senderId = \'api\', version = undefined, meta = {})') &&
+        websocketSource.includes('saveId: meta.saveId') &&
+        websocketSource.includes('contentHash: meta.contentHash') &&
         appSource.includes('const remoteVersion = Number(detail.version)') &&
+        appSource.includes('pendingNoteSaveIds') &&
+        appSource.includes('const isOwnAck = detail.userId === userId') &&
         appSource.includes('setCurrentNoteVersion(currentNotepadId, remoteVersion)') &&
         appSource.includes('cacheSyncedNote(currentNotepadId, detail.content || \'\', { version: remoteVersion })'),
-        'remote note updates should carry and apply the saved version to avoid false 409 conflicts across devices'
+        'remote note updates should carry save identity, content hash, and saved version to avoid false conflict warnings'
     );
     assert(
         serverSource.includes('createSearchIndex({') &&
@@ -625,11 +646,11 @@ async function run() {
 
         result = await request('/api/notepads', {
             method: 'POST',
-            body: JSON.stringify({ name: 'API Regression Note', content: 'hello' })
+            body: JSON.stringify({ id: 'api-regression-note-id', name: 'API Regression Note', content: 'hello' })
         });
         assert(result.response.ok, 'POST /api/notepads should succeed');
         const notepadId = result.body.id;
-        assert(notepadId, 'created notepad should have an id');
+        assert(notepadId === 'api-regression-note-id', 'created notepad should honor a safe client-provided id');
 
         result = await request(`/api/notes/${notepadId}`);
         assert(result.response.ok, 'GET /api/notes/:id should succeed');
@@ -650,6 +671,23 @@ async function run() {
         });
         assert(result.response.status === 409, 'stale note patch should return 409');
         assert(result.body.currentVersion === 2, 'note conflict should report current version');
+
+        result = await request(`/api/notes/${notepadId}`, {
+            method: 'POST',
+            body: JSON.stringify({ content: 'hello world', baseVersion: 2, userId: 'api-regression-save', saveId: 'api-regression-save-1' })
+        });
+        assert(result.response.ok, 'POST /api/notes/:id save should succeed');
+        assert(result.body.version === 3, 'note save should increment version');
+        assert(result.body.saveId === 'api-regression-save-1', 'note save should echo saveId for client acknowledgement');
+        assert(typeof result.body.contentHash === 'string' && result.body.contentHash.length >= 16, 'note save should return a content hash');
+
+        result = await request(`/api/notes/${notepadId}`, {
+            method: 'POST',
+            body: JSON.stringify({ content: 'hello world', baseVersion: 2, userId: 'api-regression-save', saveId: 'api-regression-save-2' })
+        });
+        assert(result.response.ok, 'same-content stale note save should be accepted as already synced');
+        assert(result.body.version === 3, 'same-content stale note save should not increment version');
+        assert(result.body.unchanged === true, 'same-content stale note save should report unchanged');
 
         result = await request(`/api/notepads/${notepadId}`, {
             method: 'PUT',
@@ -701,7 +739,7 @@ async function run() {
 
         const generatedMeta = await waitForJSONFile(
             path.join(dataDir, 'thoughts.meta', `${thoughtId}.json`),
-            meta => meta?.status === 'ready',
+            meta => meta?.status === 'ready' && meta?.stages?.relations?.status === 'ready',
             8000
         );
         assert(generatedMeta.status === 'ready', 'Noop AI meta should be written as ready');

@@ -86,8 +86,8 @@ export function replaceTimeCommandBeforeCursor(value, selectionStart, selectionE
     const commandStart = start - TIME_COMMAND.length;
     if (beforeCursor.slice(commandStart) !== TIME_COMMAND) return null;
 
-    const charBeforeCommand = commandStart > 0 ? text[commandStart - 1] : '';
-    if (charBeforeCommand && !/\s/.test(charBeforeCommand)) return null;
+    const charAfterCommand = text[end] || '';
+    if (/^[A-Za-z0-9_-]$/.test(charAfterCommand)) return null;
 
     const marker = buildTimeMarker(now());
     const nextValue = `${text.slice(0, commandStart)}${marker}${text.slice(end)}`;

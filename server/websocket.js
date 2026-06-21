@@ -30,13 +30,16 @@ function createWebSocketHub({ server, validateOrigin, debug = false }) {
         sendToAll(message);
     }
 
-    function broadcastUpdate(notepadId, content, senderId = 'api', version = undefined) {
+    function broadcastUpdate(notepadId, content, senderId = 'api', version = undefined, meta = {}) {
         sendToAll({
             type: 'notes_update',
             notepadId,
             content,
             userId: senderId,
-            version
+            version,
+            saveId: meta.saveId,
+            contentHash: meta.contentHash,
+            source: meta.source || 'save'
         });
     }
 
