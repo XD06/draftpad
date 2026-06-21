@@ -1,4 +1,12 @@
 import { stripHybridDisplayArtifacts } from './managers/hybrid-display-sanitizer.js';
+import {
+    buildTimeMarker,
+    deleteTimeMarker,
+    handleTimeCommandKeydown,
+    renderTimeMarkers,
+    replaceTimeMarker,
+    TIME_COMMAND
+} from './managers/time-command.js';
 
 const HEADING_RE = /^(#{1,6})\s+(.+?)\s*#*\s*$/;
 const MARK_PROTECTED_SELECTOR = [
@@ -6,7 +14,8 @@ const MARK_PROTECTED_SELECTOR = [
     'code',
     '.mermaid',
     '.mermaid-block',
-    '.language-mermaid'
+    '.language-mermaid',
+    '.md-time-marker'
 ].join(',');
 
 function slugify(text, seen) {
@@ -83,6 +92,7 @@ export class HybridMarkdownEditor {
                 this.setEditable(!this.isReadingMode);
                 this.buildHeadingIndex();
                 this.bindAnnotationPopover();
+                this.bindTimeMarkerPopover();
                 this.scheduleDecorateRenderedMarks();
             }
         });
@@ -104,6 +114,7 @@ export class HybridMarkdownEditor {
         this.themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
         this.setupSelectionMenu();
         this.bindReadingModeGuard();
+        this.bindTimeCommand();
         this.buildHeadingIndex();
     }
 
@@ -394,7 +405,7 @@ export class HybridMarkdownEditor {
         while ((node = walker.nextNode())) {
             if (this.isMarkProtectedNode(node)) continue;
             const text = node.nodeValue || '';
-            if (text.includes('==') || text.includes('<mark') || text.includes('<span data-draw') || text.includes('<span data-note')) {
+            if (text.includes('==') || text.includes('[[time:') || text.includes('<mark') || text.includes('<span data-draw') || text.includes('<span data-note')) {
                 targets.push(node);
             }
         }
@@ -537,6 +548,7 @@ export class HybridMarkdownEditor {
         let html = this.escapeHtml(text);
         html = html.replace(/\u200B/g, '');
         const original = html;
+        html = renderTimeMarkers(html, 'md-time-marker');
         html = html.replace(
             /&lt;span data-note=&quot;([^&]*)&quot;[\s\S]*?&gt;([\s\S]*?)&lt;\/span&gt;\s*&lt;sub[\s\S]*?&gt;[\s\S]*?&lt;\/sub&gt;/g,
             (_match, comment, markedText) => this.annotationHtml(markedText, comment)
@@ -880,17 +892,199 @@ export class HybridMarkdownEditor {
         });
     }
 
+    bindTimeMarkerPopover() {
+        if (this.timeMarkerPopoverBound) return;
+        this.timeMarkerPopoverBound = true;
+        this.container.addEventListener('click', (event) => {
+            const marker = event.target.closest('.md-time-marker');
+            if (!marker || !this.container.contains(marker)) return;
+            event.preventDefault();
+            event.stopPropagation();
+            this.hideSelectionMenu();
+            this.showTimeMarkerMenu(marker);
+        });
+    }
+
+    showTimeMarkerMenu(marker) {
+        const menu = this.ensureTimeMarkerMenu();
+        const source = marker.dataset.timeSource || '';
+        if (!source) return;
+        this.activeTimeMarker = { source };
+        document.querySelectorAll('.mark-popover').forEach(el => el.remove());
+        menu.hidden = false;
+        menu.style.display = 'flex';
+        this.positionTimeMarkerMenu(marker.getBoundingClientRect());
+    }
+
+    ensureTimeMarkerMenu() {
+        if (this.timeMarkerMenu) return this.timeMarkerMenu;
+        const menu = document.createElement('div');
+        menu.className = 'selection-menu typora-selection-menu time-marker-menu';
+        menu.hidden = true;
+        menu.innerHTML = `
+            <div class="menu-btn-group">
+                <button type="button" data-time-action="update" title="更新为当前时间" aria-label="更新为当前时间">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8"></circle><path d="M12 8v5l3 2"></path></svg>
+                    <span>更新</span>
+                </button>
+                <button type="button" data-time-action="delete" title="删除时间" aria-label="删除时间">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"></path><path d="M8 6V4h8v2"></path><path d="M19 6l-1 16H6L5 6"></path><path d="M10 11v6"></path><path d="M14 11v6"></path></svg>
+                    <span>删除</span>
+                </button>
+            </div>
+        `;
+        menu.addEventListener('mousedown', (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+        });
+        menu.addEventListener('click', (event) => {
+            const button = event.target.closest('[data-time-action]');
+            if (!button) return;
+            event.preventDefault();
+            event.stopPropagation();
+            this.applyTimeMarkerAction(button.dataset.timeAction);
+        });
+        document.body.appendChild(menu);
+        document.addEventListener('mousedown', (event) => {
+            if (!this.timeMarkerMenu || this.timeMarkerMenu.hidden) return;
+            if (!this.timeMarkerMenu.contains(event.target) && !event.target.closest('.md-time-marker')) {
+                this.hideTimeMarkerMenu();
+            }
+        });
+        this.timeMarkerMenu = menu;
+        return menu;
+    }
+
+    positionTimeMarkerMenu(rect) {
+        if (!this.timeMarkerMenu || !rect) return;
+        requestAnimationFrame(() => {
+            const menuRect = this.timeMarkerMenu.getBoundingClientRect();
+            const bounds = this.container.getBoundingClientRect();
+            let left = rect.left + rect.width / 2 - menuRect.width / 2;
+            let top = rect.top + window.scrollY - menuRect.height - 10;
+            left = Math.min(
+                Math.max(left, bounds.left + 10),
+                Math.min(window.innerWidth - menuRect.width - 10, bounds.right - menuRect.width - 10)
+            );
+            if (top < window.scrollY + 10) top = rect.bottom + window.scrollY + 10;
+            this.timeMarkerMenu.style.left = `${left}px`;
+            this.timeMarkerMenu.style.top = `${top}px`;
+        });
+    }
+
+    applyTimeMarkerAction(action) {
+        const source = this.activeTimeMarker?.source || '';
+        if (!source) return;
+        const value = this.getValue();
+        const next = action === 'delete'
+            ? deleteTimeMarker(value, source)
+            : replaceTimeMarker(value, source, buildTimeMarker(new Date(), 'update'));
+        this.hideTimeMarkerMenu();
+        if (next === value) return;
+        const scroller = this.container.querySelector('.vditor-wysiwyg');
+        const scrollTop = scroller?.scrollTop || 0;
+        this.setValue(next, true);
+        this.setEditable(!this.isReadingMode);
+        this.renderAfterMutation(scrollTop);
+    }
+
+    hideTimeMarkerMenu() {
+        if (this.timeMarkerMenu) {
+            this.timeMarkerMenu.hidden = true;
+            this.timeMarkerMenu.style.display = 'none';
+        }
+        this.activeTimeMarker = null;
+    }
+
     bindReadingModeGuard() {
         this.container.addEventListener('click', (event) => {
             if (!this.isReadingMode) return;
             const target = event.target;
-            if (target.closest('.has-annotation, [data-note], .md-mark, [data-draw]')) return;
+            if (target.closest('.has-annotation, [data-note], .md-mark, [data-draw], .md-time-marker')) return;
             if (target.closest('.vditor-copy, .code-lang-copy-button')) return;
             if (target.closest('.vditor-reset')) {
                 event.preventDefault();
                 event.stopPropagation();
             }
         }, true);
+    }
+
+    bindTimeCommand() {
+        this.container.addEventListener('keydown', (event) => {
+            if (this.isReadingMode) return;
+            if (this.sourceMode) {
+                handleTimeCommandKeydown(event);
+                return;
+            }
+            this.handleWysiwygTimeCommand(event);
+        }, true);
+    }
+
+    handleWysiwygTimeCommand(event) {
+        if (!event || event.key !== 'Enter' || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey || event.isComposing) {
+            return false;
+        }
+        const target = event.target;
+        if (!target?.closest?.('.vditor-wysiwyg')) return false;
+
+        const commandRange = this.getTimeCommandRangeBeforeCaret();
+        if (!commandRange) return false;
+
+        event.preventDefault();
+        event.stopPropagation();
+        const selection = window.getSelection();
+        selection?.removeAllRanges();
+        selection?.addRange(commandRange);
+        document.execCommand('delete', false);
+        this.editor?.insertValue?.(buildTimeMarker(), true);
+        this._lastValue = this.stripDisplayGuards(this.editor?.getValue?.() || this._lastValue || '');
+        this.scheduleDecorateRenderedMarks();
+        return true;
+    }
+
+    getTimeCommandRangeBeforeCaret() {
+        const selection = window.getSelection();
+        if (!selection || !selection.isCollapsed || selection.rangeCount === 0) return null;
+        const range = selection.getRangeAt(0);
+        if (!this.container.contains(range.commonAncestorContainer)) return null;
+
+        let node = range.startContainer;
+        let offset = range.startOffset;
+        if (node.nodeType !== Node.TEXT_NODE) {
+            node = this.findTextNodeBeforeOffset(node, offset);
+            if (!node) return null;
+            offset = node.nodeValue.length;
+        }
+
+        const before = String(node.nodeValue || '').slice(0, offset);
+        if (!before.endsWith(TIME_COMMAND)) return null;
+        const commandStart = offset - TIME_COMMAND.length;
+        const charBeforeCommand = commandStart > 0 ? before[commandStart - 1] : '';
+        if (charBeforeCommand && !/\s/.test(charBeforeCommand)) return null;
+
+        const commandRange = document.createRange();
+        commandRange.setStart(node, commandStart);
+        commandRange.setEnd(node, offset);
+        return commandRange;
+    }
+
+    findTextNodeBeforeOffset(node, offset = 0) {
+        if (!node || node.nodeType !== Node.ELEMENT_NODE) return null;
+        for (let index = Math.min(offset, node.childNodes.length) - 1; index >= 0; index--) {
+            const candidate = this.findLastTextNode(node.childNodes[index]);
+            if (candidate) return candidate;
+        }
+        return null;
+    }
+
+    findLastTextNode(node) {
+        if (!node) return null;
+        if (node.nodeType === Node.TEXT_NODE) return node;
+        for (let index = node.childNodes?.length - 1 || 0; index >= 0; index--) {
+            const candidate = this.findLastTextNode(node.childNodes[index]);
+            if (candidate) return candidate;
+        }
+        return null;
     }
 
     showAnnotationPopover(annotation, showAnnotationContent = false) {

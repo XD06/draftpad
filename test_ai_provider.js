@@ -152,9 +152,10 @@ async function run() {
         insightModel: 'same-model'
     });
     assert(reusedModelProvider.isInsightReady() === false, 'insight model should not be the same as the chat model');
+    const longInsightMarkdown = normalizeInsightMarkdown('```md\n' + '测'.repeat(520) + '\n```');
     assert(
-        normalizeInsightMarkdown('```md\n' + '测'.repeat(520) + '\n```').length === 500,
-        'insight markdown should be clamped to 500 characters'
+        longInsightMarkdown.length === 520,
+        'insight markdown should strip wrapping fences but should not hard-truncate returned markdown after generation'
     );
     assert(
         createInsightPrompt({ current: { text: '测试' } }).includes('中文 Markdown'),

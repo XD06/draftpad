@@ -95,6 +95,25 @@ DumbPad 当前保持无构建工具的 Vanilla JS 前端和 Express 后端。重
 4. **访问**：
    默认地址为 `http://localhost:3000`
 
+## 🐳 Docker 一键更新
+
+部署机上进入仓库目录后运行：
+
+```bash
+npm run docker:update
+```
+
+默认流程会先 `git fetch --prune && git pull --ff-only`，再用当前仓库源码重建 `dumbpad` 服务并重启容器，最后轮询 `/health`。常用参数：
+
+```bash
+npm run docker:update -- --skip-git-pull
+npm run docker:update -- --health-url http://127.0.0.1:3000/health
+npm run docker:update -- --service dumbpad --compose-file docker-compose.yml
+npm run docker:update -- --image-only
+```
+
+说明：`docker-compose.yml` 默认配置了上游镜像；脚本默认会临时追加本地 build override，确保更新的是本仓库当前代码。只有需要直接拉取 compose 中配置的镜像时才使用 `--image-only`。
+
 ## ⚙️ 存储与 AI 配置
 
 默认使用本地存储：

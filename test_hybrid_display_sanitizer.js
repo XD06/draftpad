@@ -38,6 +38,10 @@ function run() {
         stripHybridDisplayArtifacts('\u200B<span data-draw>画线</span>') === '<span data-draw>画线</span>',
         'display guard zero-width marker should be removed before saving'
     );
+    assert(
+        stripHybridDisplayArtifacts('<time class="md-time-marker is-update" data-time-marker="true" data-time-kind="update" data-time-source="[[time:update:2026-06-21 09:08:07]]" data-time-stamp="2026-06-21 09:08:07"><span class="time-marker-label">更新</span><span class="time-marker-stamp">2026-06-21 09:08:07</span></time>') === '[[time:update:2026-06-21 09:08:07]]',
+        'rendered time marker should normalize back to source marker text'
+    );
 
     console.log('Hybrid display sanitizer checks passed');
 }

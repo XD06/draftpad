@@ -429,7 +429,11 @@ function isManualRelation(edge) {
 }
 
 function relationEdgeFromRerankItem(item, candidate) {
-    const score = Number.isFinite(item.score) ? item.score : candidate.score;
+    const judgeScore = Number.isFinite(item.score) ? item.score : candidate.score;
+    const rerankScore = Number(candidate.rerankScore ?? candidate.signals?.reranker);
+    const score = Number.isFinite(rerankScore)
+        ? Math.max(judgeScore, rerankScore)
+        : judgeScore;
     return {
         targetId: item.targetId,
         score,

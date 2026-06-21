@@ -750,6 +750,38 @@
     -webkit-box-decoration-break: clone;
 }
 
+.thought-time-marker {
+    --time-marker-accent: #159a63;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    max-width: 100%;
+    padding: 2px 8px 2px 5px;
+    margin: 0 2px;
+    border: 1px solid color-mix(in srgb, var(--time-marker-accent) 28%, var(--border-color));
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--time-marker-accent) 9%, transparent);
+    color: color-mix(in srgb, var(--time-marker-accent) 42%, var(--text-color));
+    font-family: var(--font-code);
+    font-size: 0.88em;
+    line-height: 1.54;
+    white-space: nowrap;
+    cursor: pointer;
+    box-decoration-break: clone;
+    -webkit-box-decoration-break: clone;
+    transition: background 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
+}
+
+.thought-time-marker:hover {
+    transform: translateY(-1px);
+    background: color-mix(in srgb, var(--time-marker-accent) 13%, transparent);
+    box-shadow: 0 5px 14px color-mix(in srgb, var(--time-marker-accent) 11%, transparent);
+}
+
+.thought-time-marker.is-update {
+    --time-marker-accent: #b66762;
+}
+
 .thought-draw-line,
 .thought-note-line {
     text-decoration-line: underline;
@@ -1152,8 +1184,8 @@
 }
 
 .thought-ai-insight.expanded .thought-ai-insight-markdown {
-    max-height: 420px;
-    overflow-y: auto;
+    max-height: none;
+    overflow: visible;
 }
 
 .thought-ai-insight-markdown p {

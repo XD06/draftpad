@@ -45,6 +45,7 @@ import {
 import { renderThoughtCard } from './thought-card-renderer.js';
 import { applyThoughtTextStyle, escapeHtml as escapeThoughtHtml, formatThoughtText } from './thought-text-formatting.js';
 import { buildQuickAddCreateOutboxItem, createLocalPendingThought, markCreatedThoughtPending } from './thought-quick-add.js';
+import { buildTimeMarker, deleteTimeMarker, handleTimeCommandKeydown, replaceTimeMarker } from './time-command.js';
 
 const THOUGHTS_CACHE_KEY = 'dumbpad_thoughts_cache_v1';
 
@@ -79,6 +80,7 @@ export class ThoughtsManager {
         this.pendingCreateIds = new Set(); // Prevent duplicate from race conditions
         this.pendingAIStatusTimers = new Map();
         this.outboxInFlight = false;
+        this.fetchThoughtsSeq = 0;
         this.manualRelationSearchTimer = null;
         this.manualRelationSearchSeq = 0;
         this.openRelationsPanelIds = new Set();
@@ -113,6 +115,9 @@ export class ThoughtsManager {
             this.quickAddBar.querySelector('.quick-add-backdrop').addEventListener('click', () => this.closeQuickAdd());
             this.quickAddSubmit.addEventListener('click', (e) => { e.stopPropagation(); this.submitQuickAdd(); });
             this.quickAddInput.addEventListener('keydown', (e) => {
+                if (handleTimeCommandKeydown(e)) {
+                    return;
+                }
                 if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
                     e.preventDefault();
                     this.submitQuickAdd();
@@ -279,6 +284,9 @@ export class ThoughtsManager {
             this.editorContainer.style.display = 'flex';
             this.toggleBtn.classList.remove('active');
             if (floatingActions) floatingActions.style.display = 'flex';
+            this.app.openEditorView?.().catch(error => {
+                console.warn('Failed to restore editor view:', error);
+            });
         }
     }
 
@@ -368,14 +376,41 @@ export class ThoughtsManager {
     async fetchThoughts() {
         const date = this.dateFilter.value;
         const query = this.searchInput.value.trim();
+        const requestSeq = ++this.fetchThoughtsSeq;
         try {
-            this.thoughts = this.mergeOutboxThoughts(await this.apiClient.list({ date, query }));
+            if (this.thoughts.length === 0 || date || query) {
+                const lightThoughts = await this.apiClient.list({ date, query, light: true });
+                if (requestSeq !== this.fetchThoughtsSeq) return;
+                this.thoughts = this.mergeOutboxThoughts(this.mergeThoughtDetails(lightThoughts));
+                this.syncTagsFromThoughts(this.thoughts);
+                this.render();
+            }
+
+            const fullThoughts = await this.apiClient.list({ date, query });
+            if (requestSeq !== this.fetchThoughtsSeq) return;
+            this.thoughts = this.mergeOutboxThoughts(fullThoughts);
             if (!date && !query) this.saveThoughtsCache(this.thoughts);
             this.syncTagsFromThoughts(this.thoughts);
             this.render();
         } catch (err) {
             console.error('Failed to fetch thoughts:', err);
         }
+    }
+
+    mergeThoughtDetails(thoughts) {
+        const previousById = new Map(this.thoughts.map(thought => [thought.id, thought]));
+        return (Array.isArray(thoughts) ? thoughts : []).map(thought => {
+            const previous = previousById.get(thought.id) || {};
+            return {
+                ...previous,
+                ...thought,
+                relationCount: thought.relationCount ?? previous.relationCount ?? 0,
+                aiStatus: thought.aiStatus ?? previous.aiStatus ?? 'missing',
+                aiError: thought.aiError ?? previous.aiError ?? null,
+                aiProcessedAt: thought.aiProcessedAt ?? previous.aiProcessedAt ?? 0,
+                aiTags: thought.aiTags ?? previous.aiTags ?? []
+            };
+        });
     }
 
     openQuickAdd() {
@@ -811,6 +846,7 @@ export class ThoughtsManager {
 
         this.bindThoughtSelectionFormatting(card, thought);
         this.bindThoughtInlineStyleClearing(card, thought);
+        this.bindThoughtTimeMarkers(card, thought);
         this.bindThoughtSwipeDelete(card, thought);
 
         let lastTap = 0;
@@ -921,6 +957,8 @@ export class ThoughtsManager {
             event.target.closest('.thought-relations-btn') ||
             event.target.closest('.thought-ai-status') ||
             event.target.closest('.thought-ai-detail-panel') ||
+            event.target.closest('.thought-time-marker') ||
+            event.target.closest('.thought-time-menu') ||
             event.target.closest('.thought-ai-tag-suggestion') ||
             event.target.closest('.thought-tag-remove') ||
             event.target.closest('.thought-relations-panel') ||
@@ -1098,6 +1136,132 @@ export class ThoughtsManager {
                 this.showThoughtSelectionToolbar(styledNode.getBoundingClientRect(), { mode: 'clear' });
             });
         });
+    }
+
+    bindThoughtTimeMarkers(card, thought) {
+        card.querySelectorAll('.thought-time-marker').forEach((marker) => {
+            marker.addEventListener('click', (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                const source = marker.dataset.timeSource || '';
+                if (!source) return;
+                this.hideThoughtSelectionToolbar();
+                this.activeThoughtTimeMarker = {
+                    thoughtId: thought.id,
+                    subId: marker.closest('.subtask')?.dataset.subid || '',
+                    source
+                };
+                this.showThoughtTimeMenu(marker.getBoundingClientRect());
+            });
+        });
+    }
+
+    showThoughtTimeMenu(rect) {
+        const menu = this.ensureThoughtTimeMenu();
+        menu.hidden = false;
+        menu.style.display = 'flex';
+        requestAnimationFrame(() => {
+            const menuRect = menu.getBoundingClientRect();
+            const left = Math.max(12, Math.min(window.innerWidth - menuRect.width - 12, rect.left + rect.width / 2 - menuRect.width / 2));
+            const top = Math.max(12, rect.top + window.scrollY - menuRect.height - 10);
+            menu.style.left = `${left}px`;
+            menu.style.top = `${top}px`;
+        });
+    }
+
+    ensureThoughtTimeMenu() {
+        if (this.thoughtTimeMenu) return this.thoughtTimeMenu;
+        const menu = document.createElement('div');
+        menu.className = 'selection-menu typora-selection-menu time-marker-menu thought-time-menu';
+        menu.hidden = true;
+        menu.innerHTML = `
+            <div class="menu-btn-group">
+                <button type="button" data-time-action="update" title="更新为当前时间" aria-label="更新为当前时间">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8"></circle><path d="M12 8v5l3 2"></path></svg>
+                    <span>更新</span>
+                </button>
+                <button type="button" data-time-action="delete" title="删除时间" aria-label="删除时间">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"></path><path d="M8 6V4h8v2"></path><path d="M19 6l-1 16H6L5 6"></path><path d="M10 11v6"></path><path d="M14 11v6"></path></svg>
+                    <span>删除</span>
+                </button>
+            </div>
+        `;
+        menu.addEventListener('mousedown', (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+        });
+        menu.addEventListener('click', (event) => {
+            const button = event.target.closest('[data-time-action]');
+            if (!button) return;
+            event.preventDefault();
+            event.stopPropagation();
+            this.applyThoughtTimeAction(button.dataset.timeAction);
+        });
+        document.body.appendChild(menu);
+        document.addEventListener('mousedown', (event) => {
+            if (!this.thoughtTimeMenu || this.thoughtTimeMenu.hidden) return;
+            if (!this.thoughtTimeMenu.contains(event.target) && !event.target.closest('.thought-time-marker')) {
+                this.hideThoughtTimeMenu();
+            }
+        });
+        this.thoughtTimeMenu = menu;
+        return menu;
+    }
+
+    hideThoughtTimeMenu() {
+        if (this.thoughtTimeMenu) {
+            this.thoughtTimeMenu.hidden = true;
+            this.thoughtTimeMenu.style.display = 'none';
+        }
+        this.activeThoughtTimeMarker = null;
+    }
+
+    async applyThoughtTimeAction(action) {
+        const marker = this.activeThoughtTimeMarker;
+        if (!marker) return;
+        const thought = this.thoughts.find(item => item.id === marker.thoughtId);
+        if (!thought) {
+            this.hideThoughtTimeMenu();
+            return;
+        }
+
+        const mutate = (sourceText) => action === 'delete'
+            ? deleteTimeMarker(sourceText, marker.source)
+            : replaceTimeMarker(sourceText, marker.source, buildTimeMarker(new Date(), 'update'));
+
+        this.hideThoughtTimeMenu();
+
+        if (marker.subId && !(marker.subId.startsWith('legacy_') && !(thought.subItems || []).length)) {
+            const subItem = (thought.subItems || []).find(item => item.id === marker.subId);
+            if (!subItem) return;
+            const nextText = mutate(subItem.text);
+            if (nextText === subItem.text) return;
+            subItem.text = nextText;
+            thought.updatedAt = Date.now();
+            this.focusExpandedThought(thought.id);
+            this.render();
+            try {
+                await this.apiClient.updateSubitem(thought.id, marker.subId, nextText);
+            } catch (err) {
+                console.error('Failed to update thought time marker:', err);
+                this.enqueueThoughtOverwrite(thought);
+                this.render();
+            }
+            return;
+        }
+
+        const nextText = mutate(thought.text);
+        if (nextText === thought.text) return;
+        thought.text = nextText;
+        thought.updatedAt = Date.now();
+        this.render();
+        try {
+            await this.apiClient.overwrite(thought.id, thought);
+        } catch (err) {
+            console.error('Failed to update thought time marker:', err);
+            this.enqueueThoughtOverwrite(thought);
+            this.render();
+        }
     }
 
     bindThoughtSwipeDelete(card, thought) {
@@ -1978,6 +2142,9 @@ export class ThoughtsManager {
 
         // Ctrl+Enter to save
         textarea.onkeydown = (e) => {
+            if (handleTimeCommandKeydown(e)) {
+                return;
+            }
             if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
                 e.preventDefault();
                 saveAndExit();
@@ -2063,6 +2230,7 @@ export class ThoughtsManager {
         };
 
         input.addEventListener('keydown', (e) => {
+            if (handleTimeCommandKeydown(e)) return;
             if (e.key === 'Enter') { e.preventDefault(); commit(); }
             else if (e.key === 'Escape') { cleanup(); }
         });
@@ -2112,6 +2280,7 @@ export class ThoughtsManager {
         };
 
         input.addEventListener('keydown', (e) => {
+            if (handleTimeCommandKeydown(e)) return;
             if (e.key === 'Enter') { e.preventDefault(); commit(); }
             else if (e.key === 'Escape') { input.replaceWith(textSpan); }
         });

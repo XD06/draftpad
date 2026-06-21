@@ -8,6 +8,13 @@ const ROOT = __dirname;
 function loadTextFormatting() {
     const sourcePath = path.join(ROOT, 'public', 'managers', 'thought-text-formatting.js');
     const source = fs.readFileSync(sourcePath, 'utf8')
+        .replace(/import \{ renderTimeMarkers \} from '.\/time-command\.js';\s*/, `function renderTimeMarkers(escaped = '', className = 'time-marker') {
+    return String(escaped || '').replace(/\\[\\[time:(?:(create|update):)?(\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2})\\]\\]/g, (match, kindValue, stamp) => {
+        const kind = kindValue === 'update' ? 'update' : 'create';
+        return \`<time class="\${className} is-\${kind}" data-time-marker="true" data-time-kind="\${kind}" data-time-source="\${match}" data-time-stamp="\${stamp}"><span class="time-marker-label">\${kind === 'update' ? '更新' : '创建'}</span><span class="time-marker-stamp">\${stamp}</span></time>\`;
+    });
+}
+`)
         .replace(/export function /g, 'function ')
         + '\nmodule.exports = { applyThoughtTextStyle, escapeHtml, escapeRegExp, formatThoughtText, linkifyText };\n';
     const context = {
@@ -41,6 +48,14 @@ function run() {
     assert(
         formatThoughtText('==重点== <span data-draw>画线</span> <mark>标记</mark>').includes('<mark class="thought-inline-highlight">重点</mark>'),
         'formatThoughtText should render ==highlight== markers'
+    );
+    assert(
+        formatThoughtText('记录 [[time:2026-06-21 09:08:07]]').includes('<time class="thought-time-marker is-create" data-time-marker="true"'),
+        'formatThoughtText should render time markers'
+    );
+    assert(
+        formatThoughtText('记录 [[time:update:2026-06-21 09:08:07]]').includes('<time class="thought-time-marker is-update" data-time-marker="true"'),
+        'formatThoughtText should render update time markers'
     );
     assert(
         formatThoughtText('<span data-draw>画线</span>').includes('<span class="thought-draw-line">画线</span>'),

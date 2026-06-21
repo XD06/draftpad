@@ -20,6 +20,7 @@ function sleep(ms) {
 
 function assertSaveNotesConflictScope() {
     const appSource = fs.readFileSync(path.join(ROOT, 'public', 'app.js'), 'utf8');
+    const toasterSource = fs.readFileSync(path.join(ROOT, 'public', 'managers', 'toaster.js'), 'utf8');
     const serverSource = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
     const noteRoutesSource = fs.readFileSync(path.join(ROOT, 'routes', 'note-routes.js'), 'utf8');
     const start = appSource.indexOf('async function saveNotes(');
@@ -39,6 +40,19 @@ function assertSaveNotesConflictScope() {
         noteRoutesSource.includes("app.post('/api/notes/:id'") &&
         noteRoutesSource.includes('currentVersion: notepad.version || 1'),
         'note save conflict behavior should live in the note route module'
+    );
+    assert(
+        /(noteSaveInFlight|saveNotesInFlight|pendingNoteSave|saveNotesQueue|queuedSaveNotes)/.test(appSource),
+        'single-client note saves should be serialized so overlapping autosaves do not reuse a stale baseVersion and masquerade as multi-device conflicts'
+    );
+    assert(
+        saveNotesSource.includes('savedContentStillCurrent') &&
+        saveNotesSource.includes('cacheDirtyNote(targetNotepadId, editor.value, { version: result.version })'),
+        'a completed stale save should update the base version but keep newer editor content dirty until the queued latest save finishes'
+    );
+    assert(
+        /(activeToasts|toastKey|dedupeKey|conflictToastEl|noteConflictToast)/.test(`${appSource}\n${toasterSource}`),
+        'static conflict toasts should be deduplicated instead of stacking repeated identical conflict messages'
     );
 }
 
@@ -117,6 +131,17 @@ function assertThoughtsFrontendRegressions() {
             thoughtsSource.indexOf("err?.status === 503"),
         'manual Thought insight should show the dedicated same-model error before the generic 503 missing-config hint'
     );
+    const expandedInsightStart = thoughtsCss.indexOf('.thought-ai-insight.expanded .thought-ai-insight-markdown');
+    const expandedInsightEnd = expandedInsightStart >= 0 ? thoughtsCss.indexOf('}', expandedInsightStart) : -1;
+    const expandedInsightSource = expandedInsightStart >= 0 && expandedInsightEnd > expandedInsightStart
+        ? thoughtsCss.slice(expandedInsightStart, expandedInsightEnd)
+        : '';
+    assert(
+        expandedInsightSource &&
+        !/max-height:\s*420px\b/.test(expandedInsightSource) &&
+        !/overflow-y:\s*auto\b/.test(expandedInsightSource),
+        'expanded Thought AI insight should show the full markdown in the panel instead of hiding it behind a fixed 420px inner scroller'
+    );
     assert(
         thoughtsCss.includes('.thought-card.can-expand:not(.expanded) .subtask-list .subtask-add-inline'),
         'collapsed long cards should only hide subtask-list inline add buttons'
@@ -152,10 +177,14 @@ function assertThoughtsFrontendRegressions() {
         thoughtsSource.indexOf('this.closeQuickAdd();') < thoughtsSource.indexOf('await this.apiClient.create'),
         'Quick Add should support multiline input and optimistically insert local pending thoughts before network completion'
     );
+    const thoughtEditSaveBlock = thoughtsSource.slice(
+        thoughtsSource.indexOf('const saveAndExit = () => {'),
+        thoughtsSource.indexOf('// Ctrl+Enter to save')
+    );
     assert(
-        thoughtsSource.includes('this.exitEditMode(card);') &&
-        thoughtsSource.includes('this.apiClient.overwrite(thought.id, thought)') &&
-        !thoughtsSource.includes('await this.apiClient.overwrite(thought.id, thought);'),
+        thoughtEditSaveBlock.includes('this.exitEditMode(card);') &&
+        thoughtEditSaveBlock.includes('this.apiClient.overwrite(thought.id, thought)') &&
+        !thoughtEditSaveBlock.includes('await this.apiClient.overwrite(thought.id, thought);'),
         'thought editing should exit immediately and save in the background'
     );
     assert(
@@ -257,6 +286,10 @@ function assertThoughtsFrontendRegressions() {
         !iosThemeCss.includes('padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 104px);'),
         'mobile Thought FAB should stay on the right without animating position and the scroll area should not reserve a large blank bottom gutter'
     );
+    assert(
+        !/padding-bottom:\s*calc\(env\(safe-area-inset-bottom,\s*0px\)\s*\+\s*1(?:1[0-9]|2[0-9])px\)\s*!important/.test(iosThemeCss),
+        'mobile article editor and reading content should not reserve a fixed 110px+ bottom gutter that creates a blank area at the end'
+    );
     const thoughtFadeInStart = thoughtsCss.indexOf('@keyframes thoughtFadeIn');
     const thoughtFadeInEnd = thoughtFadeInStart >= 0 ? thoughtsCss.indexOf('}', thoughtsCss.indexOf('to {', thoughtFadeInStart)) : -1;
     const thoughtFadeInSource = thoughtFadeInStart >= 0 && thoughtFadeInEnd > thoughtFadeInStart
@@ -333,9 +366,13 @@ function assertThoughtsFrontendRegressions() {
         thoughtsSource.includes("const THOUGHTS_CACHE_KEY = 'dumbpad_thoughts_cache_v1'") &&
         thoughtsSource.includes('loadThoughtsCache()') &&
         thoughtsSource.includes('saveThoughtsCache(thoughts)') &&
+        initializeSource.includes("const startsInThoughts = window.location.hash === '#thoughts'") &&
+        initializeSource.includes('if (startsInThoughts)') &&
+        initializeSource.includes('await ensureThoughtsManager()') &&
+        initializeSource.includes('await loadNotepads({ loadCurrentNote: !startsInThoughts })') &&
         initializeSource.includes('scheduleIdleTask(() =>') &&
-        initializeSource.indexOf('scheduleIdleTask(() =>') < initializeSource.indexOf('await loadNotepads()'),
-        'Thoughts view should load its module early and render cached thoughts before the network refresh'
+        initializeSource.indexOf('await ensureThoughtsManager()') < initializeSource.indexOf('await loadNotepads({ loadCurrentNote: !startsInThoughts })'),
+        'Thoughts view should load its module immediately on #thoughts and render cached thoughts before the network refresh'
     );
 }
 

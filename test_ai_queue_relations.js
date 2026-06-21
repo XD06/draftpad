@@ -121,6 +121,75 @@ async function run() {
     const rebuildResult = await aiQueue.rebuildRelations({ limit: 2 });
     assert(rebuildResult.rebuilt === 2, 'rebuildRelations should rebuild ready metas up to limit');
 
+    const rerankSignalThoughts = [
+        { id: 'rerank-source', text: 'DumbPad 的 AI 关联需要提升明显相关想法的召回', tags: ['product'], createdAt: 10 },
+        { id: 'rerank-target', text: '关联推荐漏掉了同一产品方向下的上下文，需要用重排分数补足', tags: ['product'], createdAt: 11 }
+    ];
+    const rerankSignalMetas = {
+        'rerank-source': {
+            id: 'rerank-source',
+            status: 'ready',
+            ai: {
+                entities: ['DumbPad'],
+                topics: ['relation recall'],
+                intent: 'problem',
+                keywords: ['AI relation'],
+                tags: ['product']
+            }
+        },
+        'rerank-target': {
+            id: 'rerank-target',
+            status: 'ready',
+            ai: {
+                entities: ['DumbPad'],
+                topics: ['semantic recommendation'],
+                intent: 'note',
+                keywords: ['recommendation quality'],
+                tags: ['product']
+            }
+        }
+    };
+    const rerankSignalStore = {
+        'rerank-source': { id: 'rerank-source', edges: [] },
+        'rerank-target': { id: 'rerank-target', edges: [] }
+    };
+    aiQueue.init({
+        storage: {
+            readThoughts: async () => rerankSignalThoughts,
+            readThoughtMeta: async id => rerankSignalMetas[id],
+            readSuppressedRelations: async id => ({ id, edges: [] }),
+            readRelations: async id => rerankSignalStore[id] || { id, edges: [] },
+            writeRelations: async (id, relations) => {
+                rerankSignalStore[id] = relations;
+            }
+        },
+        aiProvider: {
+            scoreRelationCandidates: async (_source, candidates) => candidates.map(candidate => ({
+                ...candidate,
+                rerankScore: 0.89,
+                signals: {
+                    ...(candidate.signals || {}),
+                    reranker: 0.89
+                }
+            })),
+            rerankRelations: async (_source, candidates) => candidates.map(candidate => ({
+                targetId: candidate.meta.id,
+                score: candidate.score,
+                confidence: candidate.score,
+                relationType: 'related_context',
+                reasons: ['fallback judge kept local score']
+            }))
+        },
+        broadcast: () => {}
+    });
+
+    const rerankSignalRelations = await aiQueue._private.buildRelations(rerankSignalMetas['rerank-source']);
+    assert(
+        rerankSignalRelations.edges.some(edge => edge.targetId === 'rerank-target') ||
+            rerankSignalRelations.suggestions.some(edge => edge.targetId === 'rerank-target'),
+        'a high dedicated reranker score should promote an obvious semantic relation even when the local overlap score is below the display threshold'
+    );
+
     relationStore.source = { id: 'source', edges: [{ targetId: 'target-strong', score: 0.91 }] };
     relationStore['target-strong'] = { id: 'target-strong', edges: [{ targetId: 'source', score: 0.91 }] };
     aiQueue.init({

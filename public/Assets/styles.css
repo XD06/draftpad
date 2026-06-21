@@ -2867,6 +2867,108 @@ blockquote {
     border-radius: 4px;
 }
 
+.md-time-marker {
+    --time-marker-accent: #159a63;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    max-width: 100%;
+    padding: 2px 8px 2px 5px;
+    margin: 0 2px;
+    border: 1px solid color-mix(in srgb, var(--time-marker-accent) 28%, var(--border-color));
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--time-marker-accent) 9%, transparent);
+    color: color-mix(in srgb, var(--time-marker-accent) 42%, var(--text-color));
+    font-family: var(--font-code);
+    font-size: 0.88em;
+    line-height: 1.54;
+    white-space: nowrap;
+    cursor: pointer;
+    box-decoration-break: clone;
+    -webkit-box-decoration-break: clone;
+    transition: background 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
+}
+
+.md-time-marker:hover {
+    transform: translateY(-1px);
+    background: color-mix(in srgb, var(--time-marker-accent) 13%, transparent);
+    box-shadow: 0 5px 14px color-mix(in srgb, var(--time-marker-accent) 11%, transparent);
+}
+
+.md-time-marker.is-update {
+    --time-marker-accent: #b66762;
+}
+
+.time-marker-icon {
+    width: 15px;
+    height: 15px;
+    flex: 0 0 15px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 6px;
+    background: color-mix(in srgb, var(--time-marker-accent) 15%, transparent);
+    color: color-mix(in srgb, var(--time-marker-accent) 88%, var(--text-color));
+    opacity: 0.9;
+}
+
+.time-marker-icon svg {
+    width: 11px;
+    height: 11px;
+    display: block;
+}
+
+.time-marker-label {
+    font-family: inherit;
+    font-size: 0.78em;
+    font-weight: 760;
+    letter-spacing: 0;
+    color: color-mix(in srgb, var(--time-marker-accent) 80%, var(--text-color));
+}
+
+.time-marker-stamp {
+    color: color-mix(in srgb, var(--time-marker-accent) 34%, var(--text-color));
+    font-variant-numeric: tabular-nums;
+}
+
+.time-marker-menu {
+    z-index: 12050;
+    padding: 5px;
+    border-radius: 14px;
+    background: color-mix(in srgb, var(--modal-bg) 80%, transparent);
+    backdrop-filter: blur(18px) saturate(1.25);
+    -webkit-backdrop-filter: blur(18px) saturate(1.25);
+    border: 1px solid color-mix(in srgb, var(--border-color) 72%, transparent);
+    box-shadow: 0 12px 32px rgba(15, 23, 42, 0.13), 0 2px 8px rgba(15, 23, 42, 0.06);
+}
+
+.time-marker-menu .menu-btn-group {
+    gap: 4px;
+}
+
+.time-marker-menu button {
+    gap: 6px;
+    min-width: 62px;
+    min-height: 34px;
+    padding: 7px 10px;
+    border-radius: 10px;
+}
+
+.time-marker-menu button svg {
+    width: 15px;
+    height: 15px;
+}
+
+.time-marker-menu [data-time-action="update"]:hover {
+    background: color-mix(in srgb, #b55f5f 10%, transparent);
+    color: #9f4f4f;
+}
+
+.time-marker-menu [data-time-action="delete"]:hover {
+    background: color-mix(in srgb, #e74c3c 12%, transparent);
+    color: #e74c3c;
+}
+
 .has-annotation {
     position: relative;
     cursor: pointer;

@@ -1128,7 +1128,7 @@ main {
     .typora-editor-shell .vditor-wysiwyg,
     .typora-editor-shell .vditor-reset,
     .typora-editor-shell.is-source-mode .typora-source-editor {
-        padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 116px) !important;
+        padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 64px) !important;
     }
 
     .typora-editor-shell.is-source-mode .typora-source-editor {
@@ -1136,7 +1136,7 @@ main {
         right: 8px;
         width: auto;
         max-width: none;
-        padding: 18px 18px calc(env(safe-area-inset-bottom, 0px) + 124px) !important;
+        padding: 18px 18px calc(env(safe-area-inset-bottom, 0px) + 72px) !important;
         border: 0.5px solid rgba(60, 60, 67, 0.10);
         border-radius: 18px;
         background: color-mix(in srgb, var(--header-bg) 94%, var(--bg-color));

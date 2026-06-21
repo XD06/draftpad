@@ -5,7 +5,6 @@ const getCacheName = (version) => `DUMBPAD_CACHE_${version}`;
 const CORE_ASSETS = [
   "/index.html",
   "/app.js",
-  "/hybrid-editor.js",
   "/sidebar.js",
   "/Assets/styles.css",
   "/Assets/preview-styles.css",
@@ -16,10 +15,6 @@ const CORE_ASSETS = [
   "/Assets/dumbpad-192.png",
   "/Assets/dumbpad-512.png",
   "/Assets/favicon-512.png",
-  "/vendor/vditor/index.css",
-  "/vendor/vditor/index.min.js",
-  "/vendor/vditor-package/dist/js/i18n/zh_CN.js",
-  "/vendor/vditor-package/dist/js/lute/lute.min.js",
   "/js/marked/marked.esm.js",
   "/css/@highlightjs/github.min.css",
   "/css/@highlightjs/github-dark.min.css",
@@ -42,6 +37,7 @@ const CORE_ASSETS = [
   "/managers/thought-renderer.js",
   "/managers/thought-tags.js",
   "/managers/thought-text-formatting.js",
+  "/managers/time-command.js",
   "/managers/toaster.js",
   "/managers/ws-client.js",
 ];

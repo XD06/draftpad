@@ -1,3 +1,5 @@
+import { renderTimeMarkers } from './time-command.js';
+
 export function escapeHtml(text) {
     if (text === null || text === undefined) return '';
     return String(text)
@@ -41,7 +43,7 @@ function linkifyEscapedHtml(escaped = '') {
 }
 
 function renderThoughtInlineMarkers(escaped = '') {
-    let html = String(escaped || '');
+    let html = renderTimeMarkers(escaped, 'thought-time-marker');
     html = html.replace(
         /&lt;span data-note=&quot;([^&]*)&quot;[\s\S]*?&gt;([\s\S]*?)&lt;\/span&gt;\s*&lt;sub[\s\S]*?&gt;[\s\S]*?&lt;\/sub&gt;/g,
         (_match, comment, markedText) => `<span class="thought-note-line" title="${comment}">${markedText}</span>`

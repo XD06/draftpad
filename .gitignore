@@ -150,6 +150,7 @@ Thumbs.db
 .playwright-cli/
 .tmp/
 scratch/
+.docker-update.override.yml
 
 # Local private AI/provider config
 ai_config.txt

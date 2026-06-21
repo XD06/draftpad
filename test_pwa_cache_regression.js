@@ -19,7 +19,8 @@ const requiredCoreAssets = [
     '/managers/thought-relations-state.js',
     '/managers/thought-renderer.js',
     '/managers/thought-tags.js',
-    '/managers/thought-text-formatting.js'
+    '/managers/thought-text-formatting.js',
+    '/managers/time-command.js'
 ];
 
 const requiredWarmAssets = [
@@ -43,6 +44,9 @@ assert(
     'service worker should refresh unversioned JS/CSS/JSON from network before falling back to cache'
 );
 assert(serviceWorker.includes('requestUrl.pathname.startsWith("/api/")'), 'service worker should bypass API requests');
+assert(!serviceWorker.includes('"/vendor/vditor/index.min.js"'), 'service worker should not install-cache lazy Vditor JS');
+assert(!serviceWorker.includes('"/vendor/vditor/index.css"'), 'service worker should not install-cache lazy Vditor CSS');
+assert(!serviceWorker.includes('"/hybrid-editor.js"'), 'service worker should runtime-cache lazy hybrid editor module');
 
 generatePWAManifest('DumbPad');
 const manifest = JSON.parse(fs.readFileSync(path.join(root, 'public', 'Assets', 'asset-manifest.json'), 'utf8'));

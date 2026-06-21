@@ -44,6 +44,7 @@ Thought 前端 helper 拆分模块有聚合测试入口：`npm run test:thought-
 - `public/managers/thought-quick-add.js`：Quick Add 数据构造 helper。负责服务端创建成功后的本地 pending AI 标记、离线 local pending Thought 构造和 create outbox payload；弹层、焦点、提交时序、API 和 outbox 协调仍保留在 `ThoughtsManager`。
 - `public/managers/thought-tags.js`：Thought 标签边界。负责标签归一化、`dumbpad_thought_tags` 持久化、标签收集，以及标签筛选、Quick Add 标签、AI 建议标签 HTML 片段渲染；`ThoughtsManager` 只保留事件协调。
 - `public/managers/thought-text-formatting.js`：Thought 文本格式化 helper。负责 HTML 转义、URL linkify 和正则转义；DOM 依赖的搜索高亮仍保留在 `ThoughtsManager`。
+- `public/managers/time-command.js`：`/time` 快捷命令边界。负责本地时间格式化、光标前 `/time` 替换、`[[time:create:...]]` / `[[time:update:...]]` 标记渲染，以及旧 `[[time:...]]` 标记兼容；文章编辑器和 Thought 输入共同复用。
 - `public/managers/thought-relations-state.js`：Thought 关系本地状态 helper。负责关系计数归一化、手动关联成功/失败和删除成功/失败时的本地 relation count/localPending/ready 状态变更；API、panel 刷新和 outbox 协调仍保留在 `ThoughtsManager`。
 - `public/managers/note-sync-controller.js`：启动缓存与 Note cache 读写控制器，避免缓存细节继续散落在 `app.js`。
 - `public/managers/settings-data-panel.js`：设置页数据空间、垃圾桶和云端维护 API adapter。
@@ -79,7 +80,7 @@ PWA 缓存策略分为三层：
 - HTML 导航使用 network-first，离线或慢网时回退到缓存的 `index.html`。
 - JS/CSS/JSON 这类无 hash 的代码与样式资源使用 network-first，离线或慢网时回退缓存，避免普通刷新继续拿到旧样式或旧模块；图片、字体等稳定大资源仍使用 cache-first。
 
-Service Worker 的核心缓存包含入口页面、主 JS/CSS、Vditor/Lute、Thought 拆分模块和图标。`WARM_ASSETS` 额外预热中文字体、代码字体和 highlight 主包；这些资源较大但变化很少，第一次安装或版本更新时缓存，后续打开直接复用。
+Service Worker 的核心缓存包含入口页面、主 JS/CSS、Thought 拆分模块和图标。Vditor、Lute 和 `hybrid-editor.js` 从安装核心资源中移出，由文章模式按需加载并走运行时静态资源缓存，避免直接进入 `#thoughts` 时抢占移动端首屏网络。`WARM_ASSETS` 额外预热中文字体、代码字体和 highlight 主包；这些资源较大但变化很少，第一次安装或版本更新时缓存，后续打开直接复用。
 
 移动端 CSS 在支持 `100dvh` 的浏览器上覆盖主要容器高度，降低地址栏收起、虚拟键盘弹出时 `100vh` 导致的错位。PWA asset manifest 生成器会排除本地候选图片、临时图标和生成产物，避免把无关资源带进缓存清单。
 

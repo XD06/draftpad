@@ -6,7 +6,6 @@ import ConfirmationManager from './managers/confirmation.js';
 import NoteSyncController from './managers/note-sync-controller.js';
 import SettingsDataPanel from './managers/settings-data-panel.js';
 import { renderSidebar, renderRecentFiles, trackRecentFile, updateSidebarSelection } from './sidebar.js';
-import { HybridMarkdownEditor } from './hybrid-editor.js';
 
 document.addEventListener('DOMContentLoaded', async () => {
     const DEBUG = false;
@@ -15,10 +14,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     let isApplyingRemoteUpdate = false;
     let hasUnsavedChanges = false;
     let editorInstance = null;
+    let editorLoader = null;
+    let pendingEditorValue = '';
 
     const editor = {
-        get value() { return editorInstance ? editorInstance.getValue() : ''; },
-        set value(val) { if (editorInstance) editorInstance.setValue(val || '', false); },
+        get value() { return editorInstance ? editorInstance.getValue() : pendingEditorValue; },
+        set value(val) {
+            pendingEditorValue = val || '';
+            if (editorInstance) editorInstance.setValue(pendingEditorValue, false);
+        },
         focus: () => editorInstance?.focus(),
         get selectionStart() { return editorInstance?.selectionStart || 0; },
         get selectionEnd() { return editorInstance?.selectionEnd || 0; },
@@ -103,6 +107,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     let saveTimeout;
     let saveRetryTimeout;
+    const saveNotesInFlight = new Map();
+    let noteConflictToastEl = null;
     let lastSaveTime = Date.now();
     const SAVE_INTERVAL = 2000;
     let currentNotepadId = 'default';
@@ -196,7 +202,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (!thoughtsManagerLoader) {
             thoughtsManagerLoader = import('./managers/thoughts.js')
                 .then(({ ThoughtsManager }) => {
-                    thoughtsManager = new ThoughtsManager({ toaster, confirmationManager });
+                    thoughtsManager = new ThoughtsManager({
+                        toaster,
+                        confirmationManager,
+                        openEditorView: () => openEditorView()
+                    });
                     thoughtsManager.app.openSearch = () => openCommandSearch?.();
                     return thoughtsManager;
                 })
@@ -246,7 +256,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const detail = event.detail || {};
         if (detail.userId === userId || detail.notepadId !== currentNotepadId) return;
         if (hasUnsavedChanges) {
-            toaster.show('内容已在其他设备更新，请刷新后再保存或复制当前内容', 'warning', true, 5000);
+            showNoteConflictToast('warning', 5000);
             return;
         }
 
@@ -878,6 +888,18 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (notepad) notepad.version = nextVersion;
     }
 
+    function showNoteConflictToast(type = 'error', timeoutMs = 6000) {
+        if (noteConflictToastEl?.parentNode) return noteConflictToastEl;
+        noteConflictToastEl = toaster.show('内容已在其他设备更新，请刷新后再保存或复制当前内容', type, true, timeoutMs);
+        return noteConflictToastEl;
+    }
+
+    function hideNoteConflictToast() {
+        if (!noteConflictToastEl) return;
+        toaster.hide(noteConflictToastEl);
+        noteConflictToastEl = null;
+    }
+
     function formatCacheTime(timestamp) {
         const value = Number(timestamp);
         if (!Number.isFinite(value) || value <= 0) return '-';
@@ -912,7 +934,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         return findNotepadByIdOrName(notepadsList, defaultId)?.id || getFallbackNotepadId(notepadsList);
     }
 
-    async function loadNotepads() {
+    async function loadNotepads({ loadCurrentNote = true } = {}) {
         try {
             if (!navigator.onLine) {
                 setStartupSyncStatus('error', '服务器不可用，本地可读');
@@ -926,9 +948,14 @@ document.addEventListener('DOMContentLoaded', async () => {
             
             currentNotepadId = handleQueryParameterSelection(currentNotepads, data['note_history']);
             cacheNotepads(data['note_history']);
-            if (findNotepadByIdOrName(currentNotepads, currentNotepadId)) await selectNotepad(currentNotepadId);
-            else currentNotepadId = await selectNextNotepad(false);
-            setTimeout(() => prefetchNotepadNotes(Array.isArray(data['note_history']) ? data['note_history'] : []), 300);
+            if (loadCurrentNote) {
+                if (findNotepadByIdOrName(currentNotepads, currentNotepadId)) await selectNotepad(currentNotepadId);
+                else currentNotepadId = await selectNextNotepad(false);
+                setTimeout(() => prefetchNotepadNotes(Array.isArray(data['note_history']) ? data['note_history'] : []), 300);
+            } else if (findNotepadByIdOrName(currentNotepads, currentNotepadId)) {
+                updateSidebarSelection(currentNotepadId);
+                renderRecentFiles(currentNotepadId, currentNotepads, selectNotepad, deleteNotepadById, renameNotepadById);
+            }
         } catch (err) {
             console.warn('Error loading notepads:', err);
             setStartupSyncStatus('error', '服务器不可用，本地可读');
@@ -939,6 +966,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const dirtyConflictNotepadIds = new Set();
     async function loadNotes(notepadId) { 
         if (!findNotepadByIdOrName(currentNotepads, notepadId)) return;
+        await ensureEditor();
         const cachedBeforeFetch = getCachedNote(notepadId);
         if (cachedBeforeFetch?.content || cachedBeforeFetch?.dirty) {
             renderCachedNotepad(notepadId, cachedBeforeFetch.content || '');
@@ -1038,19 +1066,77 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     }
 
-    function initEditor() { 
-        editorInstance = new HybridMarkdownEditor(document.getElementById('hybrid-editor'), {
-            input: (value) => {
-                if (isApplyingRemoteUpdate) return;
-                hasUnsavedChanges = true;
-                debouncedSave(value);
-                debouncedUpdateToC();
-                clearTimeout(remoteUpdateTimeout);
-                remoteUpdateTimeout = setTimeout(() => {
-                    wsClient.sendUpdate('update', { notepadId: currentNotepadId, content: value, userId });
-                }, 700);
-            }
+    function loadStylesheetOnce(id, href) {
+        const existing = document.getElementById(id) || document.querySelector(`link[href="${href}"]`);
+        if (existing) return Promise.resolve(existing);
+
+        return new Promise((resolve, reject) => {
+            const link = document.createElement('link');
+            link.id = id;
+            link.rel = 'stylesheet';
+            link.href = href;
+            link.onload = () => resolve(link);
+            link.onerror = () => reject(new Error(`Failed to load stylesheet: ${href}`));
+            document.head.appendChild(link);
         });
+    }
+
+    function loadScriptOnce(id, src) {
+        if (window.Vditor && src.includes('/vendor/vditor/')) return Promise.resolve();
+        const existing = document.getElementById(id);
+        if (existing) {
+            if (existing.dataset.loaded === 'true') return Promise.resolve(existing);
+            return new Promise((resolve, reject) => {
+                existing.addEventListener('load', () => resolve(existing), { once: true });
+                existing.addEventListener('error', () => reject(new Error(`Failed to load script: ${src}`)), { once: true });
+            });
+        }
+
+        return new Promise((resolve, reject) => {
+            const script = document.createElement('script');
+            script.id = id;
+            script.src = src;
+            script.async = true;
+            script.onload = () => {
+                script.dataset.loaded = 'true';
+                resolve(script);
+            };
+            script.onerror = () => reject(new Error(`Failed to load script: ${src}`));
+            document.head.appendChild(script);
+        });
+    }
+
+    async function ensureEditor() {
+        if (editorInstance) return editorInstance;
+        if (!editorLoader) {
+            editorLoader = (async () => {
+                await loadStylesheetOnce('vditor-editor-css', '/vendor/vditor/index.css');
+                await loadScriptOnce('vditor-editor-js', '/vendor/vditor/index.min.js');
+                const { HybridMarkdownEditor } = await import('./hybrid-editor.js');
+                editorInstance = new HybridMarkdownEditor(document.getElementById('hybrid-editor'), {
+                    input: (value) => {
+                        pendingEditorValue = value || '';
+                        if (isApplyingRemoteUpdate) return;
+                        hasUnsavedChanges = true;
+                        debouncedSave(value);
+                        debouncedUpdateToC();
+                        clearTimeout(remoteUpdateTimeout);
+                        remoteUpdateTimeout = setTimeout(() => {
+                            wsClient.sendUpdate('update', { notepadId: currentNotepadId, content: value, userId });
+                        }, 700);
+                    }
+                });
+                if (pendingEditorValue) editorInstance.setValue(pendingEditorValue, false);
+                editorInstance.setReadingMode(isReadingMode);
+                return editorInstance;
+            })().catch(error => {
+                editorLoader = null;
+                console.warn('Failed to initialize editor:', error);
+                toaster.show('编辑器加载失败', 'error', false, 3000);
+                throw error;
+            });
+        }
+        return editorLoader;
     }
 
     async function createNotepad() {
@@ -1132,6 +1218,22 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     async function saveNotes(content, isAutoSave, showStatus = true, retryCount = 0, targetNotepadId = currentNotepadId) {
+        const queueKey = isValidNotepadId(targetNotepadId) ? targetNotepadId : currentNotepadId;
+        const previousSave = saveNotesInFlight.get(queueKey) || Promise.resolve();
+        const queuedSave = previousSave
+            .catch(() => undefined)
+            .then(() => performSaveNotes(content, isAutoSave, showStatus, retryCount, targetNotepadId));
+        saveNotesInFlight.set(queueKey, queuedSave);
+        try {
+            return await queuedSave;
+        } finally {
+            if (saveNotesInFlight.get(queueKey) === queuedSave) {
+                saveNotesInFlight.delete(queueKey);
+            }
+        }
+    }
+
+    async function performSaveNotes(content, isAutoSave, showStatus = true, retryCount = 0, targetNotepadId = currentNotepadId) {
         let baseVersion;
         try {
             if (!findNotepadByIdOrName(currentNotepads, targetNotepadId) || currentNotepadId !== targetNotepadId) return;
@@ -1159,19 +1261,24 @@ document.addEventListener('DOMContentLoaded', async () => {
             clearTimeout(saveRetryTimeout);
             saveRetryTimeout = null;
             lastSaveTime = Date.now();
+            setCurrentNoteVersion(targetNotepadId, result.version);
+            const savedContentStillCurrent = currentNotepadId === targetNotepadId && editor.value === content;
             if (showStatus) {
-                if (isAutoSave) {
+                if (isAutoSave && savedContentStillCurrent) {
                     const settings = settingsManager.getSettings();
                     toaster.show('Saved', 'success', false, settings.saveStatusMessageInterval); 
-                } else toaster.show('Saved');
+                } else if (!isAutoSave && savedContentStillCurrent) toaster.show('Saved');
             }
-            if (currentNotepadId === targetNotepadId && editor.value === content) {
+            if (savedContentStillCurrent) {
                 hasUnsavedChanges = false;
+                cacheSyncedNote(targetNotepadId, content, { version: result.version });
+                setStartupSyncStatus('synced', '已同步');
+                dirtyConflictNotepadIds.delete(targetNotepadId);
+                hideNoteConflictToast();
+            } else if (currentNotepadId === targetNotepadId) {
+                cacheDirtyNote(targetNotepadId, editor.value, { version: result.version });
+                setStartupSyncStatus('cached', '本地已保留');
             }
-            setCurrentNoteVersion(targetNotepadId, result.version);
-            cacheSyncedNote(targetNotepadId, content, { version: result.version });
-            setStartupSyncStatus('synced', '已同步');
-            dirtyConflictNotepadIds.delete(targetNotepadId);
             return true;
         } catch (err) {
             console.warn('Error saving notes:', err);
@@ -1183,7 +1290,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     remoteVersion: Number.isFinite(remoteVersion) ? remoteVersion : undefined
                 });
                 setStartupSyncStatus('error', '有远端更新，本地已保留');
-                toaster.show('内容已在其他设备更新，请刷新后再保存或复制当前内容', 'error', true, 6000);
+                showNoteConflictToast('error', 6000);
                 return false;
             }
             if (isAutoSave && retryCount < 3 && currentNotepadId === targetNotepadId) {
@@ -1502,6 +1609,18 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     let selectionToken = 0;
+    async function openEditorView() {
+        if (currentNotepads.length === 0) {
+            await loadNotepads({ loadCurrentNote: false });
+        }
+        const target = findNotepadByIdOrName(currentNotepads, currentNotepadId)?.id || getFallbackNotepadId(currentNotepads);
+        if (target) {
+            await selectNotepad(target);
+        } else {
+            await ensureEditor();
+        }
+    }
+
     async function selectNotepad(id, query = "") {
         const token = ++selectionToken;
         const selectedNotepad = findNotepadByIdOrName(currentNotepads, id);
@@ -1975,10 +2094,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         setupSidebarTabs();
 
-        initEditor();
-
         if (readModeBtn) {
-            updateReadingMode(false); // Apply saved reading mode state after editor initialization
+            updateReadingMode(false);
         }
 
         // Scroll Helper Logic
@@ -2202,15 +2319,21 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     const initializeApp = async () => {
+        const startsInThoughts = window.location.hash === '#thoughts';
         addEventListeners();
         appSettings = settingsManager.loadSettings();
-        scheduleIdleTask(() => {
-            ensureThoughtsManager().catch(() => {});
-        });
-        hydrateStartupCache();
+        if (startsInThoughts) {
+            await ensureThoughtsManager();
+        } else {
+            await ensureEditor();
+            hydrateStartupCache();
+            scheduleIdleTask(() => {
+                ensureThoughtsManager().catch(() => {});
+            });
+        }
         loadAppConfig();
-        await loadNotepads();
-        await syncCurrentDirtyNote();
+        await loadNotepads({ loadCurrentNote: !startsInThoughts });
+        if (!startsInThoughts) await syncCurrentDirtyNote();
         applySettings(appSettings);
         await registerServiceWorker();
         isInitialLoad = false;

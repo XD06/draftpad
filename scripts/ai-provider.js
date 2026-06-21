@@ -236,14 +236,14 @@ function createRerankPrompt(source, candidates = []) {
     ].join('\n');
 }
 
-function normalizeInsightMarkdown(content, limit = 500) {
+function normalizeInsightMarkdown(content) {
     const normalized = String(content || '')
         .trim()
         .replace(/^```(?:markdown|md)?/i, '')
         .replace(/```$/i, '')
         .trim()
         .replace(/\n{3,}/g, '\n\n');
-    return Array.from(normalized).slice(0, limit).join('').trim();
+    return normalized.trim();
 }
 
 function createInsightPrompt(context = {}) {
@@ -518,7 +518,7 @@ class OpenAICompatibleProvider extends AIProvider {
 
         const content = payload?.choices?.[0]?.message?.content;
         if (!content) throw new Error('AI insight response did not include message content');
-        return normalizeInsightMarkdown(content, 500);
+        return normalizeInsightMarkdown(content);
     }
 }
 

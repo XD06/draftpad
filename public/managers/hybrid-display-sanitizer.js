@@ -20,6 +20,11 @@ export function stripHybridDisplayArtifacts(value = '') {
         (_match, comment, markedText) => annotationSource(markedText, comment)
     );
 
+    output = output.replace(
+        /<time\b(?=[^>]*\bdata-time-marker="true")(?=[^>]*\bdata-time-source="([^"]+)")[^>]*>[\s\S]*?<\/time>/gi,
+        (_match, source) => decodeBasicHtmlEntities(source)
+    );
+
     output = output
         .replace(/<span class="annotation-badge"[\s\S]*?<\/span>/gi, '')
         .replace(/<mark class="md-mark">([\s\S]*?)<\/mark>/gi, '<mark>$1</mark>')

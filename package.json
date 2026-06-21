@@ -18,7 +18,8 @@
     "test:thought-relations-state": "node test_thought_relations_state.js",
     "test:thought-tags": "node test_thought_tags.js",
     "test:thought-text-formatting": "node test_thought_text_formatting.js",
-    "test:thought-modules": "npm run test:thought-ai-status && npm run test:thought-card-renderer && npm run test:thought-editor && npm run test:thought-quick-add && npm run test:thought-relations-panel && npm run test:thought-relations-state && npm run test:thought-tags && npm run test:thought-text-formatting",
+    "test:time-command": "node test_time_command.js",
+    "test:thought-modules": "npm run test:thought-ai-status && npm run test:thought-card-renderer && npm run test:thought-editor && npm run test:thought-quick-add && npm run test:thought-relations-panel && npm run test:thought-relations-state && npm run test:thought-tags && npm run test:thought-text-formatting && npm run test:time-command",
     "test:note-sync": "node test_note_sync_controller.js",
     "test:hybrid-display-sanitizer": "node test_hybrid_display_sanitizer.js",
     "test:pwa-cache": "node test_pwa_cache_regression.js",
@@ -29,7 +30,8 @@
     "test:s3-prefix": "node test_s3_prefix_tools.js",
     "test:s3-real": "node test_s3_real_smoke.js",
     "ai:backfill-prefix": "node scripts/ai-backfill-prefix.js",
-    "generate-icons": "node scripts/generate-png.js"
+    "generate-icons": "node scripts/generate-png.js",
+    "docker:update": "node scripts/update-docker-container.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1055.0",
