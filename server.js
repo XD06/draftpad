@@ -100,11 +100,26 @@ function collectPublicAssetStats(dir, baseDir = dir, stats = []) {
     return stats;
 }
 
+function collectBuildFingerprintStats() {
+    const stats = collectPublicAssetStats(PUBLIC_DIR);
+    for (const fileName of ['package.json', 'package-lock.json']) {
+        const filePath = path.join(__dirname, fileName);
+        if (!fsSync.existsSync(filePath)) continue;
+        const stat = fsSync.statSync(filePath);
+        stats.push([
+            fileName,
+            stat.size,
+            Math.floor(stat.mtimeMs),
+        ].join(':'));
+    }
+    return stats;
+}
+
 function getBuildVersion() {
     try {
         const hash = crypto
             .createHash('sha1')
-            .update(collectPublicAssetStats(PUBLIC_DIR).sort().join('|'))
+            .update(collectBuildFingerprintStats().sort().join('|'))
             .digest('hex')
             .slice(0, 10);
         return `${VERSION}-${hash}`;

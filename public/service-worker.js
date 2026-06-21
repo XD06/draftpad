@@ -46,9 +46,22 @@ const WARM_ASSETS = [
   "/font/LXGWWenKai-Regular.ttf",
   "/font/FiraCode-Regular.ttf",
   "/js/@highlightjs/highlight.min.js",
+  "/hybrid-editor.js",
+  "/vendor/vditor/index.css",
+  "/vendor/vditor/index.min.js",
+  "/vendor/vditor-package/dist/js/i18n/zh_CN.js",
+  "/vendor/vditor-package/dist/js/lute/lute.min.js",
+  "/vendor/vditor-package/dist/css/content-theme/light.css",
+  "/vendor/vditor-package/dist/css/content-theme/dark.css",
+  "/vendor/vditor-package/dist/js/highlight.js/styles/github.min.css",
+  "/vendor/vditor-package/dist/js/highlight.js/styles/github-dark.min.css",
+  "/vendor/vditor-package/dist/js/highlight.js/highlight.min.js?v=11.7.0",
+  "/vendor/vditor-package/dist/js/highlight.js/third-languages.js?v=1.0.1",
 ];
 
 const NETWORK_FIRST_STATIC_EXTENSIONS = [".js", ".css", ".json"];
+const NAVIGATION_NETWORK_TIMEOUT = 900;
+const STATIC_NETWORK_TIMEOUT = 650;
 
 const getConfig = async () => {
   try {
@@ -78,9 +91,15 @@ const getAppVersion = async () => {
   }
 };
 
-const getCurrentCacheVersion = async () => {
+const isDumbPadCache = (name) => name.startsWith('DUMBPAD_CACHE_') || name.startsWith('DUMBPAD_PWA_CACHE');
+
+const getCacheState = async () => {
   const cacheNames = await caches.keys();
-  return cacheNames.includes(CURRENT_CACHE_NAME) ? APP_VERSION : null;
+  const appCaches = cacheNames.filter(isDumbPadCache);
+  return {
+    hasCurrent: cacheNames.includes(CURRENT_CACHE_NAME),
+    hasAnyAppCache: appCaches.length > 0,
+  };
 };
 
 const installNewCache = async (version) => {
@@ -130,24 +149,17 @@ const checkAndUpdateCache = async () => {
   console.log("Checking cache version...");
   
   const appVersion = await getAppVersion();
-  const cacheVersion = await getCurrentCacheVersion();
+  const cacheState = await getCacheState();
   
   console.log("App version:", appVersion);
-  console.log("Cache version:", cacheVersion);
+  console.log("Cache state:", cacheState);
   
-  if (!cacheVersion) {
-    // First time installation
-    console.log("First time installation - installing cache");
+  if (!cacheState.hasCurrent) {
+    // Current version is missing. Install it, then clean older DumbPad caches when this is an update.
+    console.log(cacheState.hasAnyAppCache ? "Version mismatch - updating cache" : "First time installation - installing cache");
     await installNewCache(appVersion);
-    return { updated: true, firstInstall: true };
-  }
-  
-  if (cacheVersion !== appVersion) {
-    // Version mismatch - update cache
-    console.log("Version mismatch - updating cache");
-    await installNewCache(appVersion);
-    await cleanupOldCaches(appVersion);
-    return { updated: true, firstInstall: false };
+    if (cacheState.hasAnyAppCache) await cleanupOldCaches(appVersion);
+    return { updated: true, firstInstall: !cacheState.hasAnyAppCache };
   }
   
   console.log("Cache up to date");
@@ -168,32 +180,37 @@ self.addEventListener("activate", (event) => {
   console.log("Service worker activating...");
 
   event.waitUntil(
-    checkAndUpdateCache().then(({ updated, firstInstall }) => {
-      return self.clients.claim().then(() => {
-        if (updated && !firstInstall) {
-          // Notify clients that an update is available; let user decide when to reload
-          console.log("Cache updated - notifying clients");
-          self.clients.matchAll().then(clients => {
-            clients.forEach(client => {
-              client.postMessage({
-                type: 'UPDATE_AVAILABLE',
-                version: APP_VERSION
-              });
+    (async () => {
+      if (self.registration.navigationPreload) {
+        await self.registration.navigationPreload.enable();
+      }
+
+      const { updated, firstInstall } = await checkAndUpdateCache();
+      await self.clients.claim();
+
+      if (updated && !firstInstall) {
+        // Notify clients that an update is available; let user decide when to reload
+        console.log("Cache updated - notifying clients");
+        self.clients.matchAll().then(clients => {
+          clients.forEach(client => {
+            client.postMessage({
+              type: 'UPDATE_AVAILABLE',
+              version: APP_VERSION
             });
           });
-        } else if (updated && firstInstall) {
-          console.log("Cache installed for first time");
-          self.clients.matchAll().then(clients => {
-            clients.forEach(client => {
-              client.postMessage({
-                type: 'CACHE_INSTALLED',
-                version: APP_VERSION
-              });
+        });
+      } else if (updated && firstInstall) {
+        console.log("Cache installed for first time");
+        self.clients.matchAll().then(clients => {
+          clients.forEach(client => {
+            client.postMessage({
+              type: 'CACHE_INSTALLED',
+              version: APP_VERSION
             });
           });
-        }
-      });
-    })
+        });
+      }
+    })()
   );
 });
 
@@ -212,8 +229,12 @@ const findCachedFallback = async (fallbackRequests = []) => {
 };
 
 const networkFirstWithTimeout = async (request, options = {}) => {
-  const { timeout = 2500, fetchOptions = {}, fallbackRequests = [] } = options;
-  const networkRequest = fetch(request, fetchOptions).then((response) => {
+  const { timeout = 2500, fetchOptions = {}, fallbackRequests = [], preloadResponse = null } = options;
+  const networkRequest = (async () => {
+    const preloaded = preloadResponse ? await preloadResponse : null;
+    if (preloaded) return preloaded;
+    return fetch(request, fetchOptions);
+  })().then((response) => {
     putInCache(request, response).catch(() => {});
     return response;
   });
@@ -273,9 +294,10 @@ self.addEventListener("fetch", (event) => {
     // Always fetch fresh index.html, fallback to cache only when offline
     event.respondWith(
       networkFirstWithTimeout(event.request, {
-        timeout: 2500,
+        timeout: NAVIGATION_NETWORK_TIMEOUT,
         fetchOptions: { cache: "no-store" },
         fallbackRequests: ["/index.html"],
+        preloadResponse: event.preloadResponse,
       })
     );
     return;
@@ -285,7 +307,7 @@ self.addEventListener("fetch", (event) => {
     if (isNetworkFirstStaticAsset) {
       event.respondWith(
         networkFirstWithTimeout(event.request, {
-          timeout: 1500,
+          timeout: STATIC_NETWORK_TIMEOUT,
           fetchOptions: { cache: "no-cache" },
           fallbackRequests: [event.request],
         })

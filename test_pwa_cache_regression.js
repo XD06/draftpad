@@ -5,6 +5,7 @@ const { generatePWAManifest } = require('./scripts/pwa-manifest-generator');
 
 const root = __dirname;
 const serviceWorker = fs.readFileSync(path.join(root, 'public', 'service-worker.js'), 'utf8');
+const serverSource = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
 
 const requiredCoreAssets = [
     '/managers/note-sync-controller.js',
@@ -26,7 +27,18 @@ const requiredCoreAssets = [
 const requiredWarmAssets = [
     '/font/LXGWWenKai-Regular.ttf',
     '/font/FiraCode-Regular.ttf',
-    '/js/@highlightjs/highlight.min.js'
+    '/js/@highlightjs/highlight.min.js',
+    '/hybrid-editor.js',
+    '/vendor/vditor/index.css',
+    '/vendor/vditor/index.min.js',
+    '/vendor/vditor-package/dist/js/i18n/zh_CN.js',
+    '/vendor/vditor-package/dist/js/lute/lute.min.js',
+    '/vendor/vditor-package/dist/css/content-theme/light.css',
+    '/vendor/vditor-package/dist/css/content-theme/dark.css',
+    '/vendor/vditor-package/dist/js/highlight.js/styles/github.min.css',
+    '/vendor/vditor-package/dist/js/highlight.js/styles/github-dark.min.css',
+    '/vendor/vditor-package/dist/js/highlight.js/highlight.min.js?v=11.7.0',
+    '/vendor/vditor-package/dist/js/highlight.js/third-languages.js?v=1.0.1'
 ];
 
 for (const asset of requiredCoreAssets) {
@@ -43,10 +55,28 @@ assert(
     serviceWorker.includes('fetchOptions: { cache: "no-cache" }'),
     'service worker should refresh unversioned JS/CSS/JSON from network before falling back to cache'
 );
+assert(
+    serviceWorker.includes('navigationPreload') &&
+    serviceWorker.includes('preloadResponse: event.preloadResponse'),
+    'service worker should use navigation preload to reduce installed PWA cold-start latency'
+);
+assert(
+    serviceWorker.includes('NAVIGATION_NETWORK_TIMEOUT = 900') &&
+    serviceWorker.includes('STATIC_NETWORK_TIMEOUT = 650'),
+    'service worker should use short cached-fallback windows for warm PWA starts'
+);
+assert(
+    serviceWorker.includes('getCacheState') &&
+    serviceWorker.includes('hasAnyAppCache') &&
+    serviceWorker.includes('await cleanupOldCaches(appVersion)'),
+    'service worker should treat an older app cache as an update and clean it after installing the current cache'
+);
 assert(serviceWorker.includes('requestUrl.pathname.startsWith("/api/")'), 'service worker should bypass API requests');
-assert(!serviceWorker.includes('"/vendor/vditor/index.min.js"'), 'service worker should not install-cache lazy Vditor JS');
-assert(!serviceWorker.includes('"/vendor/vditor/index.css"'), 'service worker should not install-cache lazy Vditor CSS');
-assert(!serviceWorker.includes('"/hybrid-editor.js"'), 'service worker should runtime-cache lazy hybrid editor module');
+assert(
+    serverSource.includes('collectBuildFingerprintStats') &&
+    serverSource.includes("'package.json', 'package-lock.json'"),
+    'build version should include dependency manifests so warmed vendor assets are invalidated after dependency updates'
+);
 
 generatePWAManifest('DumbPad');
 const manifest = JSON.parse(fs.readFileSync(path.join(root, 'public', 'Assets', 'asset-manifest.json'), 'utf8'));

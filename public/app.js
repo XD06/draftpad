@@ -1110,9 +1110,14 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (editorInstance) return editorInstance;
         if (!editorLoader) {
             editorLoader = (async () => {
-                await loadStylesheetOnce('vditor-editor-css', '/vendor/vditor/index.css');
-                await loadScriptOnce('vditor-editor-js', '/vendor/vditor/index.min.js');
-                const { HybridMarkdownEditor } = await import('./hybrid-editor.js');
+                const vditorStyles = loadStylesheetOnce('vditor-editor-css', '/vendor/vditor/index.css');
+                const vditorScript = loadScriptOnce('vditor-editor-js', '/vendor/vditor/index.min.js');
+                const hybridEditorModule = import('./hybrid-editor.js');
+                const [{ HybridMarkdownEditor }] = await Promise.all([
+                    hybridEditorModule,
+                    vditorStyles,
+                    vditorScript
+                ]);
                 editorInstance = new HybridMarkdownEditor(document.getElementById('hybrid-editor'), {
                     input: (value) => {
                         pendingEditorValue = value || '';
