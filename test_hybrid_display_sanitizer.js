@@ -39,8 +39,16 @@ function run() {
         'display guard zero-width marker should be removed before saving'
     );
     assert(
+        stripHybridDisplayArtifacts('前 \u200B[[time:create:2026-06-24 09:08:07]]\u200B 后') === '前 [[time:create:2026-06-24 09:08:07]] 后',
+        'time marker caret guards should be removed before saving'
+    );
+    assert(
         stripHybridDisplayArtifacts('<time class="md-time-marker is-update" data-time-marker="true" data-time-kind="update" data-time-source="[[time:update:2026-06-21 09:08:07]]" data-time-stamp="2026-06-21 09:08:07"><span class="time-marker-label">更新</span><span class="time-marker-stamp">2026-06-21 09:08:07</span></time>') === '[[time:update:2026-06-21 09:08:07]]',
         'rendered time marker should normalize back to source marker text'
+    );
+    assert(
+        stripHybridDisplayArtifacts('<span class="md-time-marker is-update" data-time-marker="true" data-time-source="[[time:update:2026-06-21 09:08:07]]" data-time-stamp="2026-06-21 09:08:07">[[time:update:2026-06-21 09:08:07]]</span>') === '[[time:update:2026-06-21 09:08:07]]',
+        'inline span time marker should normalize back to source marker text'
     );
 
     console.log('Hybrid display sanitizer checks passed');

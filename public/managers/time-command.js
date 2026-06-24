@@ -150,13 +150,6 @@ export function renderTimeMarkers(escaped = '', className = 'time-marker') {
         const label = TIME_KIND_LABELS[kind];
         const safeSource = escapeAttribute(match);
         const safeStamp = escapeAttribute(stamp);
-        return `<time class="${className} is-${kind} is-level-${level}" data-time-marker="true" data-time-kind="${kind}" data-time-level="${level}" data-time-source="${safeSource}" data-time-stamp="${safeStamp}" title="${label}时间：${safeStamp}" aria-label="${label}时间：${safeStamp}"><span class="time-marker-icon" aria-hidden="true">${timeMarkerIcon(kind)}</span><span class="time-marker-label">${label}</span><span class="time-marker-stamp">${stamp}</span></time>`;
+        return `<span class="${className} is-${kind} is-level-${level}" data-time-marker="true" data-time-kind="${kind}" data-time-level="${level}" data-time-source="${safeSource}" data-time-label="${label}" data-time-stamp="${safeStamp}" title="${label}时间：${safeStamp}" aria-label="${label}时间：${safeStamp}">${safeSource}</span>`;
     });
-}
-
-function timeMarkerIcon(kind = 'create') {
-    if (kind === 'update') {
-        return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8"></circle><path d="M12 8v5l3 2"></path></svg>';
-    }
-    return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"></path><path d="M5 12h14"></path></svg>';
 }

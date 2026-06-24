@@ -25,8 +25,23 @@ function run() {
         'WYSIWYG /time handling should run before plain paragraph soft Enter handling'
     );
     assert(
-        source.includes('this.notifyEditorValueChanged(this.editor?.getValue?.() || this._lastValue || \'\');'),
-        'WYSIWYG /time handling should notify the outer save pipeline after inserting a marker'
+        source.includes('this.notifyEditorValueChanged();'),
+        'WYSIWYG /time handling should notify the outer save pipeline after DOM-local time marker changes'
+    );
+    assert(
+        source.includes('readWysiwygMarkdownValue(fallback = \'\')') &&
+            source.includes('this.restoreRenderedTimeMarkers(clone);'),
+        'WYSIWYG markdown reads should restore rendered time markers before serializing'
+    );
+    assert(
+        source.includes('this.insertRenderedTimeMarkerAtRange(commandRange, buildTimeMarker());') &&
+            !source.includes('this.editor?.insertValue?.(buildTimeMarker(), true);'),
+        'WYSIWYG /time insertion should keep inline position without Vditor block serialization'
+    );
+    assert(
+        source.includes('replaceRenderedTimeMarker(marker, nextMarker = \'\')') &&
+            source.includes('this.replaceRenderedTimeMarker(marker, nextMarker);'),
+        'Rendered time marker updates should avoid full-editor rerenders that reset the caret'
     );
     assert(
         source.includes('startParagraph.parentElement !== root') &&

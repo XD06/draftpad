@@ -131,6 +131,15 @@ function run() {
         'renderTimeMarkers should render legacy time marker html as create'
     );
     assert(
+        renderTimeMarkers('x [[time:2026-06-21 09:08:07]]', 'custom-time').includes('<span class="custom-time') &&
+            renderTimeMarkers('x [[time:2026-06-21 09:08:07]]', 'custom-time').includes('>[[time:2026-06-21 09:08:07]]</span>'),
+        'renderTimeMarkers should keep source text in an inline span so editors can preserve marker position'
+    );
+    assert(
+        !renderTimeMarkers('x [[time:2026-06-21 09:08:07]]', 'custom-time').includes('<time'),
+        'renderTimeMarkers should not emit time tags inside editable content'
+    );
+    assert(
         renderTimeMarkers('x [[time:update:2026-06-21 09:08:07]]', 'custom-time').includes('class="custom-time is-update is-level-1"'),
         'renderTimeMarkers should render update time marker html'
     );

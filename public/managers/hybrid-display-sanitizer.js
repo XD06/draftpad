@@ -14,6 +14,9 @@ function annotationSource(markedText = '', comment = '') {
 
 export function stripHybridDisplayArtifacts(value = '') {
     let output = String(value || '').replace(/\u200B(?=\s*<(?:mark\b|span\s+data-(?:draw|note)\b))/gi, '');
+    output = output
+        .replace(/\u200B(?=\s*\[\[time:)/g, '')
+        .replace(/(\[\[time:[^\]]+\]\])\u200B/g, '$1');
 
     output = output.replace(
         /<span class="has-annotation" data-comment="([^"]*)"[^>]*>\s*<span style="[^"]*wavy[^"]*"[^>]*>([\s\S]*?)<\/span>\s*(?:<span class="annotation-badge"[\s\S]*?<\/span>)?\s*(?:<sub[^>]*>[\s\S]*?<\/sub>)?\s*<\/span>/gi,
@@ -22,6 +25,10 @@ export function stripHybridDisplayArtifacts(value = '') {
 
     output = output.replace(
         /<time\b(?=[^>]*\bdata-time-marker="true")(?=[^>]*\bdata-time-source="([^"]+)")[^>]*>[\s\S]*?<\/time>/gi,
+        (_match, source) => decodeBasicHtmlEntities(source)
+    );
+    output = output.replace(
+        /<span\b(?=[^>]*\bdata-time-marker="true")(?=[^>]*\bdata-time-source="([^"]+)")[^>]*>[\s\S]*?<\/span>/gi,
         (_match, source) => decodeBasicHtmlEntities(source)
     );
 

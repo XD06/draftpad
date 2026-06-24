@@ -765,6 +765,7 @@
     --time-marker-hover-fill-a: 24%;
     --time-marker-hover-fill-b: 12%;
     --time-marker-hover-glow: 18%;
+    position: relative;
     display: inline-flex;
     align-items: center;
     gap: 5px;
@@ -782,6 +783,8 @@
     line-height: 1.54;
     white-space: nowrap;
     cursor: pointer;
+    overflow: hidden;
+    text-indent: -999px;
     box-decoration-break: clone;
     -webkit-box-decoration-break: clone;
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28), 0 3px 10px color-mix(in srgb, var(--time-marker-accent) var(--time-marker-glow), transparent);
@@ -794,6 +797,39 @@
         color-mix(in srgb, var(--time-marker-accent) var(--time-marker-hover-fill-a), transparent),
         color-mix(in srgb, var(--time-marker-accent) var(--time-marker-hover-fill-b), transparent));
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.34), 0 6px 16px color-mix(in srgb, var(--time-marker-accent) var(--time-marker-hover-glow), transparent);
+}
+
+.thought-time-marker::before {
+    content: "";
+    width: 15px;
+    height: 15px;
+    flex: 0 0 15px;
+    display: inline-flex;
+    border-radius: 6px;
+    background:
+        linear-gradient(currentColor, currentColor) center / 9px 2px no-repeat,
+        linear-gradient(currentColor, currentColor) center / 2px 9px no-repeat,
+        color-mix(in srgb, var(--time-marker-accent) var(--time-marker-icon-fill), transparent);
+    color: color-mix(in srgb, var(--time-marker-accent) 94%, var(--text-color));
+    opacity: 0.96;
+    text-indent: 0;
+}
+
+.thought-time-marker.is-update::before {
+    background:
+        radial-gradient(circle at center, transparent 4px, currentColor 4.5px 5.6px, transparent 6px),
+        linear-gradient(currentColor, currentColor) 50% 47% / 2px 5px no-repeat,
+        linear-gradient(currentColor, currentColor) 58% 62% / 5px 2px no-repeat,
+        color-mix(in srgb, var(--time-marker-accent) var(--time-marker-icon-fill), transparent);
+}
+
+.thought-time-marker::after {
+    content: attr(data-time-label) " " attr(data-time-stamp);
+    color: var(--time-marker-label-color);
+    font-family: inherit;
+    font-weight: 720;
+    font-variant-numeric: tabular-nums;
+    text-indent: 0;
 }
 
 .thought-time-marker.is-update {

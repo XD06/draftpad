@@ -101,7 +101,7 @@ export class HybridMarkdownEditor {
         this.emitChange = debounce(() => {
             const value = this.sourceMode && this.sourceTextarea
                 ? this.sourceTextarea.value
-                : this.stripDisplayGuards(this.editor?.getValue?.() || this._lastValue || '');
+                : this.readWysiwygMarkdownValue(this._lastValue || '');
             this._lastValue = value;
             this.buildHeadingIndex();
             this.scheduleDecorateRenderedMarks();
@@ -130,7 +130,7 @@ export class HybridMarkdownEditor {
     getValue() {
         if (this.sourceMode && this.sourceTextarea) return this.sourceTextarea.value;
         if (!this.ready || !this.editor?.getValue) return this.stripDisplayGuards(this.pendingValue || this._lastValue || '');
-        return this.stripDisplayGuards(this._lastValue || this.pendingValue || '');
+        return this.readWysiwygMarkdownValue(this._lastValue || this.pendingValue || '');
     }
 
     setValue(value = '', emit = true) {
@@ -154,7 +154,9 @@ export class HybridMarkdownEditor {
     }
 
     notifyEditorValueChanged(value = '') {
-        const normalized = this.stripDisplayGuards(value);
+        const normalized = !this.sourceMode && this.ready
+            ? this.readWysiwygMarkdownValue(value || this._lastValue || '')
+            : this.stripDisplayGuards(value);
         this._lastValue = normalized;
         if (this.sourceTextarea) this.sourceTextarea.value = normalized;
         this.buildHeadingIndex();
@@ -233,6 +235,28 @@ export class HybridMarkdownEditor {
 
     stripDisplayGuards(value = '') {
         return stripHybridDisplayArtifacts(value);
+    }
+
+    readWysiwygMarkdownValue(fallback = '') {
+        const rawValue = this.editor?.getValue?.() || fallback || '';
+        if (!/<time\b[^>]*\bmd-time-marker\b/i.test(rawValue)) {
+            return this.stripDisplayGuards(rawValue);
+        }
+
+        const root = this.container.querySelector('.vditor-wysiwyg .vditor-reset');
+        if (!root?.querySelector?.('.md-time-marker[data-time-source]') || typeof this.editor?.html2md !== 'function') {
+            return this.stripDisplayGuards(rawValue);
+        }
+
+        const clone = root.cloneNode(true);
+        this.restoreRenderedTimeMarkers(clone);
+        return this.stripDisplayGuards(this.editor.html2md(clone.innerHTML) || rawValue);
+    }
+
+    restoreRenderedTimeMarkers(root) {
+        root?.querySelectorAll?.('.md-time-marker[data-time-source]').forEach(marker => {
+            marker.replaceWith(document.createTextNode(marker.dataset.timeSource || ''));
+        });
     }
 
     generateToC() {
@@ -920,7 +944,7 @@ export class HybridMarkdownEditor {
         const menu = this.ensureTimeMarkerMenu();
         const source = marker.dataset.timeSource || '';
         if (!source) return;
-        this.activeTimeMarker = { source };
+        this.activeTimeMarker = { source, marker };
         document.querySelectorAll('.mark-popover').forEach(el => el.remove());
         menu.hidden = false;
         menu.style.display = 'flex';
@@ -986,6 +1010,16 @@ export class HybridMarkdownEditor {
     applyTimeMarkerAction(action) {
         const source = this.activeTimeMarker?.source || '';
         if (!source) return;
+        const marker = this.activeTimeMarker?.marker;
+        if (!this.sourceMode && marker?.isConnected && this.container.contains(marker)) {
+            this.hideTimeMarkerMenu();
+            const nextMarker = action === 'delete' ? '' : buildUpdatedTimeMarker(source, new Date());
+            this.replaceRenderedTimeMarker(marker, nextMarker);
+            this.notifyEditorValueChanged();
+            this.scheduleDecorateRenderedMarks();
+            return;
+        }
+
         const value = this.getValue();
         const next = action === 'delete'
             ? deleteTimeMarker(value, source)
@@ -997,6 +1031,17 @@ export class HybridMarkdownEditor {
         this.setValue(next, true);
         this.setEditable(!this.isReadingMode);
         this.renderAfterMutation(scrollTop);
+    }
+
+    replaceRenderedTimeMarker(marker, nextMarker = '') {
+        if (!marker) return;
+        const replacement = nextMarker
+            ? this.createRenderedTimeMarker(nextMarker)
+            : document.createTextNode('');
+        marker.replaceWith(replacement);
+        if (nextMarker && replacement.nodeType === Node.ELEMENT_NODE) {
+            this.placeCaretAfterNode(replacement);
+        }
     }
 
     hideTimeMarkerMenu() {
@@ -1048,11 +1093,37 @@ export class HybridMarkdownEditor {
         const selection = window.getSelection();
         selection?.removeAllRanges();
         selection?.addRange(commandRange);
-        document.execCommand('delete', false);
-        this.editor?.insertValue?.(buildTimeMarker(), true);
-        this.notifyEditorValueChanged(this.editor?.getValue?.() || this._lastValue || '');
+        this.insertRenderedTimeMarkerAtRange(commandRange, buildTimeMarker());
+        this.notifyEditorValueChanged();
         this.scheduleDecorateRenderedMarks();
         return true;
+    }
+
+    createRenderedTimeMarker(markerText) {
+        const template = document.createElement('template');
+        template.innerHTML = renderTimeMarkers(this.escapeHtml(markerText), 'md-time-marker');
+        return template.content.firstElementChild || document.createTextNode(markerText);
+    }
+
+    insertRenderedTimeMarkerAtRange(range, markerText = buildTimeMarker()) {
+        if (!range) return null;
+        range.deleteContents();
+        const marker = this.createRenderedTimeMarker(markerText);
+        const trailingGuard = document.createTextNode('\u200B');
+        range.insertNode(marker);
+        marker.after(trailingGuard);
+        this.placeCaretAfterNode(trailingGuard);
+        return marker;
+    }
+
+    placeCaretAfterNode(node) {
+        if (!node) return;
+        const range = document.createRange();
+        range.setStartAfter(node);
+        range.collapse(true);
+        const selection = window.getSelection();
+        selection?.removeAllRanges();
+        selection?.addRange(range);
     }
 
     handleWysiwygSoftEnter(event) {
