@@ -10,11 +10,17 @@ function loadTimeCommand() {
     const source = fs.readFileSync(sourcePath, 'utf8')
         .replace(/export const /g, 'const ')
         .replace(/export function /g, 'function ')
-        + '\nmodule.exports = { TIME_COMMAND, buildTimeMarker, deleteTimeMarker, formatTimeStamp, parseTimeMarkerText, replaceTimeCommandBeforeCursor, replaceTimeMarker, renderTimeMarkers };\n';
+        + '\nmodule.exports = { TIME_COMMAND, buildTimeMarker, deleteTimeMarker, formatTimeStamp, handleTimeCommandKeydown, parseTimeMarkerText, replaceTimeCommandBeforeCursor, replaceTimeMarker, renderTimeMarkers };\n';
     const context = {
         module: { exports: {} },
         exports: {},
         Date,
+        Event: class FakeEvent {
+            constructor(type, options = {}) {
+                this.type = type;
+                this.bubbles = Boolean(options.bubbles);
+            }
+        },
         String,
         Number,
         RegExp
@@ -28,6 +34,7 @@ function run() {
         buildTimeMarker,
         deleteTimeMarker,
         formatTimeStamp,
+        handleTimeCommandKeydown,
         parseTimeMarkerText,
         replaceTimeCommandBeforeCursor,
         replaceTimeMarker,
@@ -68,6 +75,39 @@ function run() {
         replaceTimeCommandBeforeCursor('/time', 0, 0, { now: () => fixed }) === null,
         'replaceTimeCommandBeforeCursor should require the cursor after /time'
     );
+
+    const delegatedControl = {
+        value: '记录/time内容',
+        selectionStart: '记录/time'.length,
+        selectionEnd: '记录/time'.length,
+        setSelectionRange(start, end) {
+            this.selectionStart = start;
+            this.selectionEnd = end;
+        },
+        dispatchEvent(event) {
+            this.lastDispatchedEvent = event;
+        }
+    };
+    let prevented = false;
+    const delegatedEvent = {
+        key: 'Enter',
+        target: delegatedControl,
+        currentTarget: {},
+        preventDefault() {
+            prevented = true;
+        }
+    };
+    assert(handleTimeCommandKeydown(delegatedEvent, { now: () => fixed }) === true, 'handleTimeCommandKeydown should support delegated keydown events');
+    assert(prevented === true, 'handleTimeCommandKeydown should prevent the Enter newline after replacing /time');
+    assert(
+        delegatedControl.value === '记录[[time:create:2026-06-21 09:08:07]]内容',
+        'handleTimeCommandKeydown should replace delegated target value inline'
+    );
+    assert(
+        delegatedControl.lastDispatchedEvent?.type === 'input' && delegatedControl.lastDispatchedEvent.bubbles,
+        'handleTimeCommandKeydown should dispatch a bubbling input event after replacement'
+    );
+
     assert(
         renderTimeMarkers('x [[time:2026-06-21 09:08:07]]', 'custom-time').includes('class="custom-time is-create"'),
         'renderTimeMarkers should render legacy time marker html as create'

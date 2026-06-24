@@ -152,6 +152,16 @@ export class HybridMarkdownEditor {
         }
     }
 
+    notifyEditorValueChanged(value = '') {
+        const normalized = this.stripDisplayGuards(value);
+        this._lastValue = normalized;
+        if (this.sourceTextarea) this.sourceTextarea.value = normalized;
+        this.buildHeadingIndex();
+        this.onInput(normalized);
+        this.dispatch('input', { value: normalized });
+        this.dispatch('change', { value: normalized });
+    }
+
     renderAfterMutation(scrollTop = 0) {
         const restoreScroll = () => {
             const nextScroller = this.container.querySelector('.vditor-wysiwyg');
@@ -1032,12 +1042,13 @@ export class HybridMarkdownEditor {
 
         event.preventDefault();
         event.stopPropagation();
+        event.stopImmediatePropagation?.();
         const selection = window.getSelection();
         selection?.removeAllRanges();
         selection?.addRange(commandRange);
         document.execCommand('delete', false);
         this.editor?.insertValue?.(buildTimeMarker(), true);
-        this._lastValue = this.stripDisplayGuards(this.editor?.getValue?.() || this._lastValue || '');
+        this.notifyEditorValueChanged(this.editor?.getValue?.() || this._lastValue || '');
         this.scheduleDecorateRenderedMarks();
         return true;
     }

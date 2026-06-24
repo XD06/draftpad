@@ -104,7 +104,11 @@ export function handleTimeCommandKeydown(event, options = {}) {
         return false;
     }
 
-    const control = event.currentTarget || event.target;
+    const target = event.target;
+    const currentTarget = event.currentTarget;
+    const control = typeof target?.value === 'string'
+        ? target
+        : (typeof currentTarget?.value === 'string' ? currentTarget : null);
     if (!control || typeof control.value !== 'string') return false;
 
     const result = replaceTimeCommandBeforeCursor(
