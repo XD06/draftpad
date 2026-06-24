@@ -1475,7 +1475,7 @@ main {
     color: var(--text-color);
     font-family: var(--font-reading);
     font-size: 16.5px;
-    line-height: 1.78;
+    line-height: 1.68;
 }
 
 .typora-editor-shell .vditor-wysiwyg pre.vditor-reset {
@@ -2869,18 +2869,28 @@ blockquote {
 
 .md-time-marker {
     --time-marker-accent: #118355;
+    --time-marker-fill-a: 18%;
+    --time-marker-fill-b: 8%;
+    --time-marker-border-strength: 44%;
+    --time-marker-text-strength: 78%;
+    --time-marker-stamp-strength: 62%;
+    --time-marker-icon-fill: 25%;
+    --time-marker-glow: 9%;
+    --time-marker-hover-fill-a: 24%;
+    --time-marker-hover-fill-b: 12%;
+    --time-marker-hover-glow: 18%;
     display: inline-flex;
     align-items: center;
     gap: 5px;
     max-width: 100%;
     padding: 2px 8px 2px 5px;
     margin: 0 2px;
-    border: 1px solid color-mix(in srgb, var(--time-marker-accent) 42%, var(--border-color));
+    border: 1px solid color-mix(in srgb, var(--time-marker-accent) var(--time-marker-border-strength), var(--border-color));
     border-radius: 999px;
     background: linear-gradient(135deg,
-        color-mix(in srgb, var(--time-marker-accent) 16%, transparent),
-        color-mix(in srgb, var(--time-marker-accent) 7%, transparent));
-    color: color-mix(in srgb, var(--time-marker-accent) 72%, var(--text-color));
+        color-mix(in srgb, var(--time-marker-accent) var(--time-marker-fill-a), transparent),
+        color-mix(in srgb, var(--time-marker-accent) var(--time-marker-fill-b), transparent));
+    color: color-mix(in srgb, var(--time-marker-accent) var(--time-marker-text-strength), var(--text-color));
     font-family: var(--font-code);
     font-size: 0.88em;
     line-height: 1.54;
@@ -2888,20 +2898,72 @@ blockquote {
     cursor: pointer;
     box-decoration-break: clone;
     -webkit-box-decoration-break: clone;
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.24);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28), 0 3px 10px color-mix(in srgb, var(--time-marker-accent) var(--time-marker-glow), transparent);
     transition: background 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
 }
 
 .md-time-marker:hover {
     transform: translateY(-1px);
     background: linear-gradient(135deg,
-        color-mix(in srgb, var(--time-marker-accent) 21%, transparent),
-        color-mix(in srgb, var(--time-marker-accent) 10%, transparent));
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28), 0 6px 16px color-mix(in srgb, var(--time-marker-accent) 16%, transparent);
+        color-mix(in srgb, var(--time-marker-accent) var(--time-marker-hover-fill-a), transparent),
+        color-mix(in srgb, var(--time-marker-accent) var(--time-marker-hover-fill-b), transparent));
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.34), 0 6px 16px color-mix(in srgb, var(--time-marker-accent) var(--time-marker-hover-glow), transparent);
 }
 
 .md-time-marker.is-update {
-    --time-marker-accent: #bd4d45;
+    --time-marker-accent: #c0544a;
+    --time-marker-fill-a: 23%;
+    --time-marker-fill-b: 10%;
+    --time-marker-border-strength: 50%;
+    --time-marker-text-strength: 84%;
+    --time-marker-stamp-strength: 66%;
+    --time-marker-icon-fill: 30%;
+    --time-marker-glow: 13%;
+    --time-marker-hover-fill-a: 29%;
+    --time-marker-hover-fill-b: 14%;
+    --time-marker-hover-glow: 21%;
+}
+
+.md-time-marker.is-update.is-level-2 {
+    --time-marker-accent: #c7443f;
+    --time-marker-fill-a: 28%;
+    --time-marker-fill-b: 13%;
+    --time-marker-border-strength: 58%;
+    --time-marker-text-strength: 88%;
+    --time-marker-stamp-strength: 70%;
+    --time-marker-icon-fill: 36%;
+    --time-marker-glow: 16%;
+    --time-marker-hover-fill-a: 34%;
+    --time-marker-hover-fill-b: 17%;
+    --time-marker-hover-glow: 24%;
+}
+
+.md-time-marker.is-update.is-level-3 {
+    --time-marker-accent: #bd2f38;
+    --time-marker-fill-a: 33%;
+    --time-marker-fill-b: 16%;
+    --time-marker-border-strength: 66%;
+    --time-marker-text-strength: 92%;
+    --time-marker-stamp-strength: 74%;
+    --time-marker-icon-fill: 42%;
+    --time-marker-glow: 19%;
+    --time-marker-hover-fill-a: 39%;
+    --time-marker-hover-fill-b: 20%;
+    --time-marker-hover-glow: 27%;
+}
+
+.md-time-marker.is-update.is-level-4 {
+    --time-marker-accent: #a91f31;
+    --time-marker-fill-a: 39%;
+    --time-marker-fill-b: 20%;
+    --time-marker-border-strength: 74%;
+    --time-marker-text-strength: 96%;
+    --time-marker-stamp-strength: 80%;
+    --time-marker-icon-fill: 50%;
+    --time-marker-glow: 23%;
+    --time-marker-hover-fill-a: 44%;
+    --time-marker-hover-fill-b: 24%;
+    --time-marker-hover-glow: 31%;
 }
 
 .time-marker-icon {
@@ -2912,7 +2974,7 @@ blockquote {
     align-items: center;
     justify-content: center;
     border-radius: 6px;
-    background: color-mix(in srgb, var(--time-marker-accent) 23%, transparent);
+    background: color-mix(in srgb, var(--time-marker-accent) var(--time-marker-icon-fill), transparent);
     color: color-mix(in srgb, var(--time-marker-accent) 94%, var(--text-color));
     opacity: 0.96;
 }
@@ -2932,7 +2994,7 @@ blockquote {
 }
 
 .time-marker-stamp {
-    color: color-mix(in srgb, var(--time-marker-accent) 58%, var(--text-color));
+    color: color-mix(in srgb, var(--time-marker-accent) var(--time-marker-stamp-strength), var(--text-color));
     font-variant-numeric: tabular-nums;
 }
 

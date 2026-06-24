@@ -10,7 +10,7 @@ function loadTimeCommand() {
     const source = fs.readFileSync(sourcePath, 'utf8')
         .replace(/export const /g, 'const ')
         .replace(/export function /g, 'function ')
-        + '\nmodule.exports = { TIME_COMMAND, buildTimeMarker, deleteTimeMarker, formatTimeStamp, handleTimeCommandKeydown, parseTimeMarkerText, replaceTimeCommandBeforeCursor, replaceTimeMarker, renderTimeMarkers };\n';
+        + '\nmodule.exports = { TIME_COMMAND, buildTimeMarker, buildUpdatedTimeMarker, deleteTimeMarker, formatTimeStamp, handleTimeCommandKeydown, parseTimeMarkerText, replaceTimeCommandBeforeCursor, replaceTimeMarker, renderTimeMarkers };\n';
     const context = {
         module: { exports: {} },
         exports: {},
@@ -32,6 +32,7 @@ function loadTimeCommand() {
 function run() {
     const {
         buildTimeMarker,
+        buildUpdatedTimeMarker,
         deleteTimeMarker,
         formatTimeStamp,
         handleTimeCommandKeydown,
@@ -45,11 +46,28 @@ function run() {
     assert(formatTimeStamp(fixed) === '2026-06-21 09:08:07', 'formatTimeStamp should use local date and time');
     assert(buildTimeMarker(fixed) === '[[time:create:2026-06-21 09:08:07]]', 'buildTimeMarker should wrap formatted create time');
     assert(buildTimeMarker(fixed, 'update') === '[[time:update:2026-06-21 09:08:07]]', 'buildTimeMarker should wrap formatted update time');
+    assert(buildTimeMarker(fixed, 'update', 3) === '[[time:update@3:2026-06-21 09:08:07]]', 'buildTimeMarker should persist stronger update levels');
     const parsedLegacy = parseTimeMarkerText('[[time:2026-06-21 09:08:07]]');
     assert(parsedLegacy.kind === 'create', 'parseTimeMarkerText should treat legacy markers as create markers');
+    assert(parsedLegacy.level === 1, 'parseTimeMarkerText should give legacy create markers level 1');
     assert(parsedLegacy.label === '创建', 'parseTimeMarkerText should expose a create label');
     assert(parsedLegacy.stamp === '2026-06-21 09:08:07', 'parseTimeMarkerText should expose the timestamp');
     assert(parsedLegacy.source === '[[time:2026-06-21 09:08:07]]', 'parseTimeMarkerText should preserve source text');
+    const parsedUpdateLevel = parseTimeMarkerText('[[time:update@4:2026-06-21 09:08:07]]');
+    assert(parsedUpdateLevel.kind === 'update', 'parseTimeMarkerText should parse update level markers');
+    assert(parsedUpdateLevel.level === 4, 'parseTimeMarkerText should expose update level markers');
+    assert(
+        buildUpdatedTimeMarker('[[time:create:2026-06-21 09:08:07]]', fixed) === '[[time:update:2026-06-21 09:08:07]]',
+        'buildUpdatedTimeMarker should turn create markers into level 1 update markers'
+    );
+    assert(
+        buildUpdatedTimeMarker('[[time:update@3:2026-06-21 09:08:07]]', fixed) === '[[time:update@4:2026-06-21 09:08:07]]',
+        'buildUpdatedTimeMarker should increment update marker levels'
+    );
+    assert(
+        buildUpdatedTimeMarker('[[time:update@4:2026-06-21 09:08:07]]', fixed) === '[[time:update@4:2026-06-21 09:08:07]]',
+        'buildUpdatedTimeMarker should cap update marker levels at 4'
+    );
 
     const result = replaceTimeCommandBeforeCursor('记录 /time', '记录 /time'.length, '记录 /time'.length, {
         now: () => fixed
@@ -109,12 +127,16 @@ function run() {
     );
 
     assert(
-        renderTimeMarkers('x [[time:2026-06-21 09:08:07]]', 'custom-time').includes('class="custom-time is-create"'),
+        renderTimeMarkers('x [[time:2026-06-21 09:08:07]]', 'custom-time').includes('class="custom-time is-create is-level-1"'),
         'renderTimeMarkers should render legacy time marker html as create'
     );
     assert(
-        renderTimeMarkers('x [[time:update:2026-06-21 09:08:07]]', 'custom-time').includes('class="custom-time is-update"'),
+        renderTimeMarkers('x [[time:update:2026-06-21 09:08:07]]', 'custom-time').includes('class="custom-time is-update is-level-1"'),
         'renderTimeMarkers should render update time marker html'
+    );
+    assert(
+        renderTimeMarkers('x [[time:update@3:2026-06-21 09:08:07]]', 'custom-time').includes('is-level-3'),
+        'renderTimeMarkers should render update level classes'
     );
     assert(
         replaceTimeMarker('记录 [[time:create:2026-06-21 09:08:07]]', '[[time:create:2026-06-21 09:08:07]]', '[[time:update:2026-06-21 10:00:00]]') === '记录 [[time:update:2026-06-21 10:00:00]]',

@@ -1,6 +1,6 @@
 export const TIME_COMMAND = '/time';
-const TIME_MARKER_RE = /\[\[time:(?:(create|update):)?(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\]\]/g;
-const TIME_MARKER_EXACT_RE = /^\[\[time:(?:(create|update):)?(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\]\]$/;
+const TIME_MARKER_RE = /\[\[time:(?:(create|update)(?:@([1-4]))?:)?(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\]\]/g;
+const TIME_MARKER_EXACT_RE = /^\[\[time:(?:(create|update)(?:@([1-4]))?:)?(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\]\]$/;
 const TIME_KIND_LABELS = {
     create: '创建',
     update: '更新'
@@ -8,6 +8,12 @@ const TIME_KIND_LABELS = {
 
 function normalizeTimeKind(kind = 'create') {
     return kind === 'update' ? 'update' : 'create';
+}
+
+function normalizeTimeLevel(level = 1) {
+    const value = Number.parseInt(level, 10);
+    if (!Number.isFinite(value)) return 1;
+    return Math.min(4, Math.max(1, value));
 }
 
 function escapeAttribute(value = '') {
@@ -32,17 +38,28 @@ export function formatTimeStamp(date = new Date()) {
     ].join(':');
 }
 
-export function buildTimeMarker(date = new Date(), kind = 'create') {
-    return `[[time:${normalizeTimeKind(kind)}:${formatTimeStamp(date)}]]`;
+export function buildTimeMarker(date = new Date(), kind = 'create', level = 1) {
+    const normalizedKind = normalizeTimeKind(kind);
+    const normalizedLevel = normalizeTimeLevel(level);
+    const levelSuffix = normalizedKind === 'update' && normalizedLevel > 1 ? `@${normalizedLevel}` : '';
+    return `[[time:${normalizedKind}${levelSuffix}:${formatTimeStamp(date)}]]`;
+}
+
+export function buildUpdatedTimeMarker(previousMarker = '', date = new Date()) {
+    const parsed = parseTimeMarkerText(previousMarker);
+    const previousLevel = parsed?.kind === 'update' ? parsed.level : 0;
+    return buildTimeMarker(date, 'update', previousLevel + 1);
 }
 
 export function parseTimeMarkerText(markerText = '') {
     const match = String(markerText || '').match(TIME_MARKER_EXACT_RE);
     if (!match) return null;
     const kind = normalizeTimeKind(match[1] || 'create');
-    const stamp = match[2];
+    const level = kind === 'update' ? normalizeTimeLevel(match[2] || 1) : 1;
+    const stamp = match[3];
     return {
         kind,
+        level,
         label: TIME_KIND_LABELS[kind],
         stamp,
         source: match[0]
@@ -127,12 +144,13 @@ export function handleTimeCommandKeydown(event, options = {}) {
 }
 
 export function renderTimeMarkers(escaped = '', className = 'time-marker') {
-    return String(escaped || '').replace(TIME_MARKER_RE, (match, kindValue, stamp) => {
+    return String(escaped || '').replace(TIME_MARKER_RE, (match, kindValue, levelValue, stamp) => {
         const kind = normalizeTimeKind(kindValue || 'create');
+        const level = kind === 'update' ? normalizeTimeLevel(levelValue || 1) : 1;
         const label = TIME_KIND_LABELS[kind];
         const safeSource = escapeAttribute(match);
         const safeStamp = escapeAttribute(stamp);
-        return `<time class="${className} is-${kind}" data-time-marker="true" data-time-kind="${kind}" data-time-source="${safeSource}" data-time-stamp="${safeStamp}" title="${label}时间：${safeStamp}" aria-label="${label}时间：${safeStamp}"><span class="time-marker-icon" aria-hidden="true">${timeMarkerIcon(kind)}</span><span class="time-marker-label">${label}</span><span class="time-marker-stamp">${stamp}</span></time>`;
+        return `<time class="${className} is-${kind} is-level-${level}" data-time-marker="true" data-time-kind="${kind}" data-time-level="${level}" data-time-source="${safeSource}" data-time-stamp="${safeStamp}" title="${label}时间：${safeStamp}" aria-label="${label}时间：${safeStamp}"><span class="time-marker-icon" aria-hidden="true">${timeMarkerIcon(kind)}</span><span class="time-marker-label">${label}</span><span class="time-marker-stamp">${stamp}</span></time>`;
     });
 }
 

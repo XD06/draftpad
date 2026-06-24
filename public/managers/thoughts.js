@@ -45,7 +45,7 @@ import {
 import { renderThoughtCard } from './thought-card-renderer.js';
 import { applyThoughtTextStyle, escapeHtml as escapeThoughtHtml, formatThoughtText } from './thought-text-formatting.js';
 import { buildQuickAddCreateOutboxItem, createLocalPendingThought, markCreatedThoughtPending } from './thought-quick-add.js';
-import { buildTimeMarker, deleteTimeMarker, handleTimeCommandKeydown, replaceTimeMarker } from './time-command.js';
+import { buildTimeMarker, buildUpdatedTimeMarker, deleteTimeMarker, handleTimeCommandKeydown, replaceTimeMarker } from './time-command.js';
 
 const THOUGHTS_CACHE_KEY = 'dumbpad_thoughts_cache_v1';
 
@@ -1227,7 +1227,7 @@ export class ThoughtsManager {
 
         const mutate = (sourceText) => action === 'delete'
             ? deleteTimeMarker(sourceText, marker.source)
-            : replaceTimeMarker(sourceText, marker.source, buildTimeMarker(new Date(), 'update'));
+            : replaceTimeMarker(sourceText, marker.source, buildUpdatedTimeMarker(marker.source, new Date()));
 
         this.hideThoughtTimeMenu();
 

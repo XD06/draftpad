@@ -1,6 +1,7 @@
 import { stripHybridDisplayArtifacts } from './managers/hybrid-display-sanitizer.js';
 import {
     buildTimeMarker,
+    buildUpdatedTimeMarker,
     deleteTimeMarker,
     handleTimeCommandKeydown,
     renderTimeMarkers,
@@ -988,7 +989,7 @@ export class HybridMarkdownEditor {
         const value = this.getValue();
         const next = action === 'delete'
             ? deleteTimeMarker(value, source)
-            : replaceTimeMarker(value, source, buildTimeMarker(new Date(), 'update'));
+            : replaceTimeMarker(value, source, buildUpdatedTimeMarker(source, new Date()));
         this.hideTimeMarkerMenu();
         if (next === value) return;
         const scroller = this.container.querySelector('.vditor-wysiwyg');
