@@ -2914,63 +2914,63 @@ blockquote {
 }
 
 .md-time-marker.is-update {
-    --time-marker-accent: #c0544a;
-    --time-marker-fill-a: 19%;
-    --time-marker-fill-b: 8%;
-    --time-marker-border-strength: 48%;
-    --time-marker-text-color: color-mix(in srgb, #a94d49 78%, var(--text-color));
-    --time-marker-label-color: color-mix(in srgb, #a94d49 88%, var(--text-color));
-    --time-marker-stamp-color: color-mix(in srgb, #a94d49 72%, var(--text-color));
+    --time-marker-accent: #d84b42;
+    --time-marker-fill-a: 13%;
+    --time-marker-fill-b: 5%;
+    --time-marker-border-strength: 42%;
+    --time-marker-text-color: #bf3b38;
+    --time-marker-label-color: #c83c38;
+    --time-marker-stamp-color: #b63d3a;
     --time-marker-icon-fill: 30%;
-    --time-marker-glow: 11%;
-    --time-marker-hover-fill-a: 25%;
-    --time-marker-hover-fill-b: 11%;
-    --time-marker-hover-glow: 21%;
+    --time-marker-glow: 8%;
+    --time-marker-hover-fill-a: 18%;
+    --time-marker-hover-fill-b: 7%;
+    --time-marker-hover-glow: 17%;
 }
 
 .md-time-marker.is-update.is-level-2 {
-    --time-marker-accent: #c7443f;
-    --time-marker-fill-a: 20%;
-    --time-marker-fill-b: 9%;
-    --time-marker-border-strength: 52%;
-    --time-marker-text-color: color-mix(in srgb, #bd383d 84%, var(--text-color));
-    --time-marker-label-color: color-mix(in srgb, #bd383d 94%, var(--text-color));
-    --time-marker-stamp-color: color-mix(in srgb, #bd383d 78%, var(--text-color));
+    --time-marker-accent: #e33142;
+    --time-marker-fill-a: 14%;
+    --time-marker-fill-b: 6%;
+    --time-marker-border-strength: 48%;
+    --time-marker-text-color: #d3233d;
+    --time-marker-label-color: #df263f;
+    --time-marker-stamp-color: #c72a3d;
     --time-marker-icon-fill: 36%;
-    --time-marker-glow: 13%;
-    --time-marker-hover-fill-a: 26%;
-    --time-marker-hover-fill-b: 12%;
-    --time-marker-hover-glow: 24%;
+    --time-marker-glow: 10%;
+    --time-marker-hover-fill-a: 19%;
+    --time-marker-hover-fill-b: 8%;
+    --time-marker-hover-glow: 20%;
 }
 
 .md-time-marker.is-update.is-level-3 {
-    --time-marker-accent: #bd2f38;
-    --time-marker-fill-a: 21%;
-    --time-marker-fill-b: 10%;
-    --time-marker-border-strength: 56%;
-    --time-marker-text-color: color-mix(in srgb, #a91f31 90%, var(--text-color));
-    --time-marker-label-color: color-mix(in srgb, #a91f31 98%, var(--text-color));
-    --time-marker-stamp-color: color-mix(in srgb, #a91f31 83%, var(--text-color));
+    --time-marker-accent: #e0183e;
+    --time-marker-fill-a: 15%;
+    --time-marker-fill-b: 7%;
+    --time-marker-border-strength: 54%;
+    --time-marker-text-color: #d20f3a;
+    --time-marker-label-color: #e0113d;
+    --time-marker-stamp-color: #bf1a38;
     --time-marker-icon-fill: 42%;
-    --time-marker-glow: 15%;
-    --time-marker-hover-fill-a: 27%;
-    --time-marker-hover-fill-b: 13%;
-    --time-marker-hover-glow: 27%;
+    --time-marker-glow: 12%;
+    --time-marker-hover-fill-a: 20%;
+    --time-marker-hover-fill-b: 9%;
+    --time-marker-hover-glow: 23%;
 }
 
 .md-time-marker.is-update.is-level-4 {
-    --time-marker-accent: #a91f31;
-    --time-marker-fill-a: 22%;
-    --time-marker-fill-b: 11%;
+    --time-marker-accent: #c90035;
+    --time-marker-fill-a: 16%;
+    --time-marker-fill-b: 8%;
     --time-marker-border-strength: 60%;
-    --time-marker-text-color: color-mix(in srgb, #7f1023 96%, var(--text-color));
-    --time-marker-label-color: color-mix(in srgb, #7f1023 100%, var(--text-color));
-    --time-marker-stamp-color: color-mix(in srgb, #7f1023 88%, var(--text-color));
+    --time-marker-text-color: #a8002c;
+    --time-marker-label-color: #bd0033;
+    --time-marker-stamp-color: #980029;
     --time-marker-icon-fill: 50%;
-    --time-marker-glow: 17%;
-    --time-marker-hover-fill-a: 28%;
-    --time-marker-hover-fill-b: 14%;
-    --time-marker-hover-glow: 31%;
+    --time-marker-glow: 14%;
+    --time-marker-hover-fill-a: 21%;
+    --time-marker-hover-fill-b: 10%;
+    --time-marker-hover-glow: 26%;
 }
 
 .time-marker-icon {

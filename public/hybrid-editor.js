@@ -1027,7 +1027,8 @@ export class HybridMarkdownEditor {
                 handleTimeCommandKeydown(event);
                 return;
             }
-            this.handleWysiwygTimeCommand(event);
+            if (this.handleWysiwygTimeCommand(event)) return;
+            this.handleWysiwygSoftEnter(event);
         }, true);
     }
 
@@ -1052,6 +1053,65 @@ export class HybridMarkdownEditor {
         this.notifyEditorValueChanged(this.editor?.getValue?.() || this._lastValue || '');
         this.scheduleDecorateRenderedMarks();
         return true;
+    }
+
+    handleWysiwygSoftEnter(event) {
+        if (!event || event.key !== 'Enter' || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey || event.isComposing) {
+            return false;
+        }
+        const target = event.target;
+        const root = this.container.querySelector('.vditor-wysiwyg .vditor-reset');
+        if (!root || !target?.closest?.('.vditor-wysiwyg')) return false;
+
+        const range = this.getPlainParagraphRange(root);
+        if (!range) return false;
+
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation?.();
+
+        range.deleteContents();
+        const lineBreak = document.createElement('br');
+        const caretGuard = document.createTextNode('\u200B');
+        range.insertNode(lineBreak);
+        lineBreak.after(caretGuard);
+
+        const nextRange = document.createRange();
+        nextRange.setStart(caretGuard, 1);
+        nextRange.collapse(true);
+        const selection = window.getSelection();
+        selection?.removeAllRanges();
+        selection?.addRange(nextRange);
+
+        this.notifyEditorValueChanged(this.editor?.getValue?.() || this._lastValue || '');
+        this.scheduleDecorateRenderedMarks();
+        return true;
+    }
+
+    getPlainParagraphRange(root) {
+        const selection = window.getSelection();
+        if (!selection || selection.rangeCount === 0) return null;
+
+        const range = selection.getRangeAt(0);
+        if (!root.contains(range.commonAncestorContainer)) return null;
+
+        const startParagraph = this.closestElement(range.startContainer, 'p');
+        const endParagraph = this.closestElement(range.endContainer, 'p');
+        if (!startParagraph || startParagraph !== endParagraph || startParagraph.parentElement !== root) return null;
+
+        const startInlineCode = this.closestElement(range.startContainer, 'code');
+        const endInlineCode = this.closestElement(range.endContainer, 'code');
+        if (startInlineCode || endInlineCode) return null;
+
+        const visibleText = startParagraph.textContent.replace(/\u200B/g, '').trim();
+        if (!visibleText && range.collapsed) return null;
+
+        return range.cloneRange();
+    }
+
+    closestElement(node, selector) {
+        const element = node?.nodeType === Node.ELEMENT_NODE ? node : node?.parentElement;
+        return element?.closest?.(selector) || null;
     }
 
     getTimeCommandRangeBeforeCaret() {
