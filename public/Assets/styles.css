@@ -2868,145 +2868,125 @@ blockquote {
 }
 
 .md-time-marker {
-    --time-marker-accent: #118355;
-    --time-marker-fill-a: 18%;
-    --time-marker-fill-b: 8%;
-    --time-marker-border-strength: 44%;
-    --time-marker-text-strength: 78%;
-    --time-marker-stamp-strength: 62%;
-    --time-marker-text-color: color-mix(in srgb, var(--time-marker-accent) var(--time-marker-text-strength), var(--text-color));
-    --time-marker-label-color: color-mix(in srgb, var(--time-marker-accent) 88%, var(--text-color));
-    --time-marker-stamp-color: color-mix(in srgb, var(--time-marker-accent) var(--time-marker-stamp-strength), var(--text-color));
-    --time-marker-icon-fill: 25%;
-    --time-marker-glow: 9%;
-    --time-marker-hover-fill-a: 24%;
-    --time-marker-hover-fill-b: 12%;
-    --time-marker-hover-glow: 18%;
+    --time-marker-accent: #14785c;
+    --time-marker-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 5v14M5 12h14'/%3E%3C/svg%3E");
+    --time-marker-fill-a: 7%;
+    --time-marker-fill-b: 3%;
+    --time-marker-border-strength: 24%;
+    --time-marker-label-color: #116f55;
+    --time-marker-stamp-color: color-mix(in srgb, var(--time-marker-accent) 62%, var(--text-color));
+    --time-marker-rail-strength: 76%;
+    --time-marker-hover-fill-a: 11%;
+    --time-marker-hover-fill-b: 5%;
+    --time-marker-hover-border-strength: 34%;
     position: relative;
     display: inline-flex;
-    align-items: center;
-    gap: 5px;
+    align-items: baseline;
+    gap: 3px;
     max-width: 100%;
-    padding: 2px 8px 2px 5px;
-    margin: 0 2px;
+    padding: 0 4px 0 4px;
+    margin: 0 1px;
     border: 1px solid color-mix(in srgb, var(--time-marker-accent) var(--time-marker-border-strength), var(--border-color));
-    border-radius: 999px;
+    border-left-color: color-mix(in srgb, var(--time-marker-accent) var(--time-marker-rail-strength), transparent);
+    border-left-width: 2px;
+    border-radius: 5px;
     background: linear-gradient(135deg,
         color-mix(in srgb, var(--time-marker-accent) var(--time-marker-fill-a), transparent),
         color-mix(in srgb, var(--time-marker-accent) var(--time-marker-fill-b), transparent));
-    color: var(--time-marker-text-color);
+    color: var(--time-marker-stamp-color);
     font-family: var(--font-code);
-    font-size: 0.88em;
-    line-height: 1.54;
+    font-size: 0.72em;
+    line-height: 1.28;
     white-space: nowrap;
     cursor: pointer;
     overflow: hidden;
     text-indent: -999px;
     box-decoration-break: clone;
     -webkit-box-decoration-break: clone;
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28), 0 3px 10px color-mix(in srgb, var(--time-marker-accent) var(--time-marker-glow), transparent);
-    transition: background 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.24);
+    vertical-align: 0.08em;
+    transition: background 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
 }
 
 .md-time-marker:hover {
-    transform: translateY(-1px);
+    border-color: color-mix(in srgb, var(--time-marker-accent) var(--time-marker-hover-border-strength), var(--border-color));
+    border-left-color: color-mix(in srgb, var(--time-marker-accent) 88%, transparent);
     background: linear-gradient(135deg,
         color-mix(in srgb, var(--time-marker-accent) var(--time-marker-hover-fill-a), transparent),
         color-mix(in srgb, var(--time-marker-accent) var(--time-marker-hover-fill-b), transparent));
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.34), 0 6px 16px color-mix(in srgb, var(--time-marker-accent) var(--time-marker-hover-glow), transparent);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3), 0 2px 8px color-mix(in srgb, var(--time-marker-accent) 7%, transparent);
 }
 
 .md-time-marker::before {
     content: "";
-    width: 15px;
-    height: 15px;
-    flex: 0 0 15px;
-    display: inline-flex;
-    border-radius: 6px;
-    background:
-        linear-gradient(currentColor, currentColor) center / 9px 2px no-repeat,
-        linear-gradient(currentColor, currentColor) center / 2px 9px no-repeat,
-        color-mix(in srgb, var(--time-marker-accent) var(--time-marker-icon-fill), transparent);
-    color: color-mix(in srgb, var(--time-marker-accent) 94%, var(--text-color));
-    opacity: 0.96;
+    width: 12px;
+    height: 12px;
+    flex: 0 0 12px;
+    display: inline-block;
+    align-self: center;
+    background: currentColor;
+    color: var(--time-marker-label-color);
+    -webkit-mask: var(--time-marker-icon) center / contain no-repeat;
+    mask: var(--time-marker-icon) center / contain no-repeat;
     text-indent: 0;
 }
 
 .md-time-marker.is-update::before {
-    background:
-        radial-gradient(circle at center, transparent 4px, currentColor 4.5px 5.6px, transparent 6px),
-        linear-gradient(currentColor, currentColor) 50% 47% / 2px 5px no-repeat,
-        linear-gradient(currentColor, currentColor) 58% 62% / 5px 2px no-repeat,
-        color-mix(in srgb, var(--time-marker-accent) var(--time-marker-icon-fill), transparent);
+    --time-marker-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 19h9'/%3E%3Cpath d='M16.5 4.5a2.1 2.1 0 0 1 3 3L7 20l-4 1 1-4Z'/%3E%3C/svg%3E");
 }
 
 .md-time-marker::after {
-    content: attr(data-time-label) " " attr(data-time-stamp);
-    color: var(--time-marker-label-color);
+    content: attr(data-time-stamp);
+    color: var(--time-marker-stamp-color);
     font-family: inherit;
-    font-weight: 720;
+    font-style: italic;
+    font-weight: 640;
     font-variant-numeric: tabular-nums;
     text-indent: 0;
+    opacity: 0.96;
 }
 
 .md-time-marker.is-update {
-    --time-marker-accent: #d84b42;
-    --time-marker-fill-a: 13%;
-    --time-marker-fill-b: 5%;
-    --time-marker-border-strength: 42%;
-    --time-marker-text-color: #bf3b38;
-    --time-marker-label-color: #c83c38;
-    --time-marker-stamp-color: #b63d3a;
-    --time-marker-icon-fill: 30%;
-    --time-marker-glow: 8%;
-    --time-marker-hover-fill-a: 18%;
-    --time-marker-hover-fill-b: 7%;
-    --time-marker-hover-glow: 17%;
+    --time-marker-accent: #2f6fbb;
+    --time-marker-fill-a: 7%;
+    --time-marker-fill-b: 3%;
+    --time-marker-border-strength: 26%;
+    --time-marker-label-color: #2860a8;
+    --time-marker-stamp-color: color-mix(in srgb, #b73f3d 72%, var(--text-color));
+    --time-marker-rail-strength: 78%;
+    --time-marker-hover-fill-a: 12%;
+    --time-marker-hover-fill-b: 5%;
+    --time-marker-hover-border-strength: 38%;
 }
 
 .md-time-marker.is-update.is-level-2 {
-    --time-marker-accent: #e33142;
-    --time-marker-fill-a: 14%;
-    --time-marker-fill-b: 6%;
-    --time-marker-border-strength: 48%;
-    --time-marker-text-color: #d3233d;
-    --time-marker-label-color: #df263f;
-    --time-marker-stamp-color: #c72a3d;
-    --time-marker-icon-fill: 36%;
-    --time-marker-glow: 10%;
-    --time-marker-hover-fill-a: 19%;
-    --time-marker-hover-fill-b: 8%;
-    --time-marker-hover-glow: 20%;
+    --time-marker-accent: #c38a00;
+    --time-marker-fill-a: 8%;
+    --time-marker-fill-b: 4%;
+    --time-marker-border-strength: 30%;
+    --time-marker-label-color: #a36a00;
+    --time-marker-stamp-color: color-mix(in srgb, #c73532 78%, var(--text-color));
+    --time-marker-rail-strength: 82%;
 }
 
 .md-time-marker.is-update.is-level-3 {
-    --time-marker-accent: #e0183e;
-    --time-marker-fill-a: 15%;
-    --time-marker-fill-b: 7%;
-    --time-marker-border-strength: 54%;
-    --time-marker-text-color: #d20f3a;
-    --time-marker-label-color: #e0113d;
-    --time-marker-stamp-color: #bf1a38;
-    --time-marker-icon-fill: 42%;
-    --time-marker-glow: 12%;
-    --time-marker-hover-fill-a: 20%;
-    --time-marker-hover-fill-b: 9%;
-    --time-marker-hover-glow: 23%;
+    --time-marker-accent: #d65f1f;
+    --time-marker-fill-a: 9%;
+    --time-marker-fill-b: 4%;
+    --time-marker-border-strength: 34%;
+    --time-marker-label-color: #c64e18;
+    --time-marker-stamp-color: color-mix(in srgb, #d02030 84%, var(--text-color));
+    --time-marker-rail-strength: 88%;
 }
 
 .md-time-marker.is-update.is-level-4 {
-    --time-marker-accent: #c90035;
-    --time-marker-fill-a: 16%;
-    --time-marker-fill-b: 8%;
-    --time-marker-border-strength: 60%;
-    --time-marker-text-color: #a8002c;
-    --time-marker-label-color: #bd0033;
-    --time-marker-stamp-color: #980029;
-    --time-marker-icon-fill: 50%;
-    --time-marker-glow: 14%;
-    --time-marker-hover-fill-a: 21%;
-    --time-marker-hover-fill-b: 10%;
-    --time-marker-hover-glow: 26%;
+    --time-marker-accent: #d12f42;
+    --time-marker-fill-a: 10%;
+    --time-marker-fill-b: 5%;
+    --time-marker-border-strength: 38%;
+    --time-marker-label-color: #c41735;
+    --time-marker-stamp-color: color-mix(in srgb, #c60035 90%, var(--text-color));
+    --time-marker-rail-strength: 92%;
 }
 
 .time-marker-icon {
