@@ -951,6 +951,14 @@ export class ThoughtsManager {
             });
         }
 
+        const editBtn = card.querySelector('.thought-edit-btn');
+        if (editBtn) {
+            editBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.enterEditMode(card, thought);
+            });
+        }
+
         const aiStatusBtn = card.querySelector('.thought-ai-status');
         if (aiStatusBtn) {
             aiStatusBtn.addEventListener('click', (e) => {

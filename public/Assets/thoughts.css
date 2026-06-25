@@ -1326,14 +1326,25 @@
 }
 
 .subtask-add-footer {
-    min-width: 30px;
-    padding: 0 8px;
-    opacity: 0.72;
+min-width: 30px;
+padding: 0 8px;
+opacity: 0.72;
 }
 
 .subtask-add-footer:hover {
-    opacity: 1 !important;
-    color: var(--primary-color);
+opacity: 1 !important;
+color: var(--primary-color);
+}
+
+.thought-edit-btn {
+min-width: 30px;
+padding: 0 7px;
+opacity: 0.72;
+}
+
+.thought-edit-btn:hover {
+opacity: 1 !important;
+color: var(--primary-color);
 }
 
 .relations-icon {
