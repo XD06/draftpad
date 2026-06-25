@@ -14,6 +14,10 @@ function registerThoughtRoutes(app, context) {
         await storage.saveThoughts(thoughts);
     }
 
+    async function withThoughtWriteLock(task) {
+        return storage.withThoughtWriteLock(task);
+    }
+
     function broadcastThoughtsUpdate(action, payload) {
         broadcastWebSocketMessage({
             type: 'thoughts_update',
@@ -148,13 +152,15 @@ function registerThoughtRoutes(app, context) {
                 };
             }
 
-            for (const edge of relations.edges || []) {
-                const item = await edgeToResponse(edge);
+            const [resolvedRelations, resolvedSuggestions] = await Promise.all([
+                Promise.all((relations.edges || []).map(edgeToResponse)),
+                Promise.all((relations.suggestions || []).map(edgeToResponse))
+            ]);
+
+            for (const item of resolvedRelations) {
                 if (item) responseRelations.push(item);
             }
-
-            for (const edge of relations.suggestions || []) {
-                const item = await edgeToResponse(edge);
+            for (const item of resolvedSuggestions) {
                 if (item) responseSuggestions.push(item);
             }
 
@@ -402,15 +408,39 @@ function registerThoughtRoutes(app, context) {
                 })));
             }
 
+            // Optimisation: only fetch meta for thoughts whose AI status is
+            // "pending" or "missing" (to check if processing has finished).
+            // For thoughts that are already "ready" or "error", we trust the
+            // aiStatus / aiError / aiProcessedAt / aiTags fields already
+            // stored on the thought object — they are kept up-to-date by PATCH
+            // and WebSocket pushes.  This avoids N meta file reads per list
+            // request while still reading relation counts from source of truth.
+            const pendingIds = new Set(
+                thoughts
+                    .filter(t => t.aiStatus === 'pending' || !t.aiStatus || t.aiStatus === 'missing')
+                    .map(t => t.id)
+            );
+
             const thoughtsWithRelationCounts = await Promise.all(thoughts.map(async (thought) => {
+                const relationCount = await storage.readRelationCount(thought.id);
+                if (!pendingIds.has(thought.id)) {
+                    return {
+                        ...thought,
+                        relationCount,
+                        aiStatus: visibleAIStatus(thought.id, { status: thought.aiStatus }, thought.aiStatus || 'missing'),
+                        aiError: thought.aiError || null,
+                        aiProcessedAt: thought.aiProcessedAt || 0,
+                        aiTags: Array.isArray(thought.aiTags) ? thought.aiTags : []
+                    };
+                }
                 const meta = await storage.readThoughtMeta(thought.id);
                 return {
                     ...thought,
-                    relationCount: await storage.readRelationCount(thought.id),
-                    aiStatus: visibleAIStatus(thought.id, meta),
-                    aiError: meta?.error || null,
+                    relationCount,
+                    aiStatus: visibleAIStatus(thought.id, meta, thought.aiStatus || 'missing'),
+                    aiError: meta?.error || thought.aiError || null,
                     aiProcessedAt: meta?.ai?.processedAt || 0,
-                    aiTags: Array.isArray(meta?.ai?.tags) ? meta.ai.tags : []
+                    aiTags: Array.isArray(meta?.ai?.tags) ? meta.ai.tags : (thought.aiTags || [])
                 };
             }));
 
@@ -425,25 +455,28 @@ function registerThoughtRoutes(app, context) {
             const { text, subItems, tags, completed } = req.body;
             if (!text) return res.status(400).json({ error: 'Text is required' });
 
-            const thoughts = await readThoughts();
-            const now = Date.now();
-            const newThought = {
-                id: createThoughtId(thoughts),
-                text,
-                subItems: subItems || [],
-                tags: tags || [],
-                completed: completed === true,
-                relationCount: 0,
-                aiStatus: 'pending',
-                version: 1,
-                createdAt: now,
-                updatedAt: now
-            };
+            const newThought = await withThoughtWriteLock(async () => {
+                const thoughts = await readThoughts();
+                const now = Date.now();
+                const thought = {
+                    id: createThoughtId(thoughts),
+                    text,
+                    subItems: subItems || [],
+                    tags: tags || [],
+                    completed: completed === true,
+                    relationCount: 0,
+                    aiStatus: 'pending',
+                    version: 1,
+                    createdAt: now,
+                    updatedAt: now
+                };
 
-            thoughts.unshift(newThought);
-            await saveThoughts(thoughts);
+                thoughts.unshift(thought);
+                await saveThoughts(thoughts);
+                return thought;
+            });
+
             scheduleIndexNotepads(250);
-
             broadcastThoughtsUpdate('create', newThought);
             console.info(`[thought-ai] queue reason=create thoughtId=${newThought.id}`);
             aiQueue.queueThought(newThought.id, 'create');
@@ -497,92 +530,106 @@ function registerThoughtRoutes(app, context) {
         try {
             const { id } = req.params;
             const { action, text, target, replacement, baseVersion } = req.body;
-            const thoughts = await readThoughts();
-            const index = thoughts.findIndex(t => t.id === id);
 
-            if (index === -1) return res.status(404).json({ error: 'Thought not found' });
+            const result = await withThoughtWriteLock(async () => {
+                const thoughts = await readThoughts();
+                const index = thoughts.findIndex(t => t.id === id);
 
-            const thought = thoughts[index];
-            const clientVersion = Number(baseVersion);
-            if (Number.isFinite(clientVersion) && (thought.version || 1) > clientVersion) {
-                return res.status(409).json({
-                    error: 'Thought has been updated on another device',
-                    currentVersion: thought.version || 1
-                });
-            }
-            let modified = false;
+                if (index === -1) return { status: 404, body: { error: 'Thought not found' } };
 
-            switch (action) {
-                case 'toggle_complete':
-                    thought.completed = !thought.completed;
-                    modified = true;
-                    break;
-                case 'append':
-                    if (text) {
-                        thought.text += text;
+                const thought = thoughts[index];
+                const clientVersion = Number(baseVersion);
+                if (Number.isFinite(clientVersion) && (thought.version || 1) > clientVersion) {
+                    return {
+                        status: 409,
+                        body: {
+                            error: 'Thought has been updated on another device',
+                            currentVersion: thought.version || 1
+                        }
+                    };
+                }
+                let modified = false;
+
+                switch (action) {
+                    case 'toggle_complete':
+                        thought.completed = !thought.completed;
                         modified = true;
-                    }
-                    break;
-                case 'replace':
-                    if (target && thought.text.includes(target)) {
-                        thought.text = thought.text.split(target).join(replacement || '');
+                        break;
+                    case 'append':
+                        if (text) {
+                            thought.text += text;
+                            modified = true;
+                        }
+                        break;
+                    case 'replace':
+                        if (target && thought.text.includes(target)) {
+                            thought.text = thought.text.split(target).join(replacement || '');
+                            modified = true;
+                        }
+                        break;
+                    case 'overwrite':
+                        if (text !== undefined) { thought.text = text; modified = true; }
+                        if (req.body.subItems !== undefined) { thought.subItems = req.body.subItems; modified = true; }
+                        if (req.body.tags !== undefined) { thought.tags = req.body.tags; modified = true; }
+                        if (req.body.completed !== undefined) { thought.completed = req.body.completed === true; modified = true; }
+                        break;
+                    case 'add_subitem':
+                        if (!text) return { status: 400, body: { error: 'Subitem text is required' } };
+                        thought.subItems.push({
+                            id: Date.now().toString(),
+                            text,
+                            completed: false
+                        });
                         modified = true;
+                        break;
+                    case 'toggle_subitem': {
+                        const sub = thought.subItems.find(s => s.id === req.body.subId);
+                        if (!sub) return { status: 404, body: { error: 'Subitem not found' } };
+                        sub.completed = !sub.completed;
+                        modified = true;
+                        break;
                     }
-                    break;
-                case 'overwrite':
-                    if (text !== undefined) { thought.text = text; modified = true; }
-                    if (req.body.subItems !== undefined) { thought.subItems = req.body.subItems; modified = true; }
-                    if (req.body.tags !== undefined) { thought.tags = req.body.tags; modified = true; }
-                    if (req.body.completed !== undefined) { thought.completed = req.body.completed === true; modified = true; }
-                    break;
-                case 'add_subitem':
-                    if (!text) return res.status(400).json({ error: 'Subitem text is required' });
-                    thought.subItems.push({
-                        id: Date.now().toString(),
-                        text,
-                        completed: false
-                    });
-                    modified = true;
-                    break;
-                case 'toggle_subitem': {
-                    const sub = thought.subItems.find(s => s.id === req.body.subId);
-                    if (!sub) return res.status(404).json({ error: 'Subitem not found' });
-                    sub.completed = !sub.completed;
-                    modified = true;
-                    break;
+                    case 'update_subitem': {
+                        const sub = thought.subItems.find(s => s.id === req.body.subId);
+                        if (!sub) return { status: 404, body: { error: 'Subitem not found' } };
+                        if (text !== undefined) sub.text = text;
+                        if (req.body.completed !== undefined) sub.completed = req.body.completed;
+                        modified = true;
+                        break;
+                    }
+                    case 'delete_subitem': {
+                        const idx = thought.subItems.findIndex(s => s.id === req.body.subId);
+                        if (idx === -1) return { status: 404, body: { error: 'Subitem not found' } };
+                        thought.subItems.splice(idx, 1);
+                        modified = true;
+                        break;
+                    }
+                    default:
+                        return { status: 400, body: { error: 'Invalid action' } };
                 }
-                case 'update_subitem': {
-                    const sub = thought.subItems.find(s => s.id === req.body.subId);
-                    if (!sub) return res.status(404).json({ error: 'Subitem not found' });
-                    if (text !== undefined) sub.text = text;
-                    if (req.body.completed !== undefined) sub.completed = req.body.completed;
-                    modified = true;
-                    break;
+
+                if (modified) {
+                    thought.updatedAt = Date.now();
+                    thought.version = (thought.version || 1) + 1;
+                    const meta = await storage.readThoughtMeta(thought.id);
+                    thought.aiStatus = visibleAIStatus(thought.id, meta, thought.aiStatus || 'missing');
+                    thought.aiError = meta?.error || null;
+                    thought.relationCount = await storage.readRelationCount(thought.id);
+                    await saveThoughts(thoughts);
                 }
-                case 'delete_subitem': {
-                    const idx = thought.subItems.findIndex(s => s.id === req.body.subId);
-                    if (idx === -1) return res.status(404).json({ error: 'Subitem not found' });
-                    thought.subItems.splice(idx, 1);
-                    modified = true;
-                    break;
-                }
-                default:
-                    return res.status(400).json({ error: 'Invalid action' });
+
+                return { status: 200, body: { success: true, thought }, thought, modified };
+            });
+
+            if (result.status !== 200) {
+                return res.status(result.status).json(result.body);
             }
 
-            if (modified) {
-                thought.updatedAt = Date.now();
-                thought.version = (thought.version || 1) + 1;
-                const meta = await storage.readThoughtMeta(thought.id);
-                thought.aiStatus = visibleAIStatus(thought.id, meta, thought.aiStatus || 'missing');
-                thought.aiError = meta?.error || null;
-                thought.relationCount = await storage.readRelationCount(thought.id);
-                await saveThoughts(thoughts);
+            if (result.modified) {
                 scheduleIndexNotepads(250);
-                broadcastThoughtsUpdate('update', thought);
+                broadcastThoughtsUpdate('update', result.thought);
             }
-
-            res.json({ success: true, thought });
+            res.json(result.body);
         } catch (err) {
             res.status(500).json({ error: 'Error updating thought' });
         }
@@ -591,33 +638,40 @@ function registerThoughtRoutes(app, context) {
     app.delete('/api/thoughts/:id', async (req, res) => {
         try {
             const { id } = req.params;
-            let thoughts = await readThoughts();
-            const thoughtToDelete = thoughts.find(t => t.id === id);
-            const initialLen = thoughts.length;
-            thoughts = thoughts.filter(t => t.id !== id);
 
-            if (thoughts.length !== initialLen) {
+            const result = await withThoughtWriteLock(async () => {
+                let thoughts = await readThoughts();
+                const thoughtToDelete = thoughts.find(t => t.id === id);
+                const initialLen = thoughts.length;
+                thoughts = thoughts.filter(t => t.id !== id);
+
+                if (thoughts.length === initialLen) return null;
+
                 const trashItem = await storage.moveThoughtToTrash(thoughtToDelete);
                 await saveThoughts(thoughts);
-                await storage.deleteThoughtMeta(id);
-                await storage.deleteRelations(id);
-                await storage.deleteSuppressedRelations(id);
-                const relationCleanup = await storage.removeRelationReferences(id);
-                await storage.removeSuppressedRelationReferences(id);
-                scheduleIndexNotepads(250);
-                broadcastThoughtsUpdate('delete', { id });
-                const affectedRelationIds = Array.isArray(relationCleanup?.affectedIds) ? relationCleanup.affectedIds : [];
-                for (const affectedId of affectedRelationIds) {
-                    broadcastWebSocketMessage({
-                        type: 'relations_update',
-                        thoughtId: affectedId,
-                        relationsCount: await storage.readRelationCount(affectedId)
-                    });
-                }
-                res.json({ success: true, trashItem });
-            } else {
-                res.status(404).json({ error: 'Thought not found' });
+                return { trashItem, thoughtToDelete };
+            });
+
+            if (!result) {
+                return res.status(404).json({ error: 'Thought not found' });
             }
+
+            await storage.deleteThoughtMeta(id);
+            await storage.deleteRelations(id);
+            await storage.deleteSuppressedRelations(id);
+            const relationCleanup = await storage.removeRelationReferences(id);
+            await storage.removeSuppressedRelationReferences(id);
+            scheduleIndexNotepads(250);
+            broadcastThoughtsUpdate('delete', { id });
+            const affectedRelationIds = Array.isArray(relationCleanup?.affectedIds) ? relationCleanup.affectedIds : [];
+            for (const affectedId of affectedRelationIds) {
+                broadcastWebSocketMessage({
+                    type: 'relations_update',
+                    thoughtId: affectedId,
+                    relationsCount: await storage.readRelationCount(affectedId)
+                });
+            }
+            res.json({ success: true, trashItem: result.trashItem });
         } catch (err) {
             res.status(500).json({ error: 'Error deleting thought' });
         }

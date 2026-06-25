@@ -89,6 +89,9 @@ export class ThoughtsManager {
         this.activeThoughtSelection = null;
         this.thoughtSelectionToolbar = null;
         this.markedLoader = null;
+        this._renderBatchSize = 30;
+        this._renderedCount = 0;
+        this._lastFilteredIds = [];
 
         this.initDateFilter();
         this.initEventListeners();
@@ -186,7 +189,10 @@ export class ThoughtsManager {
             });
         }
 
-        this.searchInput.addEventListener('input', () => this.render());
+        this.searchInput.addEventListener('input', () => {
+            clearTimeout(this._searchDebounce);
+            this._searchDebounce = setTimeout(() => this.render(), 150);
+        });
         this.dateFilter.addEventListener('change', () => this.fetchThoughts());
         this.statusFilter.querySelectorAll('.status-pill').forEach(btn => {
             btn.addEventListener('click', () => {
@@ -578,7 +584,7 @@ export class ThoughtsManager {
             this.thoughts = this.thoughts.filter(t => t.id !== payload.id);
         }
 
-        this.render();
+        this.scheduleRender();
     }
 
     handleRelationsSocketUpdate(detail) {
@@ -659,7 +665,7 @@ export class ThoughtsManager {
             normalizeTag: tag => this.normalizeTag(tag),
             now: Date.now()
         });
-        this.render();
+        this.scheduleRender();
     }
 
     shouldDelayAIStatusUpdate(thought, nextStatus, detail) {
@@ -732,15 +738,26 @@ export class ThoughtsManager {
     }
 
 
+    scheduleRender() {
+        if (this._renderScheduled) return;
+        this._renderScheduled = true;
+        requestAnimationFrame(() => {
+            this._renderScheduled = false;
+            this.render();
+        });
+    }
+
     render() {
         const query = this.searchInput.value.toLowerCase();
         const status = this.statusFilter.dataset.value || 'all';
         const activeTag = this.activeTag.toLowerCase();
         this.renderTagFilters();
-        
+
         const filtered = sortThoughts(filterThoughts(this.thoughts, { query, status, activeTag }));
+        this._lastFilteredIds = filtered.map(t => t.id);
 
         this.timeline.innerHTML = '';
+        this._renderedCount = 0;
 
         if (filtered.length === 0) {
             this.timeline.innerHTML = `
@@ -755,7 +772,19 @@ export class ThoughtsManager {
             return;
         }
 
-        filtered.forEach(thought => {
+        this._renderBatch(filtered, query);
+        this._ensureScrollListener();
+        this.restoreOpenPanelsAfterRender();
+    }
+
+    _renderBatch(filtered, query) {
+        const start = this._renderedCount;
+        const end = Math.min(start + this._renderBatchSize, filtered.length);
+        if (start >= end) return;
+
+        const fragment = document.createDocumentFragment();
+        for (let i = start; i < end; i++) {
+            const thought = filtered[i];
             const card = document.createElement('div');
             card.className = `thought-card ${thought.completed ? 'completed' : ''}`;
             card.dataset.id = thought.id;
@@ -779,9 +808,50 @@ export class ThoughtsManager {
 
             this.bindThoughtCardEvents({ card, thought, bodyText, isLong });
 
-            this.timeline.appendChild(card);
-        });
-        this.restoreOpenPanelsAfterRender();
+            fragment.appendChild(card);
+        }
+        this.timeline.appendChild(fragment);
+        this._renderedCount = end;
+
+        // Append a sentinel element if there are more items to load
+        this._updateSentinel(filtered.length);
+    }
+
+    _updateSentinel(totalCount) {
+        const existing = this.timeline.querySelector('.thoughts-load-more-sentinel');
+        if (this._renderedCount >= totalCount) {
+            if (existing) existing.remove();
+            return;
+        }
+        if (existing) return;
+        const sentinel = document.createElement('div');
+        sentinel.className = 'thoughts-load-more-sentinel';
+        sentinel.style.height = '1px';
+        this.timeline.appendChild(sentinel);
+    }
+
+    _ensureScrollListener() {
+        if (this._scrollListenerAttached) return;
+        this._scrollListenerAttached = true;
+        const container = this.view;
+        container.addEventListener('scroll', () => {
+            this._checkScrollLoad();
+        }, { passive: true });
+    }
+
+    _checkScrollLoad() {
+        if (this._renderedCount >= this._lastFilteredIds.length) return;
+        const sentinel = this.timeline.querySelector('.thoughts-load-more-sentinel');
+        if (!sentinel) return;
+        const rect = sentinel.getBoundingClientRect();
+        const containerRect = this.view.getBoundingClientRect();
+        if (rect.top <= containerRect.bottom + 300) {
+            const query = this.searchInput.value.toLowerCase();
+            const status = this.statusFilter.dataset.value || 'all';
+            const activeTag = this.activeTag.toLowerCase();
+            const filtered = sortThoughts(filterThoughts(this.thoughts, { query, status, activeTag }));
+            this._renderBatch(filtered, query);
+        }
     }
 
     restoreOpenPanelsAfterRender() {

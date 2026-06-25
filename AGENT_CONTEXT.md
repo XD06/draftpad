@@ -51,6 +51,15 @@ Current test scripts are declared in `package.json`. Prefer running tests throug
 - Preserve PWA/mobile performance work: service worker caching, cached app shell, lazy Thought rendering, and mobile layout behavior.
 - For PWA caching, keep unversioned JS/CSS/JSON on a network-first-with-cache-fallback path. Do not switch them back to pure cache-first unless asset URLs are content-hashed; normal reloads must not keep serving stale styles or modules.
 
+## Data Safety Fixes (2026-06)
+
+Four critical data-safety bugs were fixed:
+
+1. **Thought CRUD race condition** — `storage.js` now exposes `withThoughtWriteLock()`, an async mutex that serializes read-modify-write operations. `thought-routes.js` POST/PATCH/DELETE handlers wrap their entire read-modify-write cycle in this lock to prevent concurrent requests from overwriting each other's changes.
+2. **Note save bypassing storage layer** — `note-routes.js` POST `/api/notes/:id` previously used `fs.writeFile` directly when a notepad was not in meta, which silently lost data in S3 mode. It now routes through `storage.writeNoteContent()` with a fallback notepad object.
+3. **Note content non-atomic write** — `storage.js` `writeNoteContent()` now uses temp-file + rename for local writes, matching the atomic write pattern already used by `writeJSON()`. This prevents file corruption on crash during write.
+4. **PATCH Note null pointer crash** — `note-routes.js` PATCH `/api/notes/:id` used `targetNotepad.version` without a null check. If the notepad was deleted between the initial lookup and the second `readNotepadsMeta()` call, the route would throw `TypeError`. Now uses `targetNotepad?.version || 1`.
+
 ## Verification Commands
 
 Use focused checks for the area touched:

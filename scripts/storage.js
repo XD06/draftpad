@@ -41,6 +41,18 @@ const s3NotepadKeyCache = new Map();
 let storageInitialized = false;
 let storageInitPromise = null;
 
+// Async mutex for serializing Thought read-modify-write operations.
+// Without this, concurrent POST/PATCH/DELETE requests can lose data
+// because they each read the full thoughts array, mutate it, and save
+// it back — the last writer wins and intermediate writes are lost.
+let thoughtWriteLock = Promise.resolve();
+
+async function withThoughtWriteLock(task) {
+    const run = thoughtWriteLock.then(task, task);
+    thoughtWriteLock = run.catch(() => {});
+    return run;
+}
+
 function isS3Backend() {
     return STORAGE_BACKEND === 's3';
 }
@@ -67,7 +79,19 @@ async function writeJSON(filePath, value) {
     await fs.mkdir(path.dirname(filePath), { recursive: true });
     const tempPath = `${filePath}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`;
     await fs.writeFile(tempPath, JSON.stringify(value, null, 2), 'utf8');
-    await fs.rename(tempPath, filePath);
+    // On Windows, fs.rename can fail with EPERM if the target file is briefly
+    // locked by another concurrent operation or antivirus scan. Retry a few
+    // times with a short delay before giving up.
+    for (let attempt = 0; attempt < 5; attempt++) {
+        try {
+            await fs.rename(tempPath, filePath);
+            return;
+        } catch (err) {
+            if (err.code !== 'EPERM' && err.code !== 'EBUSY') throw err;
+            if (attempt === 4) throw err;
+            await new Promise(resolve => setTimeout(resolve, 20 * (attempt + 1)));
+        }
+    }
 }
 
 function s3Key(key) {
@@ -256,30 +280,30 @@ async function writeThoughtIndex(thoughts) {
 }
 
 async function readSplitThoughts() {
-    await fs.mkdir(THOUGHTS_DIR, { recursive: true });
-    const entries = await fs.readdir(THOUGHTS_DIR, { withFileTypes: true });
-    const thoughts = [];
+await fs.mkdir(THOUGHTS_DIR, { recursive: true });
+const entries = await fs.readdir(THOUGHTS_DIR, { withFileTypes: true });
 
-    for (const entry of entries) {
-        if (!entry.isFile() || !entry.name.endsWith('.json')) continue;
-        const thought = await readJSON(path.join(THOUGHTS_DIR, entry.name), null);
-        if (thought && thought.id) thoughts.push(thought);
-    }
+const thoughtEntries = entries.filter(entry => entry.isFile() && entry.name.endsWith('.json'));
+const thoughts = await Promise.all(
+thoughtEntries.map(entry => readJSON(path.join(THOUGHTS_DIR, entry.name), null))
+);
 
-    return thoughts.sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0));
+return thoughts
+.filter(thought => thought && thought.id)
+.sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0));
 }
 
 async function readS3SplitThoughts() {
-    const entries = await s3.listObjects(s3Key('thoughts/'));
-    const thoughts = [];
+const entries = await s3.listObjects(s3Key('thoughts/'));
 
-    for (const entry of entries) {
-        if (!entry.key.endsWith('.json')) continue;
-        const thought = await s3.getJSONObject(entry.key, null);
-        if (thought && thought.id) thoughts.push(thought);
-    }
+const thoughtEntries = entries.filter(entry => entry.key.endsWith('.json'));
+const thoughts = await Promise.all(
+thoughtEntries.map(entry => s3.getJSONObject(entry.key, null))
+);
 
-    return thoughts.sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0));
+return thoughts
+.filter(thought => thought && thought.id)
+.sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0));
 }
 
 async function saveSplitThoughts(thoughts) {
@@ -600,103 +624,129 @@ async function removeSuppressedRelationReferences(targetId) {
     const safeTargetId = safeId(targetId);
     if (!safeTargetId) return 0;
 
-    if (isS3Backend()) {
-        const entries = await s3.listObjects(s3Key('relations.suppressed/'));
-        let updated = 0;
-
-        for (const entry of entries) {
-            if (!entry.key.endsWith('.json')) continue;
-            const suppressed = await s3.getJSONObject(entry.key, null);
-            if (!suppressed || !Array.isArray(suppressed.edges)) continue;
-
-            const nextEdges = suppressed.edges.filter(edge => edge.targetId !== safeTargetId);
-            if (nextEdges.length !== suppressed.edges.length) {
-                suppressed.edges = nextEdges;
-                suppressed.updatedAt = Date.now();
-                await s3.putObject(entry.key, JSON.stringify(suppressed, null, 2), 'application/json');
-                updated++;
-            }
-        }
-
-        return updated;
-    }
-
-    await fs.mkdir(SUPPRESSED_RELATIONS_DIR, { recursive: true });
-    const entries = await fs.readdir(SUPPRESSED_RELATIONS_DIR, { withFileTypes: true }).catch(() => []);
-    let updated = 0;
-
-    for (const entry of entries) {
-        if (!entry.isFile() || !entry.name.endsWith('.json')) continue;
-        const filePath = path.join(SUPPRESSED_RELATIONS_DIR, entry.name);
-        const suppressed = await readJSON(filePath, null);
-        if (!suppressed || !Array.isArray(suppressed.edges)) continue;
-
+    const cleanSuppressed = (suppressed) => {
+        if (!suppressed || !Array.isArray(suppressed.edges)) return false;
         const nextEdges = suppressed.edges.filter(edge => edge.targetId !== safeTargetId);
         if (nextEdges.length !== suppressed.edges.length) {
             suppressed.edges = nextEdges;
             suppressed.updatedAt = Date.now();
-            await writeJSON(filePath, suppressed);
-            updated++;
+            return true;
         }
-    }
-
-    return updated;
-}
-
-async function removeRelationReferences(targetId) {
-    const removeFromRelations = (relations) => {
-        const edges = Array.isArray(relations.edges) ? relations.edges : [];
-        const suggestions = Array.isArray(relations.suggestions) ? relations.suggestions : [];
-        const nextEdges = edges.filter(edge => edge.targetId !== targetId);
-        const nextSuggestions = suggestions.filter(edge => edge.targetId !== targetId);
-        const changed = nextEdges.length !== edges.length || nextSuggestions.length !== suggestions.length;
-        if (changed) {
-            relations.edges = nextEdges;
-            relations.suggestions = nextSuggestions;
-            relations.computedAt = Date.now();
-        }
-        return changed;
+        return false;
     };
 
     if (isS3Backend()) {
-        const entries = await s3.listObjects(s3Key('relations/'));
-        let updated = 0;
-        const affectedIds = [];
+        const entries = await s3.listObjects(s3Key('relations.suppressed/'));
+        const relationEntries = entries.filter(entry => entry.key.endsWith('.json'));
 
-        for (const entry of entries) {
-            if (!entry.key.endsWith('.json')) continue;
-            const relations = await s3.getJSONObject(entry.key, null);
-            if (!relations) continue;
+        const allSuppressed = await Promise.all(
+            relationEntries.map(async (entry) => ({ entry, data: await s3.getJSONObject(entry.key, null) }))
+        );
 
-            if (removeFromRelations(relations)) {
-                await s3.putObject(entry.key, JSON.stringify(relations, null, 2), 'application/json');
-                updated++;
-                if (relations.id) affectedIds.push(relations.id);
-            }
-        }
+        const toUpdate = allSuppressed.filter(({ data }) => cleanSuppressed(data));
 
-        return { updated, affectedIds };
+        await Promise.all(
+            toUpdate.map(({ entry, data }) =>
+                s3.putObject(entry.key, JSON.stringify(data, null, 2), 'application/json')
+            )
+        );
+
+        return toUpdate.length;
     }
 
-    await fs.mkdir(RELATIONS_DIR, { recursive: true });
-    const entries = await fs.readdir(RELATIONS_DIR, { withFileTypes: true }).catch(() => []);
-    let updated = 0;
-    const affectedIds = [];
+    await fs.mkdir(SUPPRESSED_RELATIONS_DIR, { recursive: true });
+    const entries = await fs.readdir(SUPPRESSED_RELATIONS_DIR, { withFileTypes: true }).catch(() => []);
 
-    for (const entry of entries) {
-        if (!entry.isFile() || !entry.name.endsWith('.json')) continue;
-        const filePath = path.join(RELATIONS_DIR, entry.name);
-        const relations = await readJSON(filePath, null);
-        if (!relations) continue;
+    const allLocal = await Promise.all(
+        entries
+            .filter(entry => entry.isFile() && entry.name.endsWith('.json'))
+            .map(async (entry) => {
+                const filePath = path.join(SUPPRESSED_RELATIONS_DIR, entry.name);
+                const data = await readJSON(filePath, null);
+                return { filePath, data };
+            })
+    );
 
-        if (removeFromRelations(relations)) {
-            await writeJSON(filePath, relations);
-            updated++;
-            affectedIds.push(relations.id || path.basename(entry.name, '.json'));
-        }
-    }
+    const localToUpdate = allLocal.filter(({ data }) => cleanSuppressed(data));
 
-    return { updated, affectedIds };
+    await Promise.all(
+        localToUpdate.map(({ filePath, data }) => writeJSON(filePath, data))
+    );
+
+    return localToUpdate.length;
+}
+
+async function removeRelationReferences(targetId) {
+const removeFromRelations = (relations) => {
+const edges = Array.isArray(relations.edges) ? relations.edges : [];
+const suggestions = Array.isArray(relations.suggestions) ? relations.suggestions : [];
+const nextEdges = edges.filter(edge => edge.targetId !== targetId);
+const nextSuggestions = suggestions.filter(edge => edge.targetId !== targetId);
+const changed = nextEdges.length !== edges.length || nextSuggestions.length !== suggestions.length;
+if (changed) {
+relations.edges = nextEdges;
+relations.suggestions = nextSuggestions;
+relations.computedAt = Date.now();
+}
+return changed;
+};
+
+if (isS3Backend()) {
+const entries = await s3.listObjects(s3Key('relations/'));
+const relationEntries = entries.filter(entry => entry.key.endsWith('.json'));
+
+// Read all relation files in parallel
+const allRelations = await Promise.all(
+relationEntries.map(async (entry) => ({
+entry,
+data: await s3.getJSONObject(entry.key, null)
+}))
+);
+
+// Filter to only those that need updating
+const toUpdate = allRelations.filter(({ data }) => data && removeFromRelations(data));
+
+// Write back in parallel
+await Promise.all(
+toUpdate.map(({ entry, data }) =>
+s3.putObject(entry.key, JSON.stringify(data, null, 2), 'application/json')
+)
+);
+
+const affectedIds = toUpdate
+.map(({ data }) => data.id)
+.filter(Boolean);
+
+return { updated: toUpdate.length, affectedIds };
+}
+
+await fs.mkdir(RELATIONS_DIR, { recursive: true });
+const entries = await fs.readdir(RELATIONS_DIR, { withFileTypes: true }).catch(() => []);
+
+// Read all relation files in parallel
+const allLocalRelations = await Promise.all(
+entries
+.filter(entry => entry.isFile() && entry.name.endsWith('.json'))
+.map(async (entry) => {
+const filePath = path.join(RELATIONS_DIR, entry.name);
+const data = await readJSON(filePath, null);
+return { filePath, data, entryName: entry.name };
+})
+);
+
+// Filter to only those that need updating
+const localToUpdate = allLocalRelations.filter(({ data }) => data && removeFromRelations(data));
+
+// Write back in parallel
+await Promise.all(
+localToUpdate.map(({ filePath, data }) => writeJSON(filePath, data))
+);
+
+const localAffectedIds = localToUpdate
+.map(({ data, entryName }) => data.id || path.basename(entryName, '.json'))
+.filter(Boolean);
+
+return { updated: localToUpdate.length, affectedIds: localAffectedIds };
 }
 
 async function readNotepadsMeta() {
@@ -762,14 +812,27 @@ async function readNoteContent(notepad) {
 
 async function writeNoteContent(notepad, content) {
     await init();
+    const safeContent = content || '';
     if (isS3Backend()) {
         const key = await getS3NotepadKey(notepad);
-        await s3.putObject(s3Key(key), content || '', 'text/plain; charset=utf-8');
+        await s3.putObject(s3Key(key), safeContent, 'text/plain; charset=utf-8');
         return;
     }
 
     const notePath = await getNotepadFilePath(notepad, DATA_DIR);
-    await fs.writeFile(notePath, content || '', 'utf8');
+    await fs.mkdir(path.dirname(notePath), { recursive: true });
+    const tempPath = `${notePath}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`;
+    await fs.writeFile(tempPath, safeContent, 'utf8');
+    for (let attempt = 0; attempt < 5; attempt++) {
+        try {
+            await fs.rename(tempPath, notePath);
+            return;
+        } catch (err) {
+            if (err.code !== 'EPERM' && err.code !== 'EBUSY') throw err;
+            if (attempt === 4) throw err;
+            await new Promise(resolve => setTimeout(resolve, 20 * (attempt + 1)));
+        }
+    }
 }
 
 async function deleteNoteContent(notepad) {
@@ -1101,23 +1164,21 @@ async function getSearchDocuments() {
         };
     });
 
-    const notepadDocuments = [];
-    for (const notepad of notepads.notepads) {
-        notepadDocuments.push({
-            id: notepad.id,
-            type: 'notepad',
-            title: notepad.name || '',
-            content: await readNoteContent(notepad),
-            tags: [],
-            updatedAt: notepad.updatedAt || notepad.createdAt || 0
-        });
-    }
+    const notepadDocuments = await Promise.all(notepads.notepads.map(async (notepad) => ({
+        id: notepad.id,
+        type: 'notepad',
+        title: notepad.name || '',
+        content: await readNoteContent(notepad),
+        tags: [],
+        updatedAt: notepad.updatedAt || notepad.createdAt || 0
+    })));
 
     return [...notepadDocuments, ...thoughtDocuments];
 }
 
 module.exports = {
     init,
+    withThoughtWriteLock,
     readThoughts,
     saveThoughts,
     readThought,

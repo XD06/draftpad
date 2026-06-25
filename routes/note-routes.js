@@ -80,9 +80,8 @@ function registerNoteRoutes(app, context) {
             }
 
             if (!notepad) {
-                const sanitizedId = sanitizeFilename(id);
-                const notePath = path.join(dataDir, `${sanitizedId}.txt`);
-                await fs.writeFile(notePath, req.body.content);
+                const fallbackNotepad = { id, name: id };
+                await storage.writeNoteContent(fallbackNotepad, req.body.content);
             } else {
                 await storage.writeNoteContent(notepad, req.body.content);
             }
@@ -186,7 +185,7 @@ function registerNoteRoutes(app, context) {
                     await storage.saveNotepadsMeta(data);
                 }
 
-                broadcastUpdate(id, content, senderId, targetNotepad.version, { contentHash: hashContent(content) });
+                broadcastUpdate(id, content, senderId, targetNotepad?.version || 1, { contentHash: hashContent(content) });
                 scheduleIndexNotepads();
                 return res.json({ success: true, content, modified, version: savedVersion });
             }
