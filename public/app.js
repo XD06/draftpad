@@ -1552,7 +1552,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         updateSettingsConflictSection();
         refreshCloudStatus(false);
         refreshTrashList(false);
-        const focusTarget = options.focusSyncPanel ? settingsConflictSection : settingsInputAutoSaveStatusInterval;
+        const isMobile = window.matchMedia?.('(max-width: 720px)')?.matches;
+        const focusTarget = options.focusSyncPanel
+            ? settingsConflictSection
+            : (isMobile ? null : settingsInputAutoSaveStatusInterval);
         showModal(settingsModal, focusTarget);
         if (options.focusSyncPanel && settingsConflictSection) {
             settingsConflictSection.scrollIntoView({ block: 'nearest' });

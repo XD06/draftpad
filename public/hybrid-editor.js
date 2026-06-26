@@ -78,7 +78,10 @@ export class HybridMarkdownEditor {
             },
             customWysiwygToolbar: () => {},
             input: () => {
-                if (!this.isDecorating && !this.suppressInput) this.emitChange();
+                if (!this.isDecorating && !this.suppressInput) {
+                    this.scheduleDecorateRenderedMarks();
+                    this.emitChange();
+                }
             },
             after: () => {
                 this.ready = true;
@@ -116,6 +119,7 @@ export class HybridMarkdownEditor {
         this.setupSelectionMenu();
         this.bindReadingModeGuard();
         this.bindTimeCommand();
+        this.bindMarkerProtection();
         this.buildHeadingIndex();
     }
 
@@ -378,6 +382,10 @@ export class HybridMarkdownEditor {
             this.editor?.enable?.();
         }
         this.container.querySelectorAll('[contenteditable]').forEach(el => {
+            if (el.classList?.contains('md-time-marker') ||
+                el.classList?.contains('md-mark') ||
+                el.classList?.contains('has-annotation') ||
+                el.hasAttribute('data-draw')) return;
             el.setAttribute('contenteditable', enabled ? 'true' : 'false');
         });
         this.container.querySelectorAll('textarea').forEach(el => {
@@ -420,16 +428,15 @@ export class HybridMarkdownEditor {
 
     scheduleDecorateRenderedMarks() {
         cancelAnimationFrame(this.decorateFrame);
-        this.decorateFrame = requestAnimationFrame(() => {
-            requestAnimationFrame(() => this.decorateRenderedMarks());
-        });
+        this.decorateFrame = requestAnimationFrame(() => this.decorateRenderedMarks());
     }
 
-    decorateRenderedMarks() {
+    decorateRenderedMarks(preserveCaret = true) {
         const root = this.container.querySelector('.vditor-wysiwyg .vditor-reset');
         if (!root || this.sourceMode) return;
 
         this.isDecorating = true;
+
         root.querySelectorAll('p, li').forEach(parent => {
             if (!this.isMarkProtectedNode(parent)) this.decorateCodeTagMarks(parent);
         });
@@ -445,17 +452,290 @@ export class HybridMarkdownEditor {
             }
         }
 
+        let didReplace = false;
+        let savedOffset = null;
+
+        if (preserveCaret && targets.length > 0) {
+            savedOffset = this.saveSelectionOffset(root);
+        }
+
         for (const textNode of targets) {
             const html = this.renderInlineMarks(textNode.nodeValue || '');
             if (!html) continue;
             const template = document.createElement('template');
             template.innerHTML = html;
             textNode.parentNode?.replaceChild(template.content, textNode);
+            didReplace = true;
+        }
+
+        if (didReplace) {
+            this.ensureTimeMarkerTrailingGuard(root);
         }
 
         this.decorateCodeWrappedTags(root);
-        requestAnimationFrame(() => {
-            this.isDecorating = false;
+
+        this.lockInlineMarks(root);
+
+        if (preserveCaret && didReplace && savedOffset != null) {
+            this.restoreSelectionOffset(root, savedOffset);
+        }
+
+        this.isDecorating = false;
+    }
+
+    /**
+     * MutationObserver that watches for Vditor breaking rendered inline
+     * marks (time markers, highlights, etc.) back into raw source text.
+     * When detected, immediately re-decorates in the same microtask,
+     * before the browser paints, so the user never sees the raw source.
+     */
+    bindMarkerProtection() {
+        this.markerObserver = new MutationObserver(() => {
+            if (this.isDecorating || this.sourceMode) return;
+            const root = this.container.querySelector('.vditor-wysiwyg .vditor-reset');
+            if (!root) return;
+
+            // Check if any text node now contains raw marker source
+            const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+            let node;
+            let needsFix = false;
+            while ((node = walker.nextNode())) {
+                if (this.isMarkProtectedNode(node)) continue;
+                const text = node.nodeValue || '';
+                if (text.includes('[[time:') || text.includes('==') ||
+                    text.includes('<mark') || text.includes('<span data-draw') ||
+                    text.includes('<span data-note')) {
+                    needsFix = true;
+                    break;
+                }
+            }
+            if (needsFix) {
+                // Save caret using a snapshot of surrounding text,
+                // not the offset-based approach which breaks when
+                // Vditor has already moved the caret.
+                const caretSnapshot = this.saveCaretSnapshot(root);
+                this.decorateRenderedMarks(false);
+                if (caretSnapshot) {
+                    this.restoreCaretSnapshot(root, caretSnapshot);
+                }
+            }
+        });
+
+        // Start observing once editor is ready
+        const start = () => {
+            const root = this.container.querySelector('.vditor-wysiwyg .vditor-reset');
+            if (root) {
+                this.markerObserver.observe(root, {
+                    childList: true,
+                    subtree: true,
+                    characterData: true
+                });
+            } else {
+                setTimeout(start, 100);
+            }
+        };
+        start();
+    }
+
+    /**
+     * Save a snapshot of the caret position using text context
+     * rather than numeric offsets.  This is robust against DOM
+     * mutations because we search for the same text context
+     * after decoration to find the correct position.
+     */
+    saveCaretSnapshot(root) {
+        const selection = window.getSelection();
+        if (!selection || selection.rangeCount === 0) return null;
+        const range = selection.getRangeAt(0);
+        if (!root.contains(range.startContainer)) return null;
+        if (!range.collapsed) return null;
+
+        const container = range.startContainer;
+        const offset = range.startOffset;
+
+        // Build a text snapshot: all visible text before the caret.
+        const preRange = document.createRange();
+        preRange.selectNodeContents(root);
+        preRange.setEnd(container, offset);
+        const beforeText = preRange.toString().replace(/\u200B/g, '');
+
+        return { beforeText };
+    }
+
+    /**
+     * Restore caret from a snapshot by finding the text position
+     * that matches the saved 'beforeText' length.
+     * Unlike restoreSelectionOffset, this counts ALL visible text
+     * (including text inside protected nodes like time markers)
+     * because Vditor's serialization includes marker source text.
+     */
+    restoreCaretSnapshot(root, snapshot) {
+        if (!snapshot) return;
+        const target = snapshot.beforeText.length;
+        if (target <= 0) return;
+
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+        let count = 0;
+        let node;
+        while ((node = walker.nextNode())) {
+            const text = (node.nodeValue || '').replace(/\u200B/g, '');
+            const len = text.length;
+            if (count + len >= target) {
+                // Found the right text node
+                let actualOffset = 0;
+                let visibleCount = 0;
+                for (const ch of node.nodeValue || '') {
+                    if (visibleCount >= target - count) break;
+                    actualOffset++;
+                    if (ch !== '\u200B') visibleCount++;
+                }
+                try {
+                    const range = document.createRange();
+                    range.setStart(node, actualOffset);
+                    range.collapse(true);
+                    const selection = window.getSelection();
+                    selection?.removeAllRanges();
+                    selection?.addRange(range);
+                } catch (_e) {}
+                return;
+            }
+            count += len;
+        }
+    }
+
+    /**
+     * Set contenteditable="false" on all rendered inline marks so Vditor
+     * treats them as atomic units.  This is a first line of defense;
+     * the MutationObserver in bindMarkerProtection handles cases where
+     * Vditor still breaks them.
+     */
+    lockInlineMarks(root) {
+        root.querySelectorAll(
+            '.md-time-marker, .md-mark, [data-draw], .has-annotation'
+        ).forEach(el => {
+            el.setAttribute('contenteditable', 'false');
+        });
+    }
+
+    /**
+     * Save the collapsed caret position as a visible-character offset,
+     * skipping text inside protected nodes (code blocks, time markers, etc).
+     * Both save and restore use the same counting logic so offsets stay
+     * consistent across DOM mutations.
+     */
+    saveSelectionOffset(root) {
+        const selection = window.getSelection();
+        if (!selection || selection.rangeCount === 0) return null;
+        const range = selection.getRangeAt(0);
+        if (!root.contains(range.startContainer)) return null;
+        if (!range.collapsed) return null;
+
+        // Fast path: caret is inside a text node
+        if (range.startContainer.nodeType === Node.TEXT_NODE) {
+            if (this.isMarkProtectedNode(range.startContainer)) return null;
+            const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+            let count = 0;
+            let node;
+            while ((node = walker.nextNode())) {
+                if (this.isMarkProtectedNode(node)) continue;
+                if (node === range.startContainer) {
+                    const visibleBefore = String(node.nodeValue || '')
+                        .slice(0, range.startOffset)
+                        .replace(/\u200B/g, '').length;
+                    return count + visibleBefore;
+                }
+                count += (node.nodeValue || '').replace(/\u200B/g, '').length;
+            }
+        }
+
+        // Slow path: caret is between elements (e.g. right after a time marker span)
+        // Walk all child nodes of the start container to find the position
+        const container = range.startContainer;
+        const offset = range.startOffset;
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+        let count = 0;
+        let node;
+        let found = false;
+        while ((node = walker.nextNode())) {
+            if (this.isMarkProtectedNode(node)) continue;
+            if (found) break;
+            // Check if this text node is at or after the caret position
+            const parent = node.parentElement;
+            if (parent === container) {
+                const childIndex = Array.from(container.childNodes).indexOf(node);
+                if (childIndex >= offset) {
+                    found = true;
+                    break;
+                }
+            }
+            // Also check ancestors
+            if (container !== root && container.contains?.(node)) {
+                // The caret is before this text node in the tree
+                found = true;
+                break;
+            }
+            count += (node.nodeValue || '').replace(/\u200B/g, '').length;
+        }
+        return count;
+    }
+
+    restoreSelectionOffset(root, offset) {
+        if (offset == null || offset < 0) return;
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+        let node;
+        let count = 0;
+        while ((node = walker.nextNode())) {
+            if (this.isMarkProtectedNode(node)) continue;
+            const text = (node.nodeValue || '').replace(/\u200B/g, '');
+            const len = text.length;
+            if (count + len >= offset) {
+                let actualOffset = 0;
+                let visibleCount = 0;
+                for (const ch of node.nodeValue || '') {
+                    if (visibleCount >= offset - count) break;
+                    actualOffset++;
+                    if (ch !== '\u200B') visibleCount++;
+                }
+                try {
+                    const range = document.createRange();
+                    range.setStart(node, actualOffset);
+                    range.collapse(true);
+                    const selection = window.getSelection();
+                    selection?.removeAllRanges();
+                    selection?.addRange(range);
+                } catch (_e) {
+                    // node may have been removed during decoration
+                }
+                return;
+            }
+            count += len;
+        }
+
+        // Fallback: place caret at end of last non-protected text node
+        let last = null;
+        const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+        let n;
+        while ((n = w.nextNode())) {
+            if (!this.isMarkProtectedNode(n)) last = n;
+        }
+        if (last) {
+            try {
+                const range = document.createRange();
+                range.setStart(last, last.nodeValue?.length || 0);
+                range.collapse(true);
+                const selection = window.getSelection();
+                selection?.removeAllRanges();
+                selection?.addRange(range);
+            } catch (_e) {}
+        }
+    }
+
+    ensureTimeMarkerTrailingGuard(root) {
+        root.querySelectorAll('.md-time-marker').forEach(marker => {
+            const next = marker.nextSibling;
+            if (!next || next.nodeType !== Node.TEXT_NODE || !next.nodeValue) {
+                marker.after(document.createTextNode('\u200B'));
+            }
         });
     }
 
@@ -1102,7 +1382,9 @@ export class HybridMarkdownEditor {
     createRenderedTimeMarker(markerText) {
         const template = document.createElement('template');
         template.innerHTML = renderTimeMarkers(this.escapeHtml(markerText), 'md-time-marker');
-        return template.content.firstElementChild || document.createTextNode(markerText);
+        const el = template.content.firstElementChild;
+        if (el) el.setAttribute('contenteditable', 'false');
+        return el || document.createTextNode(markerText);
     }
 
     insertRenderedTimeMarkerAtRange(range, markerText = buildTimeMarker()) {
@@ -1377,6 +1659,7 @@ export class HybridMarkdownEditor {
         this.sourceToggle?.classList.toggle('active', this.sourceMode);
 
         if (this.sourceMode) {
+            this.markerObserver?.disconnect();
             const value = this._lastValue || this.pendingValue || '';
             this.sourceTextarea.value = value || '';
             this.sourceTextarea.setSelectionRange(0, 0);
@@ -1396,6 +1679,13 @@ export class HybridMarkdownEditor {
             this.buildHeadingIndex();
             this.decorateRenderedMarks();
             this.scheduleDecorateRenderedMarks();
+            // Re-connect marker protection observer
+            const root = this.container.querySelector('.vditor-wysiwyg .vditor-reset');
+            if (root) {
+                this.markerObserver?.observe(root, {
+                    childList: true, subtree: true, characterData: true
+                });
+            }
         }
     }
 }
