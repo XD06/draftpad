@@ -97,7 +97,19 @@ export class HybridMarkdownEditor {
                 this.buildHeadingIndex();
                 this.bindAnnotationPopover();
                 this.bindTimeMarkerPopover();
+                // Connect marker protection immediately now that
+                // Vditor's DOM is available, rather than waiting for
+                // the 100 ms polling loop in bindMarkerProtection.
+                this.connectMarkerObserver();
+                // Multi-pass decoration: Vditor performs async
+                // re-processing (Lute re-parse, syntax highlighting,
+                // etc.) that can strip rendered inline marks back to
+                // raw source text.  Retry at increasing delays to
+                // catch each wave of re-processing.
+                this.decorateRenderedMarks();
                 this.scheduleDecorateRenderedMarks();
+                setTimeout(() => this.decorateRenderedMarks(), 80);
+                setTimeout(() => this.decorateRenderedMarks(), 240);
             }
         });
 
@@ -146,6 +158,11 @@ export class HybridMarkdownEditor {
             this.setEditable(!this.isReadingMode);
             this.decorateRenderedMarks();
             this.scheduleDecorateRenderedMarks();
+            // Vditor's async re-processing can strip decorations
+            // after the synchronous and next-frame passes.  Retry
+            // at 80 ms and 240 ms to ensure marks survive.
+            setTimeout(() => this.decorateRenderedMarks(), 80);
+            setTimeout(() => this.decorateRenderedMarks(), 240);
         } else {
             this.pendingValue = normalized;
         }
@@ -521,20 +538,33 @@ export class HybridMarkdownEditor {
             }
         });
 
-        // Start observing once editor is ready
-        const start = () => {
-            const root = this.container.querySelector('.vditor-wysiwyg .vditor-reset');
-            if (root) {
-                this.markerObserver.observe(root, {
-                    childList: true,
-                    subtree: true,
-                    characterData: true
-                });
-            } else {
-                setTimeout(start, 100);
-            }
-        };
-        start();
+        // Attempt to connect immediately; if Vditor's DOM isn't ready
+        // yet, the `after` callback will call connectMarkerObserver()
+        // again as soon as Vditor finishes initialising.
+        this.connectMarkerObserver();
+    }
+
+    /**
+     * Connect (or re-connect) the MutationObserver to Vditor's content
+     * root.  Safe to call multiple times — disconnects first to avoid
+     * duplicate observers.  Called from bindMarkerProtection() in the
+     * constructor and again from the Vditor `after` callback to ensure
+     * the observer is active as early as possible.
+     */
+    connectMarkerObserver() {
+        if (!this.markerObserver) return;
+        const root = this.container.querySelector('.vditor-wysiwyg .vditor-reset');
+        if (root) {
+            this.markerObserver.disconnect();
+            this.markerObserver.observe(root, {
+                childList: true,
+                subtree: true,
+                characterData: true
+            });
+        } else {
+            // Vditor not ready yet — retry shortly.
+            setTimeout(() => this.connectMarkerObserver(), 100);
+        }
     }
 
     /**
@@ -1679,13 +1709,11 @@ export class HybridMarkdownEditor {
             this.buildHeadingIndex();
             this.decorateRenderedMarks();
             this.scheduleDecorateRenderedMarks();
-            // Re-connect marker protection observer
-            const root = this.container.querySelector('.vditor-wysiwyg .vditor-reset');
-            if (root) {
-                this.markerObserver?.observe(root, {
-                    childList: true, subtree: true, characterData: true
-                });
-            }
+            // Re-connect marker protection and add delayed retries
+            // to survive Vditor's async re-processing.
+            this.connectMarkerObserver();
+            setTimeout(() => this.decorateRenderedMarks(), 80);
+            setTimeout(() => this.decorateRenderedMarks(), 240);
         }
     }
 }
