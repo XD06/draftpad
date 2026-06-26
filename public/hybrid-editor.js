@@ -280,8 +280,16 @@ export class HybridMarkdownEditor {
 
     /**
      * Restore rendered inline marks (highlight, draw, annotation) back
-     * to their source HTML form in a cloned DOM tree, so that html2md
-     * can correctly preserve them in the markdown output.
+     * to their source HTML form in a cloned DOM tree.
+     *
+     * We use TEXT NODES (not real HTML elements) because html2md (Lute)
+     * strips unknown HTML elements like <span data-draw>.  By creating
+     * text nodes containing the raw HTML source, the browser escapes
+     * them as &lt;span...&gt; in innerHTML.  Lute's HTML2MD then
+     * preserves them as text, and when the markdown is later loaded
+     * by setValue(), Lute decodes the entities back to raw HTML text
+     * in a text node, which renderInlineMarks() then converts to
+     * rendered elements.
      */
     restoreAllRenderedMarks(root) {
         if (!root) return;
@@ -289,40 +297,26 @@ export class HybridMarkdownEditor {
         // Restore <mark class="md-mark"> back to <mark>text</mark>
         root.querySelectorAll('mark.md-mark').forEach(mark => {
             const text = mark.textContent || '';
-            const el = document.createElement('mark');
-            el.textContent = text;
-            mark.replaceWith(el);
+            mark.replaceWith(document.createTextNode(`<mark>${text}</mark>`));
         });
 
-        // Restore [data-draw] back to <span data-draw>text</span>
+        // Restore [data-draw] back to source HTML
         root.querySelectorAll('[data-draw]').forEach(span => {
             const text = span.textContent || '';
-            const el = document.createElement('span');
-            el.setAttribute('data-draw', '');
-            el.textContent = text;
-            span.replaceWith(el);
+            span.replaceWith(document.createTextNode(
+                `<span data-draw style="text-decoration:underline blue;text-decoration-thickness:2px;">${text}</span>`
+            ));
         });
 
-        // Restore .has-annotation back to <span data-note="comment">text</span><sub>...</sub>
+        // Restore .has-annotation back to source HTML
         root.querySelectorAll('.has-annotation').forEach(span => {
             const comment = span.dataset.comment || '';
             const markedText = span.querySelector('span[style*="wavy"]')?.textContent || span.textContent || '';
-
-            const el = document.createElement('span');
-            el.setAttribute('data-note', comment);
-            el.style.textDecoration = 'underline wavy #e74c3c';
-            el.style.textDecorationThickness = '2.5px';
-            el.textContent = markedText;
-
-            const sub = document.createElement('sub');
-            sub.setAttribute('data-note-label', '');
-            sub.style.color = '#e74c3c';
-            sub.style.fontSize = '0.65em';
-            sub.style.marginLeft = '2px';
-            sub.textContent = '（' + comment + '）';
-
-            span.replaceWith(el);
-            el.after(sub);
+            const safeComment = this.escapeAttribute(comment);
+            const htmlLabel = this.escapeHtml(comment);
+            span.replaceWith(document.createTextNode(
+                `<span data-note="${safeComment}" style="text-decoration:underline wavy #e74c3c;text-decoration-thickness:2.5px;">${markedText}</span><sub data-note-label style="color:#e74c3c;font-size:0.65em;margin-left:2px;">（${htmlLabel}）</sub>`
+            ));
         });
     }
 
@@ -575,11 +569,36 @@ export class HybridMarkdownEditor {
 
         let didReplace = false;
 
-        // Use snapshot-based caret preservation which is more robust
-        // than offset-based save/restore against DOM mutations.
-        let caretSnapshot = null;
+        // --- Caret preservation using zero-width marker ---
+        // Insert \uFEFF at the caret position in the target text node.
+        // renderInlineMarks preserves \uFEFF (it only strips \u200B).
+        // After all DOM operations, find \uFEFF and place the caret there.
+        //
+        // This is far more robust than text-counting approaches because
+        // the marker travels through the HTML transformation intact,
+        // regardless of how many characters are consumed by decoration
+        // (e.g. ==text== → <mark>text</mark> changes text length by -4).
+        //
+        // We only need to do this when the caret is INSIDE a target
+        // text node — if the caret is elsewhere, replacing target nodes
+        // doesn't affect it.
+        const CARET_MARKER = '\uFEFF';
+        let caretMarked = false;
         if (preserveCaret) {
-            caretSnapshot = this.saveCaretSnapshot(root);
+            const selection = window.getSelection();
+            if (selection && selection.rangeCount > 0 && selection.isCollapsed) {
+                const range = selection.getRangeAt(0);
+                const caretNode = range.startContainer;
+                const caretOffset = range.startOffset;
+                for (const target of targets) {
+                    if (caretNode === target) {
+                        const text = target.nodeValue || '';
+                        target.nodeValue = text.slice(0, caretOffset) + CARET_MARKER + text.slice(caretOffset);
+                        caretMarked = true;
+                        break;
+                    }
+                }
+            }
         }
 
         for (const textNode of targets) {
@@ -601,8 +620,26 @@ export class HybridMarkdownEditor {
 
         this.lockInlineMarks(root);
 
-        if (preserveCaret && didReplace && caretSnapshot) {
-            this.restoreCaretSnapshot(root, caretSnapshot);
+        // --- Restore caret from zero-width marker ---
+        if (caretMarked) {
+            const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+            let n;
+            while ((n = w.nextNode())) {
+                const text = n.nodeValue || '';
+                const idx = text.indexOf(CARET_MARKER);
+                if (idx >= 0) {
+                    n.nodeValue = text.slice(0, idx) + text.slice(idx + 1);
+                    try {
+                        const range = document.createRange();
+                        range.setStart(n, idx);
+                        range.collapse(true);
+                        const selection = window.getSelection();
+                        selection?.removeAllRanges();
+                        selection?.addRange(range);
+                    } catch (_e) {}
+                    break;
+                }
+            }
         }
 
         this.isDecorating = false;
@@ -635,14 +672,10 @@ export class HybridMarkdownEditor {
                 }
             }
             if (needsFix) {
-                // Save caret using a snapshot of surrounding text,
-                // not the offset-based approach which breaks when
-                // Vditor has already moved the caret.
-                const caretSnapshot = this.saveCaretSnapshot(root);
-                this.decorateRenderedMarks(false);
-                if (caretSnapshot) {
-                    this.restoreCaretSnapshot(root, caretSnapshot);
-                }
+                // Delegate caret preservation to decorateRenderedMarks.
+                // It uses a zero-width marker (\uFEFF) approach that is
+                // immune to text-length changes caused by decoration.
+                this.decorateRenderedMarks(true);
             }
         });
 
