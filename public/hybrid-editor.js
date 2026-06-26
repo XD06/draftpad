@@ -260,18 +260,70 @@ export class HybridMarkdownEditor {
 
     readWysiwygMarkdownValue(fallback = '') {
         const rawValue = this.editor?.getValue?.() || fallback || '';
-        if (!/<time\b[^>]*\bmd-time-marker\b/i.test(rawValue)) {
-            return this.stripDisplayGuards(rawValue);
-        }
-
         const root = this.container.querySelector('.vditor-wysiwyg .vditor-reset');
-        if (!root?.querySelector?.('.md-time-marker[data-time-source]') || typeof this.editor?.html2md !== 'function') {
+
+        // Check if DOM has any rendered marks that editor.getValue()
+        // might not preserve (Lute may strip or convert them).
+        const hasRenderedMarks = root?.querySelector?.(
+            '.md-time-marker[data-time-source], mark.md-mark, [data-draw], .has-annotation'
+        );
+
+        if (!hasRenderedMarks || typeof this.editor?.html2md !== 'function') {
             return this.stripDisplayGuards(rawValue);
         }
 
         const clone = root.cloneNode(true);
         this.restoreRenderedTimeMarkers(clone);
+        this.restoreAllRenderedMarks(clone);
         return this.stripDisplayGuards(this.editor.html2md(clone.innerHTML) || rawValue);
+    }
+
+    /**
+     * Restore rendered inline marks (highlight, draw, annotation) back
+     * to their source HTML form in a cloned DOM tree, so that html2md
+     * can correctly preserve them in the markdown output.
+     */
+    restoreAllRenderedMarks(root) {
+        if (!root) return;
+
+        // Restore <mark class="md-mark"> back to <mark>text</mark>
+        root.querySelectorAll('mark.md-mark').forEach(mark => {
+            const text = mark.textContent || '';
+            const el = document.createElement('mark');
+            el.textContent = text;
+            mark.replaceWith(el);
+        });
+
+        // Restore [data-draw] back to <span data-draw>text</span>
+        root.querySelectorAll('[data-draw]').forEach(span => {
+            const text = span.textContent || '';
+            const el = document.createElement('span');
+            el.setAttribute('data-draw', '');
+            el.textContent = text;
+            span.replaceWith(el);
+        });
+
+        // Restore .has-annotation back to <span data-note="comment">text</span><sub>...</sub>
+        root.querySelectorAll('.has-annotation').forEach(span => {
+            const comment = span.dataset.comment || '';
+            const markedText = span.querySelector('span[style*="wavy"]')?.textContent || span.textContent || '';
+
+            const el = document.createElement('span');
+            el.setAttribute('data-note', comment);
+            el.style.textDecoration = 'underline wavy #e74c3c';
+            el.style.textDecorationThickness = '2.5px';
+            el.textContent = markedText;
+
+            const sub = document.createElement('sub');
+            sub.setAttribute('data-note-label', '');
+            sub.style.color = '#e74c3c';
+            sub.style.fontSize = '0.65em';
+            sub.style.marginLeft = '2px';
+            sub.textContent = '（' + comment + '）';
+
+            span.replaceWith(el);
+            el.after(sub);
+        });
     }
 
     restoreRenderedTimeMarkers(root) {
@@ -454,10 +506,9 @@ export class HybridMarkdownEditor {
 
         this.isDecorating = true;
 
-        root.querySelectorAll('p, li').forEach(parent => {
-            if (!this.isMarkProtectedNode(parent)) this.decorateCodeTagMarks(parent);
-        });
-
+        // --- Phase 1: Scan for raw marker source in text nodes ---
+        // This is the cheapest check and determines whether we need
+        // to do any DOM modifications at all.
         const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
         const targets = [];
         let node;
@@ -469,11 +520,66 @@ export class HybridMarkdownEditor {
             }
         }
 
-        let didReplace = false;
-        let savedOffset = null;
+        // --- Phase 2: Quick-check for code-wrapped marks ---
+        // Vditor sometimes wraps raw HTML like <mark> in <code> tags.
+        // Check if any <code> element contains such raw HTML.
+        let hasCodeWrappedMarks = false;
+        if (targets.length === 0) {
+            for (const codeEl of root.querySelectorAll('code')) {
+                const t = codeEl.textContent || '';
+                if (t.includes('<mark') || t.includes('<span data-draw') || t.includes('<span data-note') || t.includes('</mark>') || t.includes('</span>')) {
+                    hasCodeWrappedMarks = true;
+                    break;
+                }
+            }
+        }
 
-        if (preserveCaret && targets.length > 0) {
-            savedOffset = this.saveSelectionOffset(root);
+        // --- Phase 3: Early return if nothing to do ---
+        // This is the critical optimisation: when the user is just
+        // typing normal text (no raw markers), we skip ALL DOM
+        // operations — no decorateCodeTagMarks, no
+        // decorateCodeWrappedTags, no lockInlineMarks, no caret
+        // save/restore.  This prevents cursor jumping during typing.
+        if (targets.length === 0 && !hasCodeWrappedMarks) {
+            this.isDecorating = false;
+            return;
+        }
+
+        // --- Phase 4: Process code-wrapped marks if needed ---
+        if (hasCodeWrappedMarks || targets.length > 0) {
+            root.querySelectorAll('p, li').forEach(parent => {
+                if (!this.isMarkProtectedNode(parent)) this.decorateCodeTagMarks(parent);
+            });
+        }
+
+        // Re-scan after code-wrapped mark processing may have
+        // converted <code> elements into text nodes
+        if (hasCodeWrappedMarks && targets.length === 0) {
+            const w2 = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+            while ((node = w2.nextNode())) {
+                if (this.isMarkProtectedNode(node)) continue;
+                const text = node.nodeValue || '';
+                if (text.includes('==') || text.includes('[[time:') || text.includes('<mark') || text.includes('<span data-draw') || text.includes('<span data-note')) {
+                    targets.push(node);
+                }
+            }
+        }
+
+        if (targets.length === 0) {
+            // Code-wrapped marks were processed but no text node
+            // targets remain.  Just lock and return.
+            this.lockInlineMarks(root);
+            this.isDecorating = false;
+            return;
+        }
+
+        let didReplace = false;
+
+        // Use snapshot-based caret preservation which is more robust
+        // than offset-based save/restore against DOM mutations.
+        let caretSnapshot = null;
+        if (preserveCaret) {
+            caretSnapshot = this.saveCaretSnapshot(root);
         }
 
         for (const textNode of targets) {
@@ -487,14 +593,16 @@ export class HybridMarkdownEditor {
 
         if (didReplace) {
             this.ensureTimeMarkerTrailingGuard(root);
+            // Only process code-wrapped tags when we actually replaced
+            // text nodes — otherwise it's an expensive no-op that
+            // reads/writes innerHTML and can cause cursor jumps.
+            this.decorateCodeWrappedTags(root);
         }
-
-        this.decorateCodeWrappedTags(root);
 
         this.lockInlineMarks(root);
 
-        if (preserveCaret && didReplace && savedOffset != null) {
-            this.restoreSelectionOffset(root, savedOffset);
+        if (preserveCaret && didReplace && caretSnapshot) {
+            this.restoreCaretSnapshot(root, caretSnapshot);
         }
 
         this.isDecorating = false;
@@ -602,7 +710,28 @@ export class HybridMarkdownEditor {
     restoreCaretSnapshot(root, snapshot) {
         if (!snapshot) return;
         const target = snapshot.beforeText.length;
-        if (target <= 0) return;
+
+        if (target === 0) {
+            // Caret was at the very beginning of the content.
+            // Place it at the start of the first editable text node
+            // to prevent cursor loss on mobile (which closes keyboard).
+            const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+            let firstNode;
+            while ((firstNode = walker.nextNode())) {
+                if (!this.isMarkProtectedNode(firstNode)) break;
+            }
+            if (firstNode) {
+                try {
+                    const range = document.createRange();
+                    range.setStart(firstNode, 0);
+                    range.collapse(true);
+                    const selection = window.getSelection();
+                    selection?.removeAllRanges();
+                    selection?.addRange(range);
+                } catch (_e) {}
+            }
+            return;
+        }
 
         const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
         let count = 0;
@@ -643,7 +772,12 @@ export class HybridMarkdownEditor {
         root.querySelectorAll(
             '.md-time-marker, .md-mark, [data-draw], .has-annotation'
         ).forEach(el => {
-            el.setAttribute('contenteditable', 'false');
+            // Only set the attribute if it's not already set.
+            // Setting the same value still triggers MutationObserver
+            // callbacks and can cause unnecessary browser re-layouts.
+            if (el.getAttribute('contenteditable') !== 'false') {
+                el.setAttribute('contenteditable', 'false');
+            }
         });
     }
 
@@ -912,6 +1046,12 @@ export class HybridMarkdownEditor {
         );
         html = html.replace(/&lt;mark&gt;([\s\S]*?)&lt;\/mark&gt;/g, '<mark class="md-mark">$1</mark>');
         html = html.replace(/==([^=\n]+?)==/g, '<mark class="md-mark">$1</mark>');
+        // Preserve newlines: HTML parser collapses \n in text content
+        // into whitespace, which would merge adjacent lines.  Convert
+        // them to <br> so that soft breaks survive the text-to-HTML
+        // conversion.  This is safe because all generated HTML tags
+        // (mark, span, time-marker) contain no literal \n.
+        html = html.replace(/\n/g, '<br>');
         return html === original ? '' : html;
     }
 
@@ -1466,8 +1606,15 @@ export class HybridMarkdownEditor {
         selection?.removeAllRanges();
         selection?.addRange(nextRange);
 
-        this.notifyEditorValueChanged(this.editor?.getValue?.() || this._lastValue || '');
-        this.scheduleDecorateRenderedMarks();
+        // Defer value sync to next tick so the browser can process
+        // the caret placement first.  Calling notifyEditorValueChanged
+        // synchronously can trigger DOM reads (editor.getValue) that
+        // interfere with the just-placed caret, causing it to stay on
+        // the previous line.
+        setTimeout(() => {
+            this.notifyEditorValueChanged(this.editor?.getValue?.() || this._lastValue || '');
+            this.scheduleDecorateRenderedMarks();
+        }, 0);
         return true;
     }
 
@@ -1622,50 +1769,41 @@ export class HybridMarkdownEditor {
     }
 
     updateAnnotationComment(element, oldComment = '', nextComment = '') {
-        const value = this.getValue();
-        const text = (element.querySelector('span[style*="wavy"]')?.textContent || element.textContent || '')
-            .replace(/\s*[（(][^）)]*[）)]\s*$/, '')
-            .trim();
-        if (!text || !nextComment) return;
+        if (!element || !nextComment) return;
 
-        const escapedText = this.escapeRegExp(text);
-        const pattern = new RegExp(`<span data-note="[^"]*"([^>]*)>${escapedText}<\\/span><sub data-note-label[^>]*>[\\s\\S]*?<\\/sub>`);
-        const safeComment = this.escapeAttribute(nextComment);
-        const replacement = `<span data-note="${safeComment}" style="text-decoration:underline wavy #e74c3c;text-decoration-thickness:2.5px;">${text}</span><sub data-note-label style="color:#e74c3c;font-size:0.65em;margin-left:2px;">（${this.escapeHtml(nextComment)}）</sub>`;
-        const next = value.replace(pattern, replacement);
-        if (next === value) return;
+        // Update the comment directly in the DOM, then sync the
+        // editor value.  This avoids relying on getValue() to
+        // preserve the annotation HTML in the markdown string.
+        element.dataset.comment = nextComment;
 
-        const scroller = this.container.querySelector('.vditor-wysiwyg');
-        const scrollTop = scroller?.scrollTop || 0;
-        this.setValue(next, true);
-        this.setEditable(!this.isReadingMode);
-        this.renderAfterMutation(scrollTop);
+        const sub = element.querySelector('sub');
+        if (sub) {
+            sub.textContent = '（' + nextComment + '）';
+        }
+
+        this.notifyEditorValueChanged();
+        this.scheduleDecorateRenderedMarks();
     }
 
     removeInlineMark(element, type, comment = '') {
-        const value = this.getValue();
+        if (!element) return;
+
+        // Extract the plain text from the rendered element
         const text = type === 'annotation'
             ? (element.querySelector('span[style*="wavy"]')?.textContent || element.textContent || '').replace(/\s*[（(][^）)]*[）)]\s*$/, '').trim()
             : (element.textContent || '').trim();
         if (!text) return;
 
-        const escapedText = this.escapeRegExp(text);
-        let pattern;
-        if (type === 'mark') {
-            pattern = new RegExp(`<mark>${escapedText}<\\/mark>`);
-        } else if (type === 'drawLine') {
-            pattern = new RegExp(`<span data-draw[^>]*>${escapedText}<\\/span>`);
-        } else if (type === 'annotation') {
-            pattern = new RegExp(`<span data-note="[^"]*"[^>]*>${escapedText}<\\/span><sub data-note-label[^>]*>[\\s\\S]*?<\\/sub>`);
-        }
-        if (!pattern) return;
-        const next = value.replace(pattern, text);
-        if (next === value) return;
-        const scroller = this.container.querySelector('.vditor-wysiwyg');
-        const scrollTop = scroller?.scrollTop || 0;
-        this.setValue(next, true);
-        this.setEditable(!this.isReadingMode);
-        this.renderAfterMutation(scrollTop);
+        // Replace the DOM element directly with a text node.
+        // This is more reliable than trying to regex-match the mark
+        // in the markdown value, because editor.getValue() may not
+        // preserve <mark>, <span data-draw>, or <span data-note> tags.
+        const textNode = document.createTextNode(text);
+        element.replaceWith(textNode);
+
+        // Sync the editor value from the modified DOM
+        this.notifyEditorValueChanged();
+        this.scheduleDecorateRenderedMarks();
     }
 
     escapeRegExp(text) {
