@@ -189,19 +189,21 @@ export default class ThoughtOutbox {
 
     async retry(apiClient) {
         const items = this.load();
-        const remaining = [];
-        const created = [];
+        const succeededIds = new Set();
+        const failedUpdates = new Map();
         let changed = false;
+        const created = [];
 
         for (const item of items) {
             try {
                 const data = await apiClient.requestOutboxItem(item);
                 changed = true;
+                succeededIds.add(item.id);
                 if (item.kind === 'create') {
                     created.push({ item, data });
                 }
             } catch (err) {
-                remaining.push({
+                failedUpdates.set(item.id, {
                     ...item,
                     attempts: Number(item.attempts || 0) + 1,
                     lastError: err.message || String(err)
@@ -209,6 +211,28 @@ export default class ThoughtOutbox {
             }
         }
 
+        // Re-load the latest outbox before saving: new items may have been
+        // enqueued concurrently during the awaits above. Keep those new items,
+        // drop the succeeded ones, and update the failed ones in place —
+        // otherwise this.save(remaining) would overwrite storage and silently
+        // delete anything queued while retry was running.
+        const latest = this.load();
+        const remaining = [];
+        for (const item of latest) {
+            if (succeededIds.has(item.id)) continue;
+            if (failedUpdates.has(item.id)) {
+                const failed = failedUpdates.get(item.id);
+                // Dead-letter: give up on permanently failing items (>10 attempts)
+                // so they don't block the queue forever and retry endlessly.
+                if (failed.attempts > 10) {
+                    console.warn('thought-outbox: dropping item after max attempts:', failed);
+                } else {
+                    remaining.push(failed);
+                }
+            } else {
+                remaining.push(item);
+            }
+        }
         this.save(remaining);
         return { changed, remaining, created };
     }

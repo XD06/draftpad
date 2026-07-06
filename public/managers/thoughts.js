@@ -1384,6 +1384,7 @@ export class ThoughtsManager {
             tracking = false;
             isDragging = false;
             deltaX = 0;
+            suppressNextClick = false;
         };
 
         card.addEventListener('pointerdown', (event) => {
@@ -1446,6 +1447,7 @@ export class ThoughtsManager {
         card.addEventListener('click', (event) => {
             if (!suppressNextClick) return;
             suppressNextClick = false;
+            if (event.target.closest('.thought-dot, button, input, textarea, a')) return;
             event.preventDefault();
             event.stopPropagation();
         }, true);
@@ -2190,6 +2192,10 @@ export class ThoughtsManager {
         let saveStarted = false;
         const saveAndExit = () => {
             if (saveStarted) return;
+            if (!textarea || !textarea.isConnected) {
+                saveStarted = true;
+                return;
+            }
             saveStarted = true;
             const newText = textarea.value.trim();
             const nextSubItems = cleanSubItems(subtasks);
@@ -2237,6 +2243,11 @@ export class ThoughtsManager {
 
         // Click outside card to save & exit
         const handleClickOutside = (e) => {
+            if (!card.isConnected) {
+                document.removeEventListener('click', handleClickOutside);
+                card._clickOutsideHandler = null;
+                return;
+            }
             if (!e.target.isConnected) return;
             if (!card.contains(e.target)) {
                 saveAndExit();

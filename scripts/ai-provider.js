@@ -379,32 +379,51 @@ class OpenAICompatibleProvider extends AIProvider {
     }
 
     async requestJSON(url, apiKey, body) {
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+        const MAX_RETRIES = 3;
+        for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+            try {
+                const response = await this.fetchImpl(url, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${apiKey}`
+                    },
+                    body: JSON.stringify(body),
+                    signal: controller.signal
+                });
 
-        try {
-            const response = await this.fetchImpl(url, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${apiKey}`
-                },
-                body: JSON.stringify(body),
-                signal: controller.signal
-            });
+                const payload = await response.json().catch(() => ({}));
 
-            const payload = await response.json().catch(() => ({}));
-            if (!response.ok) {
-                const detail = payload?.error?.message || JSON.stringify(payload);
-                const message = detail && detail !== '{}'
-                    ? `AI request failed with status ${response.status}: ${detail}`
-                    : `AI request failed with status ${response.status}`;
-                throw new Error(message);
+                // Retry on 429 (rate limit) and 5xx (transient server errors)
+                // with exponential backoff + jitter. Respect Retry-After when
+                // present. Without this, a single 429 fails the whole extract
+                // and the user/queue retry immediately, amplifying rate limiting.
+                if ((response.status === 429 || response.status >= 500) && attempt < MAX_RETRIES) {
+                    clearTimeout(timer);
+                    const retryAfterSec = Number(response.headers?.get?.('retry-after'));
+                    const baseDelay = Math.min(30000, 1000 * Math.pow(2, attempt));
+                    const delay = (Number.isFinite(retryAfterSec) && retryAfterSec > 0)
+                        ? Math.min(60000, retryAfterSec * 1000)
+                        : baseDelay + Math.floor(Math.random() * 500);
+                    await new Promise(r => setTimeout(r, delay));
+                    continue;
+                }
+
+                if (!response.ok) {
+                    const detail = payload?.error?.message || JSON.stringify(payload);
+                    const message = detail && detail !== '{}'
+                        ? `AI request failed with status ${response.status}: ${detail}`
+                        : `AI request failed with status ${response.status}`;
+                    throw new Error(message);
+                }
+                return payload;
+            } finally {
+                clearTimeout(timer);
             }
-            return payload;
-        } finally {
-            clearTimeout(timer);
         }
+        throw new Error('AI request failed after retries');
     }
 
     async extract(text, options = {}) {

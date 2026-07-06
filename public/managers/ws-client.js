@@ -80,10 +80,14 @@ export class WSClient {
         if (this.closedByClient) return;
 
         clearTimeout(this.reconnectTimer);
+        // Add jitter (0.5x..1.5x) so that when the server restarts, all clients
+        // don't reconnect at the exact same instant (thundering herd).
+        const jitter = 0.5 + Math.random();
+        const delay = Math.min(this.currentReconnectDelay * jitter, this.maxReconnectDelay);
         this.reconnectTimer = setTimeout(() => {
             this.connect();
             this.currentReconnectDelay = Math.min(this.currentReconnectDelay * 1.5, this.maxReconnectDelay);
-        }, this.currentReconnectDelay);
+        }, delay);
     }
 
     send(message) {
@@ -91,6 +95,13 @@ export class WSClient {
         if (this.ws && this.ws.readyState === WebSocket.OPEN) {
             this.ws.send(payload);
             return;
+        }
+        // Cap the offline queue so a long disconnect can't accumulate unbounded
+        // updates (which would all flush at once and potentially arrive out of
+        // order). Drop oldest when over capacity.
+        const MAX_QUEUE = 100;
+        if (this.messageQueue.length >= MAX_QUEUE) {
+            this.messageQueue.shift();
         }
         this.messageQueue.push(payload);
     }

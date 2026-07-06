@@ -74,6 +74,9 @@ const pageHistoryCookieAge = PAGE_HISTORY_COOKIE_AGE * 24 * 60 * 60 * 1000;
 const MAX_FILENAME_COLLISION_ATTEMPTS = 100; // Maximum attempts to resolve filename collisions
 const DEBUG_WS = process.env.DEBUG_WS === 'true';
 const SHARE_SECRET = process.env.SHARE_SECRET || PIN || 'dumbpad_default_secret_9988';
+if (!process.env.SHARE_SECRET) {
+    console.warn('SECURITY: SHARE_SECRET is not set — falling back to PIN or a hardcoded default. Set a dedicated high-entropy SHARE_SECRET env var in production so share tokens cannot be derived from the PIN.');
+}
 
 function getShareToken(id) {
     return crypto.createHmac('sha256', SHARE_SECRET).update(id).digest('hex').substring(0, 16);
@@ -276,6 +279,20 @@ app.use('/css/@highlightjs/github.min.css', express.static(
 generatePWAManifest(SITE_TITLE);
 BUILD_VERSION = getBuildVersion();
 
+// Security headers (lightweight helmet replacement — no extra dependency).
+// Applied before any route so static, API, and share pages all get them.
+// CSP allows unsafe-inline for scripts/styles to stay compatible with the
+// existing inline scripts in the share page and login page; XSS is mitigated
+// at the source (escapeHtml + sanitizeHtml) rather than relying on CSP alone.
+app.use((req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+    res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' ws: wss:;");
+    next();
+});
+
 registerStaticRoutes(app, {
     publicDir: PUBLIC_DIR,
     assetsDir: ASSETS_DIR,
@@ -289,6 +306,8 @@ app.use(express.static(path.join(__dirname, 'public'), {
 const { broadcastWebSocketMessage, broadcastUpdate } = createWebSocketHub({
     server,
     validateOrigin,
+    pin: PIN,
+    cookieName: COOKIE_NAME,
     debug: DEBUG_WS
 });
 
@@ -450,34 +469,53 @@ async function getNotepadsFromDir() {
         }
     }
 
-    let needsSave = false;
-    if (newNotepads.length > 0) {
-        notepadsData.notepads = [...notepads, ...newNotepads];
-        console.log(`Added new notepads: ${newNotepads.map(n => n.id).join(', ')}`);
-        needsSave = true;
-    }
+    // Self-heal (orphan .txt files + missing timestamps) inside the notepad
+    // write lock with atomic write. The lock prevents a race with concurrent
+    // DELETE (which removes meta then deletes the .txt file): without it, this
+    // self-heal could re-add a notepad mid-deletion, resurrecting it as an
+    // orphan meta entry pointing at a deleted file. We re-read the latest meta
+    // inside the lock and re-check orphans against it.
+    let resultNotepads = notepadsData.notepads;
+    if (newNotepads.length > 0 || notepads.some(n => !n.createdAt || !n.updatedAt)) {
+        resultNotepads = await storage.withNotepadWriteLock(async () => {
+            const latest = await storage.readNotepadsMeta();
+            const list = latest.notepads || [];
+            const existingIds = new Set(list.map(n => n.id));
+            const existingNames = new Set(list.map(n => sanitizeFilename(n.name)));
+            const trulyOrphan = newNotepads.filter(n =>
+                !existingIds.has(n.id) && !existingNames.has(n.id)
+            );
 
-    // Ensure all notepads have timestamps
-    for (const notepad of notepadsData.notepads) {
-        if (!notepad.createdAt || !notepad.updatedAt) {
-            try {
-                let filePath = await getNotepadFilePath(notepad, DATA_DIR);
-                const stats = await fs.stat(filePath);
-                notepad.createdAt = notepad.createdAt || Math.floor(stats.birthtimeMs || Date.now());
-                notepad.updatedAt = notepad.updatedAt || Math.floor(stats.mtimeMs || Date.now());
-            } catch (e) {
-                notepad.createdAt = notepad.createdAt || Date.now();
-                notepad.updatedAt = notepad.updatedAt || Date.now();
+            let changed = false;
+            for (const notepad of list) {
+                if (!notepad.createdAt || !notepad.updatedAt) {
+                    try {
+                        const filePath = await getNotepadFilePath(notepad, DATA_DIR);
+                        const stats = await fs.stat(filePath);
+                        notepad.createdAt = notepad.createdAt || Math.floor(stats.birthtimeMs || Date.now());
+                        notepad.updatedAt = notepad.updatedAt || Math.floor(stats.mtimeMs || Date.now());
+                    } catch (e) {
+                        notepad.createdAt = notepad.createdAt || Date.now();
+                        notepad.updatedAt = notepad.updatedAt || Date.now();
+                    }
+                    changed = true;
+                }
             }
-            needsSave = true;
-        }
+
+            if (trulyOrphan.length > 0) {
+                console.log(`Added orphan notepads: ${trulyOrphan.map(n => n.id).join(', ')}`);
+                latest.notepads = [...list, ...trulyOrphan];
+                changed = true;
+            }
+
+            if (changed) {
+                await storage.saveNotepadsMeta(latest);
+            }
+            return latest.notepads;
+        });
     }
 
-    if (needsSave) {
-        await fs.writeFile(NOTEPADS_FILE, JSON.stringify(notepadsData, null, 2), 'utf8');
-    }
-
-    return notepadsData.notepads;
+    return resultNotepads;
 }
 
 // Helper function to generate unique notepad name

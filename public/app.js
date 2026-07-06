@@ -7,6 +7,27 @@ import NoteSyncController from './managers/note-sync-controller.js';
 import SettingsDataPanel from './managers/settings-data-panel.js';
 import { renderSidebar, renderRecentFiles, trackRecentFile, updateSidebarSelection } from './sidebar.js';
 
+// Global 401 handler: any /api 401 means the PIN session is gone — redirect to login.
+// This catches the case where the cookie expires while the app is open (the SW
+// may serve a cached shell, but the next API call will 401 and we must leave).
+(() => {
+    const originalFetch = window.fetch;
+    let redirecting = false;
+    window.fetch = function(input, init) {
+        return originalFetch.call(this, input, init).then(response => {
+            if (response.status === 401 && !redirecting) {
+                const url = typeof input === 'string' ? input : (input && input.url) || '';
+                if (url.includes('/api/')) {
+                    redirecting = true;
+                    const redirect = encodeURIComponent(window.location.pathname + window.location.search + window.location.hash);
+                    window.location.href = '/login?redirect=' + redirect;
+                }
+            }
+            return response;
+        });
+    };
+})();
+
 document.addEventListener('DOMContentLoaded', async () => {
     const DEBUG = false;
     const THEME_KEY = 'dumbpad_theme';
@@ -1615,11 +1636,16 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     function debouncedSave(content) {
-        cacheDirtyNote(currentNotepadId, content);
+        const targetNotepadId = currentNotepadId;
+        cacheDirtyNote(targetNotepadId, content);
         setStartupSyncStatus('cached', '本地已保留');
         clearTimeout(saveTimeout);
         saveTimeout = setTimeout(async () => {
-            await saveNotes(content, true);
+            // Capture targetNotepadId at debounce time: saveNotes defaults to
+            // currentNotepadId which may have changed if the user switched
+            // notepads during the 300ms delay — that would write the old
+            // notepad's content into the new one.
+            await saveNotes(content, true, true, 0, targetNotepadId);
         }, 300);
     }
 
@@ -1771,6 +1797,18 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     async function selectNotepad(id, query = "") {
         const token = ++selectionToken;
+        // Flush any pending debounced save for the current notepad before
+        // switching. performSaveNotes guards on currentNotepadId ===
+        // targetNotepadId, so once currentNotepadId changes the pending save
+        // would be skipped — leaving the old notepad with unsynced content.
+        if (saveTimeout && currentNotepadId) {
+            clearTimeout(saveTimeout);
+            saveTimeout = null;
+            const pendingContent = editor.value;
+            if (pendingContent != null) {
+                saveNotes(pendingContent, true, false).catch(() => {});
+            }
+        }
         const selectedNotepad = findNotepadByIdOrName(currentNotepads, id);
         currentNotepadId = selectedNotepad?.id || null;
         

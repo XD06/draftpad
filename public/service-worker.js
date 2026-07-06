@@ -229,13 +229,13 @@ const findCachedFallback = async (fallbackRequests = []) => {
 };
 
 const networkFirstWithTimeout = async (request, options = {}) => {
-  const { timeout = 2500, fetchOptions = {}, fallbackRequests = [], preloadResponse = null } = options;
+  const { timeout = 2500, fetchOptions = {}, fallbackRequests = [], preloadResponse = null, shouldCache = () => true } = options;
   const networkRequest = (async () => {
     const preloaded = preloadResponse ? await preloadResponse : null;
     if (preloaded) return preloaded;
     return fetch(request, fetchOptions);
   })().then((response) => {
-    putInCache(request, response).catch(() => {});
+    if (shouldCache(response)) putInCache(request, response).catch(() => {});
     return response;
   });
 
@@ -291,13 +291,17 @@ self.addEventListener("fetch", (event) => {
   const isNetworkFirstStaticAsset = NETWORK_FIRST_STATIC_EXTENSIONS.some(ext => requestUrl.pathname.endsWith(ext));
 
   if (isNavigation) {
-    // Always fetch fresh index.html, fallback to cache only when offline
+    // Always fetch fresh index.html, fallback to cache only when offline.
+    // Never cache redirected (e.g. → /login) responses under the original URL:
+    // otherwise a logged-out navigation can pollute the "/" cache slot with the
+    // login page, or leave a stale app shell that hides the login redirect.
     event.respondWith(
       networkFirstWithTimeout(event.request, {
         timeout: NAVIGATION_NETWORK_TIMEOUT,
         fetchOptions: { cache: "no-store" },
         fallbackRequests: ["/index.html"],
         preloadResponse: event.preloadResponse,
+        shouldCache: (response) => response.ok && !response.redirected,
       })
     );
     return;

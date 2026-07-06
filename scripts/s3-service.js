@@ -114,7 +114,14 @@ async function getObject(key) {
 async function getJSONObject(key, fallback = null) {
     const text = await getObject(key);
     if (text === null) return fallback;
-    return JSON.parse(text);
+    try {
+        return JSON.parse(text);
+    } catch (error) {
+        // A single corrupt/partially-written object must not bring down the
+        // whole list (readS3SplitThoughts uses Promise.all over all objects).
+        console.warn(`s3-service: corrupt JSON at ${key}, returning fallback:`, error.message);
+        return fallback;
+    }
 }
 
 async function deleteObject(key) {

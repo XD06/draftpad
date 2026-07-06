@@ -7,6 +7,7 @@ let broadcast = () => {};
 let processing = false;
 let currentJob = null;
 let currentJobs = [];
+let pendingRecoveryTimer = null;
 let lastError = null;
 const queue = [];
 const queuedIds = new Set();
@@ -45,6 +46,19 @@ function init(options = {}) {
         insightModel: aiProvider.insightModel || 'not-configured',
         hasReranker: Boolean(aiProvider.rerankBaseUrl && aiProvider.rerankApiKey)
     });
+
+    // Periodically recover thoughts whose meta is stuck in 'pending' (process
+    // died mid-process, or a storage outage prevented the error write). Without
+    // this, a single transient failure can leave a thought permanently stuck
+    // and require manual intervention.
+    if (!pendingRecoveryTimer) {
+        pendingRecoveryTimer = setInterval(() => {
+            recoverStalePendingMeta({ limit: 50 }).catch(err => {
+                logAI('pending:recover:error', { message: err?.message || String(err) });
+            });
+        }, 60000);
+        if (pendingRecoveryTimer.unref) pendingRecoveryTimer.unref();
+    }
 }
 
 function ensureInitialized() {
@@ -796,34 +810,55 @@ async function processThought(thoughtId) {
         });
         return { meta, relations };
     } catch (error) {
-        const meta = {
-            id: thoughtId,
-            status: 'error',
-            ai: null,
-            schemaVersion: 2,
-            stages: {
-                queued: { status: 'ready' },
-                analysis: { status: currentStage === 'analysis' ? 'error' : 'ready' },
-                embedding: currentStage === 'analysis' ? { status: 'pending' } : embeddingStage,
-                relations: { status: currentStage === 'relations' ? 'error' : 'pending' }
-            },
-            error: {
-                stage: currentStage,
-                message: error.message,
-                lastFailedAt: Date.now()
-            }
+        // Preserve already-completed AI extraction. Previously this built a
+        // fresh meta with ai: null, discarding expensive extract+embedding
+        // results just because the relations stage hit a transient
+        // rerank/LLM/network error. Now we keep meta.ai when extraction
+        // succeeded and only mark the failed stage.
+        let meta;
+        try {
+            meta = await storage.readThoughtMeta(thoughtId);
+        } catch (_) {
+            meta = null;
+        }
+        const relationsFailed = currentStage === 'relations';
+        if (!meta || !meta.ai) {
+            meta = {
+                id: thoughtId,
+                schemaVersion: 2,
+                stages: { queued: { status: 'ready' } },
+                status: 'error',
+                ai: null
+            };
+        } else {
+            // Extraction succeeded; keep it so rebuildRelations can retry the
+            // relations stage later without re-running extract/embedding.
+            meta.status = 'ready';
+        }
+        meta.id = thoughtId;
+        meta.stages = meta.stages || {};
+        meta.stages.queued = { status: 'ready' };
+        meta.stages.analysis = { status: currentStage === 'analysis' ? 'error' : 'ready' };
+        meta.stages.embedding = currentStage === 'analysis' ? { status: 'pending' } : embeddingStage;
+        meta.stages.relations = { status: relationsFailed ? 'error' : 'pending' };
+        meta.error = {
+            stage: currentStage,
+            message: error.message,
+            lastFailedAt: Date.now()
         };
         await attachLatestInsight(thoughtId, meta, preservedInsight);
         await storage.writeThoughtMeta(thoughtId, meta);
         logAI('process:error', {
             thoughtId,
             message: error.message,
+            stage: currentStage,
+            preservedAI: !!meta.ai,
             durationMs: Date.now() - startedAt
         });
         broadcast({
             type: 'ai_status_update',
             thoughtId,
-            status: 'error',
+            status: meta.status,
             error: meta.error
         });
         return { meta, relations: null };
@@ -921,9 +956,18 @@ async function recoverStalePendingMeta({ limit = Infinity, maxAgeMs = DEFAULT_PE
     let queued = 0;
     let skippedFresh = 0;
 
+    const activeIds = new Set(currentJobs.map(job => job?.thoughtId).filter(Boolean));
     for (const thought of thoughts) {
         if (queued >= limit) break;
         if (!thought?.id) continue;
+
+        // Skip thoughts currently being processed: their meta is still
+        // 'pending' (queuedIds was removed on dispatch) but re-queueing them
+        // would cause concurrent duplicate processing and waste AI quota.
+        if (activeIds.has(thought.id)) {
+            skippedFresh++;
+            continue;
+        }
 
         const meta = await storage.readThoughtMeta(thought.id);
         if (meta?.status !== 'pending') continue;
@@ -954,7 +998,7 @@ async function rebuildRelations({ limit = Infinity } = {}) {
         const meta = await storage.readThoughtMeta(thought.id);
         if (meta?.status !== 'ready' || !meta.ai) continue;
 
-        const relations = await buildRelations(meta);
+        const relations = await withRelationWriteLock(() => buildRelations(meta));
         broadcast({
             type: 'relations_update',
             thoughtId: thought.id,

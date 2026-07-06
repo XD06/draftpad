@@ -53,6 +53,17 @@ async function withThoughtWriteLock(task) {
     return run;
 }
 
+// Async mutex for serializing Notepad/Note metadata read-modify-write.
+// Without this, concurrent POST/PATCH/DELETE on notepads/notes can lose
+// version numbers and content: each handler reads meta, mutates, and saves,
+// so the last writer wins and intermediate writes are lost.
+let notepadWriteLock = Promise.resolve();
+async function withNotepadWriteLock(task) {
+    const run = notepadWriteLock.then(task, task);
+    notepadWriteLock = run.catch(() => {});
+    return run;
+}
+
 function isS3Backend() {
     return STORAGE_BACKEND === 's3';
 }
@@ -128,7 +139,10 @@ async function s3PathExists(key) {
 }
 
 function safeId(id) {
-    return String(id || '').replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').trim();
+    // Keep only filename-safe characters. This also neutralizes path traversal:
+    // '../' becomes '___' (no dots, no separators), so the result can never
+    // escape the target directory when used in path.join or as an S3 key.
+    return String(id || '').replace(/[^A-Za-z0-9_-]/g, '_').trim();
 }
 
 function thoughtPath(id) {
@@ -522,7 +536,7 @@ async function deleteThought(id) {
 
 async function readThoughtMeta(id) {
     if (isS3Backend()) return s3ReadJSON(`thoughts.meta/${safeId(id)}.json`, null);
-    return readJSON(path.join(META_DIR, `${id}.json`), null);
+    return readJSON(path.join(META_DIR, `${safeId(id)}.json`), null);
 }
 
 async function writeThoughtMeta(id, meta) {
@@ -530,7 +544,7 @@ async function writeThoughtMeta(id, meta) {
         await s3WriteJSON(`thoughts.meta/${safeId(id)}.json`, meta);
         return;
     }
-    await writeJSON(path.join(META_DIR, `${id}.json`), meta);
+    await writeJSON(path.join(META_DIR, `${safeId(id)}.json`), meta);
 }
 
 async function deleteThoughtMeta(id) {
@@ -538,12 +552,12 @@ async function deleteThoughtMeta(id) {
         await s3.deleteObject(s3Key(`thoughts.meta/${safeId(id)}.json`));
         return;
     }
-    await fs.rm(path.join(META_DIR, `${id}.json`), { force: true });
+    await fs.rm(path.join(META_DIR, `${safeId(id)}.json`), { force: true });
 }
 
 async function readRelations(id) {
     if (isS3Backend()) return s3ReadJSON(`relations/${safeId(id)}.json`, { id, edges: [] });
-    return readJSON(path.join(RELATIONS_DIR, `${id}.json`), { id, edges: [] });
+    return readJSON(path.join(RELATIONS_DIR, `${safeId(id)}.json`), { id, edges: [] });
 }
 
 async function readRelationCount(id) {
@@ -556,7 +570,7 @@ async function writeRelations(id, relations) {
         await s3WriteJSON(`relations/${safeId(id)}.json`, relations);
         return;
     }
-    await writeJSON(path.join(RELATIONS_DIR, `${id}.json`), relations);
+    await writeJSON(path.join(RELATIONS_DIR, `${safeId(id)}.json`), relations);
 }
 
 async function deleteRelations(id) {
@@ -564,7 +578,7 @@ async function deleteRelations(id) {
         await s3.deleteObject(s3Key(`relations/${safeId(id)}.json`));
         return;
     }
-    await fs.rm(path.join(RELATIONS_DIR, `${id}.json`), { force: true });
+    await fs.rm(path.join(RELATIONS_DIR, `${safeId(id)}.json`), { force: true });
 }
 
 async function readSuppressedRelations(id) {
@@ -1179,6 +1193,7 @@ async function getSearchDocuments() {
 module.exports = {
     init,
     withThoughtWriteLock,
+    withNotepadWriteLock,
     readThoughts,
     saveThoughts,
     readThought,

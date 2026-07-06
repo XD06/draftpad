@@ -6,7 +6,11 @@ export class ToastManager {
   }
 
   show(message, type = 'success', isStatic = false, timeoutMs = 1000, onClick = null) {
-    if (!timeoutMs || timeoutMs < 1) return;
+    // isStatic toasts persist until clicked (e.g. the PWA "new version
+    // available" notice) and must bypass the timeoutMs guard — otherwise
+    // timeoutMs=0 (intended as "no auto-dismiss") is rejected here and the
+    // toast never appears, so users never get the update notification.
+    if (!isStatic && (!timeoutMs || timeoutMs < 1)) return;
 
     const toast = document.createElement('div');
     toast.classList.add('toast');

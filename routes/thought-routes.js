@@ -656,11 +656,14 @@ function registerThoughtRoutes(app, context) {
                 return res.status(404).json({ error: 'Thought not found' });
             }
 
-            await storage.deleteThoughtMeta(id);
-            await storage.deleteRelations(id);
-            await storage.deleteSuppressedRelations(id);
-            const relationCleanup = await storage.removeRelationReferences(id);
-            await storage.removeSuppressedRelationReferences(id);
+            const relationCleanup = await withRelationWriteLock(async () => {
+                await storage.deleteThoughtMeta(id);
+                await storage.deleteRelations(id);
+                await storage.deleteSuppressedRelations(id);
+                const cleanup = await storage.removeRelationReferences(id);
+                await storage.removeSuppressedRelationReferences(id);
+                return cleanup;
+            });
             scheduleIndexNotepads(250);
             broadcastThoughtsUpdate('delete', { id });
             const affectedRelationIds = Array.isArray(relationCleanup?.affectedIds) ? relationCleanup.affectedIds : [];

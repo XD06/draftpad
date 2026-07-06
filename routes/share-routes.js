@@ -1,3 +1,27 @@
+function escapeHtml(str) {
+    return String(str == null ? '' : str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+// Strip dangerous HTML from marked output. marked v15 does not sanitize raw
+// HTML, so user-supplied <script>/<iframe>/on* handlers would otherwise
+// execute on the public (unauthenticated) share page. Defense-in-depth alongside CSP.
+const DANGEROUS_TAGS = /<\/?(script|iframe|object|embed|form|input|button|textarea|select|option|link|meta|style|base|svg|math)\b[^>]*>/gi;
+const ON_ATTRS = /\s+on[a-z]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi;
+const DANGEROUS_ATTRS = /\s+(?:srcdoc|formaction|xlink:href)\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi;
+const JS_PROTO = /((?:href|src|action|formaction|data|xlink:href)\s*=\s*)("\s*javascript:[^"]*"|'\s*javascript:[^']*'|javascript:[^\s>]*)/gi;
+function sanitizeHtml(html) {
+    return String(html == null ? '' : html)
+        .replace(DANGEROUS_TAGS, '')
+        .replace(ON_ATTRS, '')
+        .replace(DANGEROUS_ATTRS, '')
+        .replace(JS_PROTO, '$1""');
+}
+
 function registerShareRoutes(app, context) {
     const { storage, marked, baseUrl, getShareToken } = context;
 
@@ -42,8 +66,11 @@ function registerShareRoutes(app, context) {
             replaceMark(/==(.+?)==/g, 'highlight');
             replaceMark(/<mark>(.+?)<\/mark>/g, 'mark');
 
-            // --- PHASE 2: Markdown Parsing ---
-            let htmlBody = marked.parse(textForMarked);
+            // --- PHASE 2: Markdown Parsing + Sanitize ---
+            // Sanitize before rehydrating tokens: the @@MARK_TOKEN_n@@ placeholders
+            // are plain text so they survive sanitization, and the trusted badge SVG
+            // is generated afterwards in Phase 3 (so it is not stripped).
+            let htmlBody = sanitizeHtml(marked.parse(textForMarked));
 
             // --- PHASE 3: Rehydrate Tokens ---
             htmlBody = htmlBody.replace(/@@MARK_TOKEN_(\d+)@@/g, (match, idStr) => {
@@ -52,15 +79,15 @@ function registerShareRoutes(app, context) {
 
                 if (m.type === 'annotation' || m.type === 'annotation_legacy') {
                     const comment = encodeURIComponent(m.type === 'annotation' ? m.groups[0] : m.groups[1]);
-                    const textInner = m.type === 'annotation' ? m.groups[1] : m.groups[0];
+                    const textInner = escapeHtml(m.type === 'annotation' ? m.groups[1] : m.groups[0]);
                     const badge = `<span class="annotation-badge"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg></span>`;
-                    const decoded = decodeURIComponent(comment);
+                    const decoded = escapeHtml(decodeURIComponent(comment));
                     const note = decoded ? `<span class="annotation-note">（${decoded}）</span>` : '';
                     return `<span class="has-annotation" data-comment="${comment}"><span style="text-decoration:underline wavy #e74c3c;text-decoration-thickness:2.5px;">${textInner}</span>${badge}${note}</span>`;
                 } else if (m.type === 'highlight') {
-                    return `<span style="text-decoration:underline blue;text-decoration-thickness:2px;">${m.groups[0]}</span>`;
+                    return `<span style="text-decoration:underline blue;text-decoration-thickness:2px;">${escapeHtml(m.groups[0])}</span>`;
                 } else if (m.type === 'mark') {
-                    return `<mark class="md-mark">${m.groups[0]}</mark>`;
+                    return `<mark class="md-mark">${escapeHtml(m.groups[0])}</mark>`;
                 }
                 return match;
             });
@@ -70,7 +97,7 @@ function registerShareRoutes(app, context) {
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>${notepad.name} - DumbPad Shared</title>
+        <title>${escapeHtml(notepad.name)} - DumbPad Shared</title>
         <link rel="stylesheet" href="/Assets/styles.css">
         <link rel="stylesheet" href="/Assets/preview-styles.css">
         <style>
@@ -175,7 +202,7 @@ function registerShareRoutes(app, context) {
     </head>
     <body data-theme="light">
         <div class="shared-card">
-            <h1 class="shared-title">${notepad.name}</h1>
+            <h1 class="shared-title">${escapeHtml(notepad.name)}</h1>
             <article class="markdown-body">
                 ${htmlBody}
             </article>
@@ -190,6 +217,7 @@ function registerShareRoutes(app, context) {
             document.documentElement.setAttribute('data-theme', theme);
 
             // Read-only Popover logic
+            const escapeHtmlClient = s => String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
             let currentPopover = null;
             document.addEventListener('click', (e) => {
                 const annotation = e.target.closest('.has-annotation');
@@ -198,7 +226,7 @@ function registerShareRoutes(app, context) {
                     currentPopover = null;
                 }
                 if (annotation) {
-                    const comment = decodeURIComponent(annotation.dataset.comment);
+                    const comment = escapeHtmlClient(decodeURIComponent(annotation.dataset.comment));
                     const popover = document.createElement('div');
                     popover.className = 'shared-popover';
                     popover.innerHTML = \`<div class="mark-popover-inline-content" style="display:flex;gap:10px;align-items:flex-start">
