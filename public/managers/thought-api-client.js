@@ -72,12 +72,18 @@ export default class ThoughtApiClient {
             text: thoughtState.text || '',
             subItems: Array.isArray(thoughtState.subItems) ? thoughtState.subItems : [],
             tags: Array.isArray(thoughtState.tags) ? thoughtState.tags : [],
-            completed: thoughtState.completed === true
+            completed: thoughtState.completed === true,
+            pinned: thoughtState.pinned === true,
+            attachments: Array.isArray(thoughtState.attachments) ? thoughtState.attachments : []
         });
     }
 
     toggleComplete(id) {
         return this.patch(id, { action: 'toggle_complete' });
+    }
+
+    togglePin(id) {
+        return this.patch(id, { action: 'toggle_pin' });
     }
 
     delete(id) {

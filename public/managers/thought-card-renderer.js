@@ -77,6 +77,8 @@ export function renderThoughtCard({
         highlightSearch
     });
     const isLong = bodyText.split('\n').length > 6 || bodyText.length > 200 || subItems.length > 3;
+    const isPinned = thought.pinned === true;
+    const attachments = Array.isArray(thought.attachments) ? thought.attachments : [];
 
     return {
         bodyText,
@@ -88,6 +90,12 @@ export function renderThoughtCard({
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="20 6 9 17 4 12"></polyline></svg>
                     </div>
                     <div class="thought-time">${dateStr}</div>
+                    <button class="thought-pin-btn ${isPinned ? 'pinned' : ''}" data-pin="${escapeHtml(thought.id)}" title="${isPinned ? '取消置顶' : '置顶'}" aria-label="${isPinned ? '取消置顶' : '置顶'}">
+                        <svg class="thought-pin-icon" viewBox="0 0 24 24" fill="${isPinned ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M12 17v5"></path>
+                            <path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"></path>
+                        </svg>
+                    </button>
                 </div>
                 <div class="thought-body">
                     <div class="thought-text">${bodyHtml}</div>
@@ -95,12 +103,60 @@ export function renderThoughtCard({
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                     </button>
                 </div>
+                ${attachments.length ? renderAttachments(attachments) : ''}
                 ${tagsHtml}
                 ${aiTagsHtml}
                 ${subtasksHtml}
                 ${footerHtml}
             `
     };
+}
+
+function renderAttachments(attachments) {
+    if (!attachments.length) return '';
+    const items = attachments.map(att => {
+        const isImage = att.type && att.type.startsWith('image/');
+        const name = escapeAttText(att.name || '文件');
+        if (isImage) {
+            return `<div class="thought-attachment thought-attachment-image" data-att-id="${escapeAttText(att.id || '')}">
+                        <img src="${escapeAttText(att.dataUrl || '')}" alt="${name}" loading="lazy">
+                    </div>`;
+        }
+        const sizeText = formatAttSize(att.size);
+        const icon = getFileIcon(att.type);
+        return `<a class="thought-attachment thought-attachment-file" href="${escapeAttText(att.dataUrl || '')}" download="${name}" data-att-id="${escapeAttText(att.id || '')}">
+                    <span class="thought-attachment-icon">${icon}</span>
+                    <span class="thought-attachment-info">
+                        <span class="thought-attachment-name">${name}</span>
+                        <span class="thought-attachment-size">${sizeText}</span>
+                    </span>
+                </a>`;
+    }).join('');
+    return `<div class="thought-attachments">${items}</div>`;
+}
+
+function escapeAttText(text) {
+    return String(text || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function formatAttSize(bytes) {
+    const n = Number(bytes || 0);
+    if (n < 1024) return n + ' B';
+    if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+    return (n / (1024 * 1024)).toFixed(1) + ' MB';
+}
+
+function getFileIcon(type) {
+    const t = String(type || '');
+    if (t.startsWith('image/')) return '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="M21 15l-5-5L5 21"/></svg>';
+    if (t.startsWith('video/')) return '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>';
+    if (t.startsWith('audio/')) return '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>';
+    return '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>';
 }
 
 function renderSubtasks({ sortedSubItems, query, linkify, highlightSearch }) {

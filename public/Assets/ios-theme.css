@@ -289,10 +289,11 @@ header {
     font-weight: 500;
     color: var(--muted-text);
     background: transparent;
-    padding: 0 0 8px 0;
+    padding: 0;
     border-radius: 0;
     letter-spacing: 0.02em;
     opacity: 0.75;
+    line-height: 24px;
 }
 
 /* 主文本 */

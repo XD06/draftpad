@@ -403,6 +403,8 @@ function registerThoughtRoutes(app, context) {
                     subItems: Array.isArray(thought.subItems) ? thought.subItems : [],
                     tags: Array.isArray(thought.tags) ? thought.tags : [],
                     completed: thought.completed === true,
+                    pinned: thought.pinned === true,
+                    attachments: Array.isArray(thought.attachments) ? thought.attachments : [],
                     createdAt: thought.createdAt || 0,
                     updatedAt: thought.updatedAt || thought.createdAt || 0
                 })));
@@ -464,6 +466,8 @@ function registerThoughtRoutes(app, context) {
                     subItems: subItems || [],
                     tags: tags || [],
                     completed: completed === true,
+                    pinned: false,
+                    attachments: Array.isArray(req.body.attachments) ? req.body.attachments : [],
                     relationCount: 0,
                     aiStatus: 'pending',
                     version: 1,
@@ -555,6 +559,15 @@ function registerThoughtRoutes(app, context) {
                         thought.completed = !thought.completed;
                         modified = true;
                         break;
+                    case 'toggle_pin':
+                        thought.pinned = !thought.pinned;
+                        if (thought.pinned) {
+                            thought.pinnedAt = Date.now();
+                        } else {
+                            delete thought.pinnedAt;
+                        }
+                        modified = true;
+                        break;
                     case 'append':
                         if (text) {
                             thought.text += text;
@@ -572,6 +585,8 @@ function registerThoughtRoutes(app, context) {
                         if (req.body.subItems !== undefined) { thought.subItems = req.body.subItems; modified = true; }
                         if (req.body.tags !== undefined) { thought.tags = req.body.tags; modified = true; }
                         if (req.body.completed !== undefined) { thought.completed = req.body.completed === true; modified = true; }
+                        if (req.body.pinned !== undefined) { thought.pinned = req.body.pinned === true; modified = true; }
+                        if (req.body.attachments !== undefined) { thought.attachments = req.body.attachments; modified = true; }
                         break;
                     case 'add_subitem':
                         if (!text) return { status: 400, body: { error: 'Subitem text is required' } };

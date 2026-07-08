@@ -69,8 +69,13 @@ export class ThoughtsManager {
         this.quickAddTagsList = document.getElementById('quick-add-tags-list');
         this.quickAddTagInput = document.getElementById('quick-add-tag-input');
         this.quickAddTagSuggestions = document.getElementById('quick-add-tag-suggestions');
+        this.quickAddAttachBtn = document.getElementById('quick-add-attach-btn');
+        this.quickAddFileInput = document.getElementById('quick-add-file-input');
+        this.quickAddAttachmentsPreview = document.getElementById('quick-add-attachments-preview');
         this.tagsFilter = document.getElementById('thoughts-tags-filter');
         this.outboxStatus = document.getElementById('thoughts-outbox-status');
+
+        this.quickAddAttachments = [];
 
         this.thoughts = this.loadThoughtsCache();
         this.quickAddTags = [];
@@ -105,6 +110,7 @@ export class ThoughtsManager {
         this.addThoughtBtn = document.getElementById('fab-add-thought');
         this.addThoughtBtn.addEventListener('click', () => this.openQuickAdd());
         this.initQuickAddEvents();
+        this.initQuickAddAttachEvents();
         this.initThoughtsToggleEvents();
         this.initSearchAndFilterEvents();
         this.initOutboxEvents();
@@ -135,6 +141,89 @@ export class ThoughtsManager {
             });
             this.initQuickAddTagEvents();
         }
+    }
+
+    initQuickAddAttachEvents() {
+        if (this.quickAddAttachBtn && this.quickAddFileInput) {
+            this.quickAddAttachBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.quickAddFileInput.click();
+            });
+            this.quickAddFileInput.addEventListener('change', () => {
+                this.handleQuickAddFileSelect(this.quickAddFileInput.files);
+                this.quickAddFileInput.value = '';
+            });
+        }
+    }
+
+    async handleQuickAddFileSelect(fileList) {
+        if (!fileList || !fileList.length) return;
+        const MAX_FILE_SIZE = 4 * 1024 * 1024;
+        for (const file of fileList) {
+            if (file.size > MAX_FILE_SIZE) {
+                this.app.toaster?.show(`文件「${file.name}」超过 4MB 限制`, 'error', false, 3000);
+                continue;
+            }
+            try {
+                const dataUrl = await this.readFileAsDataURL(file);
+                this.quickAddAttachments.push({
+                    id: Date.now().toString() + Math.random().toString(36).slice(2, 8),
+                    name: file.name,
+                    type: file.type || 'application/octet-stream',
+                    size: file.size,
+                    dataUrl
+                });
+            } catch (err) {
+                console.error('Failed to read file:', err);
+                this.app.toaster?.show(`文件「${file.name}」读取失败`, 'error', false, 2400);
+            }
+        }
+        this.renderQuickAddAttachments();
+    }
+
+    readFileAsDataURL(file) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result);
+            reader.onerror = reject;
+            reader.readAsDataURL(file);
+        });
+    }
+
+    renderQuickAddAttachments() {
+        if (!this.quickAddAttachmentsPreview) return;
+        if (!this.quickAddAttachments.length) {
+            this.quickAddAttachmentsPreview.style.display = 'none';
+            this.quickAddAttachmentsPreview.innerHTML = '';
+            return;
+        }
+        this.quickAddAttachmentsPreview.style.display = 'flex';
+        this.quickAddAttachmentsPreview.innerHTML = this.quickAddAttachments.map(att => {
+            const isImage = att.type && att.type.startsWith('image/');
+            const name = this.escapeHtml(att.name);
+            if (isImage) {
+                return `<div class="qa-att-item qa-att-image">
+                            <img src="${this.escapeHtml(att.dataUrl)}" alt="${name}" loading="lazy">
+                            <button class="qa-att-remove" data-remove-att="${this.escapeHtml(att.id)}" title="移除">×</button>
+                        </div>`;
+            }
+            return `<div class="qa-att-item qa-att-file">
+                        <span class="qa-att-file-name">${name}</span>
+                        <button class="qa-att-remove" data-remove-att="${this.escapeHtml(att.id)}" title="移除">×</button>
+                    </div>`;
+        }).join('');
+    }
+
+    initQuickAddAttachmentRemoveEvents() {
+        if (!this.quickAddAttachmentsPreview) return;
+        this.quickAddAttachmentsPreview.addEventListener('click', (e) => {
+            const btn = e.target.closest('[data-remove-att]');
+            if (!btn) return;
+            e.stopPropagation();
+            const attId = btn.dataset.removeAtt;
+            this.quickAddAttachments = this.quickAddAttachments.filter(a => a.id !== attId);
+            this.renderQuickAddAttachments();
+        });
     }
 
     initThoughtsToggleEvents() {
@@ -425,10 +514,13 @@ export class ThoughtsManager {
         document.body.classList.add('quick-add-open');
         this.quickAddInput.value = '';
         this.quickAddTags = [];
+        this.quickAddAttachments = [];
         this.quickAddInput.style.height = '52px';
         this.quickAddSubmit.disabled = false;
         this.renderQuickAddTags();
+        this.renderQuickAddAttachments();
         this.hideQuickAddTagSuggestions();
+        this.initQuickAddAttachmentRemoveEvents();
 
         // Auto-focus to trigger mobile keyboard
         setTimeout(() => this.quickAddInput.focus(), 80);
@@ -444,16 +536,18 @@ export class ThoughtsManager {
 
     async submitQuickAdd() {
         const text = this.quickAddInput.value.trim();
-        if (!text) {
+        if (!text && !this.quickAddAttachments.length) {
             this.quickAddInput.focus();
             return;
         }
         if (this.isAdding) return;
         this.isAdding = true;
         const tags = [...this.quickAddTags];
+        const attachments = [...this.quickAddAttachments];
         const tempThought = createLocalPendingThought({
-            text,
+            text: text || '(附件)',
             tags,
+            attachments,
             now: Date.now()
         });
 
@@ -470,7 +564,7 @@ export class ThoughtsManager {
 
         try {
             const data = markCreatedThoughtPending(
-                await this.apiClient.create({ text, tags })
+                await this.apiClient.create({ text: text || '(附件)', tags, attachments })
             );
             this.pendingCreateIds.add(data.id);
             const tempIndex = this.thoughts.findIndex(t => t.id === tempThought.id);
@@ -488,8 +582,9 @@ export class ThoughtsManager {
         } catch (err) {
             console.error('Failed to add thought:', err);
             this.handleOutboxResult(this.outbox.enqueueCreate(buildQuickAddCreateOutboxItem({
-                text,
+                text: text || '(附件)',
                 tags,
+                attachments,
                 tempThought
             })));
             this.render();
@@ -706,6 +801,29 @@ export class ThoughtsManager {
         }
     }
 
+    async togglePin(id) {
+        const thought = this.thoughts.find(t => t.id === id);
+        if (thought) {
+            thought.pinned = !thought.pinned;
+            if (thought.pinned) {
+                thought.pinnedAt = Date.now();
+            } else {
+                delete thought.pinnedAt;
+            }
+            this.render();
+        }
+
+        try {
+            await this.apiClient.togglePin(id);
+        } catch (err) {
+            console.error('Failed to toggle pin:', err);
+            if (thought) {
+                this.enqueueThoughtOverwrite(thought);
+                this.render();
+            }
+        }
+    }
+
     async deleteThought(id) {
         return this.confirmAndDeleteThought(id);
     }
@@ -786,7 +904,7 @@ export class ThoughtsManager {
         for (let i = start; i < end; i++) {
             const thought = filtered[i];
             const card = document.createElement('div');
-            card.className = `thought-card ${thought.completed ? 'completed' : ''}`;
+            card.className = `thought-card ${thought.completed ? 'completed' : ''} ${thought.pinned ? 'pinned' : ''}`;
             card.dataset.id = thought.id;
 
             const renderedCard = renderThoughtCard({
@@ -919,6 +1037,14 @@ export class ThoughtsManager {
         this.bindThoughtTimeMarkers(card, thought);
         this.bindThoughtSwipeDelete(card, thought);
 
+        const pinBtn = card.querySelector('.thought-pin-btn');
+        if (pinBtn) {
+            pinBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.togglePin(thought.id);
+            });
+        }
+
         let lastTap = 0;
         let tapTimeout;
         const handleGesture = (e) => {
@@ -1031,6 +1157,7 @@ export class ThoughtsManager {
         return (
             this.hasActiveThoughtSelection() ||
             event.target.closest('.thought-dot') ||
+            event.target.closest('.thought-pin-btn') ||
             event.target.closest('.thought-copy-btn') ||
             event.target.closest('.thought-relations-btn') ||
             event.target.closest('.thought-ai-status') ||
@@ -1041,6 +1168,7 @@ export class ThoughtsManager {
             event.target.closest('.thought-tag-remove') ||
             event.target.closest('.thought-relations-panel') ||
             event.target.closest('.thought-tag') ||
+            event.target.closest('.thought-attachment') ||
             event.target.closest('.subtask') ||
             event.target.closest('.subtask-add-inline') ||
             event.target.closest('.subtasks-summary-row') ||
@@ -1518,7 +1646,9 @@ export class ThoughtsManager {
                 text: thought.text,
                 subItems: thought.subItems || [],
                 tags,
-                completed: thought.completed
+                completed: thought.completed,
+                pinned: thought.pinned,
+                attachments: thought.attachments || []
             });
         } catch (err) {
             console.error('Failed to accept AI tag:', err);
@@ -1550,7 +1680,9 @@ export class ThoughtsManager {
                 text: thought.text,
                 subItems: thought.subItems || [],
                 tags: nextTags,
-                completed: thought.completed
+                completed: thought.completed,
+                pinned: thought.pinned,
+                attachments: thought.attachments || []
             });
         } catch (err) {
             console.error('Failed to remove thought tag:', err);
@@ -2126,6 +2258,7 @@ export class ThoughtsManager {
         const editable = getEditableThoughtParts(thought);
         let subtasks = editable.subtasks;
         const bodyText = editable.bodyText;
+        let editAttachments = Array.isArray(thought.attachments) ? thought.attachments.map(a => ({ ...a })) : [];
 
         // --- 1. Body textarea ---
         const textarea = document.createElement('textarea');
@@ -2188,6 +2321,71 @@ export class ThoughtsManager {
         renderSubtaskEditor();
         textarea.parentNode.insertBefore(panel, textarea.nextSibling);
 
+        // --- Attachment editor panel ---
+        const attPanel = document.createElement('div');
+        attPanel.className = 'thought-edit-attachments';
+        const renderAttachmentsEditor = () => {
+            attPanel.innerHTML = '';
+            if (!editAttachments.length) {
+                attPanel.style.display = 'none';
+                return;
+            }
+            attPanel.style.display = 'flex';
+            editAttachments.forEach((att, i) => {
+                const isImage = att.type && att.type.startsWith('image/');
+                const item = document.createElement('div');
+                item.className = 'thought-edit-att-item';
+                if (isImage) {
+                    item.innerHTML = `<img src="${this.escapeHtml(att.dataUrl)}" alt="${this.escapeHtml(att.name)}" loading="lazy"><button class="thought-edit-att-remove" title="移除">×</button>`;
+                } else {
+                    item.innerHTML = `<span class="thought-edit-att-name">${this.escapeHtml(att.name)}</span><button class="thought-edit-att-remove" title="移除">×</button>`;
+                }
+                item.querySelector('.thought-edit-att-remove').onclick = () => {
+                    editAttachments.splice(i, 1);
+                    renderAttachmentsEditor();
+                };
+                attPanel.appendChild(item);
+            });
+        };
+        renderAttachmentsEditor();
+
+        // Add attachment button in edit mode
+        const editAttBtn = document.createElement('button');
+        editAttBtn.className = 'thought-edit-att-add';
+        editAttBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></svg><span>添加附件</span>';
+        const editFileInput = document.createElement('input');
+        editFileInput.type = 'file';
+        editFileInput.multiple = true;
+        editFileInput.style.display = 'none';
+        editFileInput.accept = 'image/*,video/*,audio/*,.pdf,.doc,.docx,.txt,.zip,.rar,.7z';
+        editAttBtn.onclick = () => editFileInput.click();
+        editFileInput.onchange = async () => {
+            const MAX_FILE_SIZE = 4 * 1024 * 1024;
+            for (const file of editFileInput.files) {
+                if (file.size > MAX_FILE_SIZE) {
+                    this.app.toaster?.show(`文件「${file.name}」超过 4MB 限制`, 'error', false, 3000);
+                    continue;
+                }
+                try {
+                    const dataUrl = await this.readFileAsDataURL(file);
+                    editAttachments.push({
+                        id: Date.now().toString() + Math.random().toString(36).slice(2, 8),
+                        name: file.name,
+                        type: file.type || 'application/octet-stream',
+                        size: file.size,
+                        dataUrl
+                    });
+                } catch (err) {
+                    console.error('Failed to read file:', err);
+                }
+            }
+            renderAttachmentsEditor();
+            editFileInput.value = '';
+        };
+        attPanel.appendChild(editAttBtn);
+        attPanel.appendChild(editFileInput);
+        textarea.parentNode.insertBefore(attPanel, panel.nextSibling);
+
         // --- Save logic ---
         let saveStarted = false;
         const saveAndExit = () => {
@@ -2199,13 +2397,16 @@ export class ThoughtsManager {
             saveStarted = true;
             const newText = textarea.value.trim();
             const nextSubItems = cleanSubItems(subtasks);
+            const nextAttachments = editAttachments;
 
             const hasTextChanged = newText !== thought.text;
             const hasSubsChanged = JSON.stringify(nextSubItems) !== JSON.stringify(thought.subItems || []);
+            const hasAttsChanged = JSON.stringify(nextAttachments) !== JSON.stringify(thought.attachments || []);
 
-            if (hasTextChanged || hasSubsChanged) {
+            if (hasTextChanged || hasSubsChanged || hasAttsChanged) {
                 thought.text = newText;
                 thought.subItems = nextSubItems;
+                thought.attachments = nextAttachments;
                 thought.updatedAt = Date.now();
                 this.exitEditMode(card);
                 this.render();
@@ -2263,10 +2464,12 @@ export class ThoughtsManager {
         card.classList.remove('editing');
         const textarea = card.querySelector('.edit-textarea');
         const panel = card.querySelector('.subtask-editor-panel');
+        const attPanel = card.querySelector('.thought-edit-attachments');
         const textEl = card.querySelector('.thought-text');
         const subtaskList = card.querySelector('.subtask-list');
         if (textarea) textarea.remove();
         if (panel) panel.remove();
+        if (attPanel) attPanel.remove();
         if (textEl) textEl.style.display = '';
         if (subtaskList) subtaskList.style.display = '';
         // Cleanup listeners

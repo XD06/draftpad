@@ -29,6 +29,14 @@ export function filterThoughts(thoughts, { query = '', status = 'all', activeTag
 
 export function sortThoughts(thoughts) {
     return [...thoughts].sort((a, b) => {
+        const aPinned = a.pinned === true;
+        const bPinned = b.pinned === true;
+        if (aPinned !== bPinned) {
+            return aPinned ? -1 : 1;
+        }
+        if (aPinned && bPinned) {
+            return Number(b.pinnedAt || 0) - Number(a.pinnedAt || 0);
+        }
         if (a.completed !== b.completed) {
             return a.completed ? 1 : -1;
         }

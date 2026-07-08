@@ -46,7 +46,8 @@ export default class ThoughtOutbox {
         return {
             ...thought,
             subItems: Array.isArray(thought.subItems) ? thought.subItems.map(item => ({ ...item })) : [],
-            tags: Array.isArray(thought.tags) ? [...thought.tags] : []
+            tags: Array.isArray(thought.tags) ? [...thought.tags] : [],
+            attachments: Array.isArray(thought.attachments) ? thought.attachments.map(att => ({ ...att })) : []
         };
     }
 
@@ -56,7 +57,9 @@ export default class ThoughtOutbox {
             text: thought.text || '',
             subItems: Array.isArray(thought.subItems) ? thought.subItems.map(item => ({ ...item })) : [],
             tags: Array.isArray(thought.tags) ? [...thought.tags] : [],
-            completed: thought.completed === true
+            completed: thought.completed === true,
+            pinned: thought.pinned === true,
+            attachments: Array.isArray(thought.attachments) ? thought.attachments.map(att => ({ ...att })) : []
         };
     }
 
