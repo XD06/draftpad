@@ -80,6 +80,8 @@ export class HybridMarkdownEditor {
             input: () => {
                 if (!this.isDecorating && !this.suppressInput) {
                     this.scheduleDecorateRenderedMarks();
+                    clearTimeout(this.typingDecorateTimer);
+                    this.typingDecorateTimer = setTimeout(() => this.decorateRenderedMarks(), 80);
                     this.emitChange();
                 }
             },
@@ -119,7 +121,6 @@ export class HybridMarkdownEditor {
                 : this.readWysiwygMarkdownValue(this._lastValue || '');
             this._lastValue = value;
             this.buildHeadingIndex();
-            this.scheduleDecorateRenderedMarks();
             this.onInput(value);
             this.dispatch('input', { value });
             this.dispatch('change', { value });
@@ -445,10 +446,7 @@ export class HybridMarkdownEditor {
             this.editor?.enable?.();
         }
         this.container.querySelectorAll('[contenteditable]').forEach(el => {
-            if (el.classList?.contains('md-time-marker') ||
-                el.classList?.contains('md-mark') ||
-                el.classList?.contains('has-annotation') ||
-                el.hasAttribute('data-draw')) return;
+            if (el.classList?.contains('md-time-marker')) return;
             el.setAttribute('contenteditable', enabled ? 'true' : 'false');
         });
         this.container.querySelectorAll('textarea').forEach(el => {
@@ -470,6 +468,7 @@ export class HybridMarkdownEditor {
         this.sourceTextarea.setAttribute('aria-label', 'Markdown source');
         this.sourceTextarea.spellcheck = true;
         this.sourceTextarea.addEventListener('input', () => {
+            this.sourceCaretOffset = this.sourceTextarea.selectionStart;
             this._lastValue = this.sourceTextarea.value;
             this.buildHeadingIndex();
             this.onInput(this._lastValue);
@@ -583,6 +582,7 @@ export class HybridMarkdownEditor {
         // text node — if the caret is elsewhere, replacing target nodes
         // doesn't affect it.
         const CARET_MARKER = '\uFEFF';
+        const caretSnapshot = preserveCaret ? this.saveCaretSnapshot(root) : null;
         let caretMarked = false;
         if (preserveCaret) {
             const selection = window.getSelection();
@@ -640,6 +640,8 @@ export class HybridMarkdownEditor {
                     break;
                 }
             }
+        } else if (didReplace && caretSnapshot) {
+            this.restoreCaretSnapshot(root, caretSnapshot);
         }
 
         this.isDecorating = false;
@@ -671,12 +673,7 @@ export class HybridMarkdownEditor {
                     break;
                 }
             }
-            if (needsFix) {
-                // Delegate caret preservation to decorateRenderedMarks.
-                // It uses a zero-width marker (\uFEFF) approach that is
-                // immune to text-length changes caused by decoration.
-                this.decorateRenderedMarks(true);
-            }
+            if (needsFix) this.scheduleDecorateRenderedMarks();
         });
 
         // Attempt to connect immediately; if Vditor's DOM isn't ready
@@ -795,16 +792,9 @@ export class HybridMarkdownEditor {
         }
     }
 
-    /**
-     * Set contenteditable="false" on all rendered inline marks so Vditor
-     * treats them as atomic units.  This is a first line of defense;
-     * the MutationObserver in bindMarkerProtection handles cases where
-     * Vditor still breaks them.
-     */
+    /** Keep time markers atomic while leaving user-authored marked text editable. */
     lockInlineMarks(root) {
-        root.querySelectorAll(
-            '.md-time-marker, .md-mark, [data-draw], .has-annotation'
-        ).forEach(el => {
+        root.querySelectorAll('.md-time-marker').forEach(el => {
             // Only set the attribute if it's not already set.
             // Setting the same value still triggers MutationObserver
             // callbacks and can cause unnecessary browser re-layouts.
@@ -1404,9 +1394,12 @@ export class HybridMarkdownEditor {
         this.container.addEventListener('click', (event) => {
             const annotation = event.target.closest('.has-annotation, [data-note], .md-mark, [data-draw]');
             if (!annotation || !this.container.contains(annotation)) return;
-            event.preventDefault();
-            event.stopPropagation();
-            this.showAnnotationPopover(annotation, Boolean(event.target.closest('.annotation-badge')));
+            const clickedBadge = Boolean(event.target.closest('.annotation-badge'));
+            if (this.isReadingMode || clickedBadge) {
+                event.preventDefault();
+                event.stopPropagation();
+            }
+            this.showAnnotationPopover(annotation, clickedBadge);
         });
     }
 
@@ -1576,9 +1569,14 @@ export class HybridMarkdownEditor {
         const selection = window.getSelection();
         selection?.removeAllRanges();
         selection?.addRange(commandRange);
-        this.insertRenderedTimeMarkerAtRange(commandRange, buildTimeMarker());
-        this.notifyEditorValueChanged();
-        this.scheduleDecorateRenderedMarks();
+        const markerText = buildTimeMarker();
+        this.insertRenderedTimeMarkerAtRange(commandRange, markerText);
+        setTimeout(() => {
+            this.notifyEditorValueChanged();
+            this.restoreCaretAfterTimeMarker(markerText);
+            this.scheduleDecorateRenderedMarks();
+            requestAnimationFrame(() => this.restoreCaretAfterTimeMarker(markerText));
+        }, 0);
         return true;
     }
 
@@ -1597,14 +1595,37 @@ export class HybridMarkdownEditor {
         const trailingGuard = document.createTextNode('\u200B');
         range.insertNode(marker);
         marker.after(trailingGuard);
-        this.placeCaretAfterNode(trailingGuard);
+        this.placeCaretInTextNode(trailingGuard);
         return marker;
+    }
+
+    restoreCaretAfterTimeMarker(markerText) {
+        const root = this.container.querySelector('.vditor-wysiwyg .vditor-reset');
+        const marker = Array.from(root?.querySelectorAll('.md-time-marker') || [])
+            .find(element => element.dataset.timeSource === markerText);
+        if (!marker) return;
+        let guard = marker.nextSibling;
+        if (!guard || guard.nodeType !== Node.TEXT_NODE) {
+            guard = document.createTextNode('\u200B');
+            marker.after(guard);
+        }
+        this.placeCaretInTextNode(guard);
     }
 
     placeCaretAfterNode(node) {
         if (!node) return;
         const range = document.createRange();
         range.setStartAfter(node);
+        range.collapse(true);
+        const selection = window.getSelection();
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+    }
+
+    placeCaretInTextNode(node) {
+        if (!node || node.nodeType !== Node.TEXT_NODE) return;
+        const range = document.createRange();
+        range.setStart(node, node.nodeValue?.length || 0);
         range.collapse(true);
         const selection = window.getSelection();
         selection?.removeAllRanges();
@@ -1853,6 +1874,50 @@ export class HybridMarkdownEditor {
         return this.escapeHtml(text).replace(/"/g, '&quot;');
     }
 
+    getNodePath(root, node) {
+        const path = [];
+        let current = node;
+        while (current && current !== root) {
+            const parent = current.parentNode;
+            if (!parent) return null;
+            path.unshift(Array.prototype.indexOf.call(parent.childNodes, current));
+            current = parent;
+        }
+        return current === root ? path : null;
+    }
+
+    getNodeAtPath(root, path = []) {
+        return path.reduce((node, index) => node?.childNodes?.[index], root) || null;
+    }
+
+    getMarkdownOffsetForDomPoint(root, node, offset) {
+        if (!root || !node || typeof this.editor?.html2md !== 'function') return null;
+        const path = this.getNodePath(root, node);
+        if (!path) return null;
+        const clone = root.cloneNode(true);
+        const cloneNode = this.getNodeAtPath(clone, path);
+        if (!cloneNode) return null;
+
+        const marker = '\uE000';
+        try {
+            const range = document.createRange();
+            const maxOffset = cloneNode.nodeType === Node.TEXT_NODE
+                ? cloneNode.nodeValue.length
+                : cloneNode.childNodes.length;
+            range.setStart(cloneNode, Math.min(Math.max(0, offset), maxOffset));
+            range.collapse(true);
+            const caretNode = document.createTextNode(marker);
+            range.insertNode(caretNode);
+            this.restoreRenderedTimeMarkers(clone);
+            this.restoreAllRenderedMarks(clone);
+            const markdown = this.stripDisplayGuards(this.editor.html2md(clone.innerHTML) || '');
+            const markdownOffset = markdown.indexOf(marker);
+            return markdownOffset >= 0 ? markdownOffset : null;
+        } catch (_error) {
+            return null;
+        }
+    }
+
     setSourceMode(enabled) {
         if (this.isReadingMode) enabled = false;
         this.sourceMode = Boolean(enabled);
@@ -1860,19 +1925,27 @@ export class HybridMarkdownEditor {
         this.sourceToggle?.classList.toggle('active', this.sourceMode);
 
         if (this.sourceMode) {
+            const root = this.container.querySelector('.vditor-wysiwyg .vditor-reset');
+            const selection = window.getSelection();
+            const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
+            const sourceOffset = range && root?.contains(range.startContainer)
+                ? this.getMarkdownOffsetForDomPoint(root, range.startContainer, range.startOffset)
+                : Math.min(this.sourceCaretOffset || 0, (this._lastValue || '').length);
+            const scroller = this.container.querySelector('.vditor-wysiwyg');
+            const scrollRatio = scroller?.scrollHeight > scroller?.clientHeight
+                ? scroller.scrollTop / (scroller.scrollHeight - scroller.clientHeight)
+                : 0;
+
             this.markerObserver?.disconnect();
-            const value = this._lastValue || this.pendingValue || '';
-            this.sourceTextarea.value = value || '';
-            this.sourceTextarea.setSelectionRange(0, 0);
-            this.sourceTextarea.scrollTop = 0;
+            const value = this.readWysiwygMarkdownValue(this._lastValue || this.pendingValue || '');
+            this._lastValue = value;
+            this.sourceTextarea.value = value;
+            this.sourceCaretOffset = Math.min(Math.max(0, sourceOffset ?? 0), value.length);
             requestAnimationFrame(() => {
-                this.sourceTextarea.setSelectionRange(0, 0);
-                this.sourceTextarea.scrollTop = 0;
+                this.sourceTextarea.setSelectionRange(this.sourceCaretOffset, this.sourceCaretOffset);
+                const maxScroll = Math.max(0, this.sourceTextarea.scrollHeight - this.sourceTextarea.clientHeight);
+                this.sourceTextarea.scrollTop = maxScroll * scrollRatio;
                 this.sourceTextarea.focus({ preventScroll: true });
-                setTimeout(() => {
-                    this.sourceTextarea.setSelectionRange(0, 0);
-                    this.sourceTextarea.scrollTop = 0;
-                }, 0);
             });
         } else if (this.ready && this.editor?.setValue && this.sourceTextarea) {
             this.editor.setValue(this.prepareDisplayValue(this.sourceTextarea.value || ''));

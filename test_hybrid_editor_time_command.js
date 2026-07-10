@@ -34,7 +34,7 @@ function run() {
         'WYSIWYG markdown reads should restore rendered time markers before serializing'
     );
     assert(
-        source.includes('this.insertRenderedTimeMarkerAtRange(commandRange, buildTimeMarker());') &&
+        source.includes('this.insertRenderedTimeMarkerAtRange(commandRange, markerText);') &&
             !source.includes('this.editor?.insertValue?.(buildTimeMarker(), true);'),
         'WYSIWYG /time insertion should keep inline position without Vditor block serialization'
     );
@@ -53,6 +53,25 @@ function run() {
         'WYSIWYG /time handling should not update only the internal cache without dispatching input/change'
     );
 
+    assert(
+        source.includes("root.querySelectorAll('.md-time-marker')") &&
+            !source.includes("'.md-time-marker, .md-mark, [data-draw], .has-annotation'"),
+        'Only time markers should stay atomic; highlight, draw-line and annotation text must remain editable'
+    );
+    assert(
+        source.includes('getMarkdownOffsetForDomPoint(root, node, offset)') &&
+            source.includes('this.getMarkdownOffsetForDomPoint(root, range.startContainer, range.startOffset)') &&
+            source.includes('this.sourceTextarea.setSelectionRange(this.sourceCaretOffset, this.sourceCaretOffset);'),
+        'Source mode should map the WYSIWYG caret to its Markdown offset instead of resetting to zero'
+    );
+    assert(
+        !source.includes('this.decorateRenderedMarks(true);'),
+        'Marker observer should coalesce decoration instead of mutating during the input microtask'
+    );
+    assert(
+        source.includes('range.insertNode(caretNode);') && source.includes("const CARET_MARKER = '\\uFEFF';"),
+        'Decoration should anchor the caret even when raw /time source appears in a neighboring node'
+    );
     console.log('Hybrid editor time command checks passed');
 }
 
