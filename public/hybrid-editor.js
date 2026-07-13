@@ -437,6 +437,7 @@ export class HybridMarkdownEditor {
             this.setSourceMode(false);
         }
         this.container.classList.toggle('is-reading-mode', this.isReadingMode);
+        if (this.sourceToggle) this.sourceToggle.hidden = this.isReadingMode;
         this.setEditable(!this.isReadingMode);
     }
 
@@ -482,10 +483,28 @@ export class HybridMarkdownEditor {
         this.sourceToggle.setAttribute('aria-label', 'Toggle Markdown source');
         this.sourceToggle.setAttribute('data-tooltip', 'Markdown Source');
         this.sourceToggle.textContent = '</>';
+        this.sourceToggle.hidden = this.isReadingMode;
         this.sourceToggle.addEventListener('click', () => this.setSourceMode(!this.sourceMode));
 
         this.container.appendChild(this.sourceTextarea);
+        this.sourceToggleAnchor = document.createComment('source-toggle-anchor');
+        this.container.appendChild(this.sourceToggleAnchor);
         this.container.appendChild(this.sourceToggle);
+
+        this.sourceToggleMedia = window.matchMedia('(min-width: 981px)');
+        this.syncSourceTogglePlacement = () => {
+            const floatingActions = document.querySelector('.floating-actions');
+            if (this.sourceToggleMedia.matches && floatingActions) {
+                this.sourceToggle.classList.add('floating-btn', 'floating-source-toggle');
+                floatingActions.appendChild(this.sourceToggle);
+                return;
+            }
+
+            this.sourceToggle.classList.remove('floating-btn', 'floating-source-toggle');
+            this.sourceToggleAnchor.after(this.sourceToggle);
+        };
+        this.sourceToggleMedia.addEventListener?.('change', this.syncSourceTogglePlacement);
+        this.syncSourceTogglePlacement();
     }
 
     scheduleDecorateRenderedMarks() {

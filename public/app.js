@@ -172,9 +172,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (h1) { h1.textContent = text; h1.title = text; }
     }
 
-    function applyReadingModeTitle() {
-        const name = getCurrentNotepadName();
+    function applyCurrentNotepadTitle() {
+        const currentNotepad = currentNotepads.find(notepad => notepad.id === currentNotepadId);
+        const name = currentNotepad?.name || _siteTitle || 'DumbPad';
         setHeaderTitle(name);
+        const pageTitle = document.getElementById('page-title');
+        if (pageTitle) pageTitle.textContent = currentNotepad ? `${name} - DumbPad` : name;
     }
 
     function setStartupSyncStatus(state = 'idle', text = '') {
@@ -881,8 +884,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         renderRecentFiles(notepadId, currentNotepads, selectNotepad, deleteNotepadById, renameNotepadById);
         const name = getCurrentNotepadName();
         updateUrlWithNotepad(name);
-        const pageTitle = document.getElementById('page-title');
-        if (pageTitle) pageTitle.textContent = `${name} - DumbPad`;
+        applyCurrentNotepadTitle();
         return true;
     }
 
@@ -1320,8 +1322,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         renderNotepadLists(currentNotepadId);
         if (currentNotepadId === id) {
             updateUrlWithNotepad(newName);
-            const pageTitle = document.getElementById('page-title');
-            if (pageTitle) pageTitle.textContent = `${newName} - DumbPad`;
+            applyCurrentNotepadTitle();
         }
         hideModal(renameModal);
 
@@ -1342,8 +1343,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             renderNotepadLists(currentNotepadId);
             if (currentNotepadId === id) {
                 updateUrlWithNotepad(result.name);
-                const pageTitle = document.getElementById('page-title');
-                if (pageTitle) pageTitle.textContent = `${result.name} - DumbPad`;
+                applyCurrentNotepadTitle();
             }
             wsClient.sendUpdate('notepad_change', { action: 'rename', notepadId: id, newName: result.name });
             toaster.show('Renamed notepad');
@@ -1353,8 +1353,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             renderNotepadLists(currentNotepadId);
             if (currentNotepadId === id) {
                 updateUrlWithNotepad(previousNotepad.name);
-                const pageTitle = document.getElementById('page-title');
-                if (pageTitle) pageTitle.textContent = `${previousNotepad.name} - DumbPad`;
+                applyCurrentNotepadTitle();
             }
             const message = err?.status === 409
                 ? '该 Notepad 已在其他设备更新，请刷新后再重命名'
@@ -1878,6 +1877,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
         const selectedNotepad = findNotepadByIdOrName(currentNotepads, id);
         currentNotepadId = selectedNotepad?.id || null;
+        applyCurrentNotepadTitle();
         
         // --- UI Visibility ---
         const emptyState = document.getElementById('empty-state');
@@ -1889,7 +1889,6 @@ document.addEventListener('DOMContentLoaded', async () => {
             emptyState.style.display = 'flex';
             hybridEditor.style.display = 'none';
             // No valid notepad selected — avoid any further loading/rendering
-            document.getElementById('page-title').textContent = `${_siteTitle} - DumbPad`;
             return;
         }
 
@@ -1902,8 +1901,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         updateToC(); // Update TOC on selection
 
-        // Update header title if in reading mode
-        if (isReadingMode) applyReadingModeTitle();
+        applyCurrentNotepadTitle();
 
         if (query && editorInstance) {
             setTimeout(() => editorInstance.jumpToKeyword(query), 100);
@@ -1911,7 +1909,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         // editor.focus(); // Disabled to allow opening in full preview mode
         const name = getCurrentNotepadName();
         updateUrlWithNotepad(name);
-        document.getElementById('page-title').textContent = `${name} - DumbPad`;
     }
 
     async function selectNextNotepad(forward = true) {
@@ -2247,11 +2244,10 @@ document.addEventListener('DOMContentLoaded', async () => {
 
             if (isReadingMode) {
                 document.body.classList.add('reading-mode-active');
-                applyReadingModeTitle();
             } else {
                 document.body.classList.remove('reading-mode-active');
-                setHeaderTitle(_siteTitle);
             }
+            applyCurrentNotepadTitle();
 
             updateToC(); // Update TOC when toggling mode
 
@@ -2565,7 +2561,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (!navigator.onLine) return;
             const config = await (await fetch('/api/config')).json();
             _siteTitle = config.siteTitle;
-            if (!isReadingMode) setHeaderTitle(_siteTitle);
+            applyCurrentNotepadTitle();
         } catch (err) {
             console.warn('Error loading config:', err);
         }

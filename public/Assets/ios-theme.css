@@ -19,6 +19,9 @@
     /* iOS 导航栏 */
     --nav-bg: rgba(255, 255, 255, 0.28);
     --nav-separator: rgba(60, 60, 67, 0.16);
+    --nav-glass-bg: rgba(249, 249, 252, 0.42);
+    --nav-glass-border: rgba(255, 255, 255, 0.58);
+    --nav-glass-shadow: rgba(39, 37, 33, 0.07);
 
     /* iOS 文字色 */
     --text-color: #1c1c1e;
@@ -76,6 +79,9 @@
     --modal-bg: #2c2c2e;
     --nav-bg: rgba(28, 28, 30, 0.30);
     --nav-separator: rgba(255, 255, 255, 0.14);
+    --nav-glass-bg: rgba(28, 28, 30, 0.46);
+    --nav-glass-border: rgba(255, 255, 255, 0.12);
+    --nav-glass-shadow: rgba(0, 0, 0, 0.24);
     --text-color: #ffffff;
     --muted-text: #8e8e93;
     --primary-color: #FFD60A;
@@ -164,6 +170,30 @@ header {
     display: flex;
     flex-direction: column;
     isolation: isolate;
+}
+
+/* Desktop keeps the existing floating header shape, but uses a genuinely
+   translucent material. The mobile header intentionally retains its current
+   opacity and spacing. */
+@media (min-width: 981px) {
+    header {
+        background: var(--nav-glass-bg) !important;
+        border: 1px solid var(--nav-glass-border) !important;
+        backdrop-filter: blur(22px) saturate(122%) contrast(102%);
+        -webkit-backdrop-filter: blur(22px) saturate(122%) contrast(102%);
+        box-shadow:
+            0 2px 7px var(--nav-glass-shadow),
+            inset 0 1px 0 rgba(255, 255, 255, 0.36) !important;
+        background-clip: padding-box;
+    }
+}
+
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    @media (min-width: 981px) {
+        header {
+            background: color-mix(in srgb, var(--header-bg) 88%, transparent) !important;
+        }
+    }
 }
 
 /* header-top / header-left / header-right 必须透明，不能遮挡毛玻璃 */
@@ -1462,5 +1492,625 @@ main {
 @media (max-width: 380px) {
     header #header-title h1 {
         font-size: 14px !important;
+    }
+}
+
+/* Desktop glass needs real app surfaces behind the fixed header. Previously
+   .container reserved an empty 76px strip, so backdrop-filter only sampled a
+   flat body color and looked opaque. Extend the three columns behind header,
+   then keep their interactive content inside a safe top inset. */
+@media (min-width: 981px) {
+    body:not(.thoughts-mode) .container {
+        padding-top: 12px !important;
+    }
+
+    body:not(.thoughts-mode) .three-column-layout {
+        height: calc(100vh - 24px) !important;
+        min-height: 0 !important;
+        max-height: calc(100vh - 24px) !important;
+    }
+
+    body:not(.thoughts-mode) .sidebar,
+    body:not(.thoughts-mode) .editor-main,
+    body:not(.thoughts-mode) .hybrid-editor.typora-editor-shell,
+    body:not(.thoughts-mode) .hybrid-editor.typora-editor-shell.vditor,
+    body:not(.thoughts-mode) .typora-editor-shell .vditor {
+        height: calc(100vh - 24px) !important;
+        min-height: 0 !important;
+        max-height: calc(100vh - 24px) !important;
+    }
+
+    body:not(.thoughts-mode) .sidebar-header {
+        padding-top: 64px;
+    }
+
+    body:not(.thoughts-mode) .typora-editor-shell .vditor-wysiwyg {
+        scroll-padding-top: 78px;
+    }
+
+    body:not(.thoughts-mode) .typora-editor-shell .vditor-wysiwyg pre.vditor-reset {
+        margin: 64px auto 0 !important;
+        padding-top: 24px !important;
+    }
+
+    body:not(.thoughts-mode) .typora-source-editor {
+        padding-top: 102px !important;
+        scroll-padding-top: 78px;
+    }
+}
+
+/* Desktop directory: keep the existing information architecture while
+   reducing the disconnected pill-menu appearance. */
+@media (min-width: 981px) {
+    body:not(.thoughts-mode) .sidebar-left {
+        background: color-mix(in srgb, var(--header-bg) 30%, transparent);
+        border: 1px solid rgba(255, 255, 255, 0.48);
+        border-radius: 12px;
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.24);
+        backdrop-filter: blur(10px) saturate(112%);
+        -webkit-backdrop-filter: blur(10px) saturate(112%);
+    }
+
+    body:not(.thoughts-mode) .sidebar-left .sidebar-header {
+        padding-right: 18px;
+        padding-bottom: 8px;
+        padding-left: 18px;
+    }
+
+    body:not(.thoughts-mode) .sidebar-left .sidebar-header h3 {
+        color: color-mix(in srgb, var(--text-color) 62%, var(--muted-text));
+        font-size: 12px;
+        font-weight: 600;
+    }
+
+    body:not(.thoughts-mode) .sidebar-left .directory-tree {
+        padding: 8px 10px 16px;
+    }
+
+    body:not(.thoughts-mode) .sidebar-left .dir-group {
+        margin-bottom: 8px;
+    }
+
+    body:not(.thoughts-mode) .sidebar-left .dir-group-title {
+        min-height: 32px;
+        padding: 7px 9px;
+        border-radius: 7px;
+        color: color-mix(in srgb, var(--muted-text) 88%, var(--text-color));
+        font-size: 12px;
+        transition: background-color 160ms ease-out, color 160ms ease-out;
+    }
+
+    body:not(.thoughts-mode) .sidebar-left .dir-count {
+        color: color-mix(in srgb, var(--muted-text) 78%, transparent);
+        font-size: 11px;
+        font-variant-numeric: tabular-nums;
+    }
+
+    body:not(.thoughts-mode) .sidebar-left .dir-items {
+        gap: 4px;
+    }
+
+    body:not(.thoughts-mode) .sidebar-left .sidebar-item-wrapper {
+        position: relative;
+        min-height: 40px;
+        margin: 0;
+        padding: 0;
+        border: 1px solid transparent;
+        border-radius: 9px;
+        background: color-mix(in srgb, var(--header-bg) 52%, transparent);
+        color: color-mix(in srgb, var(--text-color) 82%, var(--muted-text));
+        box-shadow: none;
+        transition:
+            background-color 160ms ease-out,
+            border-color 160ms ease-out,
+            color 160ms ease-out;
+    }
+
+    body:not(.thoughts-mode) .sidebar-left .dir-item {
+        min-height: 38px;
+        padding: 9px 12px 9px 22px;
+        font-size: 12.5px;
+    }
+
+    body:not(.thoughts-mode) .sidebar-left .item-time {
+        color: color-mix(in srgb, var(--muted-text) 86%, transparent);
+        font-size: 11px;
+        font-variant-numeric: tabular-nums;
+    }
+
+    body:not(.thoughts-mode) .sidebar-left .sidebar-item-wrapper.active {
+        border-color: rgba(var(--primary-rgb), 0.08);
+        background: rgba(var(--primary-rgb), 0.12);
+        color: color-mix(in srgb, var(--text-color) 84%, var(--primary-color));
+    }
+
+    body:not(.thoughts-mode) .sidebar-left .sidebar-item-wrapper.active::before {
+        content: "";
+        position: absolute;
+        top: 50%;
+        left: 9px;
+        width: 5px;
+        height: 5px;
+        border-radius: 50%;
+        background: var(--primary-color);
+        transform: translateY(-50%);
+        pointer-events: none;
+    }
+
+    body:not(.thoughts-mode) .sidebar-left .sidebar-item-wrapper.active .item-time {
+        color: color-mix(in srgb, var(--primary-color) 48%, var(--muted-text));
+    }
+
+    body:not(.thoughts-mode) .sidebar-left .dir-group-title:focus-visible,
+    body:not(.thoughts-mode) .sidebar-left .dir-item:focus-visible,
+    body:not(.thoughts-mode) .sidebar-left .item-action-btn:focus-visible {
+        outline: 2px solid rgba(var(--primary-rgb), 0.48);
+        outline-offset: 1px;
+    }
+}
+
+@media (min-width: 981px) and (hover: hover) and (pointer: fine) {
+    body:not(.thoughts-mode) .sidebar-left .dir-group-title:hover {
+        background: rgba(118, 118, 128, 0.08);
+        color: var(--text-color);
+    }
+
+    body:not(.thoughts-mode) .sidebar-left .sidebar-item-wrapper:hover {
+        border-color: rgba(255, 255, 255, 0.42);
+        background: color-mix(in srgb, var(--header-bg) 70%, transparent);
+        color: var(--text-color);
+    }
+
+    body:not(.thoughts-mode) .sidebar-left .sidebar-item-wrapper.active:hover {
+        border-color: rgba(var(--primary-rgb), 0.12);
+        background: rgba(var(--primary-rgb), 0.16);
+    }
+}
+
+/* Desktop recents mirrors the directory material but remains visually
+   secondary: no leading selection dot and a softer active treatment. */
+@media (min-width: 981px) {
+    body:not(.thoughts-mode) .sidebar-right {
+        background: color-mix(in srgb, var(--header-bg) 30%, transparent);
+        border: 1px solid rgba(255, 255, 255, 0.48);
+        border-radius: 12px;
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.24);
+        backdrop-filter: blur(10px) saturate(112%);
+        -webkit-backdrop-filter: blur(10px) saturate(112%);
+    }
+
+    body:not(.thoughts-mode) .sidebar-right .sidebar-header {
+        padding-right: 18px;
+        padding-bottom: 8px;
+        padding-left: 18px;
+    }
+
+    body:not(.thoughts-mode) .sidebar-right .sidebar-header h3 {
+        color: color-mix(in srgb, var(--text-color) 56%, var(--muted-text));
+        font-size: 12px;
+        font-weight: 600;
+    }
+
+    body:not(.thoughts-mode) .sidebar-right .recent-files-list {
+        padding: 8px 10px 16px;
+    }
+
+    body:not(.thoughts-mode) .sidebar-right .recent-stack {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+    }
+
+    body:not(.thoughts-mode) .sidebar-right .sidebar-item-wrapper {
+        min-height: 40px;
+        margin: 0;
+        padding: 0;
+        border: 1px solid transparent;
+        border-radius: 9px;
+        background: color-mix(in srgb, var(--header-bg) 46%, transparent);
+        color: color-mix(in srgb, var(--text-color) 76%, var(--muted-text));
+        box-shadow: none;
+        transition:
+            background-color 160ms ease-out,
+            border-color 160ms ease-out,
+            color 160ms ease-out;
+    }
+
+    body:not(.thoughts-mode) .sidebar-right .recent-item {
+        min-height: 38px;
+        padding: 9px 12px;
+        font-size: 12.5px;
+    }
+
+    body:not(.thoughts-mode) .sidebar-right .item-time {
+        color: color-mix(in srgb, var(--muted-text) 82%, transparent);
+        font-size: 11px;
+        font-variant-numeric: tabular-nums;
+    }
+
+    body:not(.thoughts-mode) .sidebar-right .sidebar-item-wrapper.active {
+        border-color: rgba(var(--primary-rgb), 0.06);
+        background: rgba(var(--primary-rgb), 0.09);
+        color: color-mix(in srgb, var(--text-color) 88%, var(--primary-color));
+    }
+
+    body:not(.thoughts-mode) .sidebar-right .sidebar-item-wrapper.active .item-time {
+        color: color-mix(in srgb, var(--primary-color) 42%, var(--muted-text));
+    }
+
+    body:not(.thoughts-mode) .sidebar-right .empty-state {
+        margin: 12px 2px;
+        padding: 16px 12px;
+        border: 1px dashed rgba(118, 118, 128, 0.16);
+        border-radius: 9px;
+        background: transparent;
+        color: color-mix(in srgb, var(--muted-text) 82%, transparent);
+        font-size: 11px;
+    }
+
+    body:not(.thoughts-mode) .sidebar-right .recent-item:focus-visible,
+    body:not(.thoughts-mode) .sidebar-right .item-action-btn:focus-visible {
+        outline: 2px solid rgba(var(--primary-rgb), 0.42);
+        outline-offset: 1px;
+    }
+}
+
+@media (min-width: 981px) and (hover: hover) and (pointer: fine) {
+    body:not(.thoughts-mode) .sidebar-right .sidebar-item-wrapper:hover {
+        border-color: rgba(255, 255, 255, 0.38);
+        background: color-mix(in srgb, var(--header-bg) 64%, transparent);
+        color: var(--text-color);
+    }
+
+    body:not(.thoughts-mode) .sidebar-right .sidebar-item-wrapper.active:hover {
+        border-color: rgba(var(--primary-rgb), 0.10);
+        background: rgba(var(--primary-rgb), 0.13);
+    }
+}
+
+/* Desktop reading rhythm: retain the existing paper width while making long
+   notes scan more like a notebook than a rendered technical document. */
+@media (min-width: 981px) {
+    body:not(.thoughts-mode) .typora-editor-shell .vditor-reset {
+        line-height: 1.72;
+        letter-spacing: 0;
+        text-rendering: optimizeLegibility;
+    }
+
+    body:not(.thoughts-mode) .typora-editor-shell .vditor-reset h1,
+    body:not(.thoughts-mode) .typora-editor-shell .vditor-reset h2,
+    body:not(.thoughts-mode) .typora-editor-shell .vditor-reset h3,
+    body:not(.thoughts-mode) .typora-editor-shell .vditor-reset h4,
+    body:not(.thoughts-mode) .typora-editor-shell .vditor-reset h5,
+    body:not(.thoughts-mode) .typora-editor-shell .vditor-reset h6 {
+        margin-top: 1.55em;
+        margin-bottom: 0.62em;
+        line-height: 1.32;
+        letter-spacing: -0.012em;
+        text-wrap: balance;
+    }
+
+    body:not(.thoughts-mode) .typora-editor-shell .vditor-reset > h1:first-child,
+    body:not(.thoughts-mode) .typora-editor-shell .vditor-reset > h2:first-child,
+    body:not(.thoughts-mode) .typora-editor-shell .vditor-reset > h3:first-child,
+    body:not(.thoughts-mode) .typora-editor-shell .vditor-reset > h4:first-child,
+    body:not(.thoughts-mode) .typora-editor-shell .vditor-reset > h5:first-child,
+    body:not(.thoughts-mode) .typora-editor-shell .vditor-reset > h6:first-child {
+        margin-top: 0;
+    }
+
+    body:not(.thoughts-mode) .typora-editor-shell .vditor-reset h1 {
+        font-size: 28px;
+    }
+
+    body:not(.thoughts-mode) .typora-editor-shell .vditor-reset h2 {
+        font-size: 24px;
+    }
+
+    body:not(.thoughts-mode) .typora-editor-shell .vditor-reset h3 {
+        font-size: 20px;
+    }
+
+    body:not(.thoughts-mode) .typora-editor-shell .vditor-reset h4,
+    body:not(.thoughts-mode) .typora-editor-shell .vditor-reset h5,
+    body:not(.thoughts-mode) .typora-editor-shell .vditor-reset h6 {
+        font-size: 17px;
+    }
+
+    body:not(.thoughts-mode) .typora-editor-shell .vditor-reset p,
+    body:not(.thoughts-mode) .typora-editor-shell .vditor-reset ul,
+    body:not(.thoughts-mode) .typora-editor-shell .vditor-reset ol,
+    body:not(.thoughts-mode) .typora-editor-shell .vditor-reset blockquote {
+        margin-bottom: 14px;
+    }
+
+    body:not(.thoughts-mode) .typora-editor-shell .vditor-reset p,
+    body:not(.thoughts-mode) .typora-editor-shell .vditor-reset li {
+        text-wrap: pretty;
+    }
+
+    body:not(.thoughts-mode) .typora-editor-shell .vditor-reset ul,
+    body:not(.thoughts-mode) .typora-editor-shell .vditor-reset ol {
+        padding-left: 1.75em;
+    }
+
+    body:not(.thoughts-mode) .typora-editor-shell .vditor-reset li + li {
+        margin-top: 0.32em;
+    }
+
+    body:not(.thoughts-mode) .typora-editor-shell .vditor-reset blockquote {
+        padding: 11px 14px;
+        border: 1px solid rgba(60, 60, 67, 0.10);
+        border-radius: 8px;
+        background: rgba(118, 118, 128, 0.06);
+        color: color-mix(in srgb, var(--text-color) 76%, var(--muted-text));
+    }
+
+    body:not(.thoughts-mode) .typora-editor-shell .vditor-reset :not(pre) > code:not(.hljs):not(.highlight-chroma) {
+        padding: 0.16em 0.36em;
+        border-radius: 4px;
+        background: color-mix(in srgb, var(--secondary-color) 54%, transparent);
+        font-family: var(--font-code);
+        font-size: 0.88em;
+    }
+}
+
+/* Markdown task lists keep Vditor's native editing behavior and use the
+   existing gold accent instead of the browser's default blue checkbox. */
+.typora-editor-shell .vditor-reset li.vditor-task {
+    position: relative;
+    min-height: 1.72em;
+    padding: 2px 6px 2px 0;
+    border-radius: 6px;
+    color: var(--text-color);
+    word-break: break-word;
+    transition:
+        background-color 160ms ease-out,
+        color 160ms ease-out,
+        opacity 160ms ease-out;
+}
+
+.typora-editor-shell .vditor-reset li.vditor-task > input[type="checkbox"] {
+    --task-checked-color: color-mix(in srgb, var(--primary-color) 72%, #ffd84a);
+    appearance: none;
+    -webkit-appearance: none;
+    display: inline-grid;
+    place-items: center;
+    width: 17px;
+    height: 17px;
+    margin: 0 0.56em 0.18em -1.72em;
+    padding: 0;
+    border: 1.5px solid color-mix(in srgb, var(--muted-text) 48%, transparent);
+    border-radius: 5px;
+    background: transparent;
+    color: #ffffff;
+    vertical-align: middle;
+    cursor: pointer;
+    transition:
+        background-color 160ms ease-out,
+        border-color 160ms ease-out,
+        transform 140ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.typora-editor-shell .vditor-reset li.vditor-task > input[type="checkbox"]::after {
+    content: "";
+    width: 7px;
+    height: 4px;
+    border-bottom: 2px solid currentColor;
+    border-left: 2px solid currentColor;
+    transform: translateY(-1px) rotate(-45deg) scale(0);
+    transform-origin: center;
+    transition: transform 140ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.typora-editor-shell .vditor-reset li.vditor-task > input[type="checkbox"]:checked {
+    border-color: var(--task-checked-color);
+    background: var(--task-checked-color);
+}
+
+.typora-editor-shell .vditor-reset li.vditor-task > input[type="checkbox"]:checked::after {
+    transform: translateY(-1px) rotate(-45deg) scale(1);
+}
+
+.typora-editor-shell .vditor-reset li.vditor-task > input[type="checkbox"]:focus-visible {
+    outline: 2px solid rgba(var(--primary-rgb), 0.46);
+    outline-offset: 2px;
+}
+
+.typora-editor-shell .vditor-reset li.vditor-task > input[type="checkbox"]:active {
+    transform: scale(0.90);
+}
+
+.typora-editor-shell .vditor-reset li.vditor-task:has(> input[type="checkbox"]:checked) {
+    color: color-mix(in srgb, var(--text-color) 42%, var(--muted-text));
+    text-decoration: line-through;
+    text-decoration-color: color-mix(in srgb, var(--muted-text) 64%, transparent);
+    text-decoration-thickness: 1px;
+}
+
+@media (hover: hover) and (pointer: fine) {
+    .typora-editor-shell .vditor-reset li.vditor-task:hover {
+        background: rgba(var(--primary-rgb), 0.045);
+    }
+
+    .typora-editor-shell .vditor-reset li.vditor-task > input[type="checkbox"]:hover {
+        border-color: color-mix(in srgb, var(--primary-color) 66%, var(--muted-text));
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .typora-editor-shell .vditor-reset li.vditor-task,
+    .typora-editor-shell .vditor-reset li.vditor-task > input[type="checkbox"],
+    .typora-editor-shell .vditor-reset li.vditor-task > input[type="checkbox"]::after {
+        transition-duration: 0.01ms !important;
+    }
+}
+
+/* Desktop editor tools: group related actions into one quiet control rail and
+   keep the editor scrollbar legible without turning it into a divider. */
+@media (min-width: 981px) {
+    body:not(.thoughts-mode) .floating-actions {
+        right: 304px;
+        top: 55%;
+        width: 42px;
+        padding: 4px;
+        gap: 2px;
+        border: 1px solid rgba(255, 255, 255, 0.54);
+        border-radius: 12px;
+        background: color-mix(in srgb, var(--header-bg) 46%, transparent);
+        box-shadow:
+            0 2px 8px rgba(39, 37, 33, 0.08),
+            inset 0 1px 0 rgba(255, 255, 255, 0.32);
+        backdrop-filter: blur(16px) saturate(116%);
+        -webkit-backdrop-filter: blur(16px) saturate(116%);
+        transition:
+            opacity 180ms ease-out,
+            transform 180ms cubic-bezier(0.22, 1, 0.36, 1);
+    }
+
+    body:not(.thoughts-mode) .floating-btn {
+        position: relative;
+        width: 34px;
+        height: 34px;
+        border: 0;
+        border-radius: 8px;
+        background: transparent;
+        color: color-mix(in srgb, var(--text-color) 72%, var(--muted-text));
+        box-shadow: none;
+        backdrop-filter: none;
+        -webkit-backdrop-filter: none;
+        transition:
+            background-color 160ms ease-out,
+            color 160ms ease-out,
+            transform 160ms cubic-bezier(0.22, 1, 0.36, 1);
+    }
+
+    body:not(.thoughts-mode) .floating-btn:focus-visible,
+    body:not(.thoughts-mode) .typora-source-toggle:focus-visible {
+        outline: 2px solid rgba(var(--primary-rgb), 0.52);
+        outline-offset: 1px;
+    }
+
+    body:not(.thoughts-mode) .floating-btn:active {
+        transform: scale(0.94);
+    }
+
+    body:not(.thoughts-mode) .floating-actions .typora-source-toggle {
+        position: relative;
+        right: auto;
+        bottom: auto;
+        width: 34px;
+        height: 34px;
+        margin-top: 5px;
+        border: 0;
+        border-radius: 8px;
+        background: transparent;
+        color: color-mix(in srgb, var(--text-color) 48%, var(--muted-text));
+        box-shadow: none;
+        backdrop-filter: none;
+        -webkit-backdrop-filter: none;
+        font-size: 11px;
+    }
+
+    body:not(.thoughts-mode) .floating-actions > .floating-btn + .floating-btn::before {
+        content: "";
+        position: absolute;
+        top: -1px;
+        right: 6px;
+        left: 6px;
+        height: 1px;
+        background: rgba(60, 60, 67, 0.08);
+        pointer-events: none;
+    }
+
+    body:not(.thoughts-mode) .floating-actions > .typora-source-toggle::before {
+        top: -4px;
+    }
+
+    body:not(.thoughts-mode) .floating-actions .typora-source-toggle[hidden] {
+        display: none !important;
+    }
+
+    body:not(.thoughts-mode) .typora-source-toggle:active {
+        transform: scale(0.94);
+    }
+
+    body:not(.thoughts-mode) .typora-editor-shell .vditor-wysiwyg {
+        scrollbar-width: thin;
+        scrollbar-color: rgba(60, 60, 67, 0.20) transparent;
+    }
+
+    body:not(.thoughts-mode) .typora-editor-shell .vditor-wysiwyg::-webkit-scrollbar {
+        width: 8px;
+    }
+
+    body:not(.thoughts-mode) .typora-editor-shell .vditor-wysiwyg::-webkit-scrollbar-track {
+        background: transparent;
+    }
+
+    body:not(.thoughts-mode) .typora-editor-shell .vditor-wysiwyg::-webkit-scrollbar-thumb {
+        border: 2px solid transparent;
+        border-radius: 999px;
+        background: rgba(60, 60, 67, 0.18);
+        background-clip: content-box;
+    }
+
+    [data-theme="dark"] body:not(.thoughts-mode) .floating-actions {
+        border-color: rgba(255, 255, 255, 0.10);
+        background: color-mix(in srgb, var(--header-bg) 58%, transparent);
+        box-shadow:
+            0 2px 8px rgba(0, 0, 0, 0.24),
+            inset 0 1px 0 rgba(255, 255, 255, 0.08);
+    }
+
+    [data-theme="dark"] body:not(.thoughts-mode) .floating-actions > .floating-btn + .floating-btn::before {
+        background: rgba(255, 255, 255, 0.08);
+    }
+
+    [data-theme="dark"] body:not(.thoughts-mode) .typora-editor-shell .vditor-wysiwyg {
+        scrollbar-color: rgba(235, 235, 245, 0.22) transparent;
+    }
+
+    [data-theme="dark"] body:not(.thoughts-mode) .typora-editor-shell .vditor-wysiwyg::-webkit-scrollbar-thumb {
+        background: rgba(235, 235, 245, 0.20);
+        background-clip: content-box;
+    }
+}
+
+@media (min-width: 981px) and (max-width: 1200px) {
+    body:not(.thoughts-mode) .floating-actions {
+        right: 22px;
+    }
+}
+
+@media (min-width: 981px) {
+    body:not(.thoughts-mode) .floating-btn:hover,
+    body:not(.thoughts-mode) .floating-btn:focus-visible,
+    body:not(.thoughts-mode) .typora-source-toggle:hover,
+    body:not(.thoughts-mode) .typora-source-toggle:focus-visible,
+    body:not(.thoughts-mode) .typora-source-toggle.active {
+        border-color: rgba(var(--primary-rgb), 0.20);
+        background: rgba(var(--primary-rgb), 0.10);
+        color: color-mix(in srgb, var(--primary-color) 78%, var(--text-color));
+        box-shadow: none;
+        transform: none;
+    }
+
+    body:not(.thoughts-mode) .typora-editor-shell .vditor-wysiwyg::-webkit-scrollbar-thumb:hover {
+        background: rgba(60, 60, 67, 0.32);
+        background-clip: content-box;
+    }
+
+    [data-theme="dark"] body:not(.thoughts-mode) .typora-editor-shell .vditor-wysiwyg::-webkit-scrollbar-thumb:hover {
+        background: rgba(235, 235, 245, 0.36);
+        background-clip: content-box;
+    }
+}
+
+@media (min-width: 981px) and (prefers-reduced-motion: reduce) {
+    body:not(.thoughts-mode) .floating-actions,
+    body:not(.thoughts-mode) .floating-btn,
+    body:not(.thoughts-mode) .typora-source-toggle {
+        transition-duration: 0.01ms !important;
     }
 }
