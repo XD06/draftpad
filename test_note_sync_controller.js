@@ -84,6 +84,15 @@ function run() {
     assert(defaultNote.version === 3, 'cacheDirtyNote should keep local version');
     assert(defaultNote.dirty === true, 'cacheDirtyNote should mark note dirty');
     assert(defaultNote.conflict !== true, 'cacheDirtyNote should not mark conflict by default');
+    assert(defaultNote.baseContent === 'clean content', 'first dirty edit should retain the last synced content as merge base');
+
+    sync.cacheDirtyNote('default', 'local edit again', { version: 3 });
+    defaultNote = sync.getCachedNote('default');
+    assert(defaultNote.baseContent === 'clean content', 'later dirty edits should preserve the original merge base');
+
+    sync.cacheDirtyNote('default', 'automatically merged edit', { version: 4, baseContent: 'new remote base' });
+    defaultNote = sync.getCachedNote('default');
+    assert(defaultNote.baseContent === 'new remote base', 'automatic merge should be able to advance the merge base');
 
     sync.cacheSyncedNote('default', 'remote saved', { version: 4 });
     defaultNote = sync.getCachedNote('default');
@@ -102,6 +111,21 @@ function run() {
     assert(defaultNote.remoteVersion === 7, 'cacheConflictNote should record remote version');
     assert(defaultNote.dirty === true, 'cacheConflictNote should keep dirty state');
     assert(defaultNote.conflict === true, 'cacheConflictNote should mark conflict');
+
+    let merge = sync.mergeContents({
+        base: 'title\nalpha\nomega',
+        local: 'title\nlocal alpha\nomega',
+        remote: 'title\nalpha\nremote omega'
+    });
+    assert(merge.ok === true, 'disjoint local and remote edits should merge automatically');
+    assert(merge.content === 'title\nlocal alpha\nremote omega', 'automatic merge should retain both disjoint edits');
+
+    merge = sync.mergeContents({
+        base: 'title\nalpha\nomega',
+        local: 'title\nlocal alpha\nomega',
+        remote: 'title\nremote alpha\nomega'
+    });
+    assert(merge.ok === false && merge.reason === 'overlap', 'overlapping edits should remain an explicit conflict');
 
     let decision = sync.canSyncDirtyNote({
         notepadId: 'default',

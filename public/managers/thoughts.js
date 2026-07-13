@@ -43,6 +43,8 @@ import {
     renderAIStatusLoading
 } from './thought-ai-status.js';
 import { renderThoughtCard } from './thought-card-renderer.js';
+import { buildAttachmentsFromFiles, getImageAttachments } from './thought-attachments.js';
+import { getThoughtSwipeState } from './thought-swipe.js';
 import { applyThoughtTextStyle, escapeHtml as escapeThoughtHtml, formatThoughtText } from './thought-text-formatting.js';
 import { buildQuickAddCreateOutboxItem, createLocalPendingThought, markCreatedThoughtPending } from './thought-quick-add.js';
 import { buildTimeMarker, buildUpdatedTimeMarker, deleteTimeMarker, handleTimeCommandKeydown, replaceTimeMarker } from './time-command.js';
@@ -76,6 +78,8 @@ export class ThoughtsManager {
         this.outboxStatus = document.getElementById('thoughts-outbox-status');
 
         this.quickAddAttachments = [];
+        this.attachmentLightbox = null;
+        this.attachmentLightboxState = null;
 
         this.thoughts = this.loadThoughtsCache();
         this.quickAddTags = [];
@@ -157,27 +161,8 @@ export class ThoughtsManager {
     }
 
     async handleQuickAddFileSelect(fileList) {
-        if (!fileList || !fileList.length) return;
-        const MAX_FILE_SIZE = 4 * 1024 * 1024;
-        for (const file of fileList) {
-            if (file.size > MAX_FILE_SIZE) {
-                this.app.toaster?.show(`文件「${file.name}」超过 4MB 限制`, 'error', false, 3000);
-                continue;
-            }
-            try {
-                const dataUrl = await this.readFileAsDataURL(file);
-                this.quickAddAttachments.push({
-                    id: Date.now().toString() + Math.random().toString(36).slice(2, 8),
-                    name: file.name,
-                    type: file.type || 'application/octet-stream',
-                    size: file.size,
-                    dataUrl
-                });
-            } catch (err) {
-                console.error('Failed to read file:', err);
-                this.app.toaster?.show(`文件「${file.name}」读取失败`, 'error', false, 2400);
-            }
-        }
+        const attachments = await this.collectAttachmentFiles(fileList);
+        this.quickAddAttachments.push(...attachments);
         this.renderQuickAddAttachments();
     }
 
@@ -188,6 +173,24 @@ export class ThoughtsManager {
             reader.onerror = reject;
             reader.readAsDataURL(file);
         });
+    }
+
+    async collectAttachmentFiles(fileList) {
+        if (!fileList || !fileList.length) return [];
+        const result = await buildAttachmentsFromFiles(fileList, {
+            readFileAsDataURL: file => this.readFileAsDataURL(file)
+        });
+
+        result.rejected.forEach(({ file, reason, error }) => {
+            const name = file?.name || '文件';
+            if (reason === 'too-large') {
+                this.app.toaster?.show(`文件「${name}」超过 4MB 限制`, 'error', false, 3000);
+                return;
+            }
+            console.error('Failed to read file:', error);
+            this.app.toaster?.show(`文件「${name}」读取失败`, 'error', false, 2400);
+        });
+        return result.attachments;
     }
 
     renderQuickAddAttachments() {
@@ -1085,6 +1088,20 @@ export class ThoughtsManager {
             });
         }
 
+        card.querySelectorAll('.thought-attachment-add-footer').forEach((button) => {
+            button.addEventListener('click', (event) => {
+                event.stopPropagation();
+                this.openThoughtAttachmentPicker(thought);
+            });
+        });
+
+        card.querySelectorAll('.thought-attachment-preview').forEach((button) => {
+            button.addEventListener('click', (event) => {
+                event.stopPropagation();
+                this.openAttachmentLightbox(thought, button.dataset.previewAtt, button);
+            });
+        });
+
         const aiStatusBtn = card.querySelector('.thought-ai-status');
         if (aiStatusBtn) {
             aiStatusBtn.addEventListener('click', (e) => {
@@ -1169,6 +1186,7 @@ export class ThoughtsManager {
             event.target.closest('.thought-relations-panel') ||
             event.target.closest('.thought-tag') ||
             event.target.closest('.thought-attachment') ||
+            event.target.closest('.thought-attachment-add-footer') ||
             event.target.closest('.subtask') ||
             event.target.closest('.subtask-add-inline') ||
             event.target.closest('.subtasks-summary-row') ||
@@ -1177,6 +1195,168 @@ export class ThoughtsManager {
             event.target.closest('.thought-link') ||
             card.classList.contains('editing')
         );
+    }
+
+    openThoughtAttachmentPicker(thought) {
+        if (!thought?.id) return;
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.multiple = true;
+        input.accept = 'image/*,video/*,audio/*,.pdf,.doc,.docx,.txt,.zip,.rar,.7z';
+        input.hidden = true;
+        input.addEventListener('change', async () => {
+            try {
+                const additions = await this.collectAttachmentFiles(input.files);
+                if (additions.length) await this.appendThoughtAttachments(thought, additions);
+            } finally {
+                input.remove();
+            }
+        }, { once: true });
+        document.body.appendChild(input);
+        input.click();
+    }
+
+    async appendThoughtAttachments(thought, additions) {
+        if (!thought?.id || !Array.isArray(additions) || additions.length === 0) return;
+        thought.attachments = [
+            ...(Array.isArray(thought.attachments) ? thought.attachments : []),
+            ...additions
+        ];
+        thought.updatedAt = Date.now();
+        this.render();
+
+        try {
+            const data = await this.apiClient.overwrite(thought.id, thought);
+            if (data?.thought) Object.assign(thought, data.thought);
+        } catch (error) {
+            console.error('Failed to append thought attachments:', error);
+            this.enqueueThoughtOverwrite(thought);
+            this.render();
+            this.app.toaster?.show('附件已保存在本地，联网后将自动同步', 'info', false, 2800);
+        }
+    }
+
+    ensureAttachmentLightbox() {
+        if (this.attachmentLightbox) return this.attachmentLightbox;
+        const lightbox = document.createElement('div');
+        lightbox.className = 'thought-attachment-lightbox';
+        lightbox.hidden = true;
+        lightbox.setAttribute('role', 'dialog');
+        lightbox.setAttribute('aria-modal', 'true');
+        lightbox.setAttribute('aria-label', '图片附件预览');
+        lightbox.innerHTML = `
+            <div class="thought-lightbox-toolbar">
+                <div class="thought-lightbox-meta">
+                    <span class="thought-lightbox-name"></span>
+                    <span class="thought-lightbox-counter"></span>
+                </div>
+                <a class="thought-lightbox-download" download title="下载原图" aria-label="下载原图">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"></path><path d="m7 10 5 5 5-5"></path><path d="M5 21h14"></path></svg>
+                    <span>下载原图</span>
+                </a>
+                <button type="button" class="thought-lightbox-close" title="关闭" aria-label="关闭图片预览">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>
+                </button>
+            </div>
+            <button type="button" class="thought-lightbox-nav thought-lightbox-prev" aria-label="上一张图片">‹</button>
+            <div class="thought-lightbox-stage">
+                <img class="thought-lightbox-image" alt="">
+                <div class="thought-lightbox-error" hidden>图片加载失败，可尝试下载原图。</div>
+            </div>
+            <button type="button" class="thought-lightbox-nav thought-lightbox-next" aria-label="下一张图片">›</button>
+        `;
+
+        lightbox.addEventListener('click', event => {
+            if (event.target === lightbox) this.closeAttachmentLightbox();
+        });
+        lightbox.querySelector('.thought-lightbox-close').addEventListener('click', () => this.closeAttachmentLightbox());
+        lightbox.querySelector('.thought-lightbox-prev').addEventListener('click', () => this.showAttachmentLightboxIndex(-1, { relative: true }));
+        lightbox.querySelector('.thought-lightbox-next').addEventListener('click', () => this.showAttachmentLightboxIndex(1, { relative: true }));
+        lightbox.addEventListener('keydown', event => this.handleAttachmentLightboxKeydown(event));
+        document.body.appendChild(lightbox);
+        this.attachmentLightbox = lightbox;
+        return lightbox;
+    }
+
+    openAttachmentLightbox(thought, attachmentId, trigger) {
+        const images = getImageAttachments(thought?.attachments);
+        if (!images.length) return;
+        const requestedIndex = images.findIndex(item => String(item.id) === String(attachmentId));
+        this.attachmentLightboxState = {
+            images,
+            index: requestedIndex >= 0 ? requestedIndex : 0,
+            trigger: trigger || document.activeElement
+        };
+        const lightbox = this.ensureAttachmentLightbox();
+        lightbox.hidden = false;
+        document.body.classList.add('thought-lightbox-open');
+        this.showAttachmentLightboxIndex(this.attachmentLightboxState.index);
+        lightbox.querySelector('.thought-lightbox-close').focus({ preventScroll: true });
+    }
+
+    showAttachmentLightboxIndex(index, { relative = false } = {}) {
+        const state = this.attachmentLightboxState;
+        const lightbox = this.attachmentLightbox;
+        if (!state || !lightbox || !state.images.length) return;
+        const nextIndex = relative ? state.index + index : index;
+        state.index = (nextIndex + state.images.length) % state.images.length;
+        const attachment = state.images[state.index];
+        const image = lightbox.querySelector('.thought-lightbox-image');
+        const error = lightbox.querySelector('.thought-lightbox-error');
+        image.hidden = false;
+        error.hidden = true;
+        image.onload = () => { image.hidden = false; error.hidden = true; };
+        image.onerror = () => { image.hidden = true; error.hidden = false; };
+        image.alt = attachment.name || '图片附件';
+        image.src = attachment.dataUrl || '';
+        lightbox.querySelector('.thought-lightbox-name').textContent = attachment.name || '图片附件';
+        lightbox.querySelector('.thought-lightbox-counter').textContent = `${state.index + 1} / ${state.images.length}`;
+        const download = lightbox.querySelector('.thought-lightbox-download');
+        download.href = attachment.dataUrl || '';
+        download.download = attachment.name || 'image';
+        const hasMultiple = state.images.length > 1;
+        lightbox.querySelector('.thought-lightbox-prev').hidden = !hasMultiple;
+        lightbox.querySelector('.thought-lightbox-next').hidden = !hasMultiple;
+    }
+
+    handleAttachmentLightboxKeydown(event) {
+        if (!this.attachmentLightboxState) return;
+        if (event.key === 'Escape') {
+            event.preventDefault();
+            this.closeAttachmentLightbox();
+            return;
+        }
+        if (event.key === 'ArrowLeft') {
+            event.preventDefault();
+            this.showAttachmentLightboxIndex(-1, { relative: true });
+            return;
+        }
+        if (event.key === 'ArrowRight') {
+            event.preventDefault();
+            this.showAttachmentLightboxIndex(1, { relative: true });
+            return;
+        }
+        if (event.key !== 'Tab') return;
+        const focusable = Array.from(this.attachmentLightbox.querySelectorAll('button:not([hidden]), a[href]'));
+        if (!focusable.length) return;
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (event.shiftKey && document.activeElement === first) {
+            event.preventDefault();
+            last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+            event.preventDefault();
+            first.focus();
+        }
+    }
+
+    closeAttachmentLightbox() {
+        if (!this.attachmentLightboxState || !this.attachmentLightbox) return;
+        const trigger = this.attachmentLightboxState.trigger;
+        this.attachmentLightbox.hidden = true;
+        this.attachmentLightboxState = null;
+        document.body.classList.remove('thought-lightbox-open');
+        trigger?.focus?.({ preventScroll: true });
     }
 
     hasActiveThoughtSelection() {
@@ -1480,6 +1660,8 @@ export class ThoughtsManager {
         let maxSwipe = 0;
         let capturedPointerId = null;
         let suppressNextClick = false;
+        let wasReady = false;
+        let swipePointerType = '';
 
         const captureSwipePointer = (event) => {
             capturedPointerId = event.pointerId;
@@ -1507,11 +1689,14 @@ export class ThoughtsManager {
             releaseSwipePointer(event);
             card.classList.remove('swiping', 'swipe-ready');
             card.style.removeProperty('--swipe-x');
-            card.style.removeProperty('--swipe-icon-opacity');
-            card.style.removeProperty('--swipe-rail-opacity');
+            card.style.removeProperty('transform');
+            card.style.removeProperty('--swipe-progress');
+            card.style.removeProperty('--swipe-action-opacity');
             tracking = false;
             isDragging = false;
             deltaX = 0;
+            wasReady = false;
+            swipePointerType = '';
             suppressNextClick = false;
         };
 
@@ -1522,6 +1707,8 @@ export class ThoughtsManager {
             startX = event.clientX;
             startY = event.clientY;
             deltaX = 0;
+            wasReady = false;
+            swipePointerType = event.pointerType || '';
             threshold = card.offsetWidth * 0.5;
             maxSwipe = Math.max(threshold + 28, card.offsetWidth * 0.58);
             tracking = true;
@@ -1538,13 +1725,16 @@ export class ThoughtsManager {
             }
             if (!isDragging) return;
             event.preventDefault();
-            const swipeX = Math.min(maxSwipe, Math.max(0, deltaX));
-            const railOpacity = Math.min(1, Math.max(0, (swipeX - 34) / 54));
-            const iconOpacity = Math.min(0.95, Math.max(0, (swipeX - 56) / 50));
-            card.style.setProperty('--swipe-x', `${swipeX}px`);
-            card.style.setProperty('--swipe-rail-opacity', String(railOpacity));
-            card.style.setProperty('--swipe-icon-opacity', String(iconOpacity));
-            card.classList.toggle('swipe-ready', swipeX >= threshold);
+            const state = getThoughtSwipeState(deltaX, threshold, maxSwipe);
+            card.style.setProperty('--swipe-x', `${state.swipeX}px`);
+            card.style.transform = `translate3d(${state.swipeX}px, 0, 0)`;
+            card.style.setProperty('--swipe-progress', String(state.progress));
+            card.style.setProperty('--swipe-action-opacity', String(state.actionOpacity));
+            card.classList.toggle('swipe-ready', state.ready);
+            if (state.ready && !wasReady && (swipePointerType === 'touch' || swipePointerType === 'pen')) {
+                navigator.vibrate?.(10);
+            }
+            wasReady = state.ready;
         });
 
         const finishSwipe = async (event) => {
@@ -1559,14 +1749,17 @@ export class ThoughtsManager {
 
             card.classList.add('swipe-ready');
             card.style.setProperty('--swipe-x', `${threshold}px`);
-            card.style.setProperty('--swipe-rail-opacity', '1');
-            card.style.setProperty('--swipe-icon-opacity', '0.95');
+            card.style.transform = `translate3d(${threshold}px, 0, 0)`;
+            card.style.setProperty('--swipe-progress', '1');
+            card.style.setProperty('--swipe-action-opacity', '1');
             const confirmed = await this.app.confirmationManager.show('确认移入垃圾桶吗？');
             if (!confirmed) {
                 resetSwipe();
                 return;
             }
 
+            card.style.removeProperty('transform');
+            card.style.removeProperty('--swipe-x');
             card.classList.add('swipe-deleting');
             await new Promise(resolve => setTimeout(resolve, 220));
             await this.confirmAndDeleteThought(thought.id, { skipConfirm: true });
@@ -2254,6 +2447,8 @@ export class ThoughtsManager {
         this.setThoughtCardExpanded(card, thought.id, true, { collapseOthers: true });
 
         const textEl = card.querySelector('.thought-text');
+        const attachmentDisplay = card.querySelector('.thought-attachments');
+        const footer = card.querySelector('.thought-card-footer');
 
         const editable = getEditableThoughtParts(thought);
         let subtasks = editable.subtasks;
@@ -2266,6 +2461,8 @@ export class ThoughtsManager {
         textarea.value = bodyText;
         textarea.placeholder = '输入主要内容...';
         textEl.style.display = 'none';
+        if (attachmentDisplay) attachmentDisplay.style.display = 'none';
+        if (footer) footer.style.display = 'none';
         textEl.parentNode.insertBefore(textarea, textEl.nextSibling);
 
         const autoResize = () => {
@@ -2334,11 +2531,12 @@ export class ThoughtsManager {
             editAttachments.forEach((att, i) => {
                 const isImage = att.type && att.type.startsWith('image/');
                 const item = document.createElement('div');
-                item.className = 'thought-edit-att-item';
+                const name = this.escapeHtml(att.name || '文件');
+                item.className = `thought-edit-att-item ${isImage ? 'is-image' : 'is-file'}`;
                 if (isImage) {
-                    item.innerHTML = `<img src="${this.escapeHtml(att.dataUrl)}" alt="${this.escapeHtml(att.name)}" loading="lazy"><button class="thought-edit-att-remove" title="移除">×</button>`;
+                    item.innerHTML = `<img src="${this.escapeHtml(att.dataUrl)}" alt="${name}" loading="lazy"><span class="thought-edit-att-name" title="${name}">${name}</span><button type="button" class="thought-edit-att-remove" title="移除附件" aria-label="移除附件：${name}">×</button>`;
                 } else {
-                    item.innerHTML = `<span class="thought-edit-att-name">${this.escapeHtml(att.name)}</span><button class="thought-edit-att-remove" title="移除">×</button>`;
+                    item.innerHTML = `<span class="thought-edit-att-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><path d="M14 2v6h6"></path></svg></span><span class="thought-edit-att-name" title="${name}">${name}</span><button type="button" class="thought-edit-att-remove" title="移除附件" aria-label="移除附件：${name}">×</button>`;
                 }
                 item.querySelector('.thought-edit-att-remove').onclick = () => {
                     editAttachments.splice(i, 1);
@@ -2360,25 +2558,7 @@ export class ThoughtsManager {
         editFileInput.accept = 'image/*,video/*,audio/*,.pdf,.doc,.docx,.txt,.zip,.rar,.7z';
         editAttBtn.onclick = () => editFileInput.click();
         editFileInput.onchange = async () => {
-            const MAX_FILE_SIZE = 4 * 1024 * 1024;
-            for (const file of editFileInput.files) {
-                if (file.size > MAX_FILE_SIZE) {
-                    this.app.toaster?.show(`文件「${file.name}」超过 4MB 限制`, 'error', false, 3000);
-                    continue;
-                }
-                try {
-                    const dataUrl = await this.readFileAsDataURL(file);
-                    editAttachments.push({
-                        id: Date.now().toString() + Math.random().toString(36).slice(2, 8),
-                        name: file.name,
-                        type: file.type || 'application/octet-stream',
-                        size: file.size,
-                        dataUrl
-                    });
-                } catch (err) {
-                    console.error('Failed to read file:', err);
-                }
-            }
+            editAttachments.push(...await this.collectAttachmentFiles(editFileInput.files));
             renderAttachmentsEditor();
             editFileInput.value = '';
         };
@@ -2465,11 +2645,15 @@ export class ThoughtsManager {
         const textarea = card.querySelector('.edit-textarea');
         const panel = card.querySelector('.subtask-editor-panel');
         const attPanel = card.querySelector('.thought-edit-attachments');
+        const attachmentDisplay = card.querySelector('.thought-attachments');
+        const footer = card.querySelector('.thought-card-footer');
         const textEl = card.querySelector('.thought-text');
         const subtaskList = card.querySelector('.subtask-list');
         if (textarea) textarea.remove();
         if (panel) panel.remove();
         if (attPanel) attPanel.remove();
+        if (attachmentDisplay) attachmentDisplay.style.display = '';
+        if (footer) footer.style.display = '';
         if (textEl) textEl.style.display = '';
         if (subtaskList) subtaskList.style.display = '';
         // Cleanup listeners

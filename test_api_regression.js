@@ -47,8 +47,8 @@ function assertSaveNotesConflictScope() {
     );
     assert(
         saveNotesSource.includes('savedContentStillCurrent') &&
-        saveNotesSource.includes('cacheDirtyNote(targetNotepadId, editor.value, { version: result.version })'),
-        'a completed stale save should update the base version but keep newer editor content dirty until the queued latest save finishes'
+        /cacheDirtyNote\(targetNotepadId, editor\.value, \{[\s\S]*?version:\s*result\.version,[\s\S]*?baseContent:\s*content[\s\S]*?\}\)/.test(saveNotesSource),
+        'a completed stale save should advance the merge base while keeping newer editor content dirty until the queued latest save finishes'
     );
     assert(
         /(activeToasts|toastKey|dedupeKey|conflictToastEl|noteConflictToast)/.test(`${appSource}\n${toasterSource}`),
@@ -354,20 +354,30 @@ function assertThoughtsFrontendRegressions() {
         thoughtsSource.includes('deltaX > 14') &&
         thoughtsSource.includes('threshold = card.offsetWidth * 0.5') &&
         thoughtsSource.includes('deltaX >= threshold') &&
-        thoughtsSource.includes("card.style.setProperty('--swipe-icon-opacity'") &&
-        thoughtsSource.includes("card.style.setProperty('--swipe-rail-opacity'") &&
+        thoughtsSource.includes('getThoughtSwipeState(deltaX, threshold, maxSwipe)') &&
+        thoughtsSource.includes('card.style.transform = `translate3d(${state.swipeX}px, 0, 0)`') &&
+        thoughtsSource.includes("card.style.setProperty('--swipe-action-opacity'") &&
         !thoughtsSource.includes('const threshold = 88') &&
         thoughtsSource.includes('confirmAndDeleteThought(thought.id, { skipConfirm: true })') &&
         thoughtsCss.includes('translate3d(var(--swipe-x, 0), 0, 0)') &&
-        thoughtsCss.includes('--swipe-icon-opacity') &&
-        thoughtsCss.includes('--swipe-rail-opacity') &&
+        thoughtsCss.includes('.thought-swipe-action') &&
+        thoughtsCss.includes('.thought-swipe-action-icon') &&
         thoughtsCss.includes('.thought-card.swiping') &&
         thoughtsCss.includes('.thought-card.swipe-ready') &&
         thoughtsCss.includes('.thought-card.swipe-deleting') &&
-        thoughtsCss.includes("background-image: url(\"data:image/svg+xml") &&
-        !thoughtsCss.includes('松开删除') &&
-        !thoughtsCss.includes('确认删除'),
-        'Thought cards should support right-swipe delete with an icon-only confirmation and deletion animation'
+        thoughtsCss.includes('.thought-card.swipe-ready .thought-swipe-action-icon') &&
+        !thoughtsCss.includes('--swipe-icon-opacity') &&
+        !thoughtsCss.includes('--swipe-rail-opacity'),
+        'Thought cards should support right-swipe delete with a visible trash action, confirmation, and deletion animation'
+    );
+    assert(
+        thoughtsSource.includes("thought-edit-att-item ${isImage ? 'is-image' : 'is-file'}") &&
+        thoughtsSource.includes('thought-edit-att-icon') &&
+        thoughtsSource.includes('aria-label="移除附件：${name}"') &&
+        thoughtsCss.includes('grid-template-columns: 30px minmax(0, 1fr) 20px') &&
+        thoughtsCss.includes('.thought-edit-att-icon') &&
+        thoughtsCss.includes('.thought-edit-att-remove:focus-visible'),
+        'Thought edit attachments should use compact consistent rows for images and files'
     );
     assert(
         iosThemeCss.includes('body:not(.thoughts-mode) .floating-actions') &&

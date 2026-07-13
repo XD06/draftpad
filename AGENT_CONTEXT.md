@@ -84,11 +84,13 @@ Useful test mapping:
 - `npm run test:note-sync` - note version and multi-client sync behavior.
 - `npm run test:pwa-cache` - PWA cache regression checks.
 - `npm run test:thought-card-renderer` - pure Thought card HTML rendering checks, including legacy checkbox parsing, relation count badge classes, and collapsed subtask summaries.
+- `npm run test:thought-attachments` - Thought attachment validation and normalization checks, including partial success and image filtering.
 - `npm run test:thought-editor` - Thought editor helper checks, including legacy checkbox parsing, editable subtask cloning, edit-row escaping, cleanup, sorting, and local subtask mutations.
 - `npm run test:thought-quick-add` - Quick Add data construction checks, including created pending AI state, local pending fallback thoughts, cloned tags, and create outbox payloads.
 - `npm run test:thought-relations-panel` - pure Thought relation panel rendering checks, including manual relation summaries, escaping, highlighting, and empty results.
 - `npm run test:thought-relations-state` - local Thought relation state checks, including relation count normalization and manual relation create/delete success/failure transitions.
 - `npm run test:thought-text-formatting` - pure Thought text formatting checks, including escaping, regex escaping, and existing linkify punctuation behavior.
+- `npm run test:thought-swipe` - Thought swipe distance, warning visibility, clamping, and delete-threshold state checks.
 - `npm run test:ai-queue` - AI queue and relation generation behavior.
 - `npm run test:relations` - relation scoring/calculation helpers.
 - `npm run test:s3-storage` and `npm run test:s3-prefix` - mocked/local S3 boundary checks.

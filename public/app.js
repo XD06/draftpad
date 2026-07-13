@@ -128,6 +128,10 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     let saveTimeout;
     let saveRetryTimeout;
+    // Monotonically increasing local edit revision.  Retry callbacks capture
+    // the revision they were created for and must never replay stale content
+    // after the editor has changed.
+    let editorRevision = 0;
     const saveNotesInFlight = new Map();
     const pendingNoteSaveIds = new Set();
     let noteConflictToastEl = null;
@@ -1204,6 +1208,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                         pendingEditorValue = value || '';
                         if (isApplyingRemoteUpdate) return;
                         hasUnsavedChanges = true;
+                        editorRevision += 1;
                         debouncedSave(value);
                         debouncedUpdateToC();
                         clearTimeout(remoteUpdateTimeout);
@@ -1358,12 +1363,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     }
 
-    async function saveNotes(content, isAutoSave, showStatus = true, retryCount = 0, targetNotepadId = currentNotepadId) {
+    async function saveNotes(content, isAutoSave, showStatus = true, retryCount = 0, targetNotepadId = currentNotepadId, expectedRevision = null) {
         const queueKey = isValidNotepadId(targetNotepadId) ? targetNotepadId : currentNotepadId;
         const previousSave = saveNotesInFlight.get(queueKey) || Promise.resolve();
         const queuedSave = previousSave
             .catch(() => undefined)
-            .then(() => performSaveNotes(content, isAutoSave, showStatus, retryCount, targetNotepadId));
+            .then(() => performSaveNotes(content, isAutoSave, showStatus, retryCount, targetNotepadId, expectedRevision));
         saveNotesInFlight.set(queueKey, queuedSave);
         try {
             return await queuedSave;
@@ -1374,11 +1379,15 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     }
 
-    async function performSaveNotes(content, isAutoSave, showStatus = true, retryCount = 0, targetNotepadId = currentNotepadId) {
+    async function performSaveNotes(content, isAutoSave, showStatus = true, retryCount = 0, targetNotepadId = currentNotepadId, expectedRevision = null) {
         let baseVersion;
         let saveId;
         try {
             if (!findNotepadByIdOrName(currentNotepads, targetNotepadId) || currentNotepadId !== targetNotepadId) return;
+            if (isAutoSave && expectedRevision != null
+                && (editorRevision !== expectedRevision || editor.value !== content)) {
+                return false;
+            }
             if (!navigator.onLine) {
                 setStartupSyncStatus('error', '保存失败，本地已保留');
                 return false;
@@ -1421,7 +1430,10 @@ document.addEventListener('DOMContentLoaded', async () => {
                 dirtyConflictNotepadIds.delete(targetNotepadId);
                 hideNoteConflictToast();
             } else if (currentNotepadId === targetNotepadId) {
-                cacheDirtyNote(targetNotepadId, editor.value, { version: result.version });
+                cacheDirtyNote(targetNotepadId, editor.value, {
+                    version: result.version,
+                    baseContent: content
+                });
                 setStartupSyncStatus('cached', '本地已保留');
             }
             return true;
@@ -1429,9 +1441,55 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (saveId) pendingNoteSaveIds.delete(saveId);
             console.warn('Error saving notes:', err);
             if (err?.status === 409) {
-                dirtyConflictNotepadIds.add(targetNotepadId);
                 const remoteVersion = Number(err?.payload?.currentVersion);
-                cacheConflictNote(targetNotepadId, content, {
+                const currentContent = currentNotepadId === targetNotepadId ? editor.value : content;
+                const cachedNote = getCachedNote(targetNotepadId);
+                try {
+                    const remoteNote = await fetchNoteData(targetNotepadId);
+                    const merge = noteSyncController.mergeContents({
+                        base: cachedNote?.baseContent,
+                        local: currentContent,
+                        remote: remoteNote.content || ''
+                    });
+                    if (merge.ok && currentNotepadId === targetNotepadId && editor.value === currentContent) {
+                        const nextVersion = Number(remoteNote.version);
+                        setCurrentNoteVersion(targetNotepadId, nextVersion);
+                        dirtyConflictNotepadIds.delete(targetNotepadId);
+                        hideNoteConflictToast();
+
+                        if (merge.content === (remoteNote.content || '')) {
+                            isApplyingRemoteUpdate = true;
+                            editor.value = merge.content;
+                            isApplyingRemoteUpdate = false;
+                            hasUnsavedChanges = false;
+                            cacheSyncedNote(targetNotepadId, merge.content, { version: nextVersion });
+                            setStartupSyncStatus('synced', '已同步');
+                            return true;
+                        }
+
+                        editorRevision += 1;
+                        const mergedRevision = editorRevision;
+                        isApplyingRemoteUpdate = true;
+                        editor.value = merge.content;
+                        isApplyingRemoteUpdate = false;
+                        hasUnsavedChanges = true;
+                        cacheDirtyNote(targetNotepadId, merge.content, {
+                            version: nextVersion,
+                            baseContent: remoteNote.content || ''
+                        });
+                        setStartupSyncStatus('syncing', '已自动合并，正在同步');
+                        toaster.show('已自动合并远端修改', 'success', false, 2200);
+                        setTimeout(() => {
+                            saveNotes(merge.content, true, false, 0, targetNotepadId, mergedRevision);
+                        }, 0);
+                        return false;
+                    }
+                } catch (mergeError) {
+                    console.warn('Failed to resolve note conflict automatically:', mergeError);
+                }
+
+                dirtyConflictNotepadIds.add(targetNotepadId);
+                cacheConflictNote(targetNotepadId, currentContent, {
                     localVersion: baseVersion,
                     remoteVersion: Number.isFinite(remoteVersion) ? remoteVersion : undefined
                 });
@@ -1439,10 +1497,17 @@ document.addEventListener('DOMContentLoaded', async () => {
                 showNoteConflictToast('error', 6000);
                 return false;
             }
-            if (isAutoSave && retryCount < 3 && currentNotepadId === targetNotepadId) {
+            const canRetryCurrentContent = currentNotepadId === targetNotepadId
+                && editor.value === content
+                && (expectedRevision == null || editorRevision === expectedRevision);
+            if (isAutoSave && retryCount < 3 && canRetryCurrentContent) {
                 clearTimeout(saveRetryTimeout);
                 saveRetryTimeout = setTimeout(() => {
-                    saveNotes(content, true, false, retryCount + 1, targetNotepadId);
+                    // Re-check at execution time as the user may have edited
+                    // the note while the backoff timer was waiting.
+                    if (currentNotepadId !== targetNotepadId || editor.value !== content
+                        || (expectedRevision != null && editorRevision !== expectedRevision)) return;
+                    saveNotes(content, true, false, retryCount + 1, targetNotepadId, expectedRevision);
                 }, 1200 * (retryCount + 1));
             }
             setStartupSyncStatus('error', '保存失败，本地已保留');
@@ -1637,6 +1702,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     function debouncedSave(content) {
         const targetNotepadId = currentNotepadId;
+        const revision = editorRevision;
         cacheDirtyNote(targetNotepadId, content);
         setStartupSyncStatus('cached', '本地已保留');
         clearTimeout(saveTimeout);
@@ -1645,7 +1711,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             // currentNotepadId which may have changed if the user switched
             // notepads during the 300ms delay — that would write the old
             // notepad's content into the new one.
-            await saveNotes(content, true, true, 0, targetNotepadId);
+            if (currentNotepadId !== targetNotepadId || editor.value !== content || editorRevision !== revision) return;
+            await saveNotes(content, true, true, 0, targetNotepadId, revision);
         }, 300);
     }
 

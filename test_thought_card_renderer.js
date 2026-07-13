@@ -89,6 +89,7 @@ function run() {
     assert(rendered.html.includes('relations-count has-count'), 'card render should include relation count badge');
     assert(rendered.html.includes('subtasks-summary-row'), 'card render should include collapsed subtask summary');
     assert(rendered.html.includes('<mark>first</mark>'), 'card render should preserve search highlighting in subtasks');
+    assert(rendered.html.includes('thought-attachment-add-footer'), 'card footer should include a browse-mode attachment control');
 
     const empty = renderThoughtCard({
         thought: {
@@ -106,6 +107,25 @@ function run() {
     assert(empty.isLong === false, 'short cards without subtasks should not be expandable');
     assert(empty.html.includes('subtask-add-footer'), 'cards without subtasks should expose footer add-subtask action');
     assert(empty.html.includes('relations-count is-zero'), 'zero relation count should keep zero badge class');
+
+    const withAttachments = renderThoughtCard({
+        thought: {
+            id: 'thought-3',
+            text: 'Has attachments',
+            tags: [],
+            attachments: [
+                { id: 'image-1', name: 'photo.png', type: 'image/png', size: 1200, dataUrl: 'data:image/png;base64,AA==' },
+                { id: 'file-1', name: 'notes.pdf', type: 'application/pdf', size: 2048, dataUrl: 'data:application/pdf;base64,AA==' }
+            ],
+            createdAt: 1700000000000
+        },
+        query: '',
+        ...helpers()
+    });
+    assert(withAttachments.html.includes('thought-attachments'), 'card should render attachment collection');
+    assert(withAttachments.html.includes('thought-attachment-preview'), 'images should render as preview buttons');
+    assert(withAttachments.html.includes('data-preview-att="image-1"'), 'preview buttons should expose attachment ids');
+    assert(!withAttachments.html.includes('thought-attachment-add-inline'), 'attachment collections should not duplicate the footer append control');
 
     console.log('Thought card renderer checks passed');
 }

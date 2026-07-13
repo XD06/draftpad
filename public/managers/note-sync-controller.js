@@ -50,12 +50,19 @@ export default class NoteSyncController {
     cacheNote(notepadId, content, options = {}, { notepads = [] } = {}) {
         const previous = this.loadStartupCache() || { version: 1, notes: {}, notepads };
         const previousNote = previous.notes?.[notepadId] || {};
+        const dirty = !!options.dirty;
         const nextNote = {
             content: content || '',
             version: Number.isFinite(options.version) ? options.version : previousNote.version,
-            dirty: !!options.dirty,
+            dirty,
             savedAt: Date.now()
         };
+        const explicitBase = typeof options.baseContent === 'string' ? options.baseContent : null;
+        const retainedBase = previousNote.dirty && typeof previousNote.baseContent === 'string'
+            ? previousNote.baseContent
+            : (!previousNote.dirty && typeof previousNote.content === 'string' ? previousNote.content : null);
+        const baseContent = dirty ? (explicitBase ?? retainedBase) : nextNote.content;
+        if (typeof baseContent === 'string') nextNote.baseContent = baseContent;
         if (Number.isFinite(options.remoteVersion)) nextNote.remoteVersion = Number(options.remoteVersion);
         if (options.conflict) nextNote.conflict = true;
         return this.saveStartupCache({
@@ -68,9 +75,10 @@ export default class NoteSyncController {
         });
     }
 
-    cacheDirtyNote(notepadId, content, { version, notepads = [] } = {}) {
+    cacheDirtyNote(notepadId, content, { version, baseContent, notepads = [] } = {}) {
         return this.cacheNote(notepadId, content, {
             version,
+            baseContent,
             dirty: true
         }, { notepads });
     }
@@ -89,6 +97,49 @@ export default class NoteSyncController {
             remoteVersion,
             conflict: true
         }, { notepads });
+    }
+
+    mergeContents({ base, local, remote } = {}) {
+        if (![base, local, remote].every(value => typeof value === 'string')) {
+            return { ok: false, reason: 'missing_base' };
+        }
+        if (local === remote) return { ok: true, content: local, reason: 'identical' };
+        if (local === base) return { ok: true, content: remote, reason: 'remote_only' };
+        if (remote === base) return { ok: true, content: local, reason: 'local_only' };
+
+        const localEdit = this.findSingleEdit(base, local);
+        const remoteEdit = this.findSingleEdit(base, remote);
+        const sameInsertionPoint = localEdit.start === localEdit.end
+            && remoteEdit.start === remoteEdit.end
+            && localEdit.start === remoteEdit.start;
+        const disjoint = !sameInsertionPoint && (
+            localEdit.end <= remoteEdit.start || remoteEdit.end <= localEdit.start
+        );
+        if (!disjoint) return { ok: false, reason: 'overlap' };
+
+        const edits = [localEdit, remoteEdit].sort((a, b) => b.start - a.start);
+        let content = base;
+        for (const edit of edits) {
+            content = content.slice(0, edit.start) + edit.replacement + content.slice(edit.end);
+        }
+        return { ok: true, content, reason: 'disjoint' };
+    }
+
+    findSingleEdit(base, next) {
+        let start = 0;
+        while (start < base.length && start < next.length && base[start] === next[start]) start += 1;
+
+        let baseEnd = base.length;
+        let nextEnd = next.length;
+        while (baseEnd > start && nextEnd > start && base[baseEnd - 1] === next[nextEnd - 1]) {
+            baseEnd -= 1;
+            nextEnd -= 1;
+        }
+        return {
+            start,
+            end: baseEnd,
+            replacement: next.slice(start, nextEnd)
+        };
     }
 
     getCachedNote(notepadId) {

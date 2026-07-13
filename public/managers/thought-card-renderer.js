@@ -53,6 +53,11 @@ export function renderThoughtCard({
     const footerHtml = `
                 <div class="thought-card-footer">
                     ${emptySubtaskActionHtml}
+                    <button class="thought-tool-btn thought-attachment-add-footer" type="button" title="添加附件" aria-label="添加附件">
+                        <svg class="thought-tool-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path>
+                        </svg>
+                    </button>
                     ${aiStatusHtml}
                     <button class="thought-tool-btn thought-relations-btn" data-relations="${escapeHtml(thought.id)}" title="查看关联想法" aria-label="查看关联想法">
                         <svg class="thought-tool-icon relations-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
@@ -84,6 +89,14 @@ export function renderThoughtCard({
         bodyText,
         isLong,
         html: `
+                <div class="thought-swipe-action" aria-hidden="true">
+                    <span class="thought-swipe-action-icon">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M3 6h18"></path><path d="M8 6V4h8v2"></path><path d="M19 6l-1 15H6L5 6"></path><path d="M10 11v6"></path><path d="M14 11v6"></path>
+                        </svg>
+                    </span>
+                    <span class="thought-swipe-action-label">松开删除</span>
+                </div>
                 <div class="timeline-node"></div>
                 <div class="thought-card-header">
                     <div class="thought-dot" title="点击切换完成状态">
@@ -118,9 +131,9 @@ function renderAttachments(attachments) {
         const isImage = att.type && att.type.startsWith('image/');
         const name = escapeAttText(att.name || '文件');
         if (isImage) {
-            return `<div class="thought-attachment thought-attachment-image" data-att-id="${escapeAttText(att.id || '')}">
+            return `<button type="button" class="thought-attachment thought-attachment-image thought-attachment-preview" data-att-id="${escapeAttText(att.id || '')}" data-preview-att="${escapeAttText(att.id || '')}" aria-label="预览图片：${name}">
                         <img src="${escapeAttText(att.dataUrl || '')}" alt="${name}" loading="lazy">
-                    </div>`;
+                    </button>`;
         }
         const sizeText = formatAttSize(att.size);
         const icon = getFileIcon(att.type);
