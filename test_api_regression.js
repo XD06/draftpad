@@ -87,6 +87,8 @@ function assertThoughtsFrontendRegressions() {
     const thoughtApiClientSource = fs.readFileSync(path.join(ROOT, 'public', 'managers', 'thought-api-client.js'), 'utf8');
     const thoughtOutboxSource = fs.readFileSync(path.join(ROOT, 'public', 'managers', 'thought-outbox.js'), 'utf8');
     const hybridEditorSource = fs.readFileSync(path.join(ROOT, 'public', 'hybrid-editor.js'), 'utf8');
+    const openApi = JSON.parse(fs.readFileSync(path.join(ROOT, 'public', 'openapi.json'), 'utf8'));
+    const stylesCss = fs.readFileSync(path.join(ROOT, 'public', 'Assets', 'styles.css'), 'utf8');
     const thoughtsCss = fs.readFileSync(path.join(ROOT, 'public', 'Assets', 'thoughts.css'), 'utf8');
     const iosThemeCss = fs.readFileSync(path.join(ROOT, 'public', 'Assets', 'ios-theme.css'), 'utf8');
     const indexSource = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
@@ -182,10 +184,12 @@ function assertThoughtsFrontendRegressions() {
         'ThoughtsManager should delegate browser local thought outbox persistence and replay to ThoughtOutbox'
     );
     assert(
-        thoughtsSource.includes('enqueueThoughtOverwrite(thought)') &&
+        thoughtsSource.includes('enqueueThoughtOverwrite(thought, err)') &&
         thoughtOutboxSource.includes("kind: 'relation'") &&
-        thoughtOutboxSource.includes("kind: 'create'"),
-        'thought create, overwrite, and relation operations should be covered by the outbox'
+        thoughtOutboxSource.includes("kind: 'create'") &&
+        thoughtOutboxSource.includes('markConflict') &&
+        thoughtOutboxSource.includes("item.state === 'conflict'"),
+        'thought create, overwrite, relation operations, and version conflicts should be covered by the outbox'
     );
     assert(
         thoughtsSource.includes("e.key === 'Enter' && (e.ctrlKey || e.metaKey)") &&
@@ -230,12 +234,28 @@ function assertThoughtsFrontendRegressions() {
         'ThoughtApiClient should support lightweight limited thought search'
     );
     assert(
+        openApi.openapi === '3.1.0' &&
+        openApi.paths?.['/api/thoughts'] &&
+        openApi.paths?.['/api/notes/{id}'] &&
+        openApi.components?.securitySchemes?.pinBearer,
+        'developer API contract should expose a valid OpenAPI document for note and Thought management'
+    );
+    assert(
         thoughtsSource.includes('queueManualRelationSearch') &&
         thoughtsSource.includes('manualRelationSearchSeq') &&
         thoughtsSource.includes('limit: 8, light: true') &&
         thoughtRelationsPanelSource.includes('summaryHtml = highlightPlainText') &&
         thoughtRelationsPanelSource.includes('textSnippetAroundQuery'),
         'manual relation search should be debounced, lightweight, stale-safe, and keyword-highlighted'
+    );
+    assert(
+        thoughtRelationsPanelSource.includes('thought-relation-unlink-icon') &&
+        thoughtRelationsPanelSource.includes('m15 7 2-2a4.24 4.24') &&
+        !thoughtRelationsPanelSource.includes('img.icons8.com/fluency-systems-regular/48/disconnected.png') &&
+        thoughtAIStatusSource.includes('AI_RETRY_ICON_SVG') &&
+        thoughtAIStatusSource.includes('M20 11a8.1 8.1 0 0 0-15.5-2L3 11') &&
+        !thoughtAIStatusSource.includes('AI_RUN_COMMAND_ICON_SRC'),
+        'relation deletion and AI retry controls should use inline unlink and refresh icons'
     );
     assert(
         thoughtsSource.includes('scrollFirstSearchHighlight(card)') &&
@@ -265,8 +285,9 @@ function assertThoughtsFrontendRegressions() {
     assert(
         thoughtRoutesSource.includes('const light =') &&
         thoughtRoutesSource.includes('const limit =') &&
-        thoughtRoutesSource.includes('return res.json(thoughts.map(thought => ({'),
-        'thought routes should expose a lightweight search response that skips meta and relation-count reads'
+        thoughtRoutesSource.includes('const items = thoughts.map(thought => ({') &&
+        thoughtRoutesSource.includes('pageFormat ? { items, nextCursor, hasMore } : items'),
+        'thought routes should expose lightweight arrays and compatible cursor-paginated responses without meta reads'
     );
     assert(
         thoughtRoutesSource.includes('function createThoughtId') &&
@@ -348,6 +369,44 @@ function assertThoughtsFrontendRegressions() {
         !thoughtsSource.includes('startLongPress') &&
         !thoughtsSource.includes("textEl.addEventListener('touchstart'"),
         'Thought text styling should use selected text controls, and clear style should appear only when clicking styled text'
+    );
+    assert(
+        thoughtsSource.includes('data-thought-style="copy"') &&
+        thoughtsSource.includes('data-copy-icon="true"') &&
+        thoughtsSource.includes('aria-label="复制已选文字"') &&
+        thoughtsSource.includes('<svg viewBox="0 0 24 24"') &&
+        thoughtsSource.includes("if (style === 'copy')") &&
+        thoughtsSource.includes('this.copyTextWithFeedback(button, selection.selectedText)') &&
+        thoughtsSource.includes('window.getSelection?.().removeAllRanges()'),
+        'Thought selected-text toolbar should provide icon actions and copy the selected text through the existing clipboard fallback'
+    );
+    assert(
+        indexSource.includes('id="toggle-thoughts"') &&
+        indexSource.includes('M12 2a7 7 0 0 0-4 12.74') &&
+        !indexSource.includes('M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19'),
+        'the Thought entry action should use a lightbulb icon rather than the editor pencil icon'
+    );
+    assert(
+        thoughtsSource.includes('focusSearch()') &&
+        thoughtsSource.includes('this.searchInput.focus()') &&
+        appSource.includes("e.key.toLowerCase() === 'f'") &&
+        appSource.includes('thoughtsManager?.isActive') &&
+        appSource.includes('thoughtsManager.focusSearch()'),
+        'Ctrl/Cmd+F should focus Thought search in Thoughts mode and reuse command search elsewhere'
+    );
+    assert(
+        stylesCss.includes('[data-theme="dark"] .vditor-reset pre > code.hljs') &&
+        stylesCss.includes('#c9d1d9') &&
+        stylesCss.includes('.hljs-comment') &&
+        stylesCss.includes('#8b949e'),
+        'dark code blocks should use a readable GitHub Dark foreground and syntax token palette'
+    );
+    assert(
+        thoughtsCss.includes('.thought-highlight') &&
+        thoughtsCss.includes('background: #dbeafe') &&
+        thoughtsCss.includes('color: #1d4ed8') &&
+        thoughtsCss.includes('[data-theme="dark"] .thought-highlight'),
+        'Thought search hits should use a dedicated blue highlight in light and dark themes'
     );
     assert(
         thoughtsSource.includes('bindThoughtSwipeDelete(card, thought)') &&
@@ -650,7 +709,10 @@ async function run() {
     try {
         await waitForServer(child);
 
-        let result = await request('/api/notepads');
+        let result = await request('/openapi.json');
+        assert(result.response.ok && result.body.openapi === '3.1.0', 'GET /openapi.json should expose the machine-readable API contract');
+
+        result = await request('/api/notepads');
         assert(result.response.ok, 'GET /api/notepads should succeed');
         assert(Array.isArray(result.body.notepads_list), 'notepads_list should be an array');
 
@@ -710,6 +772,33 @@ async function run() {
         assert(result.response.ok, 'GET /api/notes/:id after rename should succeed');
         assert(result.body.content === 'hello world', 'renamed note should keep content');
 
+        result = await request('/api/notepads');
+        const renamedNotepad = result.body.notepads_list.find(item => item.id === notepadId);
+        assert(renamedNotepad?.version === 4, 'renamed notepad should expose the latest version before pinning');
+
+        result = await request(`/api/notepads/${notepadId}`, {
+            method: 'PATCH',
+            body: JSON.stringify({ pinned: true, baseVersion: renamedNotepad.version })
+        });
+        assert(result.response.ok, 'PATCH /api/notepads/:id should pin a notepad');
+        assert(result.body.pinned === true, 'pin update should persist pinned=true');
+        assert(Number.isFinite(result.body.pinnedAt), 'pin update should record pinnedAt');
+        assert(result.body.version === renamedNotepad.version + 1, 'pin update should advance the notepad version');
+
+        result = await request(`/api/notepads/${notepadId}`, {
+            method: 'PATCH',
+            body: JSON.stringify({ pinned: false, baseVersion: renamedNotepad.version })
+        });
+        assert(result.response.status === 409, 'stale notepad pin updates should return 409');
+
+        result = await request(`/api/notepads/${notepadId}`, {
+            method: 'PATCH',
+            body: JSON.stringify({ pinned: false, baseVersion: renamedNotepad.version + 1 })
+        });
+        assert(result.response.ok, 'PATCH /api/notepads/:id should unpin a notepad');
+        assert(result.body.pinned === false, 'unpin update should persist pinned=false');
+        assert(!Object.prototype.hasOwnProperty.call(result.body, 'pinnedAt'), 'unpin update should clear pinnedAt');
+
         result = await request('/api/search?q=__definitely_no_match__');
         assert(result.response.ok, 'GET /api/search should succeed');
         assert(Array.isArray(result.body.results), 'search results should be an array');
@@ -740,6 +829,28 @@ async function run() {
         assert(result.body.completed === true, 'POST /api/thoughts should preserve completed state for local outbox replay');
         const completedThoughtId = result.body.id;
 
+        result = await request('/api/thoughts?format=page&light=1&limit=1&updatedSince=0');
+        assert(result.response.ok, 'paged lightweight Thought listing should succeed');
+        assert(Array.isArray(result.body.items) && result.body.items.length === 1, 'paged Thought listings should return a bounded items array');
+        assert(typeof result.body.hasMore === 'boolean', 'paged Thought listings should report whether more items are available');
+        assert(result.body.items[0].version >= 1, 'paged lightweight Thought listings should include mutation versions');
+        if (result.body.nextCursor) {
+            const firstPageId = result.body.items[0].id;
+            const nextPage = await request(`/api/thoughts?format=page&light=1&limit=1&cursor=${encodeURIComponent(result.body.nextCursor)}`);
+            assert(nextPage.response.ok, 'the next Thought cursor page should succeed');
+            assert(nextPage.body.items[0]?.id !== firstPageId, 'the next cursor page should not repeat the previous item');
+        }
+
+        result = await request('/api/thoughts?format=page&light=1&limit=1&sort=timeline&status=todo');
+        assert(result.response.ok, 'timeline-sorted Thought pagination should succeed');
+        assert(result.body.items.every(item => item.completed !== true), 'timeline page status filtering should exclude completed Thoughts');
+        if (result.body.nextCursor) {
+            const firstTimelineId = result.body.items[0].id;
+            const nextTimelinePage = await request(`/api/thoughts?format=page&light=1&limit=1&sort=timeline&status=todo&cursor=${encodeURIComponent(result.body.nextCursor)}`);
+            assert(nextTimelinePage.response.ok, 'the next timeline Thought cursor page should succeed');
+            assert(nextTimelinePage.body.items[0]?.id !== firstTimelineId, 'the next timeline cursor page should not repeat the previous item');
+        }
+
         result = await request(`/api/thoughts/${completedThoughtId}`, {
             method: 'PATCH',
             body: JSON.stringify({ action: 'overwrite', text: 'API completed thought updated', completed: false })
@@ -767,9 +878,42 @@ async function run() {
             body: JSON.stringify({ action: 'overwrite', text: 'API regression thought edited', subItems: [] })
         });
         assert(result.response.ok, 'PATCH ready thought should succeed');
-        assert(result.body.thought.aiStatus === 'ready', 'PATCH ready thought should keep current AI status instead of stale pending');
+        assert(result.body.thought.aiStatus === 'stale', 'PATCH semantic Thought content should mark existing AI output as stale');
         assert(Number.isFinite(result.body.thought.relationCount), 'PATCH ready thought should include current relation count');
         let editedThoughtVersion = result.body.thought.version;
+        result = await request(`/api/thoughts/${thoughtId}/ai-status`);
+        assert(result.response.ok && result.body.status === 'stale', 'AI status should expose stale derived content after a semantic Thought edit');
+
+        result = await request(`/api/thoughts/${thoughtId}`, {
+            method: 'PATCH',
+            body: JSON.stringify({
+                action: 'overwrite',
+                text: 'API regression thought versioned edit',
+                subItems: [],
+                baseVersion: editedThoughtVersion
+            })
+        });
+        assert(result.response.ok, 'PATCH with the current Thought version should succeed');
+        assert(result.body.thought.version === editedThoughtVersion + 1, 'a versioned Thought write should advance the version');
+        const currentThoughtVersion = result.body.thought.version;
+
+        result = await request(`/api/thoughts/${thoughtId}`, {
+            method: 'PATCH',
+            body: JSON.stringify({
+                action: 'overwrite',
+                text: 'stale local edit must not overwrite',
+                subItems: [],
+                baseVersion: editedThoughtVersion
+            })
+        });
+        assert(result.response.status === 409, 'a stale Thought write should return 409');
+        assert(result.body.currentVersion === currentThoughtVersion, 'a Thought conflict should expose the current version');
+        editedThoughtVersion = currentThoughtVersion;
+
+        result = await request('/api/thoughts?light=1');
+        const lightThought = result.body.find(item => item.id === thoughtId);
+        assert(result.response.ok && lightThought, 'lightweight Thought lists should include the edited Thought');
+        assert(lightThought.version === currentThoughtVersion, 'lightweight Thought lists should carry version for subsequent mutations');
 
         fs.writeFileSync(
             path.join(dataDir, 'thoughts.meta', `${thoughtId}.json`),

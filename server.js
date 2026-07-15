@@ -1,5 +1,6 @@
 require('dotenv').config();
 const express = require('express');
+const compression = require('compression');
 const { marked } = require('marked');
 const cors = require('cors');
 const fs = require('fs').promises;
@@ -25,6 +26,7 @@ const s3PrefixTools = require('./scripts/s3-prefix-tools');
 const localToS3Migration = require('./scripts/migrate-local-to-s3');
 const s3Service = require('./scripts/s3-service');
 const { registerAuthRoutes } = require('./routes/auth-routes');
+const { registerAssetRoutes } = require('./routes/asset-routes');
 const { registerDataManagementRoutes } = require('./routes/data-management-routes');
 const { registerNoteRoutes } = require('./routes/note-routes');
 const { registerNotepadRoutes } = require('./routes/notepad-routes');
@@ -223,6 +225,7 @@ const corsOptions = getCorsOptions(BASE_URL);
 
 // Middleware setup
 app.use(cors(corsOptions));
+app.use(compression({ threshold: 1024 }));
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 app.use(cookieParser());
@@ -561,6 +564,11 @@ registerDataManagementRoutes(app, {
     s3PrefixTools,
     localToS3Migration,
     s3Service
+});
+
+registerAssetRoutes(app, {
+    storage,
+    originValidationMiddleware
 });
 
 registerThoughtRoutes(app, {

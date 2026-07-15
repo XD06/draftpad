@@ -48,6 +48,7 @@ export class WSClient {
     handleOpen() {
         this.currentReconnectDelay = this.reconnectDelay;
         this.flushQueue();
+        window.dispatchEvent(new CustomEvent('ws_connected'));
         this.log('WebSocket connected');
     }
 

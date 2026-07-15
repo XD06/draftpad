@@ -44,6 +44,7 @@ import {
 } from './thought-ai-status.js';
 import { renderThoughtCard } from './thought-card-renderer.js';
 import { buildAttachmentsFromFiles, getImageAttachments } from './thought-attachments.js';
+import { AssetApiClient, getAssetDownloadUrl, getAssetOriginalUrl, getAssetPreviewUrl, isImageFile } from './asset-api-client.js';
 import { getThoughtSwipeState } from './thought-swipe.js';
 import { applyThoughtTextStyle, escapeHtml as escapeThoughtHtml, formatThoughtText } from './thought-text-formatting.js';
 import { buildQuickAddCreateOutboxItem, createLocalPendingThought, markCreatedThoughtPending } from './thought-quick-add.js';
@@ -55,9 +56,11 @@ export class ThoughtsManager {
     constructor(app) {
         this.app = app;
         this.apiClient = app.apiClient || new ThoughtApiClient();
+        this.assetApi = app.assetApi || new AssetApiClient();
         this.outbox = app.outbox || new ThoughtOutbox();
         this.view = document.getElementById('thoughts-view');
         this.timeline = document.getElementById('thoughts-timeline');
+        this.scrollArea = this.view?.querySelector('.thoughts-scroll-area') || this.view;
         this.searchInput = document.getElementById('thoughts-search-input');
         this.dateFilter = document.getElementById('thoughts-date-filter');
         this.statusFilter = document.getElementById('thoughts-status-filter');
@@ -78,6 +81,7 @@ export class ThoughtsManager {
         this.outboxStatus = document.getElementById('thoughts-outbox-status');
 
         this.quickAddAttachments = [];
+        this.quickAddAttachmentUploads = new Set();
         this.attachmentLightbox = null;
         this.attachmentLightboxState = null;
 
@@ -89,6 +93,7 @@ export class ThoughtsManager {
         this.pendingCreateIds = new Set(); // Prevent duplicate from race conditions
         this.pendingAIStatusTimers = new Map();
         this.outboxInFlight = false;
+        this.thoughtSyncState = this.loadOutbox().length ? 'pending' : 'synced';
         this.fetchThoughtsSeq = 0;
         this.manualRelationSearchTimer = null;
         this.manualRelationSearchSeq = 0;
@@ -101,6 +106,10 @@ export class ThoughtsManager {
         this._renderBatchSize = 30;
         this._renderedCount = 0;
         this._lastFilteredIds = [];
+        this._nextThoughtCursor = null;
+        this._hasMoreThoughts = false;
+        this._isLoadingThoughtPage = false;
+        this._thoughtPageFilterKey = '';
 
         this.initDateFilter();
         this.initEventListeners();
@@ -143,6 +152,7 @@ export class ThoughtsManager {
                 this.quickAddInput.style.height = 'auto';
                 this.quickAddInput.style.height = Math.min(this.quickAddInput.scrollHeight, 160) + 'px';
             });
+            this.quickAddInput.addEventListener('paste', event => this.queueQuickAddPastedImages(event));
             this.initQuickAddTagEvents();
         }
     }
@@ -154,14 +164,15 @@ export class ThoughtsManager {
                 this.quickAddFileInput.click();
             });
             this.quickAddFileInput.addEventListener('change', () => {
-                this.handleQuickAddFileSelect(this.quickAddFileInput.files);
+                this.trackQuickAddAttachmentUpload(this.handleQuickAddFileSelect(this.quickAddFileInput.files));
                 this.quickAddFileInput.value = '';
             });
         }
     }
 
-    async handleQuickAddFileSelect(fileList) {
+    async handleQuickAddFileSelect(fileList, session = this.quickAddSession) {
         const attachments = await this.collectAttachmentFiles(fileList);
+        if (session !== this.quickAddSession) return;
         this.quickAddAttachments.push(...attachments);
         this.renderQuickAddAttachments();
     }
@@ -178,17 +189,19 @@ export class ThoughtsManager {
     async collectAttachmentFiles(fileList) {
         if (!fileList || !fileList.length) return [];
         const result = await buildAttachmentsFromFiles(fileList, {
-            readFileAsDataURL: file => this.readFileAsDataURL(file)
+            readFileAsDataURL: file => this.readFileAsDataURL(file),
+            uploadImage: file => this.assetApi.uploadImage(file)
         });
 
         result.rejected.forEach(({ file, reason, error }) => {
             const name = file?.name || '文件';
             if (reason === 'too-large') {
-                this.app.toaster?.show(`文件「${name}」超过 4MB 限制`, 'error', false, 3000);
+                const limit = isImageFile(file) ? '50MB' : '4MB';
+                this.app.toaster?.show(`文件「${name}」超过 ${limit} 限制`, 'error', false, 3000);
                 return;
             }
-            console.error('Failed to read file:', error);
-            this.app.toaster?.show(`文件「${name}」读取失败`, 'error', false, 2400);
+            console.error('Failed to add attachment:', error);
+            this.app.toaster?.show(`文件「${name}」添加失败`, 'error', false, 2400);
         });
         return result.attachments;
     }
@@ -206,7 +219,7 @@ export class ThoughtsManager {
             const name = this.escapeHtml(att.name);
             if (isImage) {
                 return `<div class="qa-att-item qa-att-image">
-                            <img src="${this.escapeHtml(att.dataUrl)}" alt="${name}" loading="lazy">
+                            <img src="${this.escapeHtml(getAssetPreviewUrl(att))}" alt="${name}" loading="lazy">
                             <button class="qa-att-remove" data-remove-att="${this.escapeHtml(att.id)}" title="移除">×</button>
                         </div>`;
             }
@@ -215,6 +228,24 @@ export class ThoughtsManager {
                         <button class="qa-att-remove" data-remove-att="${this.escapeHtml(att.id)}" title="移除">×</button>
                     </div>`;
         }).join('');
+    }
+
+    getPastedImageFiles(event) {
+        return Array.from(event?.clipboardData?.files || []).filter(isImageFile);
+    }
+
+    queueQuickAddPastedImages(event) {
+        const files = this.getPastedImageFiles(event);
+        if (!files.length) return;
+        event.preventDefault();
+        this.trackQuickAddAttachmentUpload(this.handleQuickAddFileSelect(files, this.quickAddSession));
+    }
+
+    trackQuickAddAttachmentUpload(task) {
+        const tracked = Promise.resolve(task);
+        this.quickAddAttachmentUploads.add(tracked);
+        tracked.finally(() => this.quickAddAttachmentUploads.delete(tracked));
+        return tracked;
     }
 
     initQuickAddAttachmentRemoveEvents() {
@@ -245,6 +276,13 @@ export class ThoughtsManager {
                 window.location.hash = '';
             }
         });
+    }
+
+    focusSearch() {
+        if (!this.searchInput) return;
+        this.view.classList.add('expanded');
+        this.searchInput.focus();
+        this.searchInput.select();
     }
 
     initSearchAndFilterEvents() {
@@ -283,7 +321,8 @@ export class ThoughtsManager {
 
         this.searchInput.addEventListener('input', () => {
             clearTimeout(this._searchDebounce);
-            this._searchDebounce = setTimeout(() => this.render(), 150);
+            this.fetchThoughtsSeq += 1;
+            this._searchDebounce = setTimeout(() => this.fetchThoughts(), 150);
         });
         this.dateFilter.addEventListener('change', () => this.fetchThoughts());
         this.statusFilter.querySelectorAll('.status-pill').forEach(btn => {
@@ -291,7 +330,7 @@ export class ThoughtsManager {
                 this.statusFilter.querySelector('.status-pill.active')?.classList.remove('active');
                 btn.classList.add('active');
                 this.statusFilter.dataset.value = btn.dataset.status;
-                this.render();
+                this.fetchThoughts();
             });
         });
 
@@ -300,7 +339,7 @@ export class ThoughtsManager {
                 const clearBtn = e.target.closest('[data-clear-tag-filter]');
                 if (clearBtn) {
                     this.activeTag = '';
-                    this.render();
+                    this.fetchThoughts();
                     return;
                 }
 
@@ -308,7 +347,7 @@ export class ThoughtsManager {
                 if (!tagBtn) return;
                 const tag = tagBtn.dataset.tagFilter;
                 this.activeTag = this.activeTag.toLowerCase() === tag.toLowerCase() ? '' : tag;
-                this.render();
+                this.fetchThoughts();
             });
 
             this.tagsFilter.addEventListener('keydown', (e) => {
@@ -321,11 +360,11 @@ export class ThoughtsManager {
                     this.saveTag(tag);
                     this.activeTag = tag;
                     input.value = '';
-                    this.render();
+                    this.fetchThoughts();
                 } else if (e.key === 'Escape') {
                     input.value = '';
                     this.activeTag = '';
-                    this.render();
+                    this.fetchThoughts();
                 }
             });
         }
@@ -333,7 +372,13 @@ export class ThoughtsManager {
 
     initOutboxEvents() {
         if (this.outboxStatus) {
-            this.outboxStatus.addEventListener('click', () => this.retryOutbox({ silent: false }));
+            this.outboxStatus.addEventListener('click', () => {
+                if (this.outboxStatus.dataset.syncState === 'conflict') {
+                    this.refreshOutboxConflicts();
+                    return;
+                }
+                this.retryOutbox({ silent: false });
+            });
         }
     }
 
@@ -351,6 +396,11 @@ export class ThoughtsManager {
 
         window.addEventListener('ai_status_update', (e) => {
             this.handleAIStatusSocketUpdate(e.detail || {});
+        });
+
+        window.addEventListener('ws_connected', () => {
+            this.retryOutbox({ silent: true });
+            if (this.isActive) this.fetchThoughts();
         });
     }
 
@@ -416,15 +466,34 @@ export class ThoughtsManager {
     updateOutboxStatus(items = this.loadOutbox()) {
         if (!this.outboxStatus) return;
         const count = items.length;
-        this.outboxStatus.hidden = count === 0;
-        this.outboxStatus.textContent = count > 0 ? `待同步 ${count}` : '待同步 0';
+        const conflictCount = items.filter(item => item.state === 'conflict').length;
+        const state = this.outboxInFlight
+            ? 'syncing'
+            : conflictCount > 0
+                ? 'conflict'
+                : count > 0
+                    ? 'pending'
+                    : this.thoughtSyncState === 'syncing'
+                        ? 'syncing'
+                        : 'synced';
+        const labels = {
+            synced: '已同步',
+            syncing: '同步中',
+            pending: `待同步 ${count}`,
+            conflict: `同步冲突 ${conflictCount}`
+        };
+        this.outboxStatus.hidden = false;
+        this.outboxStatus.dataset.syncState = state;
+        this.outboxStatus.textContent = labels[state];
         this.outboxStatus.disabled = this.outboxInFlight;
     }
 
     handleOutboxResult(result) {
         if (!result) return null;
         this.updateOutboxStatus(result.items);
-        if (result.outcome === 'merged-create') {
+        if (result.outcome === 'conflict') {
+            this.app.toaster?.show('Thought 已在其他设备更新，本地修改已保留为冲突', 'warning', false, 3600);
+        } else if (result.outcome === 'merged-create') {
             this.app.toaster?.show('云端暂时不可用，已更新本地待同步内容', 'warning', false, 2400);
         } else if (result.outcome === 'cancelled-create') {
             this.app.toaster?.show('本地待同步 Thought 已取消', 'info', false, 1800);
@@ -434,10 +503,78 @@ export class ThoughtsManager {
         return result.item;
     }
 
-    enqueueThoughtOverwrite(thought) {
+    beginThoughtSync() {
+        this.thoughtSyncState = 'syncing';
+        this.updateOutboxStatus();
+    }
+
+    applySavedThought(localThought, response) {
+        const saved = response?.thought || response;
+        if (!saved?.id) return null;
+        const index = this.thoughts.findIndex(thought => thought.id === saved.id);
+        const localIndex = localThought ? this.thoughts.indexOf(localThought) : -1;
+        const previous = index >= 0 ? this.thoughts[index] : localThought || {};
+        const next = {
+            ...previous,
+            ...saved,
+            aiTags: saved.aiTags ?? previous.aiTags ?? [],
+            relationCount: saved.relationCount ?? previous.relationCount ?? 0
+        };
+        delete next.localPending;
+        delete next.syncConflict;
+        delete next.remoteConflict;
+        Object.assign(previous, next);
+        if (index >= 0) this.thoughts[index] = previous;
+        else if (localIndex >= 0) this.thoughts[localIndex] = previous;
+        else this.thoughts.unshift(previous);
+        this.thoughtSyncState = 'synced';
+        this.updateOutboxStatus();
+        return previous;
+    }
+
+    enqueueThoughtOverwrite(thought, error = null) {
         if (!thought?.id) return;
         const result = this.outbox.enqueueOverwrite(thought);
+        if (Number(error?.status) === 409) {
+            this.outbox.markConflict(thought.id, {
+                currentVersion: error.body?.currentVersion,
+                message: error.message
+            });
+            this.thoughtSyncState = 'conflict';
+            this.handleOutboxResult({ ...result, items: this.loadOutbox(), outcome: 'conflict' });
+            this.refreshThoughtConflict(thought.id, error);
+            return result.item;
+        }
+        this.thoughtSyncState = 'pending';
         return this.handleOutboxResult(result);
+    }
+
+    async refreshThoughtConflict(thoughtId, error = null) {
+        const localThought = this.thoughts.find(thought => thought.id === thoughtId);
+        if (localThought) {
+            localThought.localPending = true;
+            localThought.syncConflict = true;
+            localThought.remoteVersion = error?.body?.currentVersion;
+        }
+        try {
+            const remote = await this.apiClient.get(thoughtId);
+            if (localThought) {
+                localThought.remoteConflict = remote;
+                localThought.remoteVersion = remote?.version ?? localThought.remoteVersion;
+            }
+        } catch (refreshError) {
+            console.warn('Failed to refresh remote Thought after a sync conflict:', refreshError);
+        }
+        this.updateOutboxStatus();
+        this.render();
+    }
+
+    async refreshOutboxConflicts() {
+        const conflicts = this.loadOutbox().filter(item => item.state === 'conflict');
+        await Promise.all(conflicts.map(item => this.refreshThoughtConflict(item.thoughtId)));
+        if (conflicts.length) {
+            this.app.toaster?.show('已刷新远端版本，本地修改仍被保留，需合并后再保存', 'info', false, 3600);
+        }
     }
 
     mergeOutboxThoughts(thoughts) {
@@ -450,48 +587,138 @@ export class ThoughtsManager {
         this.outboxInFlight = true;
         this.updateOutboxStatus(items);
 
-        const result = await this.outbox.retry(this.apiClient);
-        for (const created of result.created) {
-            const index = this.thoughts.findIndex(thought => thought.id === created.item.tempThought?.id);
-            if (index >= 0) this.thoughts[index] = created.data;
-        }
+        try {
+            const result = await this.outbox.retry(this.apiClient);
+            for (const created of result.created) {
+                this.applySavedThought(
+                    this.thoughts.find(thought => thought.id === created.item.tempThought?.id),
+                    created.data
+                );
+            }
+            await Promise.all(result.conflicts.map(item => this.refreshThoughtConflict(item.thoughtId, {
+                body: item.conflict,
+                message: item.lastError
+            })));
 
-        this.outboxInFlight = false;
-        this.updateOutboxStatus(result.remaining);
-        if (result.changed) {
-            await this.fetchThoughts();
-        }
-        if (!silent) {
-            this.app.toaster?.show(
-                result.remaining.length === 0 ? '待同步 Thought 已全部提交' : `仍有 ${result.remaining.length} 条 Thought 待同步`,
-                result.remaining.length === 0 ? 'success' : 'warning',
-                false,
-                2200
-            );
+            this.thoughtSyncState = result.remaining.length ? (result.conflicts.length ? 'conflict' : 'pending') : 'synced';
+            if (result.changed) await this.fetchThoughts();
+            if (!silent) {
+                this.app.toaster?.show(
+                    result.remaining.length === 0 ? '待同步 Thought 已全部提交' : result.conflicts.length ? `有 ${result.conflicts.length} 条 Thought 需要合并` : `仍有 ${result.remaining.length} 条 Thought 待同步`,
+                    result.remaining.length === 0 ? 'success' : 'warning',
+                    false,
+                    2200
+                );
+            }
+        } finally {
+            this.outboxInFlight = false;
+            this.updateOutboxStatus();
         }
     }
 
-    async fetchThoughts() {
+    getThoughtListFilters() {
         const date = this.dateFilter.value;
         const query = this.searchInput.value.trim();
-        const requestSeq = ++this.fetchThoughtsSeq;
-        try {
-            if (this.thoughts.length === 0 || date || query) {
-                const lightThoughts = await this.apiClient.list({ date, query, light: true });
-                if (requestSeq !== this.fetchThoughtsSeq) return;
-                this.thoughts = this.mergeOutboxThoughts(this.mergeThoughtDetails(lightThoughts));
-                this.syncTagsFromThoughts(this.thoughts);
-                this.render();
-            }
+        const tag = this.activeTag;
+        const status = this.statusFilter.dataset.value || 'all';
+        return {
+            date,
+            query,
+            tag,
+            status,
+            key: JSON.stringify({ date, query, tag: tag.toLowerCase(), status })
+        };
+    }
 
-            const fullThoughts = await this.apiClient.list({ date, query });
-            if (requestSeq !== this.fetchThoughtsSeq) return;
-            this.thoughts = this.mergeOutboxThoughts(fullThoughts);
-            if (!date && !query) this.saveThoughtsCache(this.thoughts);
+    async fetchThoughts() {
+        const filters = this.getThoughtListFilters();
+        const requestSeq = ++this.fetchThoughtsSeq;
+        this._isLoadingThoughtPage = true;
+        this._nextThoughtCursor = null;
+        this._hasMoreThoughts = false;
+        this._thoughtPageFilterKey = filters.key;
+        this.updateThoughtLoadMoreControl();
+        try {
+            const page = await this.apiClient.listPage({
+                date: filters.date,
+                query: filters.query,
+                tag: filters.tag,
+                status: filters.status,
+                sort: 'timeline',
+                limit: this._renderBatchSize,
+                light: true
+            });
+            if (requestSeq !== this.fetchThoughtsSeq || filters.key !== this.getThoughtListFilters().key) return;
+            const items = Array.isArray(page?.items) ? page.items : [];
+            this.thoughts = this.mergeOutboxThoughts(this.mergeThoughtDetails(items));
+            this._nextThoughtCursor = typeof page?.nextCursor === 'string' ? page.nextCursor : null;
+            this._hasMoreThoughts = page?.hasMore === true && Boolean(this._nextThoughtCursor);
+            if (!filters.date && !filters.query && !filters.tag && filters.status === 'all') {
+                this.saveThoughtsCache(this.thoughts);
+            }
             this.syncTagsFromThoughts(this.thoughts);
             this.render();
         } catch (err) {
             console.error('Failed to fetch thoughts:', err);
+            this.app.toaster?.show('Thought 加载失败，请稍后重试', 'error', false, 2400);
+        } finally {
+            if (requestSeq === this.fetchThoughtsSeq) {
+                this._isLoadingThoughtPage = false;
+                this.updateThoughtLoadMoreControl();
+            }
+        }
+    }
+
+    async loadNextThoughtPage() {
+        if (this._isLoadingThoughtPage || !this._hasMoreThoughts || !this._nextThoughtCursor) return;
+        const filters = this.getThoughtListFilters();
+        if (filters.key !== this._thoughtPageFilterKey) {
+            await this.fetchThoughts();
+            return;
+        }
+
+        const requestSeq = this.fetchThoughtsSeq;
+        const cursor = this._nextThoughtCursor;
+        this._isLoadingThoughtPage = true;
+        this.updateThoughtLoadMoreControl();
+        try {
+            const page = await this.apiClient.listPage({
+                date: filters.date,
+                query: filters.query,
+                tag: filters.tag,
+                status: filters.status,
+                sort: 'timeline',
+                limit: this._renderBatchSize,
+                light: true,
+                cursor
+            });
+            if (requestSeq !== this.fetchThoughtsSeq || filters.key !== this.getThoughtListFilters().key) return;
+
+            const incoming = this.mergeThoughtDetails(Array.isArray(page?.items) ? page.items : []);
+            const incomingIds = new Set(incoming.map(thought => thought.id));
+            this.thoughts = this.mergeOutboxThoughts([
+                ...this.thoughts.filter(thought => !incomingIds.has(thought.id)),
+                ...incoming
+            ]);
+            this._nextThoughtCursor = typeof page?.nextCursor === 'string' ? page.nextCursor : null;
+            this._hasMoreThoughts = page?.hasMore === true && Boolean(this._nextThoughtCursor);
+            if (!filters.date && !filters.query && !filters.tag && filters.status === 'all') {
+                this.saveThoughtsCache(this.thoughts);
+            }
+            this.syncTagsFromThoughts(incoming);
+
+            const filtered = this.getFilteredThoughts();
+            this._lastFilteredIds = filtered.map(thought => thought.id);
+            this._renderBatch(filtered, this.searchInput.value.toLowerCase());
+            this.restoreOpenPanelsAfterRender();
+        } catch (err) {
+            console.error('Failed to load more thoughts:', err);
+            this.app.toaster?.show('加载更多 Thought 失败，请重试', 'error', false, 2400);
+        } finally {
+            if (requestSeq === this.fetchThoughtsSeq) {
+                this._isLoadingThoughtPage = false;
+                this.updateThoughtLoadMoreControl();
+            }
         }
     }
 
@@ -513,6 +740,7 @@ export class ThoughtsManager {
 
     openQuickAdd() {
         if (!this.quickAddBar) return;
+        this.quickAddSession = (this.quickAddSession || 0) + 1;
         this.quickAddBar.style.display = 'flex';
         document.body.classList.add('quick-add-open');
         this.quickAddInput.value = '';
@@ -538,6 +766,11 @@ export class ThoughtsManager {
     }
 
     async submitQuickAdd() {
+        if (this.quickAddAttachmentUploads.size) {
+            this.quickAddSubmit.disabled = true;
+            await Promise.allSettled([...this.quickAddAttachmentUploads]);
+            this.quickAddSubmit.disabled = false;
+        }
         const text = this.quickAddInput.value.trim();
         if (!text && !this.quickAddAttachments.length) {
             this.quickAddInput.focus();
@@ -673,6 +906,13 @@ export class ThoughtsManager {
         } else if (action === 'update') {
             const index = this.thoughts.findIndex(t => t.id === payload.id);
             if (index !== -1) {
+                const current = this.thoughts[index];
+                if (current.localPending || current.syncConflict) {
+                    current.remoteConflict = payload;
+                    current.remoteVersion = payload.version;
+                    this.scheduleRender();
+                    return;
+                }
                 if (payload.aiTags === undefined && this.thoughts[index].aiTags !== undefined) {
                     payload.aiTags = this.thoughts[index].aiTags;
                 }
@@ -790,16 +1030,19 @@ export class ThoughtsManager {
         const thought = this.thoughts.find(t => t.id === id);
         if (thought) {
             thought.completed = !thought.completed;
-            this.render();
+            this.patchRenderedThought(id);
         }
 
         try {
-            await this.apiClient.toggleComplete(id);
+            this.beginThoughtSync();
+            const data = await this.apiClient.toggleComplete(id, thought?.version);
+            this.applySavedThought(thought, data);
+            this.patchRenderedThought(id);
         } catch (err) {
             console.error('Failed to toggle complete:', err);
             if (thought) {
-                this.enqueueThoughtOverwrite(thought);
-                this.render();
+                this.enqueueThoughtOverwrite(thought, err);
+                this.patchRenderedThought(id);
             }
         }
     }
@@ -813,16 +1056,19 @@ export class ThoughtsManager {
             } else {
                 delete thought.pinnedAt;
             }
-            this.render();
+            this.patchRenderedThought(id);
         }
 
         try {
-            await this.apiClient.togglePin(id);
+            this.beginThoughtSync();
+            const data = await this.apiClient.togglePin(id, thought?.version);
+            this.applySavedThought(thought, data);
+            this.patchRenderedThought(id);
         } catch (err) {
             console.error('Failed to toggle pin:', err);
             if (thought) {
-                this.enqueueThoughtOverwrite(thought);
-                this.render();
+                this.enqueueThoughtOverwrite(thought, err);
+                this.patchRenderedThought(id);
             }
         }
     }
@@ -868,28 +1114,38 @@ export class ThoughtsManager {
         });
     }
 
-    render() {
+    getFilteredThoughts() {
         const query = this.searchInput.value.toLowerCase();
         const status = this.statusFilter.dataset.value || 'all';
         const activeTag = this.activeTag.toLowerCase();
+        return sortThoughts(filterThoughts(this.thoughts, { query, status, activeTag }));
+    }
+
+    renderEmptyState() {
+        const query = this.searchInput.value.trim();
+        this.timeline.innerHTML = `
+            <div class="thoughts-empty">
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                    <path d="M12 20h9"></path>
+                    <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path>
+                </svg>
+                <p>${query ? '未找到相关想法' : '还没有记录过灵感'}</p>
+            </div>
+        `;
+    }
+
+    render() {
+        const query = this.searchInput.value.toLowerCase();
         this.renderTagFilters();
 
-        const filtered = sortThoughts(filterThoughts(this.thoughts, { query, status, activeTag }));
+        const filtered = this.getFilteredThoughts();
         this._lastFilteredIds = filtered.map(t => t.id);
 
         this.timeline.innerHTML = '';
         this._renderedCount = 0;
 
         if (filtered.length === 0) {
-            this.timeline.innerHTML = `
-                <div class="thoughts-empty">
-                    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                        <path d="M12 20h9"></path>
-                        <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path>
-                    </svg>
-                    <p>${query ? '未找到相关想法' : '还没有记录过灵感'}</p>
-                </div>
-            `;
+            this.renderEmptyState();
             return;
         }
 
@@ -898,81 +1154,151 @@ export class ThoughtsManager {
         this.restoreOpenPanelsAfterRender();
     }
 
+    createThoughtCard(thought, query) {
+        const card = document.createElement('div');
+        card.className = `thought-card ${thought.completed ? 'completed' : ''} ${thought.pinned ? 'pinned' : ''}`;
+        card.dataset.id = thought.id;
+
+        const renderedCard = renderThoughtCard({
+            thought,
+            query,
+            parseLegacyText: text => this._parseLegacyText(text),
+            sortSubItems,
+            linkify: text => this.linkify(text),
+            highlightSearch: (html, term) => this.highlightSearch(html, term),
+            escapeHtml: value => this.escapeHtml(value),
+            renderAISuggestedTags: (item, tags) => this.renderAISuggestedTags(item, tags),
+            renderAIStatus: (item, statusValue, relationCount) => this.renderAIStatus(item, statusValue, relationCount),
+            normalizeAIStatus: statusValue => this.normalizeAIStatus(statusValue)
+        });
+        const { bodyText, isLong } = renderedCard;
+        if (isLong) card.classList.add('can-expand');
+        if (this.expandedThoughtIds.has(thought.id)) card.classList.add('expanded');
+        card.innerHTML = renderedCard.html;
+        this.bindThoughtCardEvents({ card, thought, bodyText, isLong });
+        return card;
+    }
+
     _renderBatch(filtered, query) {
         const start = this._renderedCount;
         const end = Math.min(start + this._renderBatchSize, filtered.length);
-        if (start >= end) return;
+        if (start >= end) {
+            this.updateThoughtLoadMoreControl(filtered.length);
+            return;
+        }
 
+        this.removeThoughtLoadMoreControl();
         const fragment = document.createDocumentFragment();
         for (let i = start; i < end; i++) {
-            const thought = filtered[i];
-            const card = document.createElement('div');
-            card.className = `thought-card ${thought.completed ? 'completed' : ''} ${thought.pinned ? 'pinned' : ''}`;
-            card.dataset.id = thought.id;
-
-            const renderedCard = renderThoughtCard({
-                thought,
-                query,
-                parseLegacyText: text => this._parseLegacyText(text),
-                sortSubItems,
-                linkify: text => this.linkify(text),
-                highlightSearch: (html, term) => this.highlightSearch(html, term),
-                escapeHtml: value => this.escapeHtml(value),
-                renderAISuggestedTags: (item, tags) => this.renderAISuggestedTags(item, tags),
-                renderAIStatus: (item, statusValue, relationCount) => this.renderAIStatus(item, statusValue, relationCount),
-                normalizeAIStatus: statusValue => this.normalizeAIStatus(statusValue)
-            });
-            const { bodyText, isLong } = renderedCard;
-            if (isLong) card.classList.add('can-expand');
-            if (this.expandedThoughtIds.has(thought.id)) card.classList.add('expanded');
-            card.innerHTML = renderedCard.html;
-
-            this.bindThoughtCardEvents({ card, thought, bodyText, isLong });
-
-            fragment.appendChild(card);
+            fragment.appendChild(this.createThoughtCard(filtered[i], query));
         }
         this.timeline.appendChild(fragment);
         this._renderedCount = end;
-
-        // Append a sentinel element if there are more items to load
-        this._updateSentinel(filtered.length);
+        this.updateThoughtLoadMoreControl(filtered.length);
     }
 
-    _updateSentinel(totalCount) {
-        const existing = this.timeline.querySelector('.thoughts-load-more-sentinel');
-        if (this._renderedCount >= totalCount) {
-            if (existing) existing.remove();
-            return;
+    removeThoughtLoadMoreControl() {
+        this.timeline?.querySelector('.thoughts-load-more')?.remove();
+    }
+
+    updateThoughtLoadMoreControl(totalCount = this._lastFilteredIds.length) {
+        if (!this.timeline || this.timeline.querySelector('.thoughts-empty')) return;
+        this.removeThoughtLoadMoreControl();
+
+        const hasBufferedItems = this._renderedCount < totalCount;
+        const canLoadMore = hasBufferedItems || this._hasMoreThoughts || this._isLoadingThoughtPage;
+        const control = document.createElement('div');
+        control.className = 'thoughts-load-more';
+
+        if (canLoadMore) {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'thoughts-load-more-button';
+            button.disabled = this._isLoadingThoughtPage;
+            button.textContent = this._isLoadingThoughtPage
+                ? '正在加载…'
+                : hasBufferedItems ? '显示更多' : '加载更多';
+            button.addEventListener('click', () => {
+                if (hasBufferedItems) {
+                    const filtered = this.getFilteredThoughts();
+                    this._lastFilteredIds = filtered.map(thought => thought.id);
+                    this._renderBatch(filtered, this.searchInput.value.toLowerCase());
+                    return;
+                }
+                this.loadNextThoughtPage();
+            });
+            control.appendChild(button);
+
+            const sentinel = document.createElement('div');
+            sentinel.className = 'thoughts-load-more-sentinel';
+            sentinel.setAttribute('aria-hidden', 'true');
+            control.appendChild(sentinel);
+        } else {
+            control.classList.add('is-complete');
+            control.textContent = '已加载全部';
         }
-        if (existing) return;
-        const sentinel = document.createElement('div');
-        sentinel.className = 'thoughts-load-more-sentinel';
-        sentinel.style.height = '1px';
-        this.timeline.appendChild(sentinel);
+        this.timeline.appendChild(control);
     }
 
     _ensureScrollListener() {
         if (this._scrollListenerAttached) return;
         this._scrollListenerAttached = true;
-        const container = this.view;
+        const container = this.scrollArea || this.view;
         container.addEventListener('scroll', () => {
             this._checkScrollLoad();
         }, { passive: true });
     }
 
     _checkScrollLoad() {
-        if (this._renderedCount >= this._lastFilteredIds.length) return;
+        if (this._renderedCount >= this._lastFilteredIds.length && !this._hasMoreThoughts) return;
         const sentinel = this.timeline.querySelector('.thoughts-load-more-sentinel');
         if (!sentinel) return;
         const rect = sentinel.getBoundingClientRect();
-        const containerRect = this.view.getBoundingClientRect();
+        const containerRect = (this.scrollArea || this.view).getBoundingClientRect();
         if (rect.top <= containerRect.bottom + 300) {
-            const query = this.searchInput.value.toLowerCase();
-            const status = this.statusFilter.dataset.value || 'all';
-            const activeTag = this.activeTag.toLowerCase();
-            const filtered = sortThoughts(filterThoughts(this.thoughts, { query, status, activeTag }));
-            this._renderBatch(filtered, query);
+            if (this._renderedCount < this._lastFilteredIds.length) {
+                this._renderBatch(this.getFilteredThoughts(), this.searchInput.value.toLowerCase());
+            } else {
+                this.loadNextThoughtPage();
+            }
         }
+    }
+
+    patchRenderedThought(thoughtId) {
+        const filtered = this.getFilteredThoughts();
+        this._lastFilteredIds = filtered.map(thought => thought.id);
+        if (filtered.length === 0) {
+            this._renderedCount = 0;
+            this.renderEmptyState();
+            return;
+        }
+
+        const targetCount = Math.min(this._renderedCount, filtered.length);
+        const visibleThoughts = filtered.slice(0, targetCount);
+        const visibleIds = new Set(visibleThoughts.map(thought => thought.id));
+        const cardsById = new Map(
+            Array.from(this.timeline.querySelectorAll('.thought-card')).map(card => [card.dataset.id, card])
+        );
+        cardsById.forEach((card, id) => {
+            if (!visibleIds.has(id)) card.remove();
+        });
+
+        const control = this.timeline.querySelector('.thoughts-load-more');
+        const query = this.searchInput.value.toLowerCase();
+        visibleThoughts.forEach(thought => {
+            let card = cardsById.get(thought.id);
+            if (!card || thought.id === thoughtId) {
+                const replacement = this.createThoughtCard(thought, query);
+                if (card?.isConnected) card.replaceWith(replacement);
+                card = replacement;
+                cardsById.set(thought.id, card);
+            }
+            this.timeline.insertBefore(card, control || null);
+        });
+
+        this._renderedCount = visibleThoughts.length;
+        this.updateThoughtLoadMoreControl(filtered.length);
+        this.restoreOpenPanelsAfterRender();
     }
 
     restoreOpenPanelsAfterRender() {
@@ -1226,11 +1552,13 @@ export class ThoughtsManager {
         this.render();
 
         try {
+            this.beginThoughtSync();
             const data = await this.apiClient.overwrite(thought.id, thought);
-            if (data?.thought) Object.assign(thought, data.thought);
+            this.applySavedThought(thought, data);
+            this.render();
         } catch (error) {
             console.error('Failed to append thought attachments:', error);
-            this.enqueueThoughtOverwrite(thought);
+            this.enqueueThoughtOverwrite(thought, error);
             this.render();
             this.app.toaster?.show('附件已保存在本地，联网后将自动同步', 'info', false, 2800);
         }
@@ -1308,11 +1636,11 @@ export class ThoughtsManager {
         image.onload = () => { image.hidden = false; error.hidden = true; };
         image.onerror = () => { image.hidden = true; error.hidden = false; };
         image.alt = attachment.name || '图片附件';
-        image.src = attachment.dataUrl || '';
+        image.src = getAssetOriginalUrl(attachment);
         lightbox.querySelector('.thought-lightbox-name').textContent = attachment.name || '图片附件';
         lightbox.querySelector('.thought-lightbox-counter').textContent = `${state.index + 1} / ${state.images.length}`;
         const download = lightbox.querySelector('.thought-lightbox-download');
-        download.href = attachment.dataUrl || '';
+        download.href = getAssetDownloadUrl(attachment);
         download.download = attachment.name || 'image';
         const hasMultiple = state.images.length > 1;
         lightbox.querySelector('.thought-lightbox-prev').hidden = !hasMultiple;
@@ -1419,16 +1747,29 @@ export class ThoughtsManager {
         toolbar.className = 'thought-selection-toolbar';
         toolbar.hidden = true;
         toolbar.innerHTML = `
-            <button type="button" data-thought-style="highlight" title="高亮">H</button>
-            <button type="button" data-thought-style="draw" title="画线">U</button>
-            <button type="button" data-thought-style="clear" title="清除样式">×</button>
+            <button type="button" data-thought-style="highlight" title="高亮" aria-label="高亮"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 11-6 6v3h9l3-3"></path><path d="m22 12-4.6-4.6a2 2 0 0 0-2.8 0L9 13"></path><path d="m12.5 6.5 5 5"></path></svg></button>
+            <button type="button" data-thought-style="draw" title="画线" aria-label="画线"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3v7a6 6 0 0 0 12 0V3"></path><path d="M4 21h16"></path></svg></button>
+            <button type="button" data-thought-style="copy" data-copy-icon="true" title="复制已选文字" aria-label="复制已选文字"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M15 9V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h3"></path></svg></button>
+            <button type="button" data-thought-style="clear" title="清除样式" aria-label="清除样式"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7 21 7-7"></path><path d="m3 17 4 4 14-14-4-4L3 17Z"></path><path d="M6 14 3 11l7-7 3 3"></path></svg></button>
         `;
+        toolbar.addEventListener('mousedown', (event) => {
+            if (event.target.closest('[data-thought-style]')) event.preventDefault();
+        });
         toolbar.addEventListener('click', (event) => {
             const button = event.target.closest('[data-thought-style]');
             if (!button) return;
             event.preventDefault();
             event.stopPropagation();
-            this.applySelectedThoughtStyle(button.dataset.thoughtStyle);
+            const style = button.dataset.thoughtStyle;
+            const selection = this.activeThoughtSelection;
+            if (style === 'copy') {
+                if (!selection?.selectedText) return;
+                this.copyTextWithFeedback(button, selection.selectedText);
+                window.getSelection?.().removeAllRanges();
+                this.hideThoughtSelectionToolbar();
+                return;
+            }
+            this.applySelectedThoughtStyle(style);
         });
         document.body.appendChild(toolbar);
         document.addEventListener('selectionchange', () => {
@@ -1467,10 +1808,15 @@ export class ThoughtsManager {
         thought.text = nextText;
         thought.updatedAt = Date.now();
         this.render();
+        this.beginThoughtSync();
         this.apiClient.overwrite(thought.id, thought)
+            .then(data => {
+                this.applySavedThought(thought, data);
+                this.render();
+            })
             .catch(err => {
                 console.error('Failed to style thought text:', err);
-                this.enqueueThoughtOverwrite(thought);
+                this.enqueueThoughtOverwrite(thought, err);
                 this.render();
             });
     }
@@ -1481,10 +1827,15 @@ export class ThoughtsManager {
             if (nextText === thought.text) return;
             thought.text = nextText;
             this.render();
+            this.beginThoughtSync();
             this.apiClient.overwrite(thought.id, thought)
+                .then(data => {
+                    this.applySavedThought(thought, data);
+                    this.render();
+                })
                 .catch(err => {
                     console.error('Failed to style legacy subtask text:', err);
-                    this.enqueueThoughtOverwrite(thought);
+                    this.enqueueThoughtOverwrite(thought, err);
                     this.render();
                 });
             return;
@@ -1498,10 +1849,13 @@ export class ThoughtsManager {
         this.focusExpandedThought(thought.id);
         this.render();
         try {
-            await this.apiClient.updateSubitem(thought.id, subId, nextText);
+            this.beginThoughtSync();
+            const data = await this.apiClient.updateSubitem(thought.id, subId, nextText, thought.version);
+            this.applySavedThought(thought, data);
+            this.render();
         } catch (err) {
             console.error('Failed to style subtask text:', err);
-            this.enqueueThoughtOverwrite(thought);
+            this.enqueueThoughtOverwrite(thought, err);
             this.render();
         }
     }
@@ -1627,10 +1981,13 @@ export class ThoughtsManager {
             this.focusExpandedThought(thought.id);
             this.render();
             try {
-                await this.apiClient.updateSubitem(thought.id, marker.subId, nextText);
+                this.beginThoughtSync();
+                const data = await this.apiClient.updateSubitem(thought.id, marker.subId, nextText, thought.version);
+                this.applySavedThought(thought, data);
+                this.render();
             } catch (err) {
                 console.error('Failed to update thought time marker:', err);
-                this.enqueueThoughtOverwrite(thought);
+                this.enqueueThoughtOverwrite(thought, err);
                 this.render();
             }
             return;
@@ -1642,10 +1999,13 @@ export class ThoughtsManager {
         thought.updatedAt = Date.now();
         this.render();
         try {
-            await this.apiClient.overwrite(thought.id, thought);
+            this.beginThoughtSync();
+            const data = await this.apiClient.overwrite(thought.id, thought);
+            this.applySavedThought(thought, data);
+            this.render();
         } catch (err) {
             console.error('Failed to update thought time marker:', err);
-            this.enqueueThoughtOverwrite(thought);
+            this.enqueueThoughtOverwrite(thought, err);
             this.render();
         }
     }
@@ -1798,6 +2158,8 @@ export class ThoughtsManager {
     }
 
     copyTextWithFeedback(button, text) {
+        const defaultLabel = button.getAttribute('aria-label');
+        const defaultTitle = button.getAttribute('title');
         navigator.clipboard.writeText(text).catch(() => {
             const ta = document.createElement('textarea');
             ta.value = text;
@@ -1807,7 +2169,17 @@ export class ThoughtsManager {
             document.body.removeChild(ta);
         });
         button.classList.add('copied');
-        setTimeout(() => button.classList.remove('copied'), 1200);
+        if (button.dataset.copyIcon === 'true') {
+            button.setAttribute('aria-label', '已复制');
+            button.setAttribute('title', '已复制');
+        }
+        setTimeout(() => {
+            button.classList.remove('copied');
+            if (button.dataset.copyIcon === 'true') {
+                if (defaultLabel) button.setAttribute('aria-label', defaultLabel);
+                if (defaultTitle) button.setAttribute('title', defaultTitle);
+            }
+        }, 1200);
         this.app.toaster?.show('已复制', 'success', false, 1500);
     }
 
@@ -1835,17 +2207,21 @@ export class ThoughtsManager {
         this.render();
 
         try {
-            await this.apiClient.overwrite(thoughtId, {
+            this.beginThoughtSync();
+            const data = await this.apiClient.overwrite(thoughtId, {
                 text: thought.text,
                 subItems: thought.subItems || [],
                 tags,
                 completed: thought.completed,
                 pinned: thought.pinned,
-                attachments: thought.attachments || []
+                attachments: thought.attachments || [],
+                version: thought.version
             });
+            this.applySavedThought(thought, data);
+            this.render();
         } catch (err) {
             console.error('Failed to accept AI tag:', err);
-            this.enqueueThoughtOverwrite(thought);
+            this.enqueueThoughtOverwrite(thought, err);
             this.render();
             this.app.toaster?.show('标签保存失败', 'error', false, 2200);
         }
@@ -1869,17 +2245,21 @@ export class ThoughtsManager {
         this.render();
 
         try {
-            await this.apiClient.overwrite(thoughtId, {
+            this.beginThoughtSync();
+            const data = await this.apiClient.overwrite(thoughtId, {
                 text: thought.text,
                 subItems: thought.subItems || [],
                 tags: nextTags,
                 completed: thought.completed,
                 pinned: thought.pinned,
-                attachments: thought.attachments || []
+                attachments: thought.attachments || [],
+                version: thought.version
             });
+            this.applySavedThought(thought, data);
+            this.render();
         } catch (err) {
             console.error('Failed to remove thought tag:', err);
-            this.enqueueThoughtOverwrite(thought);
+            this.enqueueThoughtOverwrite(thought, err);
             this.render();
             this.app.toaster?.show('标签移除失败', 'error', false, 2200);
         }
@@ -2469,9 +2849,37 @@ export class ThoughtsManager {
             textarea.style.height = 'auto';
             textarea.style.height = textarea.scrollHeight + 'px';
         };
+        const editAttachmentUploads = new Set();
+        let editCommitted = false;
+        let editSavePromise = Promise.resolve();
+        const appendEditAttachments = async (fileList) => {
+            const additions = await this.collectAttachmentFiles(fileList);
+            if (!additions.length) return;
+            if (!textarea.isConnected) {
+                if (editCommitted) {
+                    await editSavePromise;
+                    await this.appendThoughtAttachments(thought, additions);
+                }
+                return;
+            }
+            editAttachments.push(...additions);
+            renderAttachmentsEditor();
+        };
+        const queueEditAttachmentUpload = (fileList) => {
+            const task = appendEditAttachments(fileList);
+            editAttachmentUploads.add(task);
+            task.finally(() => editAttachmentUploads.delete(task));
+            return task;
+        };
         textarea.focus();
         autoResize();
         textarea.addEventListener('input', autoResize);
+        textarea.addEventListener('paste', event => {
+            const files = this.getPastedImageFiles(event);
+            if (!files.length) return;
+            event.preventDefault();
+            queueEditAttachmentUpload(files);
+        });
 
         // --- 2. Subtask editor panel ---
         const existingList = card.querySelector('.subtask-list');
@@ -2521,12 +2929,12 @@ export class ThoughtsManager {
         // --- Attachment editor panel ---
         const attPanel = document.createElement('div');
         attPanel.className = 'thought-edit-attachments';
+        const attachmentItems = document.createElement('div');
+        attachmentItems.className = 'thought-edit-attachment-items';
+        attachmentItems.style.display = 'contents';
+        attPanel.appendChild(attachmentItems);
         const renderAttachmentsEditor = () => {
-            attPanel.innerHTML = '';
-            if (!editAttachments.length) {
-                attPanel.style.display = 'none';
-                return;
-            }
+            attachmentItems.innerHTML = '';
             attPanel.style.display = 'flex';
             editAttachments.forEach((att, i) => {
                 const isImage = att.type && att.type.startsWith('image/');
@@ -2534,7 +2942,7 @@ export class ThoughtsManager {
                 const name = this.escapeHtml(att.name || '文件');
                 item.className = `thought-edit-att-item ${isImage ? 'is-image' : 'is-file'}`;
                 if (isImage) {
-                    item.innerHTML = `<img src="${this.escapeHtml(att.dataUrl)}" alt="${name}" loading="lazy"><span class="thought-edit-att-name" title="${name}">${name}</span><button type="button" class="thought-edit-att-remove" title="移除附件" aria-label="移除附件：${name}">×</button>`;
+                    item.innerHTML = `<img src="${this.escapeHtml(getAssetPreviewUrl(att))}" alt="${name}" loading="lazy"><span class="thought-edit-att-name" title="${name}">${name}</span><button type="button" class="thought-edit-att-remove" title="移除附件" aria-label="移除附件：${name}">×</button>`;
                 } else {
                     item.innerHTML = `<span class="thought-edit-att-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><path d="M14 2v6h6"></path></svg></span><span class="thought-edit-att-name" title="${name}">${name}</span><button type="button" class="thought-edit-att-remove" title="移除附件" aria-label="移除附件：${name}">×</button>`;
                 }
@@ -2542,7 +2950,7 @@ export class ThoughtsManager {
                     editAttachments.splice(i, 1);
                     renderAttachmentsEditor();
                 };
-                attPanel.appendChild(item);
+                attachmentItems.appendChild(item);
             });
         };
         renderAttachmentsEditor();
@@ -2558,8 +2966,7 @@ export class ThoughtsManager {
         editFileInput.accept = 'image/*,video/*,audio/*,.pdf,.doc,.docx,.txt,.zip,.rar,.7z';
         editAttBtn.onclick = () => editFileInput.click();
         editFileInput.onchange = async () => {
-            editAttachments.push(...await this.collectAttachmentFiles(editFileInput.files));
-            renderAttachmentsEditor();
+            queueEditAttachmentUpload(editFileInput.files);
             editFileInput.value = '';
         };
         attPanel.appendChild(editAttBtn);
@@ -2575,6 +2982,7 @@ export class ThoughtsManager {
                 return;
             }
             saveStarted = true;
+            editCommitted = true;
             const newText = textarea.value.trim();
             const nextSubItems = cleanSubItems(subtasks);
             const nextAttachments = editAttachments;
@@ -2590,13 +2998,15 @@ export class ThoughtsManager {
                 thought.updatedAt = Date.now();
                 this.exitEditMode(card);
                 this.render();
-                this.apiClient.overwrite(thought.id, thought)
+                this.beginThoughtSync();
+                editSavePromise = this.apiClient.overwrite(thought.id, thought)
                     .then(data => {
-                        if (data?.thought) Object.assign(thought, data.thought);
+                        this.applySavedThought(thought, data);
+                        this.render();
                     })
                     .catch(err => {
                         console.error('Failed to save thought:', err);
-                        this.enqueueThoughtOverwrite(thought);
+                        this.enqueueThoughtOverwrite(thought, err);
                         this.render();
                     });
                 return;
@@ -2694,13 +3104,13 @@ export class ThoughtsManager {
             appendLocalSubItem(thought, text);
             this.render();
             try {
-                const updated = await this.apiClient.addSubitem(thought.id, text);
-                const idx = this.thoughts.findIndex(t => t.id === thought.id);
-                if (idx !== -1) this.thoughts[idx] = updated.thought;
+                this.beginThoughtSync();
+                const updated = await this.apiClient.addSubitem(thought.id, text, thought.version);
+                this.applySavedThought(thought, updated);
                 this.render();
             } catch (err) {
                 console.error('Failed to add subtask:', err);
-                this.enqueueThoughtOverwrite(thought);
+                this.enqueueThoughtOverwrite(thought, err);
                 this.render();
             }
         };
@@ -2788,14 +3198,19 @@ export class ThoughtsManager {
             const edit = applyLocalSubItemTextEdit(thought, subId, newText);
             if (edit.action === 'delete') {
                 this.render();
-                await this.apiClient.deleteSubitem(thought.id, subId);
+                this.beginThoughtSync();
+                const data = await this.apiClient.deleteSubitem(thought.id, subId, thought.version);
+                this.applySavedThought(thought, data);
             } else {
                 this.render();
-                await this.apiClient.updateSubitem(thought.id, subId, edit.text);
+                this.beginThoughtSync();
+                const data = await this.apiClient.updateSubitem(thought.id, subId, edit.text, thought.version);
+                this.applySavedThought(thought, data);
             }
+            this.render();
         } catch (err) {
             console.error('Failed to edit subtask:', err);
-            this.enqueueThoughtOverwrite(thought);
+            this.enqueueThoughtOverwrite(thought, err);
             this.render();
         }
     }
@@ -2810,10 +3225,13 @@ export class ThoughtsManager {
             if (!migrateAndToggleLegacySubItem(thought, subId)) return;
             this.render();
             try {
-                await this.apiClient.overwrite(id, thought);
+                this.beginThoughtSync();
+                const data = await this.apiClient.overwrite(id, thought);
+                this.applySavedThought(thought, data);
+                this.render();
             } catch (err) {
                 console.error('Failed to toggle legacy subtask:', err);
-                this.enqueueThoughtOverwrite(thought);
+                this.enqueueThoughtOverwrite(thought, err);
                 this.render();
             }
             return;
@@ -2824,10 +3242,13 @@ export class ThoughtsManager {
         this.render();
 
         try {
-            await this.apiClient.toggleSubitem(id, subId);
+            this.beginThoughtSync();
+            const data = await this.apiClient.toggleSubitem(id, subId, thought.version);
+            this.applySavedThought(thought, data);
+            this.render();
         } catch (err) {
             console.error('Failed to toggle subtask:', err);
-            this.enqueueThoughtOverwrite(thought);
+            this.enqueueThoughtOverwrite(thought, err);
             this.render();
         }
     }

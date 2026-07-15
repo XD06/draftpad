@@ -1,9 +1,9 @@
 export const AI_PENDING_MIN_VISIBLE_MS = 1200;
-const AI_RUN_COMMAND_ICON_SRC = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAACXBIWXMAAAsTAAALEwEAmpwYAAAAeElEQVR4nGNgGGxAlIGB4T8J+BUDiRrQ8X5KDZiC7oWpUIlmAl5tg6rLQpfYD5UIIGDATqg6e1xekIUqRBeHgVdQvigDrpDFY4ACFnVg4ACV2MaAHwQjxwAyyCYxAKfgcmYAkQEIj4H/ZGJwDCADWMgSi8ExMPAAAJoqcdFU9JHGAAAAAElFTkSuQmCC';
+const AI_RETRY_ICON_SVG = '<svg class="thought-ai-retry-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11a8.1 8.1 0 0 0-15.5-2L3 11"></path><path d="M3 4v7h7"></path><path d="M4 13a8.1 8.1 0 0 0 15.5 2L21 13"></path><path d="M21 20v-7h-7"></path></svg>';
 const AI_INSIGHT_ICON_SVG = '<svg class="thought-ai-insight-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.15" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3a4 4 0 0 0-4 4v.3A4.5 4.5 0 0 0 6 16h1"></path><path d="M12 3a4 4 0 0 1 4 4v.3A4.5 4.5 0 0 1 18 16h-1"></path><path d="M9 12h6"></path><path d="M10 16h4"></path><path d="M12 16v5"></path><path d="M8 21h8"></path></svg>';
 
 export function normalizeAIStatus(status = '') {
-    return ['pending', 'ready', 'empty', 'error', 'missing'].includes(status) ? status : 'missing';
+    return ['pending', 'ready', 'stale', 'empty', 'error', 'missing'].includes(status) ? status : 'missing';
 }
 
 export function getAIStatusPendingDelay(thought, nextStatus, { now = Date.now(), minVisibleMs = AI_PENDING_MIN_VISIBLE_MS } = {}) {
@@ -37,7 +37,7 @@ export function applyAIStatusDetail(thought, detail = {}, { normalizeTag = value
 }
 
 export function normalizeAIStageStatus(status = '') {
-    return ['pending', 'ready', 'skipped', 'error', 'missing'].includes(status) ? status : 'missing';
+    return ['pending', 'ready', 'stale', 'skipped', 'error', 'missing'].includes(status) ? status : 'missing';
 }
 
 export function normalizeAIInsightStatus(status = '') {
@@ -48,6 +48,7 @@ export function aiStatusLabel(status, relationCount = 0) {
     const count = Number(relationCount || 0);
     if (status === 'pending') return 'AI 处理中';
     if (status === 'ready') return count > 0 ? `AI 已关联 ${count}` : 'AI 已分析';
+    if (status === 'stale') return 'AI 待更新';
     if (status === 'empty') return 'AI 无内容';
     if (status === 'error') return 'AI 失败';
     return 'AI 未分析';
@@ -58,6 +59,7 @@ export function aiStageLabel(status) {
     if (status === 'pending') return '处理中';
     if (status === 'skipped') return '跳过';
     if (status === 'error') return '失败';
+    if (status === 'stale') return '待更新';
     return '未开始';
 }
 
@@ -70,6 +72,9 @@ export function aiStatusIcon(status) {
     }
     if (status === 'error') {
         return '<svg class="thought-tool-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4"></path><path d="M12 17h.01"></path><path d="M10.3 3.9 2.7 17a2 2 0 0 0 1.7 3h15.2a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"></path></svg>';
+    }
+    if (status === 'stale') {
+        return '<svg class="thought-tool-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8.1 8.1 0 0 0-15.5-2L3 11"></path><path d="M3 4v7h7"></path><path d="M4 13a8.1 8.1 0 0 0 15.5 2L21 13"></path><path d="M21 20v-7h-7"></path></svg>';
     }
     if (status === 'empty') {
         return '<svg class="thought-tool-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M5 12h14"></path></svg>';
@@ -113,7 +118,7 @@ function plainMarkdownFallback(markdown = '', escapeHtml) {
     return escapeHtml(markdown).replace(/\n/g, '<br>');
 }
 
-export function renderAIInsightSection({ insight = {}, escapeHtml, renderedMarkdownHtml = '' }) {
+export function renderAIInsightSection({ insight = {}, escapeHtml, renderedMarkdownHtml = '', isStale = false }) {
     const status = normalizeAIInsightStatus(insight?.status);
     const isPending = status === 'pending';
     const actionLabel = status === 'ready' ? '重新生成思考扩展' : '生成思考扩展';
@@ -142,6 +147,7 @@ export function renderAIInsightSection({ insight = {}, escapeHtml, renderedMarkd
                 <div class="thought-ai-insight-head">
                     <span>思考扩展</span>
                     <div class="thought-ai-insight-actions">
+                        ${isStale ? '<span class="thought-ai-stale-note">基于旧版本</span>' : ''}
                         ${model}
                         <button type="button" class="thought-ai-insight-run" title="${escapeHtml(actionLabel)}" aria-label="${escapeHtml(actionLabel)}" ${isPending ? 'disabled' : ''}>
                             ${AI_INSIGHT_ICON_SVG}
@@ -154,6 +160,7 @@ export function renderAIInsightSection({ insight = {}, escapeHtml, renderedMarkd
 }
 
 export function renderAIStatusDetail({ detail = {}, escapeHtml, renderedInsightHtml = '' }) {
+    const isStale = normalizeAIStatus(detail.status) === 'stale';
     const stageRows = [
         ['queued', '排队'],
         ['analysis', '分析'],
@@ -173,12 +180,13 @@ export function renderAIStatusDetail({ detail = {}, escapeHtml, renderedInsightH
             <div class="thought-ai-detail-head">
                 <span>${escapeHtml(aiStatusLabel(normalizeAIStatus(detail.status), detail.relationCount || 0))}</span>
                 <button type="button" class="thought-ai-detail-retry" title="重新运行 AI" aria-label="重新运行 AI">
-                    <img src="${escapeHtml(AI_RUN_COMMAND_ICON_SRC)}" alt="run-command">
+                    ${AI_RETRY_ICON_SVG}
                 </button>
             </div>
+            ${isStale ? '<div class="thought-ai-stale-notice">正文、子任务或用户标签已变更；关联与思考扩展基于旧版本。</div>' : ''}
             <div class="thought-ai-detail-counts">${escapeHtml(counts)}</div>
             <div class="thought-ai-stage-list">${stageRows}</div>
-            ${renderAIInsightSection({ insight: detail.insight, escapeHtml, renderedMarkdownHtml: renderedInsightHtml })}
+            ${renderAIInsightSection({ insight: detail.insight, escapeHtml, renderedMarkdownHtml: renderedInsightHtml, isStale })}
             ${error}
         `;
 }
@@ -191,7 +199,7 @@ export function renderAIStatusError() {
     return `
                 <div class="thought-ai-detail-state error">AI 状态读取失败</div>
                 <button type="button" class="thought-ai-detail-retry" title="重新运行 AI" aria-label="重新运行 AI">
-                    <img src="${AI_RUN_COMMAND_ICON_SRC}" alt="run-command">
+                    ${AI_RETRY_ICON_SVG}
                 </button>
             `;
 }

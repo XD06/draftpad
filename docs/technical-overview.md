@@ -52,6 +52,12 @@ Thought 前端 helper 拆分模块有聚合测试入口：`npm run test:thought-
 - `public/managers/settings-data-panel.js`：设置页数据空间、垃圾桶和云端维护 API adapter。
 - `public/managers/ws-client.js`：轻量 WebSocket 客户端，把服务端事件转成浏览器 `CustomEvent`。
 
+### 普通 Enter 的兼容性边界
+
+`HybridMarkdownEditor` 不把所有 Enter 交给 Vditor。顶层普通段落使用 `handleWysiwygSoftEnter()`：它仅在无修饰键、非组合输入、同一顶层 `p` 且不在内联代码时拦截事件，插入软换行和零宽光标保护字符，再异步走 `notifyEditorValueChanged()`。这样源码模式不会产生额外的可编辑空段。
+
+标题、列表、引用、代码块和其他非普通段落必须继续由 Vditor 的原生块模型处理。不要把这一分支改写为 `editor.insertValue('\n')`、`execCommand('insertLineBreak')` 或“完全不拦截普通 Enter”：这些看似简单的改动曾分别导致首次 Enter 被吞、块模型错乱或源码出现空段。行为基线是 `refactor-ai-s3-thoughts` 分支；对应结构回归检查为 `npm run test:hybrid-editor-time-command`，任何调整还必须做一次真实编辑器手动回归。
+
 ## 4. Thought 写入流程
 
 1. 用户创建、修改、删除 Thought。
@@ -63,6 +69,14 @@ Thought 前端 helper 拆分模块有聚合测试入口：`npm run test:thought-
 7. 服务端成功写入 Thought 后，AI 队列异步生成 meta 和 relation；前端通过 WebSocket 刷新状态。
 
 这个流程要求快速记录不等待 AI，不等待 S3 之外的额外流程，也不因为离线而丢失本地输入。
+
+### Thought 时间线分页与局部更新
+
+Thought 页面使用 `GET /api/thoughts?format=page&light=1&limit=30&sort=timeline`：首屏只请求 30 条，底部“加载更多”和滚动哨兵按相同游标继续取数。`sort=timeline` 是页面专用排序，严格复用前端的置顶、完成状态、创建时间顺序；默认分页仍按 `updatedAt` 排序，保留给同步程序使用，二者不能混用游标。
+
+服务端在 `STORAGE_LAYOUT=split` 下会通过 `storage.listThoughtsPage()` 读取既有的 `indexes/thoughts-index.json`，先在索引中完成标签、日期、完成状态与游标筛选排序，再只读取当前页的 Thought 文件。索引缺失、旧索引没有时间线字段、对象缺失、`legacy` 布局以及任意关键词全文搜索时，都回退到完整读取；回退会修复 split 索引，不能以不完整结果代替用户搜索结果。这样 S3 的无关键词列表从“列举并读取全部对象”降为“一份索引加最多 30 个对象”。
+
+`ThoughtsManager` 将“已从服务端取到的条数”和“已插入 DOM 的卡片数”分开管理：前者由游标追加，后者仍按 30 张批量插入。完成和置顶不调用 `render()` 清空时间线，而是仅重建被操作卡片，并在当前可见批次内移动、补入或移除卡片。筛选条件改变时重置游标重新请求，避免只对已加载的局部数据筛选造成漏项。
 
 ### 手动关联搜索
 

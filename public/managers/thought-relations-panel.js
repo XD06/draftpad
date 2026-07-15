@@ -4,7 +4,10 @@ export function renderRelationsPanelContent({ thoughtId, status, relations, sugg
     const manualControls = renderManualRelationControls(thoughtId, escapeHtml);
     const listHtml = renderRelationsList(relations, escapeHtml);
     const suggestionsHtml = renderSuggestedRelationsList(suggestions, escapeHtml);
-    if (relations.length > 0 || suggestions.length > 0) return manualControls + listHtml + suggestionsHtml;
+    const staleNotice = status === 'stale'
+        ? '<div class="thought-relations-stale-notice">当前 Thought 已修改；AI 关联基于旧版本，手动关联不受影响。</div>'
+        : '';
+    if (relations.length > 0 || suggestions.length > 0) return manualControls + staleNotice + listHtml + suggestionsHtml;
     if (status === 'pending') {
         return manualControls + '<div class="thought-relations-state">AI 正在分析，关联会自动刷新</div>';
     }
@@ -195,8 +198,11 @@ export function renderRelationsList(relations, escapeHtml) {
                             ${detailLine ? `<span class="thought-relation-detail-line" title="${escapeHtml(detailLine)}">${escapeHtml(detailLine)}</span>` : ''}
                         </span>
                         <span class="thought-relation-delete" data-relation-delete="${escapeHtml(target.id || '')}" title="删除误判关联" aria-label="删除误判关联">
-                            <img width="12" height="12" src="https://img.icons8.com/fluency-systems-regular/48/disconnected.png" alt="disconnected"/>
-                                <path d="m6 6 12 12"></path>
+                            <svg class="thought-relation-unlink-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                <path d="m15 7 2-2a4.24 4.24 0 0 1 6 6l-2 2"></path>
+                                <path d="m9 17-2 2a4.24 4.24 0 0 1-6-6l2-2"></path>
+                                <path d="m8 8 8 8"></path>
+                                <path d="m4 4 16 16"></path>
                             </svg>
                         </span>
                     </button>

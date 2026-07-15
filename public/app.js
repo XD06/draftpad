@@ -5,7 +5,13 @@ import SettingsManager from './managers/settings.js'
 import ConfirmationManager from './managers/confirmation.js';
 import NoteSyncController from './managers/note-sync-controller.js';
 import SettingsDataPanel from './managers/settings-data-panel.js';
-import { renderSidebar, renderRecentFiles, trackRecentFile, updateSidebarSelection } from './sidebar.js';
+import {
+    getStartupNotepadId,
+    renderSidebar,
+    renderRecentFiles,
+    trackRecentFile,
+    updateSidebarSelection
+} from './sidebar.js';
 
 // Global 401 handler: any /api 401 means the PIN session is gone — redirect to login.
 // This catches the case where the cookie expires while the app is open (the SW
@@ -140,6 +146,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     let currentNotepadId = 'default';
     let currentNoteVersion = null;
     let currentNotepads = []; 
+    let directorySearchQuery = '';
     let isInitialLoad = true;
     let notepadIdToDelete = null;
     let notepadIdToRename = null;
@@ -846,8 +853,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     function renderNotepadLists(selectedId = currentNotepadId, noteHistory = selectedId) {
-        renderSidebar(currentNotepads, selectedId, selectNotepad, deleteNotepadById, renameNotepadById);
-        renderRecentFiles(selectedId, currentNotepads, selectNotepad, deleteNotepadById, renameNotepadById);
+        renderSidebar(currentNotepads, selectedId, selectNotepad, deleteNotepadById, renameNotepadById, toggleNotepadPin, directorySearchQuery);
+        renderRecentFiles(selectedId, currentNotepads, selectNotepad, deleteNotepadById, renameNotepadById, toggleNotepadPin);
         cacheNotepads(noteHistory, selectedId);
     }
 
@@ -881,7 +888,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (hybridEditor) hybridEditor.style.display = 'block';
 
         updateSidebarSelection(notepadId);
-        renderRecentFiles(notepadId, currentNotepads, selectNotepad, deleteNotepadById, renameNotepadById);
+        renderRecentFiles(notepadId, currentNotepads, selectNotepad, deleteNotepadById, renameNotepadById, toggleNotepadPin);
         const name = getCurrentNotepadName();
         updateUrlWithNotepad(name);
         applyCurrentNotepadTitle();
@@ -895,6 +902,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     let notePrefetchRun = 0;
+    const STARTUP_NOTE_PREFETCH_LIMIT = 3;
     async function prefetchNotepadNotes(preferredIds = []) {
         const runId = ++notePrefetchRun;
         const cached = loadStartupCache()?.notes || {};
@@ -907,7 +915,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             list.indexOf(id) === index &&
             !cached[id]?.dirty &&
             !cached[id]?.content
-        ));
+        )).slice(0, STARTUP_NOTE_PREFETCH_LIMIT);
         const concurrency = 2;
         let cursor = 0;
         const worker = async () => {
@@ -932,7 +940,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (!cache || cache.notepads.length === 0) return false;
 
         currentNotepads = cache.notepads;
-        renderSidebar(currentNotepads, currentNotepadId, selectNotepad, deleteNotepadById, renameNotepadById);
+        renderSidebar(currentNotepads, currentNotepadId, selectNotepad, deleteNotepadById, renameNotepadById, toggleNotepadPin, directorySearchQuery);
 
         const selectedId = handleQueryParameterSelection(currentNotepads, cache.currentNotepadId || cache.noteHistory);
         const note = selectedId ? cache.notes?.[selectedId] : null;
@@ -1009,7 +1017,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             toaster.show(`Notepad '${id}' not found`, 'error');
         }
 
-        return findNotepadByIdOrName(notepadsList, defaultId)?.id || getFallbackNotepadId(notepadsList);
+        return getStartupNotepadId(notepadsList) || getFallbackNotepadId(notepadsList);
     }
 
     async function loadNotepads({ loadCurrentNote = true } = {}) {
@@ -1022,7 +1030,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             const response = await fetchWithPin('/api/notepads');
             const data = await response.json();
             currentNotepads = Array.isArray(data.notepads_list) ? data.notepads_list : [];
-            renderSidebar(currentNotepads, currentNotepadId, selectNotepad, deleteNotepadById, renameNotepadById);
+            renderSidebar(currentNotepads, currentNotepadId, selectNotepad, deleteNotepadById, renameNotepadById, toggleNotepadPin, directorySearchQuery);
             
             currentNotepadId = handleQueryParameterSelection(currentNotepads, data['note_history']);
             cacheNotepads(data['note_history']);
@@ -1032,7 +1040,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 setTimeout(() => prefetchNotepadNotes(Array.isArray(data['note_history']) ? data['note_history'] : []), 300);
             } else if (findNotepadByIdOrName(currentNotepads, currentNotepadId)) {
                 updateSidebarSelection(currentNotepadId);
-                renderRecentFiles(currentNotepadId, currentNotepads, selectNotepad, deleteNotepadById, renameNotepadById);
+                renderRecentFiles(currentNotepadId, currentNotepads, selectNotepad, deleteNotepadById, renameNotepadById, toggleNotepadPin);
             }
         } catch (err) {
             console.warn('Error loading notepads:', err);
@@ -1097,7 +1105,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (currentNotepad) trackRecentFile(currentNotepad); 
             
             updateSidebarSelection(notepadId);
-            renderRecentFiles(notepadId, currentNotepads, selectNotepad, deleteNotepadById, renameNotepadById); 
+            renderRecentFiles(notepadId, currentNotepads, selectNotepad, deleteNotepadById, renameNotepadById, toggleNotepadPin);
         } catch (err) { 
             console.warn('Error loading notes:', err);
             setStartupSyncStatus('error', '服务器不可用，本地可读');
@@ -1358,6 +1366,48 @@ document.addEventListener('DOMContentLoaded', async () => {
             const message = err?.status === 409
                 ? '该 Notepad 已在其他设备更新，请刷新后再重命名'
                 : 'Error renaming notepad';
+            toaster.show(message, 'error', true);
+        }
+    }
+
+    async function toggleNotepadPin(id, pinned) {
+        const notepad = currentNotepads.find(item => item.id === id);
+        if (!notepad || typeof pinned !== 'boolean') return;
+
+        const previousNotepad = { ...notepad };
+        const now = Date.now();
+        notepad.pinned = pinned;
+        if (pinned) notepad.pinnedAt = now;
+        else delete notepad.pinnedAt;
+        notepad.updatedAt = now;
+        notepad.version = (notepad.version || 1) + 1;
+        renderNotepadLists(currentNotepadId);
+
+        try {
+            const response = await fetchWithPin(`/api/notepads/${encodeURIComponent(id)}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ pinned, baseVersion: previousNotepad.version })
+            });
+            const result = await response.json().catch(() => ({}));
+            if (!response.ok) {
+                throw Object.assign(new Error(result?.error || 'Failed to update notepad pin'), {
+                    status: response.status
+                });
+            }
+            Object.assign(notepad, result);
+            if (!result.pinned) delete notepad.pinnedAt;
+            renderNotepadLists(currentNotepadId);
+            wsClient.sendUpdate('notepad_change', { action: 'pin', notepadId: id, pinned: result.pinned === true });
+            toaster.show(result.pinned ? '文章已置顶' : '已取消置顶');
+        } catch (error) {
+            console.error('Error updating notepad pin:', error);
+            Object.assign(notepad, previousNotepad);
+            if (!Object.prototype.hasOwnProperty.call(previousNotepad, 'pinnedAt')) delete notepad.pinnedAt;
+            renderNotepadLists(currentNotepadId);
+            const message = error?.status === 409
+                ? '该 Notepad 已在其他设备更新，请刷新后再置顶'
+                : '更新文章置顶状态失败';
             toaster.show(message, 'error', true);
         }
     }
@@ -1959,6 +2009,15 @@ document.addEventListener('DOMContentLoaded', async () => {
                 });
 
                 window.addEventListener('keydown', (e) => {
+                    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') {
+                        e.preventDefault();
+                        if (thoughtsManager?.isActive) {
+                            thoughtsManager.focusSearch();
+                        } else {
+                            this.open();
+                        }
+                        return;
+                    }
                     if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
                         e.preventDefault();
                         this.open();
@@ -2016,9 +2075,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                 this.results.innerHTML = items.map((item, index) => `
                     <div class="command-item ${index === 0 ? 'selected' : ''}" data-id="${this.escapeAttr(item.id)}">
                         <div class="command-item-main">
-                            <span class="command-item-title">${this.escapeHtml(item.title || item.name)}</span>
+                            <span class="command-item-title">${this.highlightSearchText(item.title || item.name, item.matches, 'title')}</span>
                             ${item.matchType === 'content' && item.snippet
-                                ? `<span class="command-item-snippet">${this.escapeHtml(item.snippet)}</span>`
+                                ? `<span class="command-item-snippet">${this.highlightSearchText(item.snippet, item.matches, 'content', item.snippetStart, item.snippetPrefixLength)}</span>`
                                 : ''}
                         </div>
                         <kbd>Enter</kbd>
@@ -2057,6 +2116,52 @@ document.addEventListener('DOMContentLoaded', async () => {
                     item.classList.toggle('selected', index === this.selectedIndex);
                     if (index === this.selectedIndex) item.scrollIntoView({ block: 'nearest' });
                 });
+            },
+
+            highlightSearchText(text, matches = [], key = '', sourceOffset = 0, prefixLength = 0) {
+                const raw = String(text || '');
+                const startOffset = Number.isFinite(Number(sourceOffset)) ? Number(sourceOffset) : 0;
+                const prefix = Number.isFinite(Number(prefixLength)) ? Number(prefixLength) : 0;
+                const ranges = [];
+                for (const match of Array.isArray(matches) ? matches : []) {
+                    if (match?.key !== key || !Array.isArray(match.indices)) continue;
+                    for (const pair of match.indices) {
+                        const start = Number(pair?.[0]) - startOffset + prefix;
+                        const end = Number(pair?.[1]) - startOffset + prefix + 1;
+                        if (!Number.isFinite(start) || !Number.isFinite(end) || end <= 0 || start >= raw.length) continue;
+                        const range = [Math.max(0, start), Math.min(raw.length, end)];
+                        const query = this.currentQuery.toLowerCase();
+                        if (query && !raw.slice(range[0], range[1]).toLowerCase().includes(query)) continue;
+                        ranges.push(range);
+                    }
+                }
+
+                if (ranges.length === 0 && this.currentQuery) {
+                    const needle = this.currentQuery.toLowerCase();
+                    const lower = raw.toLowerCase();
+                    let cursor = lower.indexOf(needle);
+                    while (cursor >= 0) {
+                        ranges.push([cursor, cursor + needle.length]);
+                        cursor = lower.indexOf(needle, cursor + needle.length);
+                    }
+                }
+                if (ranges.length === 0) return this.escapeHtml(raw);
+
+                ranges.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+                const merged = ranges.reduce((result, range) => {
+                    const previous = result[result.length - 1];
+                    if (previous && range[0] <= previous[1]) previous[1] = Math.max(previous[1], range[1]);
+                    else result.push(range);
+                    return result;
+                }, []);
+                let cursor = 0;
+                let html = '';
+                for (const [start, end] of merged) {
+                    html += this.escapeHtml(raw.slice(cursor, start));
+                    html += `<mark class="command-search-highlight">${this.escapeHtml(raw.slice(start, end))}</mark>`;
+                    cursor = end;
+                }
+                return html + this.escapeHtml(raw.slice(cursor));
             },
 
             escapeHtml(text) {
@@ -2342,6 +2447,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
 
         setupSidebarTabs();
+        setupDirectoryTitleSearch();
 
         if (readModeBtn) {
             updateReadingMode(false);
@@ -2350,9 +2456,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         // Scroll Helper Logic
         // Icon follows scroll direction: scrolling down → ↓↓, scrolling up → ↑↑
         let scrollDir = 'down';
-        let lastScrollY = 0;
 
         if (scrollBtn) {
+            const scrollStateByTarget = new WeakMap();
             const getActiveScrollTarget = () => {
                 const sourceEditor = document.querySelector('.typora-editor-shell.is-source-mode .typora-source-editor');
                 if (sourceEditor && sourceEditor.scrollHeight > sourceEditor.clientHeight + 2) return sourceEditor;
@@ -2376,58 +2482,51 @@ document.addEventListener('DOMContentLoaded', async () => {
                     scrollBtn.innerHTML = `
                         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M7 11l5-5 5 5M7 18l5-5 5 5"></path>
-                        </svg>`;
+                    </svg>`;
                 }
             };
 
-            window.addEventListener('scroll', () => {
-                const el = document.scrollingElement || document.documentElement;
+            const updateScrollDirection = (el) => {
+                if (!el) return;
                 const y = el.scrollTop;
                 const maxScroll = el.scrollHeight - el.clientHeight;
                 if (maxScroll <= 0) return;
-                if (y === lastScrollY) return;
+                const previous = scrollStateByTarget.get(el);
+                if (previous && y === previous.y) return;
 
                 let dir;
                 if (y <= 2) {
-                    dir = 'down';           // at top → only useful direction is down
+                    dir = 'down';
                 } else if (y >= maxScroll - 2) {
-                    dir = 'up';             // at bottom → only useful direction is up
+                    dir = 'up';
                 } else {
-                    dir = y > lastScrollY ? 'down' : 'up';
+                    dir = !previous || y > previous.y ? 'down' : 'up';
                 }
-                lastScrollY = y;
+                scrollStateByTarget.set(el, { y, dir });
                 if (scrollDir !== dir) {
                     scrollDir = dir;
                     updateIcon();
                 }
-            }, { passive: true });
+            };
 
-            setTimeout(() => {
-                [
-                    document.querySelector('.typora-editor-shell .vditor-wysiwyg'),
-                    document.querySelector('.typora-source-editor'),
-                    document.querySelector('.thoughts-scroll-area')
-                ].filter(Boolean).forEach(el => {
-                    el.addEventListener('scroll', () => {
-                        const y = el.scrollTop;
-                        const maxScroll = el.scrollHeight - el.clientHeight;
-                        if (maxScroll <= 0) return;
-                        let dir;
-                        if (y <= 2) {
-                            dir = 'down';
-                        } else if (y >= maxScroll - 2) {
-                            dir = 'up';
-                        } else {
-                            dir = y > lastScrollY ? 'down' : 'up';
-                        }
-                        lastScrollY = y;
-                        if (scrollDir !== dir) {
-                            scrollDir = dir;
-                            updateIcon();
-                        }
-                    }, { passive: true });
-                });
-            }, 800);
+            const handleScroll = (event) => {
+                const target = event.target === document
+                    ? (document.scrollingElement || document.documentElement)
+                    : event.target;
+                if (!(target instanceof HTMLElement)) return;
+                if (!target.matches('.vditor-wysiwyg, .typora-source-editor, .thoughts-scroll-area') &&
+                    target !== document.scrollingElement && target !== document.documentElement) {
+                    return;
+                }
+                updateScrollDirection(target);
+            };
+
+            // Scroll does not bubble, but capture sees scrolls from nested
+            // editors created after app startup as well as the document.
+            document.addEventListener('scroll', handleScroll, true);
+            window.addEventListener('scroll', () => {
+                updateScrollDirection(document.scrollingElement || document.documentElement);
+            }, { passive: true });
 
             let scrollAnim = null;
 
@@ -2435,7 +2534,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                 const el = getActiveScrollTarget();
                 const startY = el.scrollTop;
                 const maxScroll = el.scrollHeight - el.clientHeight;
-                const direction = startY >= maxScroll - 2 ? 'up' : (startY <= 2 ? 'down' : scrollDir);
+                const savedDirection = scrollStateByTarget.get(el)?.dir || 'down';
+                const direction = startY >= maxScroll - 2 ? 'up' : (startY <= 2 ? 'down' : savedDirection);
                 const endY = direction === 'down' ? maxScroll : 0;
                 const distance = endY - startY;
                 if (Math.abs(distance) < 2) return;
@@ -2486,6 +2586,52 @@ document.addEventListener('DOMContentLoaded', async () => {
                 directoryTree.classList.remove('active');
             });
         }
+    }
+
+    function setupDirectoryTitleSearch() {
+        const toggle = document.getElementById('directory-search-toggle');
+        const row = document.getElementById('directory-search-row');
+        const input = document.getElementById('directory-search-input');
+        const clear = document.getElementById('directory-search-clear');
+        const directoryTab = document.getElementById('tab-directory');
+        const recentTab = document.getElementById('tab-recent');
+        const directoryTree = document.getElementById('directory-tree');
+        const recentFiles = document.getElementById('recent-files-mobile');
+        if (!toggle || !row || !input) return;
+
+        const setOpen = (open) => {
+            row.hidden = !open;
+            toggle.setAttribute('aria-expanded', String(open));
+            if (open) {
+                directoryTab?.classList.add('active');
+                recentTab?.classList.remove('active');
+                directoryTree?.classList.add('active');
+                recentFiles?.classList.remove('active');
+                requestAnimationFrame(() => input.focus());
+            }
+        };
+        const apply = () => {
+            directorySearchQuery = input.value.trim();
+            clear?.toggleAttribute('hidden', !directorySearchQuery);
+            renderNotepadLists(currentNotepadId);
+        };
+
+        toggle.addEventListener('click', () => setOpen(row.hidden));
+        input.addEventListener('input', apply);
+        input.addEventListener('keydown', event => {
+            if (event.key !== 'Escape') return;
+            event.preventDefault();
+            input.value = '';
+            apply();
+            setOpen(false);
+            toggle.focus();
+        });
+        clear?.addEventListener('click', () => {
+            input.value = '';
+            apply();
+            input.focus();
+        });
+        clear?.toggleAttribute('hidden', !input.value.trim());
     }
 
     function applySettings(s) {

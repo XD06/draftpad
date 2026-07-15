@@ -4,10 +4,12 @@ import {
     buildUpdatedTimeMarker,
     deleteTimeMarker,
     handleTimeCommandKeydown,
+    moveTimeMarker,
     renderTimeMarkers,
     replaceTimeMarker,
     TIME_COMMAND
 } from './managers/time-command.js';
+import { AssetApiClient, isImageFile } from './managers/asset-api-client.js';
 
 const HEADING_RE = /^(#{1,6})\s+(.+?)\s*#*\s*$/;
 const MARK_PROTECTED_SELECTOR = [
@@ -58,6 +60,9 @@ export class HybridMarkdownEditor {
         this.sourceMode = false;
         this.currentSelectionData = null;
         this.suppressInput = false;
+        this.isComposing = false;
+        this.assetApi = new AssetApiClient();
+        this.assetUploadTasks = new Set();
 
         this.container.innerHTML = '';
         this.container.classList.add('typora-editor-shell');
@@ -78,12 +83,8 @@ export class HybridMarkdownEditor {
             },
             customWysiwygToolbar: () => {},
             input: () => {
-                if (!this.isDecorating && !this.suppressInput) {
-                    this.scheduleDecorateRenderedMarks();
-                    clearTimeout(this.typingDecorateTimer);
-                    this.typingDecorateTimer = setTimeout(() => this.decorateRenderedMarks(), 80);
-                    this.emitChange();
-                }
+                if (this.isDecorating || this.suppressInput || this.isComposing) return;
+                this.handleWysiwygInput();
             },
             after: () => {
                 this.ready = true;
@@ -99,6 +100,8 @@ export class HybridMarkdownEditor {
                 this.buildHeadingIndex();
                 this.bindAnnotationPopover();
                 this.bindTimeMarkerPopover();
+                this.bindTimeMarkerDragging();
+                this.decorateArticleImages();
                 // Connect marker protection immediately now that
                 // Vditor's DOM is available, rather than waiting for
                 // the 100 ms polling loop in bindMarkerProtection.
@@ -112,6 +115,8 @@ export class HybridMarkdownEditor {
                 this.scheduleDecorateRenderedMarks();
                 setTimeout(() => this.decorateRenderedMarks(), 80);
                 setTimeout(() => this.decorateRenderedMarks(), 240);
+                setTimeout(() => this.decorateArticleImages(), 80);
+                setTimeout(() => this.decorateArticleImages(), 240);
             }
         });
 
@@ -131,6 +136,8 @@ export class HybridMarkdownEditor {
         this.themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
         this.setupSelectionMenu();
         this.bindReadingModeGuard();
+        this.bindArticleImageInteractions();
+        this.bindCompositionEvents();
         this.bindTimeCommand();
         this.bindMarkerProtection();
         this.buildHeadingIndex();
@@ -158,12 +165,15 @@ export class HybridMarkdownEditor {
             this.editor.setValue(this.prepareDisplayValue(normalized));
             this.setEditable(!this.isReadingMode);
             this.decorateRenderedMarks();
+            this.decorateArticleImages();
             this.scheduleDecorateRenderedMarks();
             // Vditor's async re-processing can strip decorations
             // after the synchronous and next-frame passes.  Retry
             // at 80 ms and 240 ms to ensure marks survive.
             setTimeout(() => this.decorateRenderedMarks(), 80);
             setTimeout(() => this.decorateRenderedMarks(), 240);
+            setTimeout(() => this.decorateArticleImages(), 80);
+            setTimeout(() => this.decorateArticleImages(), 240);
         } else {
             this.pendingValue = normalized;
         }
@@ -173,6 +183,94 @@ export class HybridMarkdownEditor {
             this.onInput(normalized);
             this.dispatch('input', { value: normalized });
         }
+    }
+
+    setWysiwygValueAtMarkdownOffset(value = '', markdownOffset = 0, emit = true) {
+        const normalized = this.stripDisplayGuards(value);
+        const safeOffset = Math.min(Math.max(0, Number(markdownOffset) || 0), normalized.length);
+        const marker = '\uE001';
+        const valueWithCaretMarker = `${normalized.slice(0, safeOffset)}${marker}${normalized.slice(safeOffset)}`;
+        this._lastValue = normalized;
+
+        if (this.ready && this.editor?.setValue) {
+            this.suppressProgrammaticInput();
+            this.wysiwygCaretRestore = { marker, markdownOffset: safeOffset };
+            this.editor.setValue(this.prepareDisplayValue(valueWithCaretMarker));
+            this.setEditable(!this.isReadingMode);
+            this.restoreWysiwygCaretFromMarker();
+            this.decorateRenderedMarks();
+            this.decorateArticleImages();
+            this.scheduleDecorateRenderedMarks();
+            setTimeout(() => {
+                this.restoreWysiwygCaretFromMarker();
+                this.decorateRenderedMarks();
+                this.decorateArticleImages();
+            }, 80);
+            setTimeout(() => {
+                if (!this.restoreWysiwygCaretFromMarker()) this.restoreWysiwygCaretFallback();
+                this.decorateRenderedMarks();
+                this.decorateArticleImages();
+            }, 240);
+        } else {
+            this.pendingValue = normalized;
+        }
+
+        if (this.sourceTextarea) this.sourceTextarea.value = normalized;
+        this.buildHeadingIndex();
+        if (emit) {
+            this.onInput(normalized);
+            this.dispatch('input', { value: normalized });
+        }
+    }
+
+    restoreWysiwygCaretFromMarker() {
+        const pending = this.wysiwygCaretRestore;
+        const root = this.container.querySelector('.vditor-wysiwyg .vditor-reset');
+        if (!pending || !root) return false;
+
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+        let node;
+        while ((node = walker.nextNode())) {
+            const index = String(node.nodeValue || '').indexOf(pending.marker);
+            if (index < 0) continue;
+            node.nodeValue = `${node.nodeValue.slice(0, index)}${node.nodeValue.slice(index + pending.marker.length)}`;
+            const range = document.createRange();
+            range.setStart(node, index);
+            range.collapse(true);
+            this.editor?.focus?.();
+            const selection = window.getSelection();
+            selection?.removeAllRanges();
+            selection?.addRange(range);
+            this.wysiwygCaretRestore = null;
+            requestAnimationFrame(() => this.scrollRangeIntoView(range));
+            return true;
+        }
+        return false;
+    }
+
+    restoreWysiwygCaretFallback() {
+        const pending = this.wysiwygCaretRestore;
+        const root = this.container.querySelector('.vditor-wysiwyg .vditor-reset');
+        if (!pending || !root) return false;
+        this.editor?.focus?.();
+        this.restoreSelectionOffset(root, pending.markdownOffset);
+        this.wysiwygCaretRestore = null;
+        const selection = window.getSelection();
+        const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
+        if (range) requestAnimationFrame(() => this.scrollRangeIntoView(range));
+        return Boolean(range);
+    }
+
+    scrollRangeIntoView(range) {
+        const scroller = this.container.querySelector('.vditor-wysiwyg');
+        if (!scroller || !range) return;
+        const rangeRect = range.getBoundingClientRect();
+        const scrollerRect = scroller.getBoundingClientRect();
+        if (!rangeRect.height || !scrollerRect.height) return;
+        const upperBound = scrollerRect.top + 48;
+        const lowerBound = scrollerRect.bottom - 72;
+        if (rangeRect.top >= upperBound && rangeRect.bottom <= lowerBound) return;
+        scroller.scrollTop += rangeRect.top - scrollerRect.top - Math.max(48, (scrollerRect.height - rangeRect.height) / 2);
     }
 
     notifyEditorValueChanged(value = '') {
@@ -359,11 +457,60 @@ export class HybridMarkdownEditor {
 
     jumpToKeyword(keyword) {
         if (!keyword) return;
-        const lower = String(keyword).toLowerCase();
-        const lineIndex = this.getValue()
+        const needle = String(keyword).trim();
+        if (!needle) return;
+        const lower = needle.toLowerCase();
+        const value = this.getValue();
+        const markdownIndex = value.toLowerCase().indexOf(lower);
+        if (this.sourceMode && this.sourceTextarea && markdownIndex >= 0) {
+            this.sourceTextarea.setSelectionRange(markdownIndex, markdownIndex + needle.length);
+            this.sourceCaretOffset = markdownIndex;
+            this.sourceTextarea.focus();
+            return;
+        }
+
+        const range = this.findRenderedTextRange(needle);
+        if (range) {
+            const target = this.closestElement(range.startContainer, 'p, li, h1, h2, h3, h4, h5, h6, blockquote') || this.renderedRoot();
+            this.showKeywordHighlight(range);
+            this.scrollRenderedElementIntoView(target);
+            return;
+        }
+
+        const lineIndex = value
             .split('\n')
             .findIndex(line => line.toLowerCase().includes(lower));
         if (lineIndex >= 0) this.scrollToLine(lineIndex, keyword);
+    }
+
+    findRenderedTextRange(keyword) {
+        const root = this.renderedRoot();
+        if (!root || !keyword) return null;
+        const lower = String(keyword).toLowerCase();
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+        let node;
+        while ((node = walker.nextNode())) {
+            if (this.isMarkProtectedNode(node)) continue;
+            const start = String(node.nodeValue || '').toLowerCase().indexOf(lower);
+            if (start < 0) continue;
+            const range = document.createRange();
+            range.setStart(node, start);
+            range.setEnd(node, start + keyword.length);
+            return range;
+        }
+        return null;
+    }
+
+    showKeywordHighlight(range) {
+        clearTimeout(this.keywordHighlightTimer);
+        const highlights = window.CSS?.highlights;
+        if (!highlights || typeof window.Highlight !== 'function') return;
+        this.keywordHighlight = new window.Highlight(range);
+        highlights.set('dumbpad-search-hit', this.keywordHighlight);
+        this.keywordHighlightTimer = setTimeout(() => {
+            highlights.delete('dumbpad-search-hit');
+            this.keywordHighlight = null;
+        }, 1800);
     }
 
     scrollToLine(index, keyword = '') {
@@ -441,6 +588,48 @@ export class HybridMarkdownEditor {
         this.setEditable(!this.isReadingMode);
     }
 
+    handleWysiwygInput() {
+        this.scheduleDecorateRenderedMarks();
+        requestAnimationFrame(() => this.decorateArticleImages());
+        clearTimeout(this.typingDecorateTimer);
+        this.typingDecorateTimer = setTimeout(() => this.decorateRenderedMarks(), 80);
+        this.emitChange();
+    }
+
+    emitSourceInput() {
+        this.sourceCaretOffset = this.sourceTextarea.selectionStart;
+        this._lastValue = this.sourceTextarea.value;
+        this.buildHeadingIndex();
+        this.onInput(this._lastValue);
+        this.dispatch('input', { value: this._lastValue });
+        this.dispatch('change', { value: this._lastValue });
+    }
+
+    isEditorInputTarget(target) {
+        return target === this.sourceTextarea || Boolean(target?.closest?.('.vditor-wysiwyg'));
+    }
+
+    bindCompositionEvents() {
+        this.container.addEventListener('compositionstart', (event) => {
+            if (!this.isEditorInputTarget(event.target)) return;
+            this.isComposing = true;
+            clearTimeout(this.typingDecorateTimer);
+        }, true);
+
+        this.container.addEventListener('compositionend', (event) => {
+            if (!this.isEditorInputTarget(event.target)) return;
+            this.isComposing = false;
+
+            requestAnimationFrame(() => {
+                if (this.sourceMode && event.target === this.sourceTextarea) {
+                    this.emitSourceInput();
+                    return;
+                }
+                this.handleWysiwygInput();
+            });
+        }, true);
+    }
+
     setEditable(enabled) {
         if (!this.ready) return;
         if (enabled && this.editor?.enable) {
@@ -468,13 +657,16 @@ export class HybridMarkdownEditor {
         this.sourceTextarea.className = 'typora-source-editor';
         this.sourceTextarea.setAttribute('aria-label', 'Markdown source');
         this.sourceTextarea.spellcheck = true;
-        this.sourceTextarea.addEventListener('input', () => {
+        this.sourceTextarea.addEventListener('input', (event) => {
             this.sourceCaretOffset = this.sourceTextarea.selectionStart;
             this._lastValue = this.sourceTextarea.value;
-            this.buildHeadingIndex();
-            this.onInput(this._lastValue);
-            this.dispatch('input', { value: this._lastValue });
-            this.dispatch('change', { value: this._lastValue });
+            if (event.isComposing || this.isComposing) return;
+            this.emitSourceInput();
+        });
+        ['select', 'click', 'keyup'].forEach(type => {
+            this.sourceTextarea.addEventListener(type, () => {
+                this.sourceCaretOffset = this.sourceTextarea.selectionStart;
+            });
         });
 
         this.sourceToggle = document.createElement('button');
@@ -514,7 +706,7 @@ export class HybridMarkdownEditor {
 
     decorateRenderedMarks(preserveCaret = true) {
         const root = this.container.querySelector('.vditor-wysiwyg .vditor-reset');
-        if (!root || this.sourceMode) return;
+        if (!root || this.sourceMode || this.isComposing) return;
 
         this.isDecorating = true;
 
@@ -674,7 +866,7 @@ export class HybridMarkdownEditor {
      */
     bindMarkerProtection() {
         this.markerObserver = new MutationObserver(() => {
-            if (this.isDecorating || this.sourceMode) return;
+            if (this.isDecorating || this.sourceMode || this.isComposing) return;
             const root = this.container.querySelector('.vditor-wysiwyg .vditor-reset');
             if (!root) return;
 
@@ -1069,7 +1261,7 @@ export class HybridMarkdownEditor {
         let html = this.escapeHtml(text);
         html = html.replace(/\u200B/g, '');
         const original = html;
-        html = renderTimeMarkers(html, 'md-time-marker');
+        html = renderTimeMarkers(html, 'md-time-marker', { draggable: true });
         html = html.replace(
             /&lt;span data-note=&quot;([^&]*)&quot;[\s\S]*?&gt;([\s\S]*?)&lt;\/span&gt;\s*&lt;sub[\s\S]*?&gt;[\s\S]*?&lt;\/sub&gt;/g,
             (_match, comment, markedText) => this.annotationHtml(markedText, comment)
@@ -1428,11 +1620,165 @@ export class HybridMarkdownEditor {
         this.container.addEventListener('click', (event) => {
             const marker = event.target.closest('.md-time-marker');
             if (!marker || !this.container.contains(marker)) return;
+            if (Date.now() - (this.lastTimeMarkerDragAt || 0) < 250) return;
             event.preventDefault();
             event.stopPropagation();
             this.hideSelectionMenu();
             this.showTimeMarkerMenu(marker);
         });
+    }
+
+    bindTimeMarkerDragging() {
+        if (this.timeMarkerDragBound) return;
+        this.timeMarkerDragBound = true;
+
+        this.container.addEventListener('pointerdown', (event) => {
+            if (this.isReadingMode || this.sourceMode) return;
+            const marker = event.target.closest('.md-time-marker[data-time-draggable="true"]');
+            const root = this.container.querySelector('.vditor-wysiwyg .vditor-reset');
+            if (!marker || !root?.contains(marker)) return;
+            const sourceOffset = this.getMarkdownOffsetBeforeNode(root, marker);
+            const source = marker.dataset.timeSource || '';
+            if (!Number.isInteger(sourceOffset) || !source) return;
+            this.timeMarkerPointerDrag = {
+                marker,
+                source,
+                sourceOffset,
+                pointerId: event.pointerId,
+                startX: event.clientX,
+                startY: event.clientY,
+                active: false
+            };
+            marker.setPointerCapture?.(event.pointerId);
+        });
+
+        this.container.addEventListener('pointermove', (event) => {
+            const drag = this.timeMarkerPointerDrag;
+            if (!drag || drag.pointerId !== event.pointerId) return;
+            if (!drag.active && Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) < 6) return;
+            drag.active = true;
+            event.preventDefault();
+            drag.marker.classList.add('is-dragging');
+            const root = this.container.querySelector('.vditor-wysiwyg .vditor-reset');
+            root?.classList.add('is-time-marker-drop-target');
+            drag.dropOffset = root ? this.showTimeMarkerDropCaret(root, event) : null;
+        });
+
+        const finishPointerDrag = (event) => {
+            const drag = this.timeMarkerPointerDrag;
+            if (!drag || drag.pointerId !== event.pointerId) return;
+            this.timeMarkerPointerDrag = null;
+            drag.marker.classList.remove('is-dragging');
+            this.container.querySelector('.vditor-reset')?.classList.remove('is-time-marker-drop-target');
+            this.hideTimeMarkerDropCaret();
+            drag.marker.releasePointerCapture?.(event.pointerId);
+            if (!drag.active) return;
+            event.preventDefault();
+            const root = this.container.querySelector('.vditor-wysiwyg .vditor-reset');
+            if (!root) return;
+            const dropOffset = Number.isInteger(drag.dropOffset)
+                ? drag.dropOffset
+                : this.getMarkdownDropOffset(root, event);
+            this.moveTimeMarkerToOffset(drag, dropOffset);
+        };
+        this.container.addEventListener('pointerup', finishPointerDrag);
+        this.container.addEventListener('pointercancel', finishPointerDrag);
+    }
+
+    moveTimeMarkerToOffset(drag, dropOffset) {
+        if (!drag || !Number.isInteger(dropOffset)) return false;
+        const value = this.readWysiwygMarkdownValue(this._lastValue || '');
+        const next = moveTimeMarker(value, drag.source, drag.sourceOffset, dropOffset);
+        if (next === value) return false;
+
+        const caretOffset = this.getMovedTimeMarkerCaretOffset(drag, dropOffset, next.length);
+        this.setWysiwygValueAtMarkdownOffset(next, caretOffset, true);
+        this.lastTimeMarkerDragAt = Date.now();
+        return true;
+    }
+
+    getMovedTimeMarkerCaretOffset(drag, dropOffset, valueLength) {
+        const offsetAfterMarker = dropOffset < drag.sourceOffset
+            ? dropOffset + drag.source.length
+            : dropOffset;
+        return Math.min(Math.max(0, offsetAfterMarker), valueLength);
+    }
+
+    getMarkdownOffsetBeforeNode(root, node) {
+        const parent = node?.parentNode;
+        if (!parent) return null;
+        const offset = Array.prototype.indexOf.call(parent.childNodes, node);
+        return offset < 0 ? null : this.getMarkdownOffsetForDomPoint(root, parent, offset);
+    }
+
+    getCaretRangeFromPoint(clientX, clientY) {
+        let range = document.caretRangeFromPoint?.(clientX, clientY) || null;
+        if (!range && document.caretPositionFromPoint) {
+            const position = document.caretPositionFromPoint(clientX, clientY);
+            if (position) {
+                range = document.createRange();
+                range.setStart(position.offsetNode, position.offset);
+                range.collapse(true);
+            }
+        }
+        return range;
+    }
+
+    getMarkdownDropOffset(root, event) {
+        const range = this.getCaretRangeFromPoint(event.clientX, event.clientY);
+        if (!range || !root.contains(range.startContainer)) return null;
+        return this.getMarkdownOffsetForDomPoint(root, range.startContainer, range.startOffset);
+    }
+
+    ensureTimeMarkerDropCaret() {
+        if (this.timeMarkerDropCaret) return this.timeMarkerDropCaret;
+        const caret = document.createElement('div');
+        caret.className = 'time-marker-drop-caret';
+        caret.setAttribute('aria-hidden', 'true');
+        caret.hidden = true;
+        document.body.appendChild(caret);
+        this.timeMarkerDropCaret = caret;
+        return caret;
+    }
+
+    showTimeMarkerDropCaret(root, event) {
+        const range = this.getCaretRangeFromPoint(event.clientX, event.clientY);
+        if (!range || !root.contains(range.startContainer)) {
+            this.hideTimeMarkerDropCaret();
+            return null;
+        }
+
+        const dropOffset = this.getMarkdownOffsetForDomPoint(root, range.startContainer, range.startOffset);
+        if (!Number.isInteger(dropOffset)) {
+            this.hideTimeMarkerDropCaret();
+            return null;
+        }
+
+        const rect = range.getBoundingClientRect();
+        const rootRect = root.getBoundingClientRect();
+        const lineHeight = Number.parseFloat(getComputedStyle(root).lineHeight) || 24;
+        const height = Math.max(16, rect.height || lineHeight);
+        const left = rect.width || rect.height
+            ? rect.left
+            : Math.min(Math.max(event.clientX, rootRect.left), rootRect.right);
+        const top = rect.height
+            ? rect.top
+            : Math.min(Math.max(event.clientY - height / 2, rootRect.top), rootRect.bottom - height);
+        const caret = this.ensureTimeMarkerDropCaret();
+        caret.classList.remove('is-block-drop-caret');
+        caret.style.removeProperty('width');
+        caret.style.left = `${Math.round(left)}px`;
+        caret.style.top = `${Math.round(top)}px`;
+        caret.style.height = `${Math.round(height)}px`;
+        caret.hidden = false;
+        return dropOffset;
+    }
+
+    hideTimeMarkerDropCaret() {
+        if (!this.timeMarkerDropCaret) return;
+        this.timeMarkerDropCaret.hidden = true;
+        this.timeMarkerDropCaret.classList.remove('is-block-drop-caret');
+        this.timeMarkerDropCaret.style.removeProperty('width');
     }
 
     showTimeMarkerMenu(marker) {
@@ -1553,6 +1899,7 @@ export class HybridMarkdownEditor {
             const target = event.target;
             if (target.closest('.has-annotation, [data-note], .md-mark, [data-draw], .md-time-marker')) return;
             if (target.closest('.vditor-copy, .code-lang-copy-button')) return;
+            if (target.closest('.vditor-reset img[data-dumbpad-asset], .vditor-reset img[src*="/api/assets/"], .vditor-reset img[src^="data:image/"]')) return;
             if (target.closest('.vditor-reset')) {
                 event.preventDefault();
                 event.stopPropagation();
@@ -1560,16 +1907,613 @@ export class HybridMarkdownEditor {
         }, true);
     }
 
+    bindArticleImageInteractions() {
+        this.bindArticleImageDragging();
+
+        this.container.addEventListener('paste', event => {
+            if (this.isReadingMode || !this.isEditorInputTarget(event.target)) return;
+            const files = Array.from(event.clipboardData?.files || []).filter(isImageFile);
+            if (!files.length) return;
+            event.preventDefault();
+            // Vditor handles image files even when the event is default-prevented.
+            // Stop it here so it cannot add a second Base64 image beside ours.
+            event.stopImmediatePropagation?.();
+            files.forEach(file => this.queueArticleImageUpload(file));
+        }, true);
+
+        this.container.addEventListener('click', event => {
+            const image = event.target.closest('.vditor-reset img');
+            const assetId = this.getArticleAssetId(image);
+            if (!image || (!assetId && !this.isLegacyArticleImage(image))) return;
+            if (Date.now() - (this.lastArticleImageDragAt || 0) < 250) return;
+            if (Date.now() - (this.lastArticleImageTouchTapAt || 0) < 450) return;
+            event.preventDefault();
+            event.stopPropagation();
+            if (this.isReadingMode) {
+                this.hideArticleImageSizeMenu();
+                this.openArticleImageLightbox(image, assetId);
+                return;
+            }
+            this.openArticleImageSizeMenu(image);
+        });
+    }
+
+    bindArticleImageDragging() {
+        if (this.articleImageDragBound) return;
+        this.articleImageDragBound = true;
+
+        // Native image drag conflicts with Vditor's contenteditable model and
+        // can leave the browser's drag selection active. Pointer events give
+        // us a deterministic cleanup path and reuse the existing drop caret.
+        this.container.addEventListener('dragstart', event => {
+            const image = event.target.closest('.vditor-reset img.dumbpad-article-image');
+            if (image && !this.isReadingMode) event.preventDefault();
+        });
+
+        this.container.addEventListener('pointerdown', event => {
+            if (this.isReadingMode || this.sourceMode || (event.pointerType === 'mouse' && event.button !== 0)) return;
+            const image = event.target.closest('.vditor-reset img.dumbpad-article-image');
+            const root = this.container.querySelector('.vditor-wysiwyg .vditor-reset');
+            if (!image || !root?.contains(image)) return;
+
+            if (!this.getArticleImageBlock(image, root)) return;
+
+            // A touch on contenteditable otherwise focuses Vditor before the
+            // click handler runs, which opens the mobile keyboard and moves
+            // its selection even when the user only wants image controls.
+            if (event.pointerType !== 'mouse') event.preventDefault();
+
+            this.articleImagePointerDrag = {
+                image,
+                pointerId: event.pointerId,
+                pointerType: event.pointerType,
+                startX: event.clientX,
+                startY: event.clientY,
+                active: false
+            };
+            image.setPointerCapture?.(event.pointerId);
+        });
+
+        this.container.addEventListener('pointermove', event => {
+            const drag = this.articleImagePointerDrag;
+            if (!drag || drag.pointerId !== event.pointerId) return;
+            if (!drag.active && Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) < 6) return;
+
+            drag.active = true;
+            event.preventDefault();
+            this.hideArticleImageSizeMenu();
+            drag.image.classList.add('is-article-image-dragging');
+            const root = this.container.querySelector('.vditor-wysiwyg .vditor-reset');
+            root?.classList.add('is-article-image-drop-target');
+            if (!root) return;
+            drag.lastClientX = event.clientX;
+            drag.lastClientY = event.clientY;
+            drag.dropTarget = this.getArticleImageDropTarget(root, event);
+            this.showArticleImageDropCaret(root, drag.dropTarget, event);
+            this.startArticleImageDragAutoScroll(drag);
+        });
+
+        const finishPointerDrag = event => {
+            const drag = this.articleImagePointerDrag;
+            if (!drag || drag.pointerId !== event.pointerId) return;
+            this.articleImagePointerDrag = null;
+            drag.image.classList.remove('is-article-image-dragging');
+            this.container.querySelector('.vditor-reset')?.classList.remove('is-article-image-drop-target');
+            this.stopArticleImageDragAutoScroll(drag);
+            this.hideTimeMarkerDropCaret();
+            drag.image.releasePointerCapture?.(event.pointerId);
+            if (!drag.active) {
+                if (drag.pointerType !== 'mouse') {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    this.lastArticleImageTouchTapAt = Date.now();
+                    this.openArticleImageSizeMenu(drag.image);
+                }
+                return;
+            }
+
+            event.preventDefault();
+            this.lastArticleImageDragAt = Date.now();
+            const root = this.container.querySelector('.vditor-wysiwyg .vditor-reset');
+            if (!root) return;
+            const dropTarget = drag.dropTarget || this.getArticleImageDropTarget(root, event);
+            this.moveArticleImageToTarget(drag, dropTarget);
+        };
+
+        this.container.addEventListener('pointerup', finishPointerDrag);
+        this.container.addEventListener('pointercancel', finishPointerDrag);
+    }
+
+    getArticleImageBlock(image, root) {
+        if (!image || !root) return null;
+
+        let block = image;
+        while (block.parentElement && block.parentElement !== root) {
+            block = block.parentElement;
+        }
+        if (block.parentElement !== root) return null;
+
+        const images = Array.from(block.querySelectorAll('img.dumbpad-article-image'));
+        const isNestedContent = Boolean(image.closest('li, blockquote, td, th'));
+        const text = String(block.textContent || '').replace(/\u200B/g, '').trim();
+        if (images.length !== 1 || images[0] !== image || isNestedContent || text) return null;
+        if (block.matches('ul, ol, table, blockquote')) return null;
+        return block;
+    }
+
+    getArticleImageDropTarget(root, event) {
+        const blocks = Array.from(root?.children || []);
+        if (!blocks.length) return null;
+
+        let pointElement = document.elementFromPoint(event.clientX, event.clientY);
+        let block = null;
+        while (pointElement && pointElement.parentElement !== root) {
+            pointElement = pointElement.parentElement;
+        }
+        if (pointElement?.parentElement === root) block = pointElement;
+
+        if (!block) {
+            const firstBlock = blocks[0];
+            const lastBlock = blocks[blocks.length - 1];
+            if (event.clientY <= firstBlock.getBoundingClientRect().top) {
+                return { block: firstBlock, placement: 'before' };
+            }
+            if (event.clientY >= lastBlock.getBoundingClientRect().bottom) {
+                return { block: lastBlock, placement: 'after' };
+            }
+            block = blocks.reduce((nearest, candidate) => {
+                const candidateRect = candidate.getBoundingClientRect();
+                const nearestRect = nearest.getBoundingClientRect();
+                const candidateDistance = Math.abs(event.clientY - (candidateRect.top + candidateRect.height / 2));
+                const nearestDistance = Math.abs(event.clientY - (nearestRect.top + nearestRect.height / 2));
+                return candidateDistance < nearestDistance ? candidate : nearest;
+            }, firstBlock);
+        }
+
+        const rect = block.getBoundingClientRect();
+        return {
+            block,
+            placement: !rect.height || event.clientY < rect.top + (rect.height / 2) ? 'before' : 'after'
+        };
+    }
+
+    showArticleImageDropCaret(root, target, event) {
+        if (!root || !target?.block) {
+            this.hideTimeMarkerDropCaret();
+            return;
+        }
+        const rootRect = root.getBoundingClientRect();
+        const blockRect = target.block.getBoundingClientRect();
+        const caret = this.ensureTimeMarkerDropCaret();
+        caret.classList.add('is-block-drop-caret');
+        caret.style.left = `${Math.round(rootRect.left)}px`;
+        caret.style.top = `${Math.round(target.placement === 'before' ? blockRect.top - 1 : blockRect.bottom - 1)}px`;
+        caret.style.width = `${Math.max(24, Math.round(rootRect.width))}px`;
+        caret.style.height = '2px';
+        caret.hidden = false;
+    }
+
+    startArticleImageDragAutoScroll(drag) {
+        const scroller = this.container.querySelector('.vditor-wysiwyg');
+        if (!drag || !scroller) return;
+        const rect = scroller.getBoundingClientRect();
+        const edge = Math.min(72, Math.max(40, rect.height * 0.16));
+        const topDistance = drag.lastClientY - rect.top;
+        const bottomDistance = rect.bottom - drag.lastClientY;
+        if (topDistance < edge) {
+            drag.autoScrollSpeed = -Math.max(4, Math.round((edge - topDistance) / 5));
+        } else if (bottomDistance < edge) {
+            drag.autoScrollSpeed = Math.max(4, Math.round((edge - bottomDistance) / 5));
+        } else {
+            this.stopArticleImageDragAutoScroll(drag);
+            return;
+        }
+
+        if (drag.autoScrollFrame) return;
+        const tick = () => {
+            if (this.articleImagePointerDrag !== drag || !drag.active || !drag.autoScrollSpeed) {
+                this.stopArticleImageDragAutoScroll(drag);
+                return;
+            }
+            scroller.scrollTop += drag.autoScrollSpeed;
+            const root = this.container.querySelector('.vditor-wysiwyg .vditor-reset');
+            if (root) {
+                const pointer = { clientX: drag.lastClientX, clientY: drag.lastClientY };
+                drag.dropTarget = this.getArticleImageDropTarget(root, pointer);
+                this.showArticleImageDropCaret(root, drag.dropTarget, pointer);
+            }
+            drag.autoScrollFrame = requestAnimationFrame(tick);
+        };
+        drag.autoScrollFrame = requestAnimationFrame(tick);
+    }
+
+    stopArticleImageDragAutoScroll(drag) {
+        if (!drag) return;
+        if (drag.autoScrollFrame) cancelAnimationFrame(drag.autoScrollFrame);
+        drag.autoScrollFrame = null;
+        drag.autoScrollSpeed = 0;
+    }
+
+    moveArticleImageToTarget(drag, dropTarget) {
+        const root = this.container.querySelector('.vditor-wysiwyg .vditor-reset');
+        const sourceBlock = this.getArticleImageBlock(drag?.image, root);
+        const targetBlock = dropTarget?.block;
+        if (!root || !sourceBlock || !targetBlock || !root.contains(targetBlock)) return false;
+        if (sourceBlock === targetBlock) return false;
+
+        const before = this.getSafeArticleImageDragValue(root, drag.image);
+        if (!before) {
+            this.editor?.tip?.('图片需独占一段，且文章不能包含未保存的标记装饰', 3000);
+            return false;
+        }
+
+        const originNextSibling = sourceBlock.nextElementSibling;
+        if (dropTarget.placement === 'before') {
+            if (sourceBlock.nextElementSibling === targetBlock) return false;
+            targetBlock.before(sourceBlock);
+        } else {
+            if (sourceBlock.previousElementSibling === targetBlock) return false;
+            targetBlock.after(sourceBlock);
+        }
+
+        const next = this.stripDisplayGuards(this.editor?.getValue?.() || '');
+        if (!this.isSafeArticleImageMove(before, next, drag.image)) {
+            if (originNextSibling) root.insertBefore(sourceBlock, originNextSibling);
+            else root.appendChild(sourceBlock);
+            this.editor?.tip?.('图片移动未保存，已保护原文内容', 3000);
+            return false;
+        }
+
+        this.commitArticleImageDragValue(next, sourceBlock);
+        return true;
+    }
+
+    getSafeArticleImageDragValue(root, image) {
+        if (!root || !image || root.querySelector(
+            '.md-time-marker[data-time-source], mark.md-mark, [data-draw], .has-annotation'
+        )) return null;
+        const value = this.stripDisplayGuards(this.editor?.getValue?.() || '');
+        const imageMarkdown = this.findStandaloneArticleImageMarkdown(value, image);
+        return value && imageMarkdown ? { value, imageMarkdown } : null;
+    }
+
+    findStandaloneArticleImageMarkdown(value, image) {
+        const source = String(image?.getAttribute?.('src') || '');
+        if (!source || /^data:image\//i.test(source)) return null;
+        const escapedSource = this.escapeRegExp(source);
+        const expression = new RegExp(`!\\[(?:\\\\.|[^\\]\\n])*\\]\\(${escapedSource}(?:\\s+"(?:\\\\.|[^"\\n])*")?\\)`, 'g');
+        const matches = Array.from(String(value || '').matchAll(expression));
+        if (matches.length !== 1) return null;
+
+        const match = matches[0];
+        const start = match.index;
+        const markdown = match[0];
+        const lineStart = value.lastIndexOf('\n', start - 1) + 1;
+        const lineEndIndex = value.indexOf('\n', start + markdown.length);
+        const lineEnd = lineEndIndex < 0 ? value.length : lineEndIndex;
+        if (value.slice(lineStart, lineEnd).trim() !== markdown) return null;
+        return markdown;
+    }
+
+    removeStandaloneArticleImageMarkdown(value, markdown) {
+        const start = value.indexOf(markdown);
+        if (start < 0 || value.indexOf(markdown, start + markdown.length) >= 0) return null;
+        const lineStart = value.lastIndexOf('\n', start - 1) + 1;
+        const lineEndIndex = value.indexOf('\n', start + markdown.length);
+        const lineEnd = lineEndIndex < 0 ? value.length : lineEndIndex + 1;
+        if (value.slice(lineStart, lineEnd).trim() !== markdown) return null;
+        return `${value.slice(0, lineStart)}${value.slice(lineEnd)}`
+            .replace(/[ \t]+\n/g, '\n')
+            .replace(/\n{3,}/g, '\n\n')
+            .trim();
+    }
+
+    isSafeArticleImageMove(before, next, image) {
+        const markdown = before?.imageMarkdown;
+        if (!markdown || !next) return false;
+        const beforeWithoutImage = this.removeStandaloneArticleImageMarkdown(before.value, markdown);
+        const nextWithoutImage = this.removeStandaloneArticleImageMarkdown(next, markdown);
+        return beforeWithoutImage !== null && nextWithoutImage !== null && beforeWithoutImage === nextWithoutImage;
+    }
+
+    commitArticleImageDragValue(value, sourceBlock) {
+        this._lastValue = value;
+        if (this.sourceTextarea) this.sourceTextarea.value = value;
+        this.buildHeadingIndex();
+
+        const range = document.createRange();
+        range.selectNodeContents(sourceBlock);
+        range.collapse(false);
+        const selection = window.getSelection();
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+        sourceBlock.dispatchEvent(new InputEvent('input', {
+            bubbles: true,
+            inputType: 'insertReplacementText'
+        }));
+
+        this.onInput(value);
+        this.dispatch('input', { value });
+        this.dispatch('change', { value });
+        this.renderAfterMutation(this.container.querySelector('.vditor-wysiwyg')?.scrollTop || 0);
+    }
+
+    isLegacyArticleImage(image) {
+        const source = String(image?.getAttribute?.('src') || image?.currentSrc || image?.src || '');
+        return /^data:image\//i.test(source);
+    }
+
+    getArticleAssetId(image) {
+        if (!image) return '';
+        if (image.dataset?.dumbpadAsset) return image.dataset.dumbpadAsset;
+        try {
+            const pathname = new URL(image.currentSrc || image.src || '', window.location.href).pathname;
+            return pathname.match(/^\/api\/assets\/([a-f0-9-]{16,64})\/(?:preview|original)$/i)?.[1] || '';
+        } catch {
+            return '';
+        }
+    }
+
+    getArticleImageWidth(image) {
+        const match = String(image?.getAttribute('title') || '').match(/dumbpad-width=(\d{2,4})/);
+        return match ? Number(match[1]) : 0;
+    }
+
+    decorateArticleImages() {
+        const root = this.container.querySelector('.vditor-wysiwyg .vditor-reset');
+        root?.querySelectorAll('img').forEach(image => {
+            const id = this.getArticleAssetId(image);
+            if (!id && !this.isLegacyArticleImage(image)) return;
+            if (id) image.dataset.dumbpadAsset = id;
+            else delete image.dataset.dumbpadAsset;
+            image.classList.add('dumbpad-article-image');
+            image.draggable = false;
+            const width = this.getArticleImageWidth(image);
+            if (width) image.style.width = `${width}px`;
+            else image.style.removeProperty('width');
+        });
+    }
+
+    queueArticleImageUpload(file) {
+        const token = `[[图片上传中 ${Date.now()}-${Math.random().toString(36).slice(2, 8)}]]`;
+        this.insertArticleUploadPlaceholder(token);
+        const task = this.assetApi.uploadImage(file)
+            .then(asset => this.replaceArticleUploadPlaceholder(token, asset))
+            .catch(error => {
+                console.error('Failed to upload article image:', error);
+                this.replaceArticleUploadPlaceholder(token, `图片上传失败：${file.name || '图片'}`);
+                this.editor?.tip?.('图片上传失败', 3000);
+            })
+            .finally(() => this.assetUploadTasks.delete(task));
+        this.assetUploadTasks.add(task);
+        return task;
+    }
+
+    insertArticleUploadPlaceholder(token) {
+        if (this.sourceMode && this.sourceTextarea) {
+            const start = this.sourceTextarea.selectionStart || 0;
+            const end = this.sourceTextarea.selectionEnd || start;
+            this.sourceTextarea.setRangeText(token, start, end, 'end');
+            this.emitSourceInput();
+            return;
+        }
+        this.editor?.focus?.();
+        this.editor?.insertMD?.(token);
+        this.handleWysiwygInput();
+    }
+
+    buildArticleImageMarkdown(asset) {
+        const alt = String(asset?.name || '图片').replace(/[\[\]\\]/g, '\\$&');
+        return `![${alt}](${asset.previewUrl} "dumbpad-width=720")`;
+    }
+
+    getCurrentWysiwygMarkdownOffset() {
+        const root = this.container.querySelector('.vditor-wysiwyg .vditor-reset');
+        const selection = window.getSelection();
+        const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
+        if (!root || !range || !root.contains(range.startContainer)) return this.getValue().length;
+        return this.getMarkdownOffsetForDomPoint(root, range.startContainer, range.startOffset) ?? this.getValue().length;
+    }
+
+    replaceArticleUploadPlaceholder(token, replacement) {
+        const imageMarkdown = typeof replacement === 'string' ? replacement : this.buildArticleImageMarkdown(replacement);
+        if (this.sourceMode && this.sourceTextarea) {
+            const current = this.sourceTextarea.value;
+            const index = current.indexOf(token);
+            if (index < 0) return;
+            const caret = this.sourceTextarea.selectionStart || 0;
+            const nextCaret = caret > index ? caret + imageMarkdown.length - token.length : caret;
+            this.sourceTextarea.value = `${current.slice(0, index)}${imageMarkdown}${current.slice(index + token.length)}`;
+            this.sourceTextarea.setSelectionRange(nextCaret, nextCaret);
+            this.emitSourceInput();
+            return;
+        }
+
+        const value = this.getValue();
+        const index = value.indexOf(token);
+        if (index < 0) return;
+        const caret = this.getCurrentWysiwygMarkdownOffset();
+        const nextCaret = caret > index ? caret + imageMarkdown.length - token.length : caret;
+        const next = `${value.slice(0, index)}${imageMarkdown}${value.slice(index + token.length)}`;
+        this.setWysiwygValueAtMarkdownOffset(next, nextCaret, true);
+    }
+
+    ensureArticleImageLightbox() {
+        if (this.articleImageLightbox) return this.articleImageLightbox;
+        const lightbox = document.createElement('div');
+        lightbox.className = 'article-image-lightbox';
+        lightbox.hidden = true;
+        lightbox.tabIndex = -1;
+        lightbox.setAttribute('role', 'dialog');
+        lightbox.setAttribute('aria-modal', 'true');
+        lightbox.setAttribute('aria-label', '文章图片预览');
+        lightbox.innerHTML = `
+            <div class="article-image-lightbox-bar">
+                <span class="article-image-lightbox-name"></span>
+                <a class="article-image-lightbox-download" download title="下载原图" aria-label="下载原图">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"></path><path d="m7 10 5 5 5-5"></path><path d="M5 21h14"></path></svg>
+                </a>
+                <button type="button" class="article-image-lightbox-close" title="关闭" aria-label="关闭图片预览">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>
+                </button>
+            </div>
+            <img class="article-image-lightbox-image" alt="">
+        `;
+        lightbox.addEventListener('click', event => {
+            if (event.target === lightbox) this.closeArticleImageLightbox();
+        });
+        lightbox.querySelector('.article-image-lightbox-close').addEventListener('click', () => this.closeArticleImageLightbox());
+        lightbox.addEventListener('keydown', event => {
+            if (event.key === 'Escape') {
+                event.preventDefault();
+                this.closeArticleImageLightbox();
+            }
+        });
+        document.body.appendChild(lightbox);
+        this.articleImageLightbox = lightbox;
+        return lightbox;
+    }
+
+    openArticleImageLightbox(image, assetId) {
+        const lightbox = this.ensureArticleImageLightbox();
+        lightbox.hidden = false;
+        document.body.classList.add('article-image-lightbox-open');
+        const name = image.alt || '图片';
+        lightbox.querySelector('.article-image-lightbox-name').textContent = name;
+        const fullImage = lightbox.querySelector('.article-image-lightbox-image');
+        fullImage.alt = name;
+        const originalUrl = assetId
+            ? `/api/assets/${assetId}/original`
+            : (image.currentSrc || image.src || '');
+        fullImage.src = originalUrl;
+        const download = lightbox.querySelector('.article-image-lightbox-download');
+        download.href = assetId ? `/api/assets/${assetId}/download` : originalUrl;
+        download.download = name;
+        this.articleImageLightboxTrigger = image;
+        lightbox.querySelector('.article-image-lightbox-close').focus({ preventScroll: true });
+    }
+
+    closeArticleImageLightbox() {
+        if (!this.articleImageLightbox) return;
+        this.articleImageLightbox.hidden = true;
+        document.body.classList.remove('article-image-lightbox-open');
+        this.articleImageLightboxTrigger?.focus?.({ preventScroll: true });
+        this.articleImageLightboxTrigger = null;
+    }
+
+    ensureArticleImageSizeMenu() {
+        if (this.articleImageSizeMenu) return this.articleImageSizeMenu;
+        const menu = document.createElement('div');
+        menu.className = 'article-image-size-menu';
+        menu.hidden = true;
+        menu.innerHTML = `
+            <button type="button" data-image-width="360" title="窄">窄</button>
+            <button type="button" data-image-width="720" title="中">中</button>
+            <button type="button" data-image-width="1080" title="宽">宽</button>
+            <button type="button" data-image-width="0" title="自适应">自适应</button>
+            <span class="article-image-size-menu-divider" aria-hidden="true"></span>
+            <a class="article-image-download" data-image-download download title="下载原图" aria-label="下载原图">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"></path><path d="m7 10 5 5 5-5"></path><path d="M5 21h14"></path></svg>
+            </a>
+            <button type="button" class="article-image-fullscreen" data-image-fullscreen title="查看大图" aria-label="查看大图">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3H3v5"></path><path d="M16 3h5v5"></path><path d="M21 16v5h-5"></path><path d="M3 16v5h5"></path></svg>
+            </button>
+            <button type="button" class="article-image-delete" data-image-delete title="删除图片" aria-label="删除图片">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"></path><path d="M8 6V4h8v2"></path><path d="M19 6l-1 14H6L5 6"></path><path d="M10 11v5"></path><path d="M14 11v5"></path></svg>
+            </button>
+        `;
+        menu.addEventListener('mousedown', event => event.preventDefault());
+        menu.addEventListener('click', event => {
+            const fullscreenButton = event.target.closest('[data-image-fullscreen]');
+            if (fullscreenButton && this.activeArticleImage) {
+                const image = this.activeArticleImage;
+                const assetId = this.getArticleAssetId(image);
+                this.hideArticleImageSizeMenu();
+                this.openArticleImageLightbox(image, assetId);
+                return;
+            }
+            const deleteButton = event.target.closest('[data-image-delete]');
+            if (deleteButton && this.activeArticleImage) {
+                this.deleteArticleImage(this.activeArticleImage);
+                return;
+            }
+            const button = event.target.closest('[data-image-width]');
+            if (!button || !this.activeArticleImage) return;
+            this.setArticleImageWidth(this.activeArticleImage, Number(button.dataset.imageWidth || 0));
+        });
+        document.body.appendChild(menu);
+        document.addEventListener('mousedown', event => {
+            if (!menu.hidden && !menu.contains(event.target) && event.target !== this.activeArticleImage) {
+                this.hideArticleImageSizeMenu();
+            }
+        });
+        this.articleImageSizeMenu = menu;
+        return menu;
+    }
+
+    openArticleImageSizeMenu(image) {
+        this.activeArticleImage = image;
+        const menu = this.ensureArticleImageSizeMenu();
+        const assetId = this.getArticleAssetId(image);
+        const originalUrl = assetId
+            ? `/api/assets/${assetId}/download`
+            : (image.currentSrc || image.src || '');
+        const download = menu.querySelector('[data-image-download]');
+        download.href = originalUrl;
+        download.download = image.alt || '图片';
+        const rect = image.getBoundingClientRect();
+        menu.hidden = false;
+        const menuWidth = menu.offsetWidth || 210;
+        const centeredLeft = rect.left + ((rect.width - menuWidth) / 2);
+        menu.style.left = `${Math.max(10, Math.min(window.innerWidth - menuWidth - 10, centeredLeft))}px`;
+        menu.style.top = `${Math.min(window.innerHeight - menu.offsetHeight - 10, rect.bottom + 8)}px`;
+    }
+
+    hideArticleImageSizeMenu() {
+        if (this.articleImageSizeMenu) this.articleImageSizeMenu.hidden = true;
+        this.activeArticleImage = null;
+    }
+
+    setArticleImageWidth(image, requestedWidth) {
+        if (!image) return;
+        const root = this.container.querySelector('.vditor-wysiwyg .vditor-reset');
+        const maxWidth = Math.max(240, Math.floor(root?.clientWidth || window.innerWidth - 48));
+        const width = requestedWidth ? Math.min(Math.max(160, requestedWidth), maxWidth) : 0;
+        if (width) {
+            image.setAttribute('title', `dumbpad-width=${width}`);
+            image.style.width = `${width}px`;
+        } else {
+            image.removeAttribute('title');
+            image.style.removeProperty('width');
+        }
+        this.hideArticleImageSizeMenu();
+        this.notifyEditorValueChanged();
+    }
+
+    deleteArticleImage(image) {
+        if (!image?.isConnected) return;
+        const block = image.closest('.vditor-wysiwyg__block');
+        image.remove();
+        if (block && !block.querySelector('img') && !String(block.textContent || '').trim()) {
+            block.remove();
+        }
+        this.hideArticleImageSizeMenu();
+        this.notifyEditorValueChanged();
+        this.editor?.focus?.();
+    }
+
     bindTimeCommand() {
-        this.container.addEventListener('keydown', (event) => {
+        this.timeCommandKeydownHandler = (event) => {
             if (this.isReadingMode) return;
             if (this.sourceMode) {
+                if (this.isComposing) return;
                 handleTimeCommandKeydown(event);
                 return;
             }
             if (this.handleWysiwygTimeCommand(event)) return;
             this.handleWysiwygSoftEnter(event);
-        }, true);
+        };
+        this.container.addEventListener('keydown', this.timeCommandKeydownHandler, true);
     }
 
     handleWysiwygTimeCommand(event) {
@@ -1589,19 +2533,74 @@ export class HybridMarkdownEditor {
         selection?.removeAllRanges();
         selection?.addRange(commandRange);
         const markerText = buildTimeMarker();
-        this.insertRenderedTimeMarkerAtRange(commandRange, markerText);
+        this.editor.deleteValue();
+        this.editor.insertValue(markerText, true);
         setTimeout(() => {
-            this.notifyEditorValueChanged();
-            this.restoreCaretAfterTimeMarker(markerText);
             this.scheduleDecorateRenderedMarks();
-            requestAnimationFrame(() => this.restoreCaretAfterTimeMarker(markerText));
+            this.emitChange();
         }, 0);
         return true;
     }
 
+    handleWysiwygSoftEnter(event) {
+        if (!event || event.key !== 'Enter' || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey || event.isComposing) {
+            return false;
+        }
+        const target = event.target;
+        const root = this.container.querySelector('.vditor-wysiwyg .vditor-reset');
+        if (!root || !target?.closest?.('.vditor-wysiwyg')) return false;
+
+        const range = this.getPlainParagraphRange(root);
+        if (!range) return false;
+
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation?.();
+
+        range.deleteContents();
+        const lineBreak = document.createElement('br');
+        const caretGuard = document.createTextNode('\u200B');
+        range.insertNode(lineBreak);
+        lineBreak.after(caretGuard);
+
+        const nextRange = document.createRange();
+        nextRange.setStart(caretGuard, 1);
+        nextRange.collapse(true);
+        const selection = window.getSelection();
+        selection?.removeAllRanges();
+        selection?.addRange(nextRange);
+
+        setTimeout(() => {
+            this.notifyEditorValueChanged(this.editor?.getValue?.() || this._lastValue || '');
+            this.scheduleDecorateRenderedMarks();
+        }, 0);
+        return true;
+    }
+
+    getPlainParagraphRange(root) {
+        const selection = window.getSelection();
+        if (!selection || selection.rangeCount === 0) return null;
+
+        const range = selection.getRangeAt(0);
+        if (!root.contains(range.commonAncestorContainer)) return null;
+
+        const startParagraph = this.closestElement(range.startContainer, 'p');
+        const endParagraph = this.closestElement(range.endContainer, 'p');
+        if (!startParagraph || startParagraph !== endParagraph || startParagraph.parentElement !== root) return null;
+
+        const startInlineCode = this.closestElement(range.startContainer, 'code');
+        const endInlineCode = this.closestElement(range.endContainer, 'code');
+        if (startInlineCode || endInlineCode) return null;
+
+        const visibleText = startParagraph.textContent.replace(/\u200B/g, '').trim();
+        if (!visibleText && range.collapsed) return null;
+
+        return range.cloneRange();
+    }
+
     createRenderedTimeMarker(markerText) {
         const template = document.createElement('template');
-        template.innerHTML = renderTimeMarkers(this.escapeHtml(markerText), 'md-time-marker');
+        template.innerHTML = renderTimeMarkers(this.escapeHtml(markerText), 'md-time-marker', { draggable: true });
         const el = template.content.firstElementChild;
         if (el) el.setAttribute('contenteditable', 'false');
         return el || document.createTextNode(markerText);
@@ -1651,67 +2650,6 @@ export class HybridMarkdownEditor {
         selection?.addRange(range);
     }
 
-    handleWysiwygSoftEnter(event) {
-        if (!event || event.key !== 'Enter' || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey || event.isComposing) {
-            return false;
-        }
-        const target = event.target;
-        const root = this.container.querySelector('.vditor-wysiwyg .vditor-reset');
-        if (!root || !target?.closest?.('.vditor-wysiwyg')) return false;
-
-        const range = this.getPlainParagraphRange(root);
-        if (!range) return false;
-
-        event.preventDefault();
-        event.stopPropagation();
-        event.stopImmediatePropagation?.();
-
-        range.deleteContents();
-        const lineBreak = document.createElement('br');
-        const caretGuard = document.createTextNode('\u200B');
-        range.insertNode(lineBreak);
-        lineBreak.after(caretGuard);
-
-        const nextRange = document.createRange();
-        nextRange.setStart(caretGuard, 1);
-        nextRange.collapse(true);
-        const selection = window.getSelection();
-        selection?.removeAllRanges();
-        selection?.addRange(nextRange);
-
-        // Defer value sync to next tick so the browser can process
-        // the caret placement first.  Calling notifyEditorValueChanged
-        // synchronously can trigger DOM reads (editor.getValue) that
-        // interfere with the just-placed caret, causing it to stay on
-        // the previous line.
-        setTimeout(() => {
-            this.notifyEditorValueChanged(this.editor?.getValue?.() || this._lastValue || '');
-            this.scheduleDecorateRenderedMarks();
-        }, 0);
-        return true;
-    }
-
-    getPlainParagraphRange(root) {
-        const selection = window.getSelection();
-        if (!selection || selection.rangeCount === 0) return null;
-
-        const range = selection.getRangeAt(0);
-        if (!root.contains(range.commonAncestorContainer)) return null;
-
-        const startParagraph = this.closestElement(range.startContainer, 'p');
-        const endParagraph = this.closestElement(range.endContainer, 'p');
-        if (!startParagraph || startParagraph !== endParagraph || startParagraph.parentElement !== root) return null;
-
-        const startInlineCode = this.closestElement(range.startContainer, 'code');
-        const endInlineCode = this.closestElement(range.endContainer, 'code');
-        if (startInlineCode || endInlineCode) return null;
-
-        const visibleText = startParagraph.textContent.replace(/\u200B/g, '').trim();
-        if (!visibleText && range.collapsed) return null;
-
-        return range.cloneRange();
-    }
-
     closestElement(node, selector) {
         const element = node?.nodeType === Node.ELEMENT_NODE ? node : node?.parentElement;
         return element?.closest?.(selector) || null;
@@ -1722,6 +2660,8 @@ export class HybridMarkdownEditor {
         if (!selection || !selection.isCollapsed || selection.rangeCount === 0) return null;
         const range = selection.getRangeAt(0);
         if (!this.container.contains(range.commonAncestorContainer)) return null;
+
+        if (this.closestElement(range.startContainer, 'code, .md-time-marker')) return null;
 
         let node = range.startContainer;
         let offset = range.startOffset;
@@ -1950,11 +2890,6 @@ export class HybridMarkdownEditor {
             const sourceOffset = range && root?.contains(range.startContainer)
                 ? this.getMarkdownOffsetForDomPoint(root, range.startContainer, range.startOffset)
                 : Math.min(this.sourceCaretOffset || 0, (this._lastValue || '').length);
-            const scroller = this.container.querySelector('.vditor-wysiwyg');
-            const scrollRatio = scroller?.scrollHeight > scroller?.clientHeight
-                ? scroller.scrollTop / (scroller.scrollHeight - scroller.clientHeight)
-                : 0;
-
             this.markerObserver?.disconnect();
             const value = this.readWysiwygMarkdownValue(this._lastValue || this.pendingValue || '');
             this._lastValue = value;
@@ -1962,21 +2897,15 @@ export class HybridMarkdownEditor {
             this.sourceCaretOffset = Math.min(Math.max(0, sourceOffset ?? 0), value.length);
             requestAnimationFrame(() => {
                 this.sourceTextarea.setSelectionRange(this.sourceCaretOffset, this.sourceCaretOffset);
-                const maxScroll = Math.max(0, this.sourceTextarea.scrollHeight - this.sourceTextarea.clientHeight);
-                this.sourceTextarea.scrollTop = maxScroll * scrollRatio;
-                this.sourceTextarea.focus({ preventScroll: true });
+                this.sourceTextarea.focus();
             });
         } else if (this.ready && this.editor?.setValue && this.sourceTextarea) {
-            this.editor.setValue(this.prepareDisplayValue(this.sourceTextarea.value || ''));
-            this._lastValue = this.sourceTextarea.value || '';
-            this.buildHeadingIndex();
-            this.decorateRenderedMarks();
-            this.scheduleDecorateRenderedMarks();
+            const sourceValue = this.sourceTextarea.value || '';
+            this.sourceCaretOffset = Math.min(Math.max(0, this.sourceTextarea.selectionStart || 0), sourceValue.length);
+            this.setWysiwygValueAtMarkdownOffset(sourceValue, this.sourceCaretOffset, false);
             // Re-connect marker protection and add delayed retries
             // to survive Vditor's async re-processing.
             this.connectMarkerObserver();
-            setTimeout(() => this.decorateRenderedMarks(), 80);
-            setTimeout(() => this.decorateRenderedMarks(), 240);
         }
     }
 }

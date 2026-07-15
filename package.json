@@ -11,7 +11,12 @@
     "test:ai-queue": "node test_ai_queue_relations.js",
     "test:relations": "node test_relations_calculator.js",
     "test:thought-ai-status": "node test_thought_ai_status.js",
+    "test:thought-api-client": "node test_thought_api_client.js",
+    "test:thought-outbox": "node test_thought_outbox.js",
     "test:thought-attachments": "node test_thought_attachments.js",
+    "test:assets": "node test_asset_routes.js",
+    "test:sidebar-title-search": "node test_sidebar_title_search.js",
+    "test:image-paste": "node test_image_paste_integration.js",
     "test:thought-card-renderer": "node test_thought_card_renderer.js",
     "test:thought-editor": "node test_thought_editor.js",
     "test:thought-quick-add": "node test_thought_quick_add.js",
@@ -22,11 +27,16 @@
     "test:thought-swipe": "node test_thought_swipe.js",
     "test:time-command": "node test_time_command.js",
     "test:hybrid-editor-time-command": "node test_hybrid_editor_time_command.js",
+    "test:scroll-helper": "node test_scroll_helper_regression.js",
+    "test:search-indexing": "node test_search_indexing.js",
     "test:thought-modules": "npm run test:thought-ai-status && npm run test:thought-attachments && npm run test:thought-card-renderer && npm run test:thought-editor && npm run test:thought-quick-add && npm run test:thought-relations-panel && npm run test:thought-relations-state && npm run test:thought-swipe && npm run test:thought-tags && npm run test:thought-text-formatting && npm run test:time-command && npm run test:hybrid-editor-time-command",
     "test:note-sync": "node test_note_sync_controller.js",
     "test:hybrid-display-sanitizer": "node test_hybrid_display_sanitizer.js",
     "test:notepad-title-task": "node test_notepad_title_task_styles.js",
+    "test:notepad-pinning": "node test_notepad_pinning.js",
+    "test:agent-skill": "node test_dumbpad_api_skill.js",
     "test:pwa-cache": "node test_pwa_cache_regression.js",
+    "test:startup-performance": "node test_startup_performance.js",
     "test:api": "node test_api_regression.js",
     "test:thoughts-migration": "node test_migrate_thoughts_local.js",
     "test:s3-migration": "node test_migrate_local_to_s3_cli.js",
@@ -35,12 +45,14 @@
     "test:s3-real": "node test_s3_real_smoke.js",
     "ai:backfill-prefix": "node scripts/ai-backfill-prefix.js",
     "generate-icons": "node scripts/generate-png.js",
-    "docker:update": "node scripts/update-docker-container.js"
+    "docker:update": "node scripts/update-docker-container.js",
+    "seed:demo": "node scripts/seed-demo-data.js --reset"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1055.0",
     "@aws-sdk/s3-request-presigner": "^3.1055.0",
     "@highlightjs/cdn-assets": "^11.11.1",
+    "compression": "^1.8.1",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
     "dotenv": "^16.4.1",
@@ -51,11 +63,11 @@
     "marked-alert": "^2.1.2",
     "marked-extended-tables": "^2.0.1",
     "marked-highlight": "^2.2.2",
+    "sharp": "^0.33.2",
     "vditor": "^3.11.2",
     "ws": "^8.18.2"
   },
   "devDependencies": {
-    "nodemon": "^3.0.3",
-    "sharp": "^0.33.2"
+    "nodemon": "^3.0.3"
   }
 }

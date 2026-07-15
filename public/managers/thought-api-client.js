@@ -42,14 +42,35 @@ export default class ThoughtApiClient {
         return body;
     }
 
-    list({ date = '', query = '', limit = '', light = false } = {}) {
+    list({
+        date = '',
+        query = '',
+        tag = '',
+        status = '',
+        sort = '',
+        limit = '',
+        light = false,
+        cursor = '',
+        updatedSince = '',
+        format = ''
+    } = {}) {
         const params = new URLSearchParams();
         if (date) params.set('date', date);
         if (query) params.set('q', query);
+        if (tag) params.set('tag', tag);
+        if (status) params.set('status', status);
+        if (sort) params.set('sort', sort);
         if (limit) params.set('limit', String(limit));
         if (light) params.set('light', '1');
+        if (cursor) params.set('cursor', cursor);
+        if (updatedSince !== '') params.set('updatedSince', String(updatedSince));
+        if (format) params.set('format', format);
         const qs = params.toString();
         return this.request(`${this.baseUrl}${qs ? `?${qs}` : ''}`);
+    }
+
+    listPage(options = {}) {
+        return this.list({ ...options, format: 'page' });
     }
 
     create(body) {
@@ -59,10 +80,17 @@ export default class ThoughtApiClient {
         });
     }
 
-    patch(id, body) {
+    get(id) {
+        return this.request(this.thoughtUrl(id));
+    }
+
+    patch(id, body, baseVersion) {
+        const payload = { ...body };
+        const version = Number(baseVersion ?? body?.baseVersion);
+        if (Number.isFinite(version)) payload.baseVersion = version;
         return this.request(this.thoughtUrl(id), {
             method: 'PATCH',
-            body: JSON.stringify(body)
+            body: JSON.stringify(payload)
         });
     }
 
@@ -74,36 +102,37 @@ export default class ThoughtApiClient {
             tags: Array.isArray(thoughtState.tags) ? thoughtState.tags : [],
             completed: thoughtState.completed === true,
             pinned: thoughtState.pinned === true,
-            attachments: Array.isArray(thoughtState.attachments) ? thoughtState.attachments : []
+            attachments: Array.isArray(thoughtState.attachments) ? thoughtState.attachments : [],
+            baseVersion: thoughtState.version
         });
     }
 
-    toggleComplete(id) {
-        return this.patch(id, { action: 'toggle_complete' });
+    toggleComplete(id, baseVersion) {
+        return this.patch(id, { action: 'toggle_complete' }, baseVersion);
     }
 
-    togglePin(id) {
-        return this.patch(id, { action: 'toggle_pin' });
+    togglePin(id, baseVersion) {
+        return this.patch(id, { action: 'toggle_pin' }, baseVersion);
     }
 
     delete(id) {
         return this.request(this.thoughtUrl(id), { method: 'DELETE' });
     }
 
-    addSubitem(id, text) {
-        return this.patch(id, { action: 'add_subitem', text });
+    addSubitem(id, text, baseVersion) {
+        return this.patch(id, { action: 'add_subitem', text }, baseVersion);
     }
 
-    updateSubitem(id, subId, text) {
-        return this.patch(id, { action: 'update_subitem', subId, text });
+    updateSubitem(id, subId, text, baseVersion) {
+        return this.patch(id, { action: 'update_subitem', subId, text }, baseVersion);
     }
 
-    deleteSubitem(id, subId) {
-        return this.patch(id, { action: 'delete_subitem', subId });
+    deleteSubitem(id, subId, baseVersion) {
+        return this.patch(id, { action: 'delete_subitem', subId }, baseVersion);
     }
 
-    toggleSubitem(id, subId) {
-        return this.patch(id, { action: 'toggle_subitem', subId });
+    toggleSubitem(id, subId, baseVersion) {
+        return this.patch(id, { action: 'toggle_subitem', subId }, baseVersion);
     }
 
     getAIStatus(id) {

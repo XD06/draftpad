@@ -275,6 +275,11 @@ header {
     color: var(--muted-text);
 }
 
+.item-pin-indicator,
+.item-pin-btn.is-pinned {
+    color: var(--primary-color);
+}
+
 .dir-group-title {
     font-size: 13px;
     font-weight: 400;
@@ -2036,7 +2041,7 @@ main {
     }
 
     body:not(.thoughts-mode) .typora-editor-shell .vditor-wysiwyg {
-        scrollbar-width: thin;
+        scrollbar-width: none;
         scrollbar-color: rgba(60, 60, 67, 0.20) transparent;
     }
 

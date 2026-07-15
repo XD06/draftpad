@@ -12,6 +12,7 @@ const requiredCoreAssets = [
     '/managers/settings-data-panel.js',
     '/managers/thought-ai-status.js',
     '/managers/thought-api-client.js',
+    '/managers/asset-api-client.js',
     '/managers/thought-attachments.js',
     '/managers/thought-card-renderer.js',
     '/managers/thought-editor.js',
@@ -26,30 +27,24 @@ const requiredCoreAssets = [
     '/managers/time-command.js'
 ];
 
-const requiredWarmAssets = [
-    '/font/LXGWWenKai-Regular.ttf',
+const deferredAssets = [
+    '/font/SourceHanSerifSC-Regular-subset.woff2',
     '/font/FiraCode-Regular.ttf',
-    '/js/@highlightjs/highlight.min.js',
     '/hybrid-editor.js',
     '/vendor/vditor/index.css',
     '/vendor/vditor/index.min.js',
-    '/vendor/vditor-package/dist/js/i18n/zh_CN.js',
-    '/vendor/vditor-package/dist/js/lute/lute.min.js',
-    '/vendor/vditor-package/dist/css/content-theme/light.css',
-    '/vendor/vditor-package/dist/css/content-theme/dark.css',
-    '/vendor/vditor-package/dist/js/highlight.js/styles/github.min.css',
-    '/vendor/vditor-package/dist/js/highlight.js/styles/github-dark.min.css',
-    '/vendor/vditor-package/dist/js/highlight.js/highlight.min.js?v=11.7.0',
-    '/vendor/vditor-package/dist/js/highlight.js/third-languages.js?v=1.0.1'
+    '/vendor/vditor-package/dist/js/lute/lute.min.js'
 ];
 
 for (const asset of requiredCoreAssets) {
     assert(serviceWorker.includes(asset), `service worker should cache split module ${asset}`);
 }
 
-for (const asset of requiredWarmAssets) {
-    assert(serviceWorker.includes(asset), `service worker should warm-cache stable heavy asset ${asset}`);
+for (const asset of deferredAssets) {
+    assert(!serviceWorker.includes(asset), `service worker should defer optional asset ${asset} until first use`);
 }
+
+assert(serviceWorker.includes('const WARM_ASSETS = [];'), 'service worker should not prefetch optional heavy assets during installation');
 
 assert(serviceWorker.includes('cacheFirst'), 'service worker should use cache-first for static assets');
 assert(

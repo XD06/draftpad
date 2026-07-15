@@ -28,6 +28,7 @@ const CORE_ASSETS = [
   "/managers/thoughts.js",
   "/managers/thought-ai-status.js",
   "/managers/thought-api-client.js",
+  "/managers/asset-api-client.js",
   "/managers/thought-attachments.js",
   "/managers/thought-card-renderer.js",
   "/managers/thought-editor.js",
@@ -44,22 +45,9 @@ const CORE_ASSETS = [
   "/managers/ws-client.js",
 ];
 
-const WARM_ASSETS = [
-  "/font/LXGWWenKai-Regular.ttf",
-  "/font/FiraCode-Regular.ttf",
-  "/js/@highlightjs/highlight.min.js",
-  "/hybrid-editor.js",
-  "/vendor/vditor/index.css",
-  "/vendor/vditor/index.min.js",
-  "/vendor/vditor-package/dist/js/i18n/zh_CN.js",
-  "/vendor/vditor-package/dist/js/lute/lute.min.js",
-  "/vendor/vditor-package/dist/css/content-theme/light.css",
-  "/vendor/vditor-package/dist/css/content-theme/dark.css",
-  "/vendor/vditor-package/dist/js/highlight.js/styles/github.min.css",
-  "/vendor/vditor-package/dist/js/highlight.js/styles/github-dark.min.css",
-  "/vendor/vditor-package/dist/js/highlight.js/highlight.min.js?v=11.7.0",
-  "/vendor/vditor-package/dist/js/highlight.js/third-languages.js?v=1.0.1",
-];
+// Fonts and the editor runtime are cached by the normal fetch handler after
+// first use. Do not force every PWA installation to download optional assets.
+const WARM_ASSETS = [];
 
 const NETWORK_FIRST_STATIC_EXTENSIONS = [".js", ".css", ".json"];
 const NAVIGATION_NETWORK_TIMEOUT = 900;

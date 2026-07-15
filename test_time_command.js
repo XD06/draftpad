@@ -10,7 +10,7 @@ function loadTimeCommand() {
     const source = fs.readFileSync(sourcePath, 'utf8')
         .replace(/export const /g, 'const ')
         .replace(/export function /g, 'function ')
-        + '\nmodule.exports = { TIME_COMMAND, buildTimeMarker, buildUpdatedTimeMarker, deleteTimeMarker, formatTimeStamp, handleTimeCommandKeydown, parseTimeMarkerText, replaceTimeCommandBeforeCursor, replaceTimeMarker, renderTimeMarkers };\n';
+        + '\nmodule.exports = { TIME_COMMAND, buildTimeMarker, buildUpdatedTimeMarker, deleteTimeMarker, formatTimeStamp, handleTimeCommandKeydown, moveTimeMarker, parseTimeMarkerText, replaceTimeCommandBeforeCursor, replaceTimeMarker, renderTimeMarkers };\n';
     const context = {
         module: { exports: {} },
         exports: {},
@@ -36,6 +36,7 @@ function run() {
         deleteTimeMarker,
         formatTimeStamp,
         handleTimeCommandKeydown,
+        moveTimeMarker,
         parseTimeMarkerText,
         replaceTimeCommandBeforeCursor,
         replaceTimeMarker,
@@ -148,6 +149,10 @@ function run() {
         'renderTimeMarkers should render update level classes'
     );
     assert(
+        renderTimeMarkers('x [[time:create:2026-06-21 09:08:07]]', 'custom-time', { draggable: true }).includes('data-time-draggable="true"'),
+        'renderTimeMarkers should flag editor markers for Pointer-based document dragging'
+    );
+    assert(
         replaceTimeMarker('记录 [[time:create:2026-06-21 09:08:07]]', '[[time:create:2026-06-21 09:08:07]]', '[[time:update:2026-06-21 10:00:00]]') === '记录 [[time:update:2026-06-21 10:00:00]]',
         'replaceTimeMarker should replace the selected marker only'
     );
@@ -158,6 +163,22 @@ function run() {
     assert(
         deleteTimeMarker('记录 [[time:create:2026-06-21 09:08:07]]', '[[time:create:2026-06-21 09:08:07]]') === '记录',
         'deleteTimeMarker should remove a trailing marker without leaving a trailing space'
+    );
+
+    const dragMarker = '[[time:create:2026-06-21 09:08:07]]';
+    const draggableValue = `第一段 ${dragMarker}\n- 列表项目\n最后一段`;
+    const markerOffset = draggableValue.indexOf(dragMarker);
+    assert(
+        moveTimeMarker(draggableValue, dragMarker, markerOffset, 0) === `${dragMarker}第一段 \n- 列表项目\n最后一段`,
+        'moveTimeMarker should move the exact marker to an earlier document offset'
+    );
+    assert(
+        moveTimeMarker(draggableValue, dragMarker, markerOffset, draggableValue.length) === `第一段 \n- 列表项目\n最后一段${dragMarker}`,
+        'moveTimeMarker should move the exact marker to a later document offset'
+    );
+    assert(
+        moveTimeMarker(draggableValue, dragMarker, markerOffset, markerOffset + 3) === draggableValue,
+        'moveTimeMarker should ignore a drop within the dragged marker itself'
     );
 
     console.log('Time command checks passed');

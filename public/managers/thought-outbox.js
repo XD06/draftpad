@@ -59,7 +59,8 @@ export default class ThoughtOutbox {
             tags: Array.isArray(thought.tags) ? [...thought.tags] : [],
             completed: thought.completed === true,
             pinned: thought.pinned === true,
-            attachments: Array.isArray(thought.attachments) ? thought.attachments.map(att => ({ ...att })) : []
+            attachments: Array.isArray(thought.attachments) ? thought.attachments.map(att => ({ ...att })) : [],
+            baseVersion: Number.isFinite(Number(thought.version)) ? Number(thought.version) : undefined
         };
     }
 
@@ -135,6 +136,24 @@ export default class ThoughtOutbox {
         });
     }
 
+    markConflict(thoughtId, conflict = {}) {
+        const items = this.load();
+        const next = items.map(item => {
+            if (item.kind !== 'patch' || item.thoughtId !== thoughtId) return item;
+            return {
+                ...item,
+                state: 'conflict',
+                lastError: conflict.message || item.lastError || 'Thought has been updated on another device',
+                conflict: {
+                    currentVersion: conflict.currentVersion,
+                    detectedAt: Date.now()
+                }
+            };
+        });
+        this.save(next);
+        return next.find(item => item.kind === 'patch' && item.thoughtId === thoughtId) || null;
+    }
+
     enqueueCreate({ text, tags = [], subItems = [], completed = false, tempThought }) {
         return this.enqueue({
             kind: 'create',
@@ -182,7 +201,14 @@ export default class ThoughtOutbox {
                 }
             } else if (item.kind === 'patch' && item.localThought) {
                 const index = merged.findIndex(thought => thought.id === item.thoughtId);
-                if (index >= 0) merged[index] = { ...merged[index], ...item.localThought, localPending: true };
+                if (index >= 0) {
+                    merged[index] = {
+                        ...merged[index],
+                        ...item.localThought,
+                        localPending: true,
+                        syncConflict: item.state === 'conflict'
+                    };
+                }
             } else if (item.kind === 'delete') {
                 merged = merged.filter(thought => thought.id !== item.thoughtId);
             }
@@ -196,8 +222,13 @@ export default class ThoughtOutbox {
         const failedUpdates = new Map();
         let changed = false;
         const created = [];
+        const conflicts = [];
 
         for (const item of items) {
+            if (item.state === 'conflict') {
+                conflicts.push(item);
+                continue;
+            }
             try {
                 const data = await apiClient.requestOutboxItem(item);
                 changed = true;
@@ -206,6 +237,20 @@ export default class ThoughtOutbox {
                     created.push({ item, data });
                 }
             } catch (err) {
+                if (Number(err?.status) === 409) {
+                    const conflict = {
+                        ...item,
+                        state: 'conflict',
+                        lastError: err.message || String(err),
+                        conflict: {
+                            currentVersion: err.body?.currentVersion,
+                            detectedAt: Date.now()
+                        }
+                    };
+                    failedUpdates.set(item.id, conflict);
+                    conflicts.push(conflict);
+                    continue;
+                }
                 failedUpdates.set(item.id, {
                     ...item,
                     attempts: Number(item.attempts || 0) + 1,
@@ -237,6 +282,6 @@ export default class ThoughtOutbox {
             }
         }
         this.save(remaining);
-        return { changed, remaining, created };
+        return { changed, remaining, created, conflicts };
     }
 }

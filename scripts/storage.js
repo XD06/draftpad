@@ -159,11 +159,65 @@ function thoughtIndexFrom(thoughts) {
             textPreview: String(thought.text || '').slice(0, 300),
             tags: Array.isArray(thought.tags) ? thought.tags : [],
             completed: !!thought.completed,
+            pinned: thought.pinned === true,
+            pinnedAt: Number(thought.pinnedAt || 0),
             createdAt: thought.createdAt || 0,
             updatedAt: thought.updatedAt || 0
         })),
         updatedAt: Date.now()
     };
+}
+
+function compareThoughtPageEntries(left, right, sort = 'updated') {
+    if (sort === 'timeline') {
+        const leftPinned = left.pinned === true;
+        const rightPinned = right.pinned === true;
+        if (leftPinned !== rightPinned) return leftPinned ? -1 : 1;
+        if (leftPinned && rightPinned) {
+            const pinnedAtDifference = Number(right.pinnedAt || 0) - Number(left.pinnedAt || 0);
+            if (pinnedAtDifference) return pinnedAtDifference;
+        }
+        if ((left.completed === true) !== (right.completed === true)) {
+            return left.completed === true ? 1 : -1;
+        }
+        return Number(right.createdAt || 0) - Number(left.createdAt || 0)
+            || String(right.id).localeCompare(String(left.id));
+    }
+    return Number(right.updatedAt || right.createdAt || 0) - Number(left.updatedAt || left.createdAt || 0)
+        || String(right.id).localeCompare(String(left.id));
+}
+
+function hasUsableThoughtPageIndex(index, sort = 'updated') {
+    if (!Array.isArray(index?.items)) return false;
+    return index.items.every(item => (
+        item
+        && typeof item.id === 'string'
+        && Number.isFinite(Number(item.createdAt || 0))
+        && Number.isFinite(Number(item.updatedAt || item.createdAt || 0))
+        && (sort !== 'timeline' || (
+            typeof item.pinned === 'boolean'
+            && Number.isFinite(Number(item.pinnedAt || 0))
+            && typeof item.completed === 'boolean'
+        ))
+    ));
+}
+
+function thoughtPageMatchesFilters(thought, { date = '', tag = '', status = 'all', updatedSince = null } = {}) {
+    if (tag) {
+        const expectedTag = String(tag).toLowerCase();
+        if (!Array.isArray(thought.tags) || !thought.tags.some(value => String(value).toLowerCase() === expectedTag)) {
+            return false;
+        }
+    }
+    if (date) {
+        const value = new Date(thought.createdAt || 0);
+        const dateValue = `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`;
+        if (dateValue !== date) return false;
+    }
+    if (status === 'todo' && thought.completed === true) return false;
+    if (status === 'done' && thought.completed !== true) return false;
+    if (updatedSince !== null && Number(thought.updatedAt || thought.createdAt || 0) <= updatedSince) return false;
+    return true;
 }
 
 function createTrashId(type, sourceId) {
@@ -467,6 +521,50 @@ async function readThought(id) {
     }
     const thoughts = await readThoughts();
     return thoughts.find(thought => thought.id === id) || null;
+}
+
+async function listThoughtsPage({
+    query = '',
+    date = '',
+    tag = '',
+    status = 'all',
+    updatedSince = null,
+    sort = 'updated',
+    cursor = null,
+    limit = 50
+} = {}) {
+    await init();
+    if (STORAGE_LAYOUT !== 'split' || query) return null;
+
+    const pageSort = sort === 'timeline' ? 'timeline' : 'updated';
+    let index = await readIndex('thoughts-index');
+    if (!hasUsableThoughtPageIndex(index, pageSort)) {
+        const thoughts = await readThoughts();
+        index = thoughtIndexFrom(thoughts);
+        await writeThoughtIndex(thoughts);
+    }
+
+    const pageSize = Math.max(1, Math.min(Number(limit) || 50, 50));
+    let entries = index.items
+        .filter(thought => thoughtPageMatchesFilters(thought, { date, tag, status, updatedSince }))
+        .sort((left, right) => compareThoughtPageEntries(left, right, pageSort));
+    if (cursor) {
+        entries = entries.filter(thought => compareThoughtPageEntries(thought, cursor, pageSort) > 0);
+    }
+
+    const hasMore = entries.length > pageSize;
+    const pageEntries = entries.slice(0, pageSize);
+    const items = await Promise.all(pageEntries.map(entry => readThought(entry.id)));
+    if (items.some(item => !item?.id)) {
+        // A concurrent write or an older index may reference an object that no
+        // longer exists. Rebuild once, then let the route use its safe full-read
+        // path for this request instead of returning a partial page.
+        const thoughts = await readThoughts();
+        await writeThoughtIndex(thoughts);
+        return null;
+    }
+
+    return { items, hasMore, usedIndex: true };
 }
 
 async function writeThought(thought) {
@@ -1137,15 +1235,7 @@ async function rebuildIndexes() {
     const now = Date.now();
 
     await writeIndex('thoughts-index', {
-        items: thoughts.map(thought => ({
-            id: thought.id,
-            type: 'thought',
-            textPreview: String(thought.text || '').slice(0, 300),
-            tags: Array.isArray(thought.tags) ? thought.tags : [],
-            completed: !!thought.completed,
-            createdAt: thought.createdAt || 0,
-            updatedAt: thought.updatedAt || 0
-        })),
+        ...thoughtIndexFrom(thoughts),
         updatedAt: now
     });
 
@@ -1197,6 +1287,7 @@ module.exports = {
     readThoughts,
     saveThoughts,
     readThought,
+    listThoughtsPage,
     writeThought,
     deleteThought,
     readThoughtMeta,

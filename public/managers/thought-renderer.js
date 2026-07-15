@@ -40,7 +40,8 @@ export function sortThoughts(thoughts) {
         if (a.completed !== b.completed) {
             return a.completed ? 1 : -1;
         }
-        return Number(b.createdAt || 0) - Number(a.createdAt || 0);
+        return Number(b.createdAt || 0) - Number(a.createdAt || 0)
+            || String(b.id || '').localeCompare(String(a.id || ''));
     });
 }
 

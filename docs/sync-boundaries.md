@@ -81,6 +81,7 @@ Notepad 的前端启动缓存只用于：
 - 恢复 Thought：从垃圾桶 payload 写回 Thought、AI meta、relation 和 suppressed relation；已不存在的 relation 目标会被过滤，仍存在的目标会补回反向 relation。
 - 标签修改：作为 Thought `overwrite` 的一部分写入 `thought.tags`，属于用户数据。
 - 子任务修改：作为 Thought PATCH action 写入 `thought.subItems`，属于用户数据。
+- 正文、子任务文本或用户标签改变时，服务端保留旧 AI meta、relation 和 insight，但标记其为 `stale`；完成状态和置顶等非语义字段不触发该标记。
 
 Thought 创建和修改不能等待 AI extract、embedding、rerank 或 S3 之外的额外流程。后端 API 返回后，AI 状态通过 `ai_status_update` 逐步刷新。
 
@@ -120,12 +121,13 @@ AI 状态：
 - `ready`：AI meta 和 relation 已完成。
 - `empty`：Thought 没有可分析文本。
 - `error`：AI 处理失败，可重试。
+- `stale`：Thought 的语义输入已变更，现有 AI 关联和 insight 对应旧版本，需由用户手动重新运行。
 - `missing`：没有 meta，通常是旧数据或缓存缺失。
 
 AI 产物：
 
 - `ai.summary/entities/topics/intent/keywords/timeScope/tags/embedding`
-- `insight.status/markdown/model/contextIds/generatedAt/error`
+- `insight.status/markdown/model/contextIds/generatedAt/truncated/error`
 - relation 候选和理由
 - relation count
 

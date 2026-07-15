@@ -552,6 +552,116 @@ async function run() {
     }
     assert(insightConfigError?.code === 'AI_INSIGHT_NOT_CONFIGURED', 'manual insight should require a configured dedicated model');
 
+    let staleThought = { id: 'stale-source', text: '旧内容', tags: ['AI'], subItems: [], version: 1 };
+    const staleMetas = {};
+    const staleRelationWrites = [];
+    aiQueue.init({
+        storage: {
+            withThoughtWriteLock: async task => task(),
+            readThought: async id => id === staleThought.id ? staleThought : null,
+            readThoughts: async () => [staleThought],
+            readThoughtMeta: async id => staleMetas[id] || null,
+            writeThoughtMeta: async (id, meta) => { staleMetas[id] = meta; },
+            readRelations: async id => ({ id, edges: [] }),
+            writeRelations: async (id, relations) => { staleRelationWrites.push({ id, relations }); },
+            readSuppressedRelations: async id => ({ id, edges: [] })
+        },
+        aiProvider: {
+            extract: async () => {
+                staleThought = { ...staleThought, text: '新内容', version: 2 };
+                return { summary: '旧内容摘要', keywords: ['旧内容'] };
+            },
+            getEmbedding: async () => [1, 0],
+            rerankRelations: async () => []
+        },
+        broadcast: () => {}
+    });
+    const staleResult = await aiQueue.processThought('stale-source');
+    assert(staleResult.discarded === true, 'AI processing should discard results when Thought analysis input changes');
+    assert(staleMetas['stale-source']?.status !== 'ready', 'stale AI processing must not write ready metadata');
+    assert(staleRelationWrites.length === 0, 'stale AI processing must not write relations');
+
+    const dedupeThought = { id: 'dedupe-source', text: '需要防止重复 AI 队列', tags: [], subItems: [], version: 1 };
+    const dedupeMetas = {};
+    let extractCalls = 0;
+    let activeExtracts = 0;
+    let maxActiveExtracts = 0;
+    let releaseFirstExtract;
+    const firstExtractStarted = new Promise(resolve => {
+        releaseFirstExtract = resolve;
+    });
+    let signalFirstExtract;
+    const firstExtractSignal = new Promise(resolve => { signalFirstExtract = resolve; });
+    aiQueue.init({
+        storage: {
+            withThoughtWriteLock: async task => task(),
+            readThought: async id => id === dedupeThought.id ? dedupeThought : null,
+            readThoughts: async () => [dedupeThought],
+            readThoughtMeta: async id => dedupeMetas[id] || null,
+            writeThoughtMeta: async (id, meta) => { dedupeMetas[id] = meta; },
+            readRelations: async id => ({ id, edges: [] }),
+            writeRelations: async () => {},
+            readSuppressedRelations: async id => ({ id, edges: [] })
+        },
+        aiProvider: {
+            extract: async () => {
+                extractCalls++;
+                activeExtracts++;
+                maxActiveExtracts = Math.max(maxActiveExtracts, activeExtracts);
+                if (extractCalls === 1) {
+                    signalFirstExtract();
+                    await firstExtractStarted;
+                }
+                activeExtracts--;
+                return { summary: '重复队列保护', keywords: ['队列'] };
+            },
+            getEmbedding: async () => [],
+            rerankRelations: async () => []
+        },
+        broadcast: () => {}
+    });
+    aiQueue.queueThought('dedupe-source', 'manual');
+    await firstExtractSignal;
+    const deferred = aiQueue.queueThought('dedupe-source', 'manual');
+    assert(deferred.deferred === true, 'a manual rerun during processing should be deferred');
+    releaseFirstExtract();
+    await sleep(50);
+    assert(extractCalls === 2, 'a deferred rerun should execute once after the active job');
+    assert(maxActiveExtracts === 1, 'the same Thought must not run two AI jobs concurrently');
+
+    const insightDedupeThought = { id: 'insight-dedupe', text: 'Insight 去重', tags: [], subItems: [], version: 1 };
+    const insightDedupeMetas = {};
+    let insightCalls = 0;
+    let releaseInsight;
+    const insightRelease = new Promise(resolve => { releaseInsight = resolve; });
+    aiQueue.init({
+        storage: {
+            withThoughtWriteLock: async task => task(),
+            readThought: async id => id === insightDedupeThought.id ? insightDedupeThought : null,
+            readThoughts: async () => [insightDedupeThought],
+            readThoughtMeta: async id => insightDedupeMetas[id] || null,
+            writeThoughtMeta: async (id, meta) => { insightDedupeMetas[id] = meta; },
+            readRelations: async id => ({ id, edges: [] })
+        },
+        aiProvider: {
+            insightModel: 'insight-model',
+            isInsightReady: () => true,
+            generateThoughtInsight: async () => {
+                insightCalls++;
+                await insightRelease;
+                return '共享的 insight 结果';
+            }
+        },
+        broadcast: () => {}
+    });
+    const firstInsight = aiQueue.generateThoughtInsight('insight-dedupe');
+    const secondInsight = aiQueue.generateThoughtInsight('insight-dedupe');
+    await sleep(0);
+    assert(insightCalls === 1, 'concurrent insight requests should share one provider call');
+    releaseInsight();
+    const [firstInsightResult, secondInsightResult] = await Promise.all([firstInsight, secondInsight]);
+    assert(firstInsightResult.markdown === secondInsightResult.markdown, 'shared insight requests should receive the same result');
+
     console.log('AI queue relations checks passed');
 }
 

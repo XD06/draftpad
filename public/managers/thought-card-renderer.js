@@ -132,12 +132,12 @@ function renderAttachments(attachments) {
         const name = escapeAttText(att.name || '文件');
         if (isImage) {
             return `<button type="button" class="thought-attachment thought-attachment-image thought-attachment-preview" data-att-id="${escapeAttText(att.id || '')}" data-preview-att="${escapeAttText(att.id || '')}" aria-label="预览图片：${name}">
-                        <img src="${escapeAttText(att.dataUrl || '')}" alt="${name}" loading="lazy">
+                        <img src="${escapeAttText(getAttachmentPreviewUrl(att))}" alt="${name}" loading="lazy">
                     </button>`;
         }
         const sizeText = formatAttSize(att.size);
         const icon = getFileIcon(att.type);
-        return `<a class="thought-attachment thought-attachment-file" href="${escapeAttText(att.dataUrl || '')}" download="${name}" data-att-id="${escapeAttText(att.id || '')}">
+        return `<a class="thought-attachment thought-attachment-file" href="${escapeAttText(getAttachmentDownloadUrl(att))}" download="${name}" data-att-id="${escapeAttText(att.id || '')}">
                     <span class="thought-attachment-icon">${icon}</span>
                     <span class="thought-attachment-info">
                         <span class="thought-attachment-name">${name}</span>
@@ -155,6 +155,14 @@ function escapeAttText(text) {
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#39;');
+}
+
+function getAttachmentPreviewUrl(attachment = {}) {
+    return String(attachment.previewUrl || attachment.dataUrl || '');
+}
+
+function getAttachmentDownloadUrl(attachment = {}) {
+    return String(attachment.downloadUrl || attachment.originalUrl || attachment.dataUrl || '');
 }
 
 function formatAttSize(bytes) {

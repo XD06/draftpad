@@ -59,11 +59,15 @@ AI pipeline 不能改写：
 
 - 创建 Thought 后只入队，不等待 AI 完成。
 - 修改 Thought 后不自动重新运行 AI；用户可在 Thought AI 面板手动触发关系重跑。
+- 正文、子任务文本或用户标签变化后，已有 AI meta 会标为 `stale`；旧关系和 insight 可供参考，但前端必须说明其基于旧版本。
 - Thought insight 不自动入队，只能通过 `POST /api/thoughts/:id/ai-insight` 手动运行。
+- 后台队列和 insight 都按 Thought 去重；正在处理时的手动重跑延后执行，重复 insight 请求复用当前任务。
+- 每次 AI 任务记录分析输入签名，写 meta、relations 或 insight 前必须确认 Thought 仍是同一语义输入；不一致时丢弃结果。
 - 队列错误应写入 meta/diagnostics 或日志，不应抛回前端保存请求。
 - WebSocket 可通知前端刷新 AI 状态，但不能要求前端阻塞等待。
 - relation 候选召回应优先避免明显关系在进入 LLM 判断前被本地阈值过滤；最终确认仍由 rerank/chat 分数和阈值控制。
 - 发送给 chat rerank 的候选必须包含候选 Thought 正文摘要，不能只提供抽取后的 AI meta。
+- 关系候选读取必须使用受控并发，避免 S3 场景因多个 AI 任务同时全量读取 meta 而放大请求。
 
 ## 后续拆分条件
 

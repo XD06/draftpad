@@ -45,11 +45,19 @@ function createSearchIndex({ storage, dataDir, notepadsFile }) {
         if (!notepadsCache.index) await indexNotepads();
         if (!notepadsCache.index) return [];
 
-        return notepadsCache.index.search(query).map(({ item }) => {
+        return notepadsCache.index.search(query).map(({ item, matches = [] }) => {
             const title = item.title || '';
             const content = item.content || '';
-            const isFilenameMatch = title.toLowerCase().includes(query.toLowerCase());
+            const normalizedMatches = matches.map(match => ({
+                key: String(match.key || ''),
+                indices: Array.isArray(match.indices)
+                    ? match.indices.map(([start, end]) => [Number(start), Number(end)])
+                    : []
+            }));
+            const isFilenameMatch = normalizedMatches.some(match => match.key === 'title') || title.toLowerCase().includes(query.toLowerCase());
             let truncatedContent = content;
+            let snippetStart = 0;
+            let snippetPrefixLength = 0;
 
             if (!isFilenameMatch) {
                 const lowerContent = content.toLowerCase();
@@ -71,7 +79,11 @@ function createSearchIndex({ storage, dataDir, notepadsFile }) {
                     }
 
                     truncatedContent = content.substring(start, end).trim();
-                    if (start > 0) truncatedContent = `...${truncatedContent}`;
+                    snippetStart = start;
+                    if (start > 0) {
+                        truncatedContent = `...${truncatedContent}`;
+                        snippetPrefixLength = 3;
+                    }
                     if (end < content.length) truncatedContent = `${truncatedContent}...`;
                 } else {
                     truncatedContent = content.substring(0, 20).trim() + '...';
@@ -89,7 +101,10 @@ function createSearchIndex({ storage, dataDir, notepadsFile }) {
                 title,
                 name: isFilenameMatch ? truncatedName : (truncatedContent || content.substring(0, 50)),
                 snippet: truncatedContent || '',
-                matchType: isFilenameMatch ? 'title' : 'content'
+                snippetStart,
+                snippetPrefixLength,
+                matchType: isFilenameMatch ? 'title' : 'content',
+                matches: normalizedMatches
             };
         });
     }

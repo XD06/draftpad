@@ -1,5 +1,6 @@
 const { createDefaultProvider } = require('./ai-provider');
 const { findCandidates } = require('./relations-calculator');
+const { createAnalysisSourceSignature, hasSameAnalysisSource } = require('./thought-ai-source');
 
 let storage;
 let aiProvider;
@@ -11,6 +12,9 @@ let pendingRecoveryTimer = null;
 let lastError = null;
 const queue = [];
 const queuedIds = new Set();
+const activeThoughtIds = new Set();
+const deferredQueueReasons = new Map();
+const insightJobs = new Map();
 const LOCAL_CANDIDATE_LIMIT = 50;
 const LLM_RERANK_CANDIDATE_LIMIT = 12;
 const LOCAL_CANDIDATE_THRESHOLD = 0.16;
@@ -21,8 +25,10 @@ const SUGGESTED_RELATION_THRESHOLD = 0.62;
 const INSIGHT_RELATION_LIMIT = 5;
 const INSIGHT_RELATED_THOUGHT_LIMIT = 3;
 const INSIGHT_NOTEPAD_LIMIT = 2;
+const DEFAULT_INSIGHT_MAX_CHARS = Math.max(200, Number(process.env.AI_INSIGHT_MAX_CHARS || 800));
 const DEFAULT_PENDING_RECOVERY_MS = Number(process.env.AI_PENDING_RECOVERY_MS || 120000);
 const DEFAULT_QUEUE_CONCURRENCY = Math.max(1, Number(process.env.AI_QUEUE_CONCURRENCY || 3));
+const DEFAULT_RELATION_META_READ_CONCURRENCY = Math.max(1, Number(process.env.AI_RELATION_META_READ_CONCURRENCY || 4));
 let relationWriteLock = Promise.resolve();
 
 function logAI(event, details = {}) {
@@ -80,26 +86,70 @@ function providerModelLabel(kind) {
     return 'noop';
 }
 
-async function writePendingMeta(thoughtId, reason = 'process') {
-    if (!thoughtId) return null;
-    const existingMeta = await storage.readThoughtMeta(thoughtId);
-    const meta = {
-        id: thoughtId,
-        status: 'pending',
-        ai: null,
-        schemaVersion: 2,
-        queuedReason: reason,
-        queuedAt: Date.now(),
-        stages: {
-            queued: { status: 'ready', at: Date.now(), reason },
-            analysis: { status: 'pending' },
-            embedding: { status: 'pending' },
-            relations: { status: 'pending' }
-        },
-        error: null
+async function isAnalysisSourceCurrent(thoughtId, signature) {
+    const thought = await storage.readThought(thoughtId);
+    return hasSameAnalysisSource(thought, signature);
+}
+
+async function writeThoughtMetaIfSourceCurrent(thoughtId, signature, meta) {
+    const write = async () => {
+        if (!(await isAnalysisSourceCurrent(thoughtId, signature))) return false;
+        await storage.writeThoughtMeta(thoughtId, meta);
+        return true;
     };
-    if (existingMeta?.insight) meta.insight = existingMeta.insight;
-    await storage.writeThoughtMeta(thoughtId, meta);
+    return typeof storage.withThoughtWriteLock === 'function'
+        ? storage.withThoughtWriteLock(write)
+        : write();
+}
+
+async function mapWithConcurrency(values, limit, mapper) {
+    const items = Array.isArray(values) ? values : [];
+    const concurrency = Math.max(1, Math.min(Number(limit) || 1, items.length || 1));
+    const results = new Array(items.length);
+    let nextIndex = 0;
+    await Promise.all(Array.from({ length: concurrency }, async () => {
+        while (nextIndex < items.length) {
+            const index = nextIndex++;
+            results[index] = await mapper(items[index], index);
+        }
+    }));
+    return results;
+}
+
+async function writePendingMeta(thoughtId, reason = 'process', sourceSignature = null) {
+    if (!thoughtId) return null;
+    const write = async () => {
+        const thought = await storage.readThought(thoughtId);
+        if (!thought) return null;
+        const currentSource = createAnalysisSourceSignature(thought);
+        if (sourceSignature && currentSource.hash !== sourceSignature.hash) return null;
+
+        const existingMeta = await storage.readThoughtMeta(thoughtId);
+        const meta = {
+            id: thoughtId,
+            status: 'pending',
+            ai: null,
+            schemaVersion: 2,
+            sourceVersion: currentSource.version,
+            sourceHash: currentSource.hash,
+            queuedReason: reason,
+            queuedAt: Date.now(),
+            stages: {
+                queued: { status: 'ready', at: Date.now(), reason },
+                analysis: { status: 'pending' },
+                embedding: { status: 'pending' },
+                relations: { status: 'pending' }
+            },
+            error: null
+        };
+        if (existingMeta?.insight) meta.insight = existingMeta.insight;
+        await storage.writeThoughtMeta(thoughtId, meta);
+        return meta;
+    };
+    const meta = typeof storage.withThoughtWriteLock === 'function'
+        ? await storage.withThoughtWriteLock(write)
+        : await write();
+    if (!meta) return null;
     logAI('pending', { thoughtId, reason });
     broadcast({
         type: 'ai_status_update',
@@ -463,7 +513,7 @@ function relationEdgeFromRerankItem(item, candidate) {
     };
 }
 
-async function buildRelations(currentMeta) {
+async function buildRelations(currentMeta, { isSourceCurrent = null } = {}) {
     const startedAt = Date.now();
     const diagnostics = {
         status: 'pending',
@@ -477,21 +527,26 @@ async function buildRelations(currentMeta) {
     const thoughts = await storage.readThoughts();
     const suppressed = await storage.readSuppressedRelations(currentMeta.id);
     const suppressedTargetIds = new Set((suppressed.edges || []).map(edge => edge.targetId));
-    const metas = [];
     const thoughtsById = new Map();
-
     for (const thought of thoughts) {
         if (thought?.id) thoughtsById.set(thought.id, thought);
-        if (!thought?.id || thought.id === currentMeta.id) continue;
-        if (suppressedTargetIds.has(thought.id)) continue;
-        const meta = await storage.readThoughtMeta(thought.id);
-        if (meta?.status === 'ready' && meta.ai) {
-            metas.push({
-                ...meta,
-                thought: thoughtSummary(thought)
-            });
-        }
     }
+    const candidateThoughts = thoughts.filter(thought => (
+        thought?.id &&
+        thought.id !== currentMeta.id &&
+        !suppressedTargetIds.has(thought.id)
+    ));
+    const candidateMetas = await mapWithConcurrency(
+        candidateThoughts,
+        DEFAULT_RELATION_META_READ_CONCURRENCY,
+        async thought => ({ thought, meta: await storage.readThoughtMeta(thought.id) })
+    );
+    const metas = candidateMetas
+        .filter(({ meta }) => meta?.status === 'ready' && meta.ai)
+        .map(({ thought, meta }) => ({
+            ...meta,
+            thought: thoughtSummary(thought)
+        }));
 
     const candidates = findCandidates(currentMeta, metas, {
         threshold: LOCAL_CANDIDATE_THRESHOLD,
@@ -612,6 +667,18 @@ async function buildRelations(currentMeta) {
         computedAt: Date.now()
     };
 
+    if (typeof isSourceCurrent === 'function' && !(await isSourceCurrent())) {
+        logAI('relations:discarded', { thoughtId: currentMeta.id, reason: 'source-changed' });
+        return {
+            ...relations,
+            stale: true,
+            diagnostics: {
+                ...relations.diagnostics,
+                status: 'stale'
+            }
+        };
+    }
+
     await syncReverseRelations(currentMeta.id, mergedEdges);
     await storage.writeRelations(currentMeta.id, relations);
     logAI('relations:ready', {
@@ -629,7 +696,12 @@ async function processThought(thoughtId) {
     const startedAt = Date.now();
     const thought = await storage.readThought(thoughtId);
     if (!thought) return null;
-    const pendingMeta = await writePendingMeta(thoughtId, 'processing');
+    const sourceSignature = createAnalysisSourceSignature(thought);
+    const pendingMeta = await writePendingMeta(thoughtId, 'processing', sourceSignature);
+    if (!pendingMeta) {
+        logAI('process:discarded', { thoughtId, reason: 'source-changed-before-start' });
+        return { discarded: true, reason: 'source-changed' };
+    }
     const preservedInsight = pendingMeta?.insight || null;
 
     const text = thoughtText(thought);
@@ -645,6 +717,8 @@ async function processThought(thoughtId) {
         const emptyMeta = {
             id: thoughtId,
             status: 'empty',
+            sourceVersion: sourceSignature.version,
+            sourceHash: sourceSignature.hash,
             ai: {
                 summary: '',
                 entities: [],
@@ -670,16 +744,27 @@ async function processThought(thoughtId) {
         await attachLatestInsight(thoughtId, emptyMeta, preservedInsight);
         const existingRelations = await storage.readRelations(thoughtId);
         const manualEdges = (existingRelations.edges || []).filter(isManualRelation);
-        await storage.writeThoughtMeta(thoughtId, emptyMeta);
-        await syncReverseRelations(thoughtId, manualEdges);
-        await storage.writeRelations(thoughtId, {
-            id: thoughtId,
-            edges: manualEdges,
-            suggestions: [],
-            diagnostics: { status: 'skipped', reason: 'empty', computedAt: Date.now() },
-            version: 2,
-            computedAt: Date.now()
+        if (!(await writeThoughtMetaIfSourceCurrent(thoughtId, sourceSignature, emptyMeta))) {
+            logAI('process:discarded', { thoughtId, reason: 'source-changed-empty' });
+            return { discarded: true, reason: 'source-changed' };
+        }
+        const emptyRelationsWritten = await withRelationWriteLock(async () => {
+            if (!(await isAnalysisSourceCurrent(thoughtId, sourceSignature))) return false;
+            await syncReverseRelations(thoughtId, manualEdges);
+            await storage.writeRelations(thoughtId, {
+                id: thoughtId,
+                edges: manualEdges,
+                suggestions: [],
+                diagnostics: { status: 'skipped', reason: 'empty', computedAt: Date.now() },
+                version: 2,
+                computedAt: Date.now()
+            });
+            return true;
         });
+        if (!emptyRelationsWritten) {
+            logAI('process:discarded', { thoughtId, reason: 'source-changed-empty-relations' });
+            return { discarded: true, reason: 'source-changed' };
+        }
         logAI('process:empty', {
             thoughtId,
             durationMs: Date.now() - startedAt
@@ -742,6 +827,8 @@ async function processThought(thoughtId) {
         const meta = {
             id: thoughtId,
             status: 'ready',
+            sourceVersion: sourceSignature.version,
+            sourceHash: sourceSignature.hash,
             ai: {
                 summary: extracted.summary,
                 entities: extracted.entities,
@@ -769,20 +856,33 @@ async function processThought(thoughtId) {
         };
         await attachLatestInsight(thoughtId, meta, preservedInsight);
 
-        await storage.writeThoughtMeta(thoughtId, meta);
+        if (!(await writeThoughtMetaIfSourceCurrent(thoughtId, sourceSignature, meta))) {
+            logAI('process:discarded', { thoughtId, reason: 'source-changed-before-relations' });
+            return { discarded: true, reason: 'source-changed' };
+        }
         currentStage = 'relations';
-        const relations = await withRelationWriteLock(() => buildRelations(meta));
+        const relations = await withRelationWriteLock(() => buildRelations(meta, {
+            isSourceCurrent: () => isAnalysisSourceCurrent(thoughtId, sourceSignature)
+        }));
+        if (relations?.stale) {
+            logAI('process:discarded', { thoughtId, reason: 'source-changed-during-relations' });
+            return { discarded: true, reason: 'source-changed' };
+        }
         meta.stages.relations = {
             status: 'ready',
             rerankScore: relations.diagnostics?.rerankScore || 'skipped',
             rerankJudge: relations.diagnostics?.rerankJudge || 'skipped',
+            model: aiProvider.rerankModel || null,
             candidateCount: relations.diagnostics?.candidateCount || 0,
             confirmedCount: relations.edges.length,
             suggestionCount: Array.isArray(relations.suggestions) ? relations.suggestions.length : 0,
             errors: relations.diagnostics?.errors || []
         };
         await attachLatestInsight(thoughtId, meta, preservedInsight);
-        await storage.writeThoughtMeta(thoughtId, meta);
+        if (!(await writeThoughtMetaIfSourceCurrent(thoughtId, sourceSignature, meta))) {
+            logAI('process:discarded', { thoughtId, reason: 'source-changed-before-ready' });
+            return { discarded: true, reason: 'source-changed' };
+        }
         logAI('process:ready', {
             thoughtId,
             relationCount: relations.edges.length,
@@ -810,6 +910,10 @@ async function processThought(thoughtId) {
         });
         return { meta, relations };
     } catch (error) {
+        if (!(await isAnalysisSourceCurrent(thoughtId, sourceSignature))) {
+            logAI('process:discarded', { thoughtId, reason: 'source-changed-after-error' });
+            return { discarded: true, reason: 'source-changed' };
+        }
         // Preserve already-completed AI extraction. Previously this built a
         // fresh meta with ai: null, discarding expensive extract+embedding
         // results just because the relations stage hit a transient
@@ -836,6 +940,8 @@ async function processThought(thoughtId) {
             meta.status = 'ready';
         }
         meta.id = thoughtId;
+        meta.sourceVersion = sourceSignature.version;
+        meta.sourceHash = sourceSignature.hash;
         meta.stages = meta.stages || {};
         meta.stages.queued = { status: 'ready' };
         meta.stages.analysis = { status: currentStage === 'analysis' ? 'error' : 'ready' };
@@ -847,7 +953,10 @@ async function processThought(thoughtId) {
             lastFailedAt: Date.now()
         };
         await attachLatestInsight(thoughtId, meta, preservedInsight);
-        await storage.writeThoughtMeta(thoughtId, meta);
+        if (!(await writeThoughtMetaIfSourceCurrent(thoughtId, sourceSignature, meta))) {
+            logAI('process:discarded', { thoughtId, reason: 'source-changed-before-error-write' });
+            return { discarded: true, reason: 'source-changed' };
+        }
         logAI('process:error', {
             thoughtId,
             message: error.message,
@@ -867,7 +976,13 @@ async function processThought(thoughtId) {
 
 function queueThought(thoughtId, reason = 'process') {
     ensureInitialized();
-    if (!thoughtId || queuedIds.has(thoughtId)) return;
+    if (!thoughtId) return { queued: false, reason: 'missing-id' };
+    if (queuedIds.has(thoughtId)) return { queued: false, state: 'queued' };
+    if (activeThoughtIds.has(thoughtId)) {
+        deferredQueueReasons.set(thoughtId, reason);
+        logAI('queue:deferred', { thoughtId, reason });
+        return { queued: false, state: 'processing', deferred: true };
+    }
     queuedIds.add(thoughtId);
     queue.push({ thoughtId, reason });
     logAI('queued', { thoughtId, reason, queueSize: queue.length });
@@ -875,6 +990,7 @@ function queueThought(thoughtId, reason = 'process') {
         console.warn('Failed to mark thought AI pending:', error);
     });
     setImmediate(drainQueue);
+    return { queued: true, state: 'queued' };
 }
 
 async function drainQueue() {
@@ -885,7 +1001,10 @@ async function drainQueue() {
     try {
         while (queue.length) {
             const batch = queue.splice(0, DEFAULT_QUEUE_CONCURRENCY);
-            for (const job of batch) queuedIds.delete(job.thoughtId);
+            for (const job of batch) {
+                queuedIds.delete(job.thoughtId);
+                activeThoughtIds.add(job.thoughtId);
+            }
             currentJobs = batch.map(job => ({
                 ...job,
                 startedAt: Date.now()
@@ -907,8 +1026,14 @@ async function drainQueue() {
                         message: error.message
                     });
                 } finally {
+                    activeThoughtIds.delete(job.thoughtId);
                     currentJobs = currentJobs.filter(item => item.thoughtId !== job.thoughtId);
                     currentJob = currentJobs[0] || null;
+                    const deferredReason = deferredQueueReasons.get(job.thoughtId);
+                    if (deferredReason) {
+                        deferredQueueReasons.delete(job.thoughtId);
+                        queueThought(job.thoughtId, deferredReason);
+                    }
                 }
             }));
         }
@@ -924,6 +1049,8 @@ function getQueueStatus() {
         processing,
         queueSize: queue.length,
         queuedIds: Array.from(queuedIds),
+        activeIds: Array.from(activeThoughtIds),
+        deferredIds: Array.from(deferredQueueReasons.keys()),
         currentJob,
         currentJobs,
         concurrency: DEFAULT_QUEUE_CONCURRENCY,
@@ -998,7 +1125,13 @@ async function rebuildRelations({ limit = Infinity } = {}) {
         const meta = await storage.readThoughtMeta(thought.id);
         if (meta?.status !== 'ready' || !meta.ai) continue;
 
-        const relations = await withRelationWriteLock(() => buildRelations(meta));
+        const sourceSignature = createAnalysisSourceSignature(thought);
+        const relations = await withRelationWriteLock(() => buildRelations(meta, {
+            isSourceCurrent: typeof storage.readThought === 'function'
+                ? () => isAnalysisSourceCurrent(thought.id, sourceSignature)
+                : null
+        }));
+        if (relations?.stale) continue;
         broadcast({
             type: 'relations_update',
             thoughtId: thought.id,
@@ -1045,37 +1178,63 @@ function insightNotConfiguredError() {
     return error;
 }
 
-async function writeThoughtInsight(thoughtId, insight) {
-    const meta = await storage.readThoughtMeta(thoughtId) || { id: thoughtId };
-    const nextInsight = {
-        ...(meta.insight || {}),
-        ...insight,
-        schemaVersion: 1,
-        updatedAt: Date.now()
-    };
-    meta.id = thoughtId;
-    meta.insight = nextInsight;
-    await storage.writeThoughtMeta(thoughtId, meta);
-    return nextInsight;
+function sourceChangedError() {
+    const error = new Error('Thought changed while AI was processing; please run it again');
+    error.code = 'AI_SOURCE_STALE';
+    return error;
 }
 
-async function generateThoughtInsight(thoughtId) {
+function truncateInsightMarkdown(markdown, maxChars = DEFAULT_INSIGHT_MAX_CHARS) {
+    const chars = Array.from(String(markdown || ''));
+    if (chars.length <= maxChars) return { markdown: chars.join(''), truncated: false };
+    return {
+        markdown: `${chars.slice(0, maxChars).join('').trimEnd()}\n\n...`,
+        truncated: true
+    };
+}
+
+async function writeThoughtInsight(thoughtId, insight, sourceSignature = null) {
+    const write = async () => {
+        const thought = await storage.readThought(thoughtId);
+        if (!thought) return null;
+        if (sourceSignature && !hasSameAnalysisSource(thought, sourceSignature)) return null;
+
+        const meta = await storage.readThoughtMeta(thoughtId) || { id: thoughtId };
+        const nextInsight = {
+            ...(meta.insight || {}),
+            ...insight,
+            schemaVersion: 1,
+            updatedAt: Date.now()
+        };
+        meta.id = thoughtId;
+        meta.insight = nextInsight;
+        await storage.writeThoughtMeta(thoughtId, meta);
+        return nextInsight;
+    };
+    return typeof storage.withThoughtWriteLock === 'function'
+        ? storage.withThoughtWriteLock(write)
+        : write();
+}
+
+async function runThoughtInsight(thoughtId) {
     ensureInitialized();
     if (!isInsightReady()) throw insightNotConfiguredError();
 
     const thought = await storage.readThought(thoughtId);
     if (!thought) return null;
+    const sourceSignature = createAnalysisSourceSignature(thought);
 
     const startedAt = Date.now();
     const model = aiProvider.insightModel || 'not-configured';
-    await writeThoughtInsight(thoughtId, {
+    const pendingInsight = await writeThoughtInsight(thoughtId, {
         status: 'pending',
         markdown: '',
         model,
         contextIds: [],
         requestedAt: Date.now(),
         error: null
-    });
+    }, sourceSignature);
+    if (!pendingInsight) throw sourceChangedError();
     logAI('insight:start', { thoughtId, model });
 
     try {
@@ -1083,14 +1242,17 @@ async function generateThoughtInsight(thoughtId) {
         if (!context) return null;
         const markdown = await aiProvider.generateThoughtInsight(context);
         if (!markdown) throw new Error('AI insight response was empty');
+        const output = truncateInsightMarkdown(markdown);
         const insight = await writeThoughtInsight(thoughtId, {
             status: 'ready',
-            markdown,
+            markdown: output.markdown,
+            truncated: output.truncated,
             model,
             contextIds: context.contextIds,
             generatedAt: Date.now(),
             error: null
-        });
+        }, sourceSignature);
+        if (!insight) throw sourceChangedError();
         logAI('insight:ready', {
             thoughtId,
             chars: Array.from(markdown).length,
@@ -1099,6 +1261,7 @@ async function generateThoughtInsight(thoughtId) {
         });
         return insight;
     } catch (error) {
+        if (error.code === 'AI_SOURCE_STALE') throw error;
         const insight = await writeThoughtInsight(thoughtId, {
             status: 'error',
             markdown: '',
@@ -1108,7 +1271,8 @@ async function generateThoughtInsight(thoughtId) {
                 message: error.message,
                 lastFailedAt: Date.now()
             }
-        });
+        }, sourceSignature);
+        if (!insight) throw sourceChangedError();
         error.insight = insight;
         logAI('insight:error', {
             thoughtId,
@@ -1116,6 +1280,19 @@ async function generateThoughtInsight(thoughtId) {
             durationMs: Date.now() - startedAt
         });
         throw error;
+    }
+}
+
+async function generateThoughtInsight(thoughtId) {
+    ensureInitialized();
+    if (insightJobs.has(thoughtId)) return insightJobs.get(thoughtId);
+
+    const job = runThoughtInsight(thoughtId);
+    insightJobs.set(thoughtId, job);
+    try {
+        return await job;
+    } finally {
+        if (insightJobs.get(thoughtId) === job) insightJobs.delete(thoughtId);
     }
 }
 

@@ -200,6 +200,55 @@ function registerNotepadRoutes(app, context) {
         }
     });
 
+    app.patch('/api/notepads/:id', async (req, res) => {
+        try {
+            const { id } = req.params;
+            const { pinned, baseVersion } = req.body || {};
+            if (typeof pinned !== 'boolean') {
+                return res.status(400).json({ error: 'pinned must be a boolean' });
+            }
+
+            const result = await storage.withNotepadWriteLock(async () => {
+                const { data, notepad } = await findNotepadById(id);
+                if (!notepad) {
+                    return { errorStatus: 404, error: 'Notepad not found' };
+                }
+
+                const clientVersion = Number(baseVersion);
+                if (Number.isFinite(clientVersion) && (notepad.version || 1) > clientVersion) {
+                    return {
+                        errorStatus: 409,
+                        error: 'Notepad has been updated on another device',
+                        currentVersion: notepad.version || 1
+                    };
+                }
+
+                if (notepad.pinned === pinned) return { notepad };
+
+                const now = Date.now();
+                notepad.pinned = pinned;
+                if (pinned) notepad.pinnedAt = now;
+                else delete notepad.pinnedAt;
+                notepad.updatedAt = now;
+                notepad.version = (notepad.version || 1) + 1;
+                await storage.saveNotepadsMeta(data);
+                return { notepad };
+            });
+
+            if (result.errorStatus) {
+                if (result.errorStatus === 404) return res.status(404).json({ error: result.error });
+                if (result.errorStatus === 409) return res.status(409).json({ error: result.error, currentVersion: result.currentVersion });
+                return res.status(500).json({ error: result.error });
+            }
+
+            scheduleIndexNotepads(250);
+            res.json(result.notepad);
+        } catch (err) {
+            console.error('Error updating notepad pin:', err);
+            res.status(500).json({ error: 'Error updating notepad pin' });
+        }
+    });
+
     app.delete('/api/notepads/:id', async (req, res) => {
         try {
             const { id } = req.params;

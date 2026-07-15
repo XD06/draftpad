@@ -134,7 +134,7 @@ function run() {
     assert(detail.includes('关联 1 · 建议 2 · 待评估 3'), 'detail should include counts line');
     assert(detail.includes('chat-model'), 'detail should include stage model');
     assert(detail.includes('thought-ai-detail-retry'), 'detail should include manual AI rerun action');
-    assert(detail.includes('alt="run-command"'), 'manual AI rerun action should use the run-command icon');
+    assert(detail.includes('thought-ai-retry-icon'), 'manual AI rerun action should use the refresh icon');
     assert(detail.includes('1536维'), 'detail should include embedding dimensions');
     assert(detail.includes('thought-ai-insight'), 'detail should include the manual insight section');
     assert(detail.includes('thought-ai-insight-run'), 'detail should include the manual insight run action');
@@ -175,12 +175,27 @@ function run() {
         escapeHtml
     });
     assert(errorDetail.includes('thought-ai-detail-retry'), 'error detail should include retry action');
-    assert(errorDetail.includes('alt="run-command"'), 'error detail should use the run-command icon');
+    assert(errorDetail.includes('thought-ai-retry-icon'), 'error detail should use the refresh icon');
     assert(errorDetail.includes('&lt;failed&gt;'), 'error detail should escape error messages');
 
     assert(ai.renderAIStatusLoading().includes('正在读取 AI 状态'), 'loading render should preserve wording');
     assert(ai.renderAIStatusError().includes('AI 状态读取失败'), 'error render should preserve wording');
-    assert(ai.renderAIStatusError().includes('alt="run-command"'), 'AI status fetch error should expose the run-command icon action');
+    assert(ai.renderAIStatusError().includes('thought-ai-retry-icon'), 'AI status fetch error should expose the refresh icon action');
+
+    assert(ai.normalizeAIStatus('stale') === 'stale', 'stale AI status should be preserved');
+    assert(ai.aiStatusLabel('stale') === 'AI 待更新', 'stale AI status should explain that a rerun is needed');
+    const staleDetail = ai.renderAIStatusDetail({
+        detail: {
+            status: 'stale',
+            relationCount: 1,
+            suggestionCount: 0,
+            insight: { status: 'ready', markdown: '旧版本 insight' },
+            stages: { relations: { status: 'stale' } }
+        },
+        escapeHtml
+    });
+    assert(staleDetail.includes('关联与思考扩展基于旧版本'), 'stale detail should explain that derived content is outdated');
+    assert(staleDetail.includes('基于旧版本'), 'stale insight should carry an explicit old-version marker');
 
     console.log('Thought AI status module checks passed');
 }

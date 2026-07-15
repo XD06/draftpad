@@ -1,3 +1,5 @@
+const { createAnalysisSourceSignature } = require('../scripts/thought-ai-source');
+
 function registerThoughtRoutes(app, context) {
     const {
         storage,
@@ -47,6 +49,29 @@ function registerThoughtRoutes(app, context) {
         return status;
     }
 
+    async function markThoughtAIStale(thought, meta, signature) {
+        if (!meta) return null;
+        const now = Date.now();
+        const nextMeta = {
+            ...meta,
+            id: thought.id,
+            status: 'stale',
+            staleAt: now,
+            staleSourceVersion: signature.version,
+            staleSourceHash: signature.hash,
+            error: null,
+            stages: {
+                ...(meta.stages || {}),
+                relations: {
+                    ...(meta.stages?.relations || {}),
+                    status: 'stale'
+                }
+            }
+        };
+        await storage.writeThoughtMeta(thought.id, nextMeta);
+        return nextMeta;
+    }
+
     function normalizeInsight(insight) {
         const status = ['missing', 'pending', 'ready', 'error'].includes(insight?.status)
             ? insight.status
@@ -60,6 +85,7 @@ function registerThoughtRoutes(app, context) {
             requestedAt: insight?.requestedAt || 0,
             model: insight?.model || null,
             contextIds: Array.isArray(insight?.contextIds) ? insight.contextIds : [],
+            truncated: insight?.truncated === true,
             error: insight?.error || null
         };
     }
@@ -269,8 +295,13 @@ function registerThoughtRoutes(app, context) {
         if (!thought) return res.status(404).json({ error: 'Thought not found' });
 
         console.info(`[thought-ai] queue reason=manual thoughtId=${id}`);
-        aiQueue.queueThought(id, 'manual');
-        res.status(202).json({ queued: true, id });
+        const queueResult = aiQueue.queueThought(id, 'manual') || {};
+        res.status(202).json({
+            queued: queueResult.queued === true || queueResult.deferred === true || queueResult.state === 'queued',
+            deferred: queueResult.deferred === true,
+            state: queueResult.state || null,
+            id
+        });
     });
 
     app.post('/api/thoughts/:id/ai-insight', async (req, res) => {
@@ -303,6 +334,9 @@ function registerThoughtRoutes(app, context) {
             console.error('Error generating thought AI insight:', err);
             if (err.code === 'AI_INSIGHT_NOT_CONFIGURED') {
                 return res.status(503).json({ error: err.message, provider: err.provider || null });
+            }
+            if (err.code === 'AI_SOURCE_STALE') {
+                return res.status(409).json({ error: err.message });
             }
             res.status(500).json({
                 error: 'Error generating thought AI insight',
@@ -361,43 +395,155 @@ function registerThoughtRoutes(app, context) {
 
     app.get('/api/thoughts', async (req, res) => {
         try {
-            const { q, date, tag } = req.query;
+            const { q, date, tag, status } = req.query;
             const light = req.query.light === '1' || req.query.light === 'true';
+            const pageFormat = req.query.format === 'page';
+            const pageSort = req.query.sort === 'timeline' ? 'timeline' : 'updated';
+            const cursorValue = typeof req.query.cursor === 'string' ? req.query.cursor : '';
+            const updatedSinceValue = req.query.updatedSince;
+            const updatedSince = updatedSinceValue === undefined || updatedSinceValue === ''
+                ? null
+                : Number(updatedSinceValue);
+            if (updatedSince !== null && !Number.isFinite(updatedSince)) {
+                return res.status(400).json({ error: 'updatedSince must be a Unix timestamp in milliseconds' });
+            }
             const rawLimit = Number.parseInt(req.query.limit, 10);
             const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, 50) : 0;
-            let thoughts = await readThoughts();
-
-            if (tag) {
-                const tagLower = tag.toLowerCase();
-                thoughts = thoughts.filter(t => t.tags && t.tags.some(tg => tg.toLowerCase() === tagLower));
+            const compareThoughts = pageSort === 'timeline'
+                ? (left, right) => {
+                    const leftPinned = left.pinned === true;
+                    const rightPinned = right.pinned === true;
+                    if (leftPinned !== rightPinned) return leftPinned ? -1 : 1;
+                    if (leftPinned && rightPinned) {
+                        const pinnedAtDifference = Number(right.pinnedAt || 0) - Number(left.pinnedAt || 0);
+                        if (pinnedAtDifference) return pinnedAtDifference;
+                    }
+                    if ((left.completed === true) !== (right.completed === true)) {
+                        return left.completed === true ? 1 : -1;
+                    }
+                    return Number(right.createdAt || 0) - Number(left.createdAt || 0)
+                        || String(right.id).localeCompare(String(left.id));
+                }
+                : (left, right) => (
+                    Number(right.updatedAt || right.createdAt || 0) - Number(left.updatedAt || left.createdAt || 0)
+                    || String(right.id).localeCompare(String(left.id))
+                );
+            let cursor = null;
+            if (pageFormat && cursorValue) {
+                try {
+                    const decoded = JSON.parse(Buffer.from(cursorValue, 'base64url').toString('utf8'));
+                    if (pageSort === 'timeline') {
+                        if (decoded?.sort !== 'timeline'
+                            || typeof decoded?.pinned !== 'boolean'
+                            || !Number.isFinite(Number(decoded?.pinnedAt))
+                            || typeof decoded?.completed !== 'boolean'
+                            || !Number.isFinite(Number(decoded?.createdAt))
+                            || typeof decoded?.id !== 'string') {
+                            throw new Error('invalid timeline cursor');
+                        }
+                        cursor = {
+                            pinned: decoded.pinned,
+                            pinnedAt: Number(decoded.pinnedAt),
+                            completed: decoded.completed,
+                            createdAt: Number(decoded.createdAt),
+                            id: decoded.id
+                        };
+                    } else {
+                        if (!Number.isFinite(Number(decoded?.updatedAt)) || typeof decoded?.id !== 'string') throw new Error('invalid cursor');
+                        cursor = { updatedAt: Number(decoded.updatedAt), id: decoded.id };
+                    }
+                } catch (_error) {
+                    return res.status(400).json({ error: 'cursor is invalid' });
+                }
             }
 
-            if (q) {
-                const query = q.toLowerCase();
-                thoughts = thoughts.filter(t => {
-                    if (t.text.toLowerCase().includes(query)) return true;
-                    if (t.subItems && t.subItems.some(s => s.text.toLowerCase().includes(query))) return true;
-                    return false;
-                });
+            let thoughts;
+            let hasMore = false;
+            const indexedPage = pageFormat && !q && typeof storage.listThoughtsPage === 'function'
+                ? await storage.listThoughtsPage({
+                    date,
+                    tag,
+                    status,
+                    updatedSince,
+                    sort: pageSort,
+                    cursor,
+                    limit: limit || 50
+                })
+                : null;
+            if (indexedPage) {
+                thoughts = indexedPage.items;
+                hasMore = indexedPage.hasMore === true;
+            } else {
+                thoughts = await readThoughts();
+
+                if (tag) {
+                    const tagLower = tag.toLowerCase();
+                    thoughts = thoughts.filter(t => t.tags && t.tags.some(tg => tg.toLowerCase() === tagLower));
+                }
+
+                if (q) {
+                    const query = q.toLowerCase();
+                    thoughts = thoughts.filter(t => {
+                        if (t.text.toLowerCase().includes(query)) return true;
+                        if (t.subItems && t.subItems.some(s => s.text.toLowerCase().includes(query))) return true;
+                        return false;
+                    });
+                }
+
+                if (date) {
+                    thoughts = thoughts.filter(t => {
+                        const d = new Date(t.createdAt);
+                        const year = d.getFullYear();
+                        const month = String(d.getMonth() + 1).padStart(2, '0');
+                        const day = String(d.getDate()).padStart(2, '0');
+                        const dateStr = `${year}-${month}-${day}`;
+                        return dateStr === date;
+                    });
+                }
+
+                if (status === 'todo') {
+                    thoughts = thoughts.filter(thought => thought.completed !== true);
+                } else if (status === 'done') {
+                    thoughts = thoughts.filter(thought => thought.completed === true);
+                }
+
+                if (updatedSince !== null) {
+                    thoughts = thoughts.filter(thought => Number(thought.updatedAt || thought.createdAt || 0) > updatedSince);
+                }
+
+                if (pageFormat) {
+                    thoughts = thoughts.sort(compareThoughts);
+                    if (cursor) {
+                        thoughts = thoughts.filter(thought => compareThoughts(thought, cursor) > 0);
+                    }
+                    const pageSize = limit || 50;
+                    hasMore = thoughts.length > pageSize;
+                    thoughts = thoughts.slice(0, pageSize);
+                } else if (limit) {
+                    thoughts = thoughts.slice(0, limit);
+                }
             }
 
-            if (date) {
-                thoughts = thoughts.filter(t => {
-                    const d = new Date(t.createdAt);
-                    const year = d.getFullYear();
-                    const month = String(d.getMonth() + 1).padStart(2, '0');
-                    const day = String(d.getDate()).padStart(2, '0');
-                    const dateStr = `${year}-${month}-${day}`;
-                    return dateStr === date;
-                });
-            }
-
-            if (limit) {
-                thoughts = thoughts.slice(0, limit);
+            let nextCursor = null;
+            if (pageFormat && hasMore && thoughts.length) {
+                const last = thoughts[thoughts.length - 1];
+                nextCursor = Buffer.from(JSON.stringify(pageSort === 'timeline'
+                    ? {
+                        sort: 'timeline',
+                        pinned: last.pinned === true,
+                        pinnedAt: Number(last.pinnedAt || 0),
+                        completed: last.completed === true,
+                        createdAt: Number(last.createdAt || 0),
+                        id: String(last.id)
+                    }
+                    : {
+                        updatedAt: Number(last.updatedAt || last.createdAt || 0),
+                        id: String(last.id)
+                    })).toString('base64url');
             }
 
             if (light) {
-                return res.json(thoughts.map(thought => ({
+                const items = thoughts.map(thought => ({
                     id: thought.id,
                     text: thought.text || '',
                     subItems: Array.isArray(thought.subItems) ? thought.subItems : [],
@@ -405,9 +551,16 @@ function registerThoughtRoutes(app, context) {
                     completed: thought.completed === true,
                     pinned: thought.pinned === true,
                     attachments: Array.isArray(thought.attachments) ? thought.attachments : [],
+                    relationCount: Number(thought.relationCount || 0),
+                    aiStatus: thought.aiStatus || 'missing',
+                    aiError: thought.aiError || null,
+                    aiProcessedAt: thought.aiProcessedAt || 0,
+                    aiTags: Array.isArray(thought.aiTags) ? thought.aiTags : [],
+                    version: thought.version || 1,
                     createdAt: thought.createdAt || 0,
                     updatedAt: thought.updatedAt || thought.createdAt || 0
-                })));
+                }));
+                return res.json(pageFormat ? { items, nextCursor, hasMore } : items);
             }
 
             // Optimisation: only fetch meta for thoughts whose AI status is
@@ -446,7 +599,7 @@ function registerThoughtRoutes(app, context) {
                 };
             }));
 
-            res.json(thoughtsWithRelationCounts);
+            res.json(pageFormat ? { items: thoughtsWithRelationCounts, nextCursor, hasMore } : thoughtsWithRelationCounts);
         } catch (err) {
             res.status(500).json({ error: 'Error fetching thoughts' });
         }
@@ -542,6 +695,7 @@ function registerThoughtRoutes(app, context) {
                 if (index === -1) return { status: 404, body: { error: 'Thought not found' } };
 
                 const thought = thoughts[index];
+                const sourceBefore = createAnalysisSourceSignature(thought);
                 const clientVersion = Number(baseVersion);
                 if (Number.isFinite(clientVersion) && (thought.version || 1) > clientVersion) {
                     return {
@@ -626,7 +780,11 @@ function registerThoughtRoutes(app, context) {
                 if (modified) {
                     thought.updatedAt = Date.now();
                     thought.version = (thought.version || 1) + 1;
-                    const meta = await storage.readThoughtMeta(thought.id);
+                    let meta = await storage.readThoughtMeta(thought.id);
+                    const sourceAfter = createAnalysisSourceSignature(thought);
+                    if (sourceAfter.hash !== sourceBefore.hash) {
+                        meta = await markThoughtAIStale(thought, meta, sourceAfter);
+                    }
                     thought.aiStatus = visibleAIStatus(thought.id, meta, thought.aiStatus || 'missing');
                     thought.aiError = meta?.error || null;
                     thought.relationCount = await storage.readRelationCount(thought.id);

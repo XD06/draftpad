@@ -67,16 +67,20 @@ function normalizeKey(key) {
 }
 
 async function bodyToString(body) {
-    if (!body) return '';
-    if (typeof body === 'string') return body;
-    if (Buffer.isBuffer(body)) return body.toString('utf8');
-    if (typeof body.transformToString === 'function') return body.transformToString();
+    return (await bodyToBuffer(body)).toString('utf8');
+}
+
+async function bodyToBuffer(body) {
+    if (!body) return Buffer.alloc(0);
+    if (Buffer.isBuffer(body)) return body;
+    if (typeof body === 'string') return Buffer.from(body);
+    if (typeof body.transformToByteArray === 'function') return Buffer.from(await body.transformToByteArray());
 
     const chunks = [];
     for await (const chunk of body) {
         chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
     }
-    return Buffer.concat(chunks).toString('utf8');
+    return Buffer.concat(chunks);
 }
 
 function isNotFound(error) {
@@ -105,6 +109,19 @@ async function getObject(key) {
             Key: normalizeKey(key)
         }));
         return bodyToString(result.Body);
+    } catch (error) {
+        if (isNotFound(error) || isCompatibleMissingObject(error)) return null;
+        throw error;
+    }
+}
+
+async function getObjectBuffer(key) {
+    try {
+        const result = await ensureClient().send(new GetObjectCommand({
+            Bucket: s3Bucket,
+            Key: normalizeKey(key)
+        }));
+        return bodyToBuffer(result.Body);
     } catch (error) {
         if (isNotFound(error) || isCompatibleMissingObject(error)) return null;
         throw error;
@@ -184,6 +201,7 @@ module.exports = {
     initS3,
     putObject,
     getObject,
+    getObjectBuffer,
     getJSONObject,
     deleteObject,
     listObjects,

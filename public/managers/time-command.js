@@ -92,6 +92,26 @@ export function deleteTimeMarker(source = '', markerText = '') {
     return before + after;
 }
 
+export function moveTimeMarker(value = '', markerText = '', sourceOffset = -1, dropOffset = -1) {
+    const text = String(value || '');
+    const marker = String(markerText || '');
+    const start = Number(sourceOffset);
+    const drop = Number(dropOffset);
+    if (!marker || !Number.isInteger(start) || !Number.isInteger(drop)) return text;
+    if (start < 0 || start + marker.length > text.length) return text;
+    if (text.slice(start, start + marker.length) !== marker) return text;
+
+    const end = start + marker.length;
+    const clampedDrop = Math.min(text.length, Math.max(0, drop));
+    if (clampedDrop >= start && clampedDrop <= end) return text;
+
+    const withoutMarker = text.slice(0, start) + text.slice(end);
+    const insertionOffset = clampedDrop > end
+        ? clampedDrop - marker.length
+        : clampedDrop;
+    return `${withoutMarker.slice(0, insertionOffset)}${marker}${withoutMarker.slice(insertionOffset)}`;
+}
+
 export function replaceTimeCommandBeforeCursor(value, selectionStart, selectionEnd, { now = () => new Date() } = {}) {
     const text = String(value || '');
     const start = Number(selectionStart);
@@ -143,13 +163,14 @@ export function handleTimeCommandKeydown(event, options = {}) {
     return true;
 }
 
-export function renderTimeMarkers(escaped = '', className = 'time-marker') {
+export function renderTimeMarkers(escaped = '', className = 'time-marker', { draggable = false } = {}) {
     return String(escaped || '').replace(TIME_MARKER_RE, (match, kindValue, levelValue, stamp) => {
         const kind = normalizeTimeKind(kindValue || 'create');
         const level = kind === 'update' ? normalizeTimeLevel(levelValue || 1) : 1;
         const label = TIME_KIND_LABELS[kind];
         const safeSource = escapeAttribute(match);
         const safeStamp = escapeAttribute(stamp);
-        return `<span class="${className} is-${kind} is-level-${level}" data-time-marker="true" data-time-kind="${kind}" data-time-level="${level}" data-time-source="${safeSource}" data-time-label="${label}" data-time-stamp="${safeStamp}" title="${label}时间：${safeStamp}" aria-label="${label}时间：${safeStamp}">${safeSource}</span>`;
+        const draggableAttr = draggable ? ' data-time-draggable="true"' : '';
+        return `<span class="${className} is-${kind} is-level-${level}" data-time-marker="true" data-time-kind="${kind}" data-time-level="${level}" data-time-source="${safeSource}" data-time-label="${label}" data-time-stamp="${safeStamp}" title="${label}时间：${safeStamp}" aria-label="${label}时间：${safeStamp}"${draggableAttr}>${safeSource}</span>`;
     });
 }
