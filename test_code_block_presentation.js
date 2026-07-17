@@ -38,9 +38,18 @@ assert(
 );
 assert(styles.includes('> pre > .dumbpad-code-tools'), 'the editable code tools should use the code block visual language');
 assert(
-    hybrid.includes("languageInput.style.setProperty('--code-language-size'") &&
-        styles.includes('width: calc(var(--code-language-size, 4) * 1ch + 6px) !important;'),
-    'the language field should size itself to its short label instead of expanding like a form input'
+    hybrid.includes("languageButton.className = 'dumbpad-code-language-badge'") &&
+        hybrid.includes("languageBadge.className = 'dumbpad-code-language-badge is-readonly'") &&
+        styles.includes('.dumbpad-code-language-badge'),
+    'the code language should remain visible as a compact badge in editing and reading surfaces'
+);
+assert(
+    hybrid.includes("popover.className = 'dumbpad-code-language-popover'") &&
+        hybrid.includes('document.body.appendChild(popover)') &&
+        hybrid.includes('findCodeLanguageSuggestions(input.value, 3)') &&
+        hybrid.includes("input.addEventListener('compositionstart'") &&
+        styles.includes('.dumbpad-code-language-popover'),
+    'language editing should use an external IME-safe combobox with at most three suggestions'
 );
 assert(
     styles.includes('white-space: pre-wrap;') && styles.includes('overflow-wrap: anywhere;') && styles.includes('min-width: 0;'),

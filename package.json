@@ -22,6 +22,7 @@
     "test:file-command": "node test_article_file_command.js",
     "test:file-command-integration": "node test_article_file_command_integration.js",
     "test:code-fence-command": "node test_code_fence_command.js",
+    "test:code-language-catalog": "node test_code_language_catalog.js",
     "test:code-block-presentation": "node test_code_block_presentation.js",
     "test:seed-demo": "node test_seed_demo_data.js",
     "test:article-block-move": "node test_article_block_move.js",

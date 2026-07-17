@@ -18,6 +18,7 @@ import {
     replaceFileCommand
 } from './managers/article-file-command.js';
 import { moveStandaloneMarkdownBlock, splitTopLevelMarkdownBlocks } from './managers/article-block-move.js';
+import { findCodeLanguageSuggestions, resolveCodeLanguage } from './managers/code-language-catalog.js';
 import {
     buildCodeFenceMarkdown,
     buildPendingCodeFenceText,
@@ -84,6 +85,12 @@ export class HybridMarkdownEditor {
         this.assetUploadTasks = new Set();
         this.articleUploadStates = new Map();
         this.articleFileCommand = null;
+        this.codeLanguagePopover = null;
+        this.activeCodeLanguageBlock = null;
+        this.activeCodeLanguageAnchor = null;
+        this.codeLanguageSuggestions = [];
+        this.activeCodeLanguageSuggestion = -1;
+        this.isCodeLanguageComposing = false;
 
         this.container.innerHTML = '';
         this.container.classList.add('typora-editor-shell');
@@ -486,6 +493,7 @@ export class HybridMarkdownEditor {
     restoreCodeBlockLineNumberDecorations(root) {
         root?.querySelectorAll?.('pre.dumbpad-code-lines[data-line-numbers]').forEach(pre => {
             pre.querySelector(':scope > .dumbpad-code-tools')?.remove();
+            pre.querySelector(':scope > .dumbpad-code-language-badge')?.remove();
             pre.classList.remove('dumbpad-code-lines');
             delete pre.dataset.lineNumbers;
         });
@@ -644,6 +652,7 @@ export class HybridMarkdownEditor {
 
     setReadingMode(enabled) {
         this.isReadingMode = Boolean(enabled);
+        this.hideCodeLanguagePopover(false);
         this.hideSelectionMenu();
         window.getSelection()?.removeAllRanges();
         if (this.isReadingMode && this.sourceMode) {
@@ -2792,44 +2801,28 @@ export class HybridMarkdownEditor {
             pre.classList.add('dumbpad-code-lines');
             pre.dataset.lineNumbers = lineNumbers;
 
+            const language = this.getRenderedCodeBlockLanguage(code);
+            const displayLanguage = language || 'plaintext';
+            if (pre.classList.contains('vditor-wysiwyg__preview')) {
+                let languageBadge = pre.querySelector(':scope > .dumbpad-code-language-badge');
+                if (!languageBadge) {
+                    languageBadge = document.createElement('span');
+                    languageBadge.className = 'dumbpad-code-language-badge is-readonly';
+                    languageBadge.setAttribute('contenteditable', 'false');
+                    languageBadge.setAttribute('aria-label', '代码块语言');
+                    pre.appendChild(languageBadge);
+                }
+                languageBadge.textContent = displayLanguage;
+                languageBadge.dataset.codeLanguage = language;
+                return;
+            }
+
             if (!pre.classList.contains('vditor-wysiwyg__pre') || pre.querySelector(':scope > .dumbpad-code-tools')) return;
             const block = pre.closest('.vditor-wysiwyg__block[data-type="code-block"]');
             if (!block) return;
             const tools = document.createElement('span');
             tools.className = 'dumbpad-code-tools';
             tools.setAttribute('contenteditable', 'false');
-
-            const languageInput = document.createElement('input');
-            languageInput.type = 'text';
-            languageInput.className = 'dumbpad-code-language';
-            languageInput.value = this.getRenderedCodeBlockLanguage(code);
-            languageInput.placeholder = '语言';
-            languageInput.title = '代码块语言，输入后按 Enter';
-            languageInput.setAttribute('aria-label', '代码块语言');
-            languageInput.setAttribute('autocomplete', 'off');
-            languageInput.setAttribute('spellcheck', 'false');
-            const syncLanguageInputWidth = () => {
-                const characterCount = Array.from(languageInput.value.trim()).length;
-                languageInput.style.setProperty('--code-language-size', String(Math.max(4, Math.min(10, characterCount || 4))));
-            };
-            syncLanguageInputWidth();
-            const commitLanguage = () => this.updateCodeBlockLanguage(block, languageInput.value);
-            languageInput.addEventListener('mousedown', event => event.stopPropagation());
-            languageInput.addEventListener('click', event => event.stopPropagation());
-            languageInput.addEventListener('input', syncLanguageInputWidth);
-            languageInput.addEventListener('keydown', event => {
-                event.stopPropagation();
-                if (event.key === 'Enter') {
-                    event.preventDefault();
-                    commitLanguage();
-                } else if (event.key === 'Escape') {
-                    event.preventDefault();
-                    languageInput.value = this.getRenderedCodeBlockLanguage(code);
-                    syncLanguageInputWidth();
-                    languageInput.blur();
-                }
-            });
-            languageInput.addEventListener('blur', commitLanguage);
 
             const copyButton = document.createElement('button');
             copyButton.type = 'button';
@@ -2857,7 +2850,28 @@ export class HybridMarkdownEditor {
                     copyButton.title = '复制代码';
                 }, 1200);
             });
-            tools.append(copyButton, languageInput);
+
+            const languageButton = document.createElement('button');
+            languageButton.type = 'button';
+            languageButton.className = 'dumbpad-code-language-badge';
+            languageButton.textContent = displayLanguage;
+            languageButton.dataset.codeLanguage = language;
+            languageButton.title = `设置代码块语言：${displayLanguage}`;
+            languageButton.setAttribute('aria-label', `设置代码块语言，当前为 ${displayLanguage}`);
+            languageButton.setAttribute('aria-haspopup', 'listbox');
+            languageButton.setAttribute('aria-expanded', 'false');
+            languageButton.setAttribute('contenteditable', 'false');
+            languageButton.addEventListener('mousedown', event => {
+                event.preventDefault();
+                event.stopPropagation();
+            });
+            languageButton.addEventListener('click', event => {
+                event.preventDefault();
+                event.stopPropagation();
+                this.openCodeLanguagePopover(block, languageButton);
+            });
+
+            tools.append(copyButton, languageButton);
             pre.appendChild(tools);
         });
     }
@@ -2865,6 +2879,188 @@ export class HybridMarkdownEditor {
     getRenderedCodeBlockLanguage(code) {
         const languageClass = Array.from(code?.classList || []).find(name => name.startsWith('language-'));
         return languageClass ? languageClass.slice('language-'.length) : '';
+    }
+
+    ensureCodeLanguagePopover() {
+        if (this.codeLanguagePopover?.isConnected) return this.codeLanguagePopover;
+        const popover = document.createElement('div');
+        popover.className = 'dumbpad-code-language-popover';
+        popover.hidden = true;
+        popover.setAttribute('role', 'dialog');
+        popover.setAttribute('aria-label', '设置代码块语言');
+
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.className = 'dumbpad-code-language-input';
+        input.placeholder = 'plaintext';
+        input.setAttribute('aria-label', '搜索或输入代码块语言');
+        input.setAttribute('role', 'combobox');
+        input.setAttribute('aria-autocomplete', 'list');
+        input.setAttribute('aria-controls', 'dumbpad-code-language-list');
+        input.setAttribute('aria-expanded', 'true');
+        input.setAttribute('autocomplete', 'off');
+        input.setAttribute('spellcheck', 'false');
+
+        const list = document.createElement('div');
+        list.id = 'dumbpad-code-language-list';
+        list.className = 'dumbpad-code-language-list';
+        list.setAttribute('role', 'listbox');
+
+        input.addEventListener('compositionstart', () => {
+            this.isCodeLanguageComposing = true;
+        });
+        input.addEventListener('compositionend', () => {
+            this.isCodeLanguageComposing = false;
+            this.renderCodeLanguageSuggestions();
+        });
+        input.addEventListener('input', () => {
+            if (!this.isCodeLanguageComposing) this.renderCodeLanguageSuggestions();
+        });
+        input.addEventListener('keydown', event => {
+            if (event.key === 'Escape') {
+                event.preventDefault();
+                this.hideCodeLanguagePopover(true);
+                return;
+            }
+            if (this.isCodeLanguageComposing) return;
+            if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                event.preventDefault();
+                const direction = event.key === 'ArrowDown' ? 1 : -1;
+                this.moveCodeLanguageSuggestion(direction);
+                return;
+            }
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                const selected = this.codeLanguageSuggestions[this.activeCodeLanguageSuggestion];
+                this.commitCodeLanguageSelection(selected?.id || input.value);
+            }
+        });
+
+        list.addEventListener('mousedown', event => event.preventDefault());
+        list.addEventListener('click', event => {
+            const option = event.target.closest('[data-code-language-option]');
+            if (!option) return;
+            event.preventDefault();
+            this.commitCodeLanguageSelection(option.dataset.codeLanguageOption);
+        });
+
+        popover.append(input, list);
+        document.body.appendChild(popover);
+        document.addEventListener('mousedown', event => {
+            if (popover.hidden) return;
+            if (popover.contains(event.target) || this.activeCodeLanguageAnchor?.contains?.(event.target)) return;
+            this.hideCodeLanguagePopover(false);
+        });
+        document.addEventListener('scroll', () => this.positionCodeLanguagePopover(), true);
+        window.addEventListener('resize', () => this.positionCodeLanguagePopover());
+        this.codeLanguagePopover = popover;
+        return popover;
+    }
+
+    openCodeLanguagePopover(block, anchor) {
+        const popover = this.ensureCodeLanguagePopover();
+        const input = popover.querySelector('.dumbpad-code-language-input');
+        this.activeCodeLanguageBlock = block;
+        this.activeCodeLanguageAnchor = anchor;
+        anchor.setAttribute('aria-expanded', 'true');
+        input.value = anchor.dataset.codeLanguage || '';
+        input.removeAttribute('aria-invalid');
+        popover.classList.remove('is-invalid');
+        popover.hidden = false;
+        this.renderCodeLanguageSuggestions();
+        this.positionCodeLanguagePopover();
+        requestAnimationFrame(() => {
+            input.focus({ preventScroll: true });
+            input.select();
+        });
+    }
+
+    renderCodeLanguageSuggestions() {
+        const popover = this.codeLanguagePopover;
+        const input = popover?.querySelector('.dumbpad-code-language-input');
+        const list = popover?.querySelector('.dumbpad-code-language-list');
+        if (!input || !list) return;
+        this.codeLanguageSuggestions = findCodeLanguageSuggestions(input.value, 3);
+        this.activeCodeLanguageSuggestion = -1;
+        input.removeAttribute('aria-activedescendant');
+        list.innerHTML = '';
+        this.codeLanguageSuggestions.forEach((item, index) => {
+            const option = document.createElement('button');
+            option.type = 'button';
+            option.id = `dumbpad-code-language-option-${index}`;
+            option.className = 'dumbpad-code-language-option';
+            option.dataset.codeLanguageOption = item.id;
+            option.setAttribute('role', 'option');
+            option.setAttribute('aria-selected', 'false');
+            const token = document.createElement('span');
+            token.className = 'dumbpad-code-language-token';
+            token.textContent = item.id;
+            const detail = document.createElement('span');
+            detail.className = 'dumbpad-code-language-detail';
+            const aliases = item.aliases.slice(0, 2).join(', ');
+            detail.textContent = aliases ? `${item.label} · ${aliases}` : item.label;
+            option.append(token, detail);
+            list.appendChild(option);
+        });
+        list.hidden = this.codeLanguageSuggestions.length === 0;
+        this.positionCodeLanguagePopover();
+    }
+
+    moveCodeLanguageSuggestion(direction) {
+        const count = this.codeLanguageSuggestions.length;
+        if (!count) return;
+        const next = this.activeCodeLanguageSuggestion < 0
+            ? (direction > 0 ? 0 : count - 1)
+            : (this.activeCodeLanguageSuggestion + direction + count) % count;
+        this.activeCodeLanguageSuggestion = next;
+        const options = Array.from(this.codeLanguagePopover?.querySelectorAll('[data-code-language-option]') || []);
+        options.forEach((option, index) => option.setAttribute('aria-selected', index === next ? 'true' : 'false'));
+        const active = options[next];
+        const input = this.codeLanguagePopover?.querySelector('.dumbpad-code-language-input');
+        if (active && input) input.setAttribute('aria-activedescendant', active.id);
+    }
+
+    positionCodeLanguagePopover() {
+        const popover = this.codeLanguagePopover;
+        const anchor = this.activeCodeLanguageAnchor;
+        if (!popover || popover.hidden || !anchor?.isConnected) return;
+        const rect = anchor.getBoundingClientRect();
+        const width = popover.offsetWidth || 220;
+        const height = popover.offsetHeight || 120;
+        const left = Math.min(Math.max(8, rect.right - width), Math.max(8, window.innerWidth - width - 8));
+        let top = rect.bottom + 5;
+        if (top + height > window.innerHeight - 8 && rect.top > height + 8) top = rect.top - height - 5;
+        popover.style.left = `${Math.round(left)}px`;
+        popover.style.top = `${Math.round(Math.max(8, top))}px`;
+    }
+
+    commitCodeLanguageSelection(value) {
+        const language = resolveCodeLanguage(value);
+        const popover = this.codeLanguagePopover;
+        const input = popover?.querySelector('.dumbpad-code-language-input');
+        if (!language) {
+            input?.setAttribute('aria-invalid', 'true');
+            popover?.classList.add('is-invalid');
+            return false;
+        }
+        const block = this.activeCodeLanguageBlock;
+        this.hideCodeLanguagePopover(false);
+        return this.updateCodeBlockLanguage(block, language);
+    }
+
+    hideCodeLanguagePopover(restoreFocus = false) {
+        const popover = this.codeLanguagePopover;
+        if (!popover || popover.hidden) return;
+        const anchor = this.activeCodeLanguageAnchor;
+        popover.hidden = true;
+        popover.classList.remove('is-invalid');
+        anchor?.setAttribute?.('aria-expanded', 'false');
+        this.activeCodeLanguageBlock = null;
+        this.activeCodeLanguageAnchor = null;
+        this.codeLanguageSuggestions = [];
+        this.activeCodeLanguageSuggestion = -1;
+        this.isCodeLanguageComposing = false;
+        if (restoreFocus && anchor?.isConnected) anchor.focus({ preventScroll: true });
     }
 
     resolveCodeBlockMarkdownContext(root, block, value) {
@@ -4062,6 +4258,7 @@ export class HybridMarkdownEditor {
 
     setSourceMode(enabled) {
         if (this.isReadingMode) enabled = false;
+        this.hideCodeLanguagePopover(false);
         this.sourceMode = Boolean(enabled);
         this.container.classList.toggle('is-source-mode', this.sourceMode);
         this.sourceToggle?.classList.toggle('active', this.sourceMode);

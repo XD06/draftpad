@@ -80,27 +80,50 @@
     font-family: var(--font-code);
 }
 
-.typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] .dumbpad-code-language {
-    width: calc(var(--code-language-size, 4) * 1ch + 6px) !important;
-    min-width: 0 !important;
-    max-width: calc(10ch + 6px);
+.typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] .dumbpad-code-language-badge {
+    display: inline-flex;
+    max-width: 78px;
     height: 20px !important;
-    min-height: 0 !important;
     box-sizing: border-box;
     margin: 0 !important;
-    padding: 0 3px !important;
+    padding: 0 5px !important;
+    align-items: center;
     border: 1px solid color-mix(in srgb, var(--border-color) 76%, transparent);
     border-radius: 6px;
     outline: none;
     background: color-mix(in srgb, var(--code-bg) 92%, var(--text-color) 8%);
-    color: var(--text-color);
+    color: var(--muted-text);
     font: 500 9px/18px var(--font-code) !important;
     letter-spacing: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
-.typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] .dumbpad-code-language:focus {
+.typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] button.dumbpad-code-language-badge {
+    cursor: pointer;
+}
+
+.typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] button.dumbpad-code-language-badge:hover,
+.typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] button.dumbpad-code-language-badge:focus-visible,
+.typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] button.dumbpad-code-language-badge[aria-expanded="true"] {
     border-color: color-mix(in srgb, var(--primary-color) 62%, var(--border-color));
+    color: var(--primary-color);
     box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary-color) 14%, transparent);
+}
+
+.typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] > pre > .dumbpad-code-language-badge.is-readonly {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    z-index: 3;
+    pointer-events: none;
+    user-select: none;
+}
+
+.typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] > pre:has(> .dumbpad-code-language-badge.is-readonly) .vditor-copy span {
+    right: 70px;
+    top: 6px;
 }
 
 .typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] .dumbpad-code-copy {
@@ -135,6 +158,98 @@
     stroke-width: 2;
     stroke-linecap: round;
     stroke-linejoin: round;
+}
+
+.dumbpad-code-language-popover {
+    position: fixed;
+    z-index: 4300;
+    width: min(220px, calc(100vw - 16px));
+    box-sizing: border-box;
+    padding: 6px;
+    border: 1px solid var(--border-color);
+    border-radius: 7px;
+    background: var(--modal-bg);
+    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.16);
+}
+
+.dumbpad-code-language-popover[hidden] {
+    display: none;
+}
+
+.dumbpad-code-language-input {
+    display: block;
+    width: 100%;
+    height: 28px;
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0 8px;
+    border: 1px solid var(--border-color);
+    border-radius: 5px;
+    outline: none;
+    background: var(--textarea-bg);
+    color: var(--text-color);
+    font: 500 12px/26px var(--font-code);
+    letter-spacing: 0;
+}
+
+.dumbpad-code-language-input:focus {
+    border-color: color-mix(in srgb, var(--primary-color) 68%, var(--border-color));
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary-color) 12%, transparent);
+}
+
+.dumbpad-code-language-popover.is-invalid .dumbpad-code-language-input {
+    border-color: #d84a44;
+    box-shadow: 0 0 0 2px color-mix(in srgb, #d84a44 12%, transparent);
+}
+
+.dumbpad-code-language-list {
+    display: grid;
+    gap: 2px;
+    margin-top: 4px;
+}
+
+.dumbpad-code-language-list[hidden] {
+    display: none;
+}
+
+.dumbpad-code-language-option {
+    display: grid;
+    min-width: 0;
+    min-height: 30px;
+    box-sizing: border-box;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 7px;
+    border: 0;
+    border-radius: 5px;
+    background: transparent;
+    color: var(--text-color);
+    text-align: left;
+    cursor: pointer;
+}
+
+.dumbpad-code-language-option:hover,
+.dumbpad-code-language-option:focus-visible,
+.dumbpad-code-language-option[aria-selected="true"] {
+    outline: none;
+    background: color-mix(in srgb, var(--primary-color) 12%, transparent);
+}
+
+.dumbpad-code-language-token {
+    overflow: hidden;
+    font: 600 12px/1.2 var(--font-code);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.dumbpad-code-language-detail {
+    overflow: hidden;
+    max-width: 112px;
+    color: var(--muted-text);
+    font: 400 10px/1.2 var(--font-reading);
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] >

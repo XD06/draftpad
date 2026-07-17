@@ -46,8 +46,8 @@ assert.strictEqual(
 );
 assert(hybrid.includes('this.setWysiwygCodeFenceValue(next, domIndex);'), 'confirmed fences should use the dedicated code-block focus path');
 assert(hybrid.includes('focusInsertedCodeBlock(blockIndex)'), 'the editor should activate the rendered code source layer after creating a fence');
-assert(hybrid.includes("languageInput.className = 'dumbpad-code-language'"), 'editable rendered code blocks should provide a language input fallback');
-assert(hybrid.includes('updateCodeBlockLanguage(block, languageInput.value)'), 'the language input should update the matching Markdown fence');
+assert(hybrid.includes("languageButton.className = 'dumbpad-code-language-badge'"), 'editable rendered code blocks should expose the current language as a compact badge');
+assert(hybrid.includes('commitCodeLanguageSelection(value)'), 'the external language picker should update the matching Markdown fence');
 
 const enterMethod = hybrid.match(/    handlePendingCodeFenceEnter\([^)]*\) \{([\s\S]*?)\r?\n    \}\r?\n\r?\n    isArticleFileCommandKeydown/);
 assert(enterMethod, 'code fence Enter handling should remain independently inspectable');
