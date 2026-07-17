@@ -38,6 +38,11 @@ assert(
 );
 assert(styles.includes('> pre > .dumbpad-code-tools'), 'the editable code tools should use the code block visual language');
 assert(
+    hybrid.includes("languageInput.style.setProperty('--code-language-size'") &&
+        styles.includes('width: calc(var(--code-language-size, 4) * 1ch + 6px) !important;'),
+    'the language field should size itself to its short label instead of expanding like a form input'
+);
+assert(
     styles.includes('white-space: pre-wrap;') && styles.includes('overflow-wrap: anywhere;') && styles.includes('min-width: 0;'),
     'long code lines should wrap inside the article width without losing whitespace'
 );

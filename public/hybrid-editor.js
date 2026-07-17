@@ -2808,9 +2808,15 @@ export class HybridMarkdownEditor {
             languageInput.setAttribute('aria-label', '代码块语言');
             languageInput.setAttribute('autocomplete', 'off');
             languageInput.setAttribute('spellcheck', 'false');
+            const syncLanguageInputWidth = () => {
+                const characterCount = Array.from(languageInput.value.trim()).length;
+                languageInput.style.setProperty('--code-language-size', String(Math.max(4, Math.min(10, characterCount || 4))));
+            };
+            syncLanguageInputWidth();
             const commitLanguage = () => this.updateCodeBlockLanguage(block, languageInput.value);
             languageInput.addEventListener('mousedown', event => event.stopPropagation());
             languageInput.addEventListener('click', event => event.stopPropagation());
+            languageInput.addEventListener('input', syncLanguageInputWidth);
             languageInput.addEventListener('keydown', event => {
                 event.stopPropagation();
                 if (event.key === 'Enter') {
@@ -2819,6 +2825,7 @@ export class HybridMarkdownEditor {
                 } else if (event.key === 'Escape') {
                     event.preventDefault();
                     languageInput.value = this.getRenderedCodeBlockLanguage(code);
+                    syncLanguageInputWidth();
                     languageInput.blur();
                 }
             });

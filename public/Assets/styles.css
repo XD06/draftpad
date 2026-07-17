@@ -81,34 +81,32 @@
 }
 
 .typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] .dumbpad-code-language {
-    width: 44px !important;
+    width: calc(var(--code-language-size, 4) * 1ch + 6px) !important;
     min-width: 0 !important;
-    max-width: 72px;
-    height: 22px !important;
+    max-width: calc(10ch + 6px);
+    height: 20px !important;
     min-height: 0 !important;
     box-sizing: border-box;
     margin: 0 !important;
-    padding: 0 5px !important;
+    padding: 0 3px !important;
     border: 1px solid color-mix(in srgb, var(--border-color) 76%, transparent);
     border-radius: 6px;
     outline: none;
     background: color-mix(in srgb, var(--code-bg) 92%, var(--text-color) 8%);
     color: var(--text-color);
-    font: 500 10px/20px var(--font-code) !important;
+    font: 500 9px/18px var(--font-code) !important;
     letter-spacing: 0;
-    transition: width 120ms ease;
 }
 
 .typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] .dumbpad-code-language:focus {
-    width: 72px !important;
     border-color: color-mix(in srgb, var(--primary-color) 62%, var(--border-color));
     box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary-color) 14%, transparent);
 }
 
 .typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] .dumbpad-code-copy {
     display: inline-grid;
-    width: 22px;
-    height: 22px;
+    width: 20px;
+    height: 20px;
     padding: 0;
     place-items: center;
     border: 1px solid color-mix(in srgb, var(--border-color) 76%, transparent);
@@ -130,8 +128,8 @@
 }
 
 .typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] .dumbpad-code-copy svg {
-    width: 13px;
-    height: 13px;
+    width: 12px;
+    height: 12px;
     fill: none;
     stroke: currentColor;
     stroke-width: 2;
