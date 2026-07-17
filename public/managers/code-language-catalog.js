@@ -1,20 +1,20 @@
 export const CODE_LANGUAGE_CATALOG = [
     { id: 'plaintext', label: '纯文本', aliases: ['text', 'plain', 'txt', 'plaintxt'] },
-    { id: 'javascript', label: 'JavaScript', aliases: ['js'] },
-    { id: 'python', label: 'Python', aliases: ['py'] },
-    { id: 'cpp', label: 'C++', aliases: ['c++'] },
-    { id: 'c', label: 'C', aliases: [] },
-    { id: 'java', label: 'Java', aliases: [] },
-    { id: 'typescript', label: 'TypeScript', aliases: ['ts'] },
-    { id: 'go', label: 'Go', aliases: [] },
+    { id: 'javascript', label: 'JavaScript', aliases: ['js'], icon: 'javascript.png' },
+    { id: 'python', label: 'Python', aliases: ['py'], icon: 'python.png' },
+    { id: 'cpp', label: 'C++', aliases: ['c++'], icon: 'cpp.png' },
+    { id: 'c', label: 'C', aliases: [], icon: 'c.png' },
+    { id: 'java', label: 'Java', aliases: [], icon: 'java.png' },
+    { id: 'typescript', label: 'TypeScript', aliases: ['ts'], icon: 'typescript.png' },
+    { id: 'go', label: 'Go', aliases: [], icon: 'go.png' },
     { id: 'rust', label: 'Rust', aliases: ['rs'] },
-    { id: 'php', label: 'PHP', aliases: [] },
-    { id: 'csharp', label: 'C#', aliases: ['cs', 'c#'] },
-    { id: 'swift', label: 'Swift', aliases: [] },
-    { id: 'kotlin', label: 'Kotlin', aliases: ['kt'] },
-    { id: 'ruby', label: 'Ruby', aliases: ['rb'] },
-    { id: 'html', label: 'HTML', aliases: [] },
-    { id: 'css', label: 'CSS', aliases: [] },
+    { id: 'php', label: 'PHP', aliases: [], icon: 'php.png' },
+    { id: 'csharp', label: 'C#', aliases: ['cs', 'c#'], icon: 'csharp.png' },
+    { id: 'swift', label: 'Swift', aliases: [], icon: 'swift.png' },
+    { id: 'kotlin', label: 'Kotlin', aliases: ['kt'], icon: 'kotlin.png' },
+    { id: 'ruby', label: 'Ruby', aliases: ['rb'], icon: 'ruby.png' },
+    { id: 'html', label: 'HTML', aliases: [], icon: 'html.png' },
+    { id: 'css', label: 'CSS', aliases: [], icon: 'css.png' },
     { id: 'scss', label: 'Sass/SCSS', aliases: ['sass'] },
     { id: 'less', label: 'Less', aliases: [] },
     { id: 'xml', label: 'XML', aliases: [] },
@@ -49,6 +49,13 @@ export function resolveCodeLanguage(value = '') {
     ));
     if (match) return match.id;
     return CUSTOM_LANGUAGE_RE.test(query) ? query : null;
+}
+
+export function getCodeLanguageIconPath(value = '') {
+    const language = resolveCodeLanguage(value);
+    if (!language) return '';
+    const item = CODE_LANGUAGE_CATALOG.find(candidate => candidate.id === language);
+    return item?.icon ? `/Assets/code-language-icons/${item.icon}` : '';
 }
 
 export function findCodeLanguageSuggestions(value = '', limit = 3) {

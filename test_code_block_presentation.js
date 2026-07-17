@@ -7,11 +7,15 @@ const hybrid = fs.readFileSync(path.join(root, 'public', 'hybrid-editor.js'), 'u
 const styles = fs.readFileSync(path.join(root, 'public', 'Assets', 'styles.css'), 'utf8');
 const loginStyles = fs.readFileSync(path.join(root, 'public', 'Assets', 'login.css'), 'utf8');
 const fontPath = path.join(root, 'font', 'changerwencai.woff2');
+const languageIconPath = path.join(root, 'public', 'Assets', 'code-language-icons', 'python.png');
+const languageIconLicensePath = path.join(root, 'public', 'Assets', 'code-language-icons', 'LICENSE.txt');
 const codeBlockSurfaceRule = styles.match(
     /\.typora-editor-shell \.vditor-reset \.vditor-wysiwyg__block\[data-type="code-block"\] > pre\s*\{([^}]*)\}/
 )?.[1] || '';
 
 assert(fs.existsSync(fontPath), 'the approved Chinese webfont should be bundled locally');
+assert(fs.existsSync(languageIconPath), 'common language badges should use bundled offline icons');
+assert(fs.existsSync(languageIconLicensePath), 'bundled language icons should retain their license and trademark notice');
 assert(styles.includes('url("/font/changerwencai.woff2") format("woff2")'), 'the main interface should use the compressed approved Chinese webfont');
 assert(loginStyles.includes('url("/font/changerwencai.woff2") format("woff2")'), 'the login interface should use the same compressed Chinese webfont');
 assert(styles.includes('--code-bg: #fafaf8;'), 'light code blocks should use the approved warm white background');
@@ -50,6 +54,19 @@ assert(
         hybrid.includes("input.addEventListener('compositionstart'") &&
         styles.includes('.dumbpad-code-language-popover'),
     'language editing should use an external IME-safe combobox with at most three suggestions'
+);
+assert(
+    hybrid.includes('option.textContent = item.id') &&
+        !hybrid.includes("detail.className = 'dumbpad-code-language-detail'") &&
+        hybrid.includes("popover.style.setProperty('--code-language-popover-size'") &&
+        styles.includes('width: calc(var(--code-language-popover-size, 9) * 1ch + 20px);'),
+    'the language picker should show token-only options and size itself to the longest visible token'
+);
+assert(
+    hybrid.includes("icon.className = 'dumbpad-code-language-icon'") &&
+        styles.includes('.dumbpad-code-language-icon') &&
+        codeBlockSurfaceRule.includes('padding: 30px 16px 12px 54px !important;'),
+    'language badges should support compact icons in a reserved top tool row above code content'
 );
 assert(
     styles.includes('white-space: pre-wrap;') && styles.includes('overflow-wrap: anywhere;') && styles.includes('min-width: 0;'),

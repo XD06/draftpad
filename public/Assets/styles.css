@@ -30,7 +30,7 @@
 .typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] > pre {
     position: relative;
     box-sizing: border-box;
-    padding: 12px 16px 12px 54px !important;
+    padding: 30px 16px 12px 54px !important;
     border: 1px solid color-mix(in srgb, var(--border-color) 80%, transparent);
     border-radius: 8px;
     background: var(--code-bg) !important;
@@ -43,7 +43,7 @@
 .typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] > pre.dumbpad-code-lines::before {
     content: attr(data-line-numbers);
     position: absolute;
-    top: 12px;
+    top: 30px;
     left: 0;
     width: 40px;
     box-sizing: border-box;
@@ -82,19 +82,36 @@
 
 .typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] .dumbpad-code-language-badge {
     display: inline-flex;
-    max-width: 78px;
-    height: 20px !important;
+    max-width: 92px;
+    height: 19px !important;
     box-sizing: border-box;
     margin: 0 !important;
-    padding: 0 5px !important;
+    padding: 0 5px 0 4px !important;
     align-items: center;
+    gap: 3px;
     border: 1px solid color-mix(in srgb, var(--border-color) 76%, transparent);
-    border-radius: 6px;
+    border-radius: 5px;
     outline: none;
     background: color-mix(in srgb, var(--code-bg) 92%, var(--text-color) 8%);
     color: var(--muted-text);
-    font: 500 9px/18px var(--font-code) !important;
+    font: 500 9px/17px var(--font-code) !important;
     letter-spacing: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] .dumbpad-code-language-icon {
+    display: block;
+    flex: 0 0 12px;
+    width: 12px;
+    height: 12px;
+    object-fit: contain;
+    pointer-events: none;
+}
+
+.typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] .dumbpad-code-language-token {
+    min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -122,7 +139,7 @@
 }
 
 .typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] > pre:has(> .dumbpad-code-language-badge.is-readonly) .vditor-copy span {
-    right: 70px;
+    right: 100px;
     top: 6px;
 }
 
@@ -163,9 +180,10 @@
 .dumbpad-code-language-popover {
     position: fixed;
     z-index: 4300;
-    width: min(220px, calc(100vw - 16px));
+    width: calc(var(--code-language-popover-size, 9) * 1ch + 20px);
+    max-width: calc(100vw - 16px);
     box-sizing: border-box;
-    padding: 6px;
+    padding: 4px;
     border: 1px solid var(--border-color);
     border-radius: 7px;
     background: var(--modal-bg);
@@ -182,7 +200,7 @@
     height: 28px;
     box-sizing: border-box;
     margin: 0;
-    padding: 0 8px;
+    padding: 0 4px;
     border: 1px solid var(--border-color);
     border-radius: 5px;
     outline: none;
@@ -213,19 +231,18 @@
 }
 
 .dumbpad-code-language-option {
-    display: grid;
+    display: block;
     min-width: 0;
-    min-height: 30px;
+    min-height: 27px;
     box-sizing: border-box;
-    grid-template-columns: minmax(0, 1fr) auto;
-    align-items: center;
-    gap: 8px;
-    padding: 4px 7px;
+    padding: 5px;
     border: 0;
     border-radius: 5px;
     background: transparent;
     color: var(--text-color);
     text-align: left;
+    font: 600 11px/17px var(--font-code);
+    white-space: nowrap;
     cursor: pointer;
 }
 
@@ -234,22 +251,6 @@
 .dumbpad-code-language-option[aria-selected="true"] {
     outline: none;
     background: color-mix(in srgb, var(--primary-color) 12%, transparent);
-}
-
-.dumbpad-code-language-token {
-    overflow: hidden;
-    font: 600 12px/1.2 var(--font-code);
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.dumbpad-code-language-detail {
-    overflow: hidden;
-    max-width: 112px;
-    color: var(--muted-text);
-    font: 400 10px/1.2 var(--font-reading);
-    text-overflow: ellipsis;
-    white-space: nowrap;
 }
 
 .typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] >

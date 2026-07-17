@@ -18,7 +18,11 @@ import {
     replaceFileCommand
 } from './managers/article-file-command.js';
 import { moveStandaloneMarkdownBlock, splitTopLevelMarkdownBlocks } from './managers/article-block-move.js';
-import { findCodeLanguageSuggestions, resolveCodeLanguage } from './managers/code-language-catalog.js';
+import {
+    findCodeLanguageSuggestions,
+    getCodeLanguageIconPath,
+    resolveCodeLanguage
+} from './managers/code-language-catalog.js';
 import {
     buildCodeFenceMarkdown,
     buildPendingCodeFenceText,
@@ -2812,7 +2816,7 @@ export class HybridMarkdownEditor {
                     languageBadge.setAttribute('aria-label', '代码块语言');
                     pre.appendChild(languageBadge);
                 }
-                languageBadge.textContent = displayLanguage;
+                this.renderCodeLanguageBadge(languageBadge, displayLanguage);
                 languageBadge.dataset.codeLanguage = language;
                 return;
             }
@@ -2854,7 +2858,7 @@ export class HybridMarkdownEditor {
             const languageButton = document.createElement('button');
             languageButton.type = 'button';
             languageButton.className = 'dumbpad-code-language-badge';
-            languageButton.textContent = displayLanguage;
+            this.renderCodeLanguageBadge(languageButton, displayLanguage);
             languageButton.dataset.codeLanguage = language;
             languageButton.title = `设置代码块语言：${displayLanguage}`;
             languageButton.setAttribute('aria-label', `设置代码块语言，当前为 ${displayLanguage}`);
@@ -2874,6 +2878,29 @@ export class HybridMarkdownEditor {
             tools.append(copyButton, languageButton);
             pre.appendChild(tools);
         });
+    }
+
+    renderCodeLanguageBadge(badge, language) {
+        const displayLanguage = String(language || 'plaintext').trim().toLowerCase() || 'plaintext';
+        const iconPath = getCodeLanguageIconPath(displayLanguage);
+        const parts = [];
+        if (iconPath) {
+            const icon = document.createElement('img');
+            icon.className = 'dumbpad-code-language-icon';
+            icon.src = iconPath;
+            icon.alt = '';
+            icon.width = 12;
+            icon.height = 12;
+            icon.draggable = false;
+            icon.setAttribute('aria-hidden', 'true');
+            parts.push(icon);
+        }
+        const token = document.createElement('span');
+        token.className = 'dumbpad-code-language-token';
+        token.setAttribute('translate', 'no');
+        token.textContent = displayLanguage;
+        parts.push(token);
+        badge.replaceChildren(...parts);
     }
 
     getRenderedCodeBlockLanguage(code) {
@@ -2992,16 +3019,14 @@ export class HybridMarkdownEditor {
             option.dataset.codeLanguageOption = item.id;
             option.setAttribute('role', 'option');
             option.setAttribute('aria-selected', 'false');
-            const token = document.createElement('span');
-            token.className = 'dumbpad-code-language-token';
-            token.textContent = item.id;
-            const detail = document.createElement('span');
-            detail.className = 'dumbpad-code-language-detail';
-            const aliases = item.aliases.slice(0, 2).join(', ');
-            detail.textContent = aliases ? `${item.label} · ${aliases}` : item.label;
-            option.append(token, detail);
+            option.setAttribute('translate', 'no');
+            option.textContent = item.id;
             list.appendChild(option);
         });
+        const visibleTokens = [input.value.trim(), ...this.codeLanguageSuggestions.map(item => item.id)].filter(Boolean);
+        const longestToken = visibleTokens.reduce((length, token) => Math.max(length, Array.from(token).length), 0);
+        const popoverSize = Math.max(4, Math.min(12, longestToken || 9));
+        popover.style.setProperty('--code-language-popover-size', String(popoverSize));
         list.hidden = this.codeLanguageSuggestions.length === 0;
         this.positionCodeLanguagePopover();
     }
