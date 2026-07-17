@@ -43,6 +43,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     let editorInstance = null;
     let editorLoader = null;
     let pendingEditorValue = '';
+    let runtimeConfig = {};
 
     const editor = {
         get value() { return editorInstance ? editorInstance.getValue() : pendingEditorValue; },
@@ -1256,6 +1257,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                         }, 700);
                     }
                 });
+                editorInstance.setAssetMaxFileBytes(runtimeConfig.assetMaxFileBytes);
                 if (pendingEditorValue) editorInstance.setValue(pendingEditorValue, false);
                 editorInstance.setReadingMode(isReadingMode);
                 return editorInstance;
@@ -2742,6 +2744,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         try {
             if (!navigator.onLine) return;
             const config = await (await fetch('/api/config')).json();
+            runtimeConfig = config;
+            editorInstance?.setAssetMaxFileBytes(config.assetMaxFileBytes);
             _siteTitle = config.siteTitle;
             applyCurrentNotepadTitle();
         } catch (err) {

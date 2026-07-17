@@ -10,7 +10,7 @@ function loadArticleFileCommand() {
     const source = fs.readFileSync(sourcePath, 'utf8')
         .replace(/export const /g, 'const ')
         .replace(/export function /g, 'function ')
-        + '\nmodule.exports = { FILE_COMMAND, ARTICLE_FILE_TITLE_PREFIX, formatFileSize, findFileCommandBeforeCursor, replaceFileCommand, buildArticleFileMarkdown };\n';
+        + '\nmodule.exports = { FILE_COMMAND, ARTICLE_FILE_TITLE_PREFIX, formatFileSize, findFileCommandBeforeCursor, findFileCommandInMarkdownBlock, replaceFileCommand, buildArticleFileMarkdown };\n';
     const context = { module: { exports: {} }, exports: {}, String, Number, Math, RegExp, encodeURIComponent };
     vm.runInNewContext(source, context, { filename: sourcePath });
     return context.module.exports;
@@ -22,6 +22,7 @@ function run() {
         ARTICLE_FILE_TITLE_PREFIX,
         formatFileSize,
         findFileCommandBeforeCursor,
+        findFileCommandInMarkdownBlock,
         replaceFileCommand,
         buildArticleFileMarkdown
     } = loadArticleFileCommand();
@@ -42,6 +43,31 @@ function run() {
         findFileCommandBeforeCursor('/file', 4, 5),
         null,
         'a selection must not invoke the command'
+    );
+
+    const fencedSource = [
+        '开头段落',
+        '',
+        '```python',
+        "print('ok')",
+        '```',
+        '',
+        '/file'
+    ].join('\n');
+    const commandStart = fencedSource.lastIndexOf('/file');
+    const fencedCommand = findFileCommandInMarkdownBlock(
+        { raw: '/file', start: commandStart, end: fencedSource.length, type: 'paragraph' },
+        '/file'
+    );
+    assert.strictEqual(fencedCommand?.start, commandStart, 'a /file paragraph after fenced code should keep its exact source start');
+    assert.strictEqual(fencedCommand?.end, fencedSource.length, 'a /file paragraph after fenced code should keep its exact source end');
+    assert.strictEqual(
+        findFileCommandInMarkdownBlock(
+            { raw: '```text\n/file\n```', start: 0, end: 17, type: 'code' },
+            '/file'
+        ),
+        null,
+        '/file inside a fenced code block must remain ordinary code text'
     );
 
     const replaced = replaceFileCommand('插入 /file 内容', { start: 3, end: 8 }, '[[上传中]]');

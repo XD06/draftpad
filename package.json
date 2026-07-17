@@ -15,11 +15,15 @@
     "test:thought-outbox": "node test_thought_outbox.js",
     "test:thought-attachments": "node test_thought_attachments.js",
     "test:assets": "node test_asset_routes.js",
+    "test:asset-upload-progress": "node test_asset_upload_progress.js",
     "test:asset-storage-s3": "node test_asset_storage_s3.js",
     "test:sidebar-title-search": "node test_sidebar_title_search.js",
     "test:image-paste": "node test_image_paste_integration.js",
     "test:file-command": "node test_article_file_command.js",
     "test:file-command-integration": "node test_article_file_command_integration.js",
+    "test:code-fence-command": "node test_code_fence_command.js",
+    "test:code-block-presentation": "node test_code_block_presentation.js",
+    "test:seed-demo": "node test_seed_demo_data.js",
     "test:article-block-move": "node test_article_block_move.js",
     "test:file-asset-policy": "node test_file_asset_policy.js",
     "test:thought-card-renderer": "node test_thought_card_renderer.js",
@@ -70,7 +74,8 @@
     "ai:backfill-prefix": "node scripts/ai-backfill-prefix.js",
     "generate-icons": "node scripts/generate-png.js",
     "docker:update": "node scripts/update-docker-container.js",
-    "seed:demo": "node scripts/seed-demo-data.js --reset"
+    "seed:demo": "node scripts/seed-demo-data.js --reset",
+    "seed:demo:merge": "node scripts/seed-demo-data.js --merge"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1055.0",

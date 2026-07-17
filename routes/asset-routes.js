@@ -44,9 +44,9 @@ function responseAsset(metadata) {
     };
 }
 
-function registerAssetRoutes(app, { storage, originValidationMiddleware }) {
+function registerAssetRoutes(app, { storage, originValidationMiddleware, maxFileBytes }) {
     const assets = createAssetStorage(storage);
-    const maxFileBytes = getMaxFileBytes();
+    const fileByteLimit = getMaxFileBytes(maxFileBytes);
 
     app.post(
         '/api/assets/images',
@@ -103,7 +103,7 @@ function registerAssetRoutes(app, { storage, originValidationMiddleware }) {
     app.post(
         '/api/assets/files',
         originValidationMiddleware,
-        express.raw({ type: 'application/octet-stream', limit: maxFileBytes }),
+        express.raw({ type: 'application/octet-stream', limit: fileByteLimit }),
         async (req, res) => {
             const input = Buffer.isBuffer(req.body) ? req.body : null;
             const requestedName = decodeAssetName(req.get('x-asset-name'));
@@ -111,7 +111,7 @@ function registerAssetRoutes(app, { storage, originValidationMiddleware }) {
                 name: requestedName,
                 type: req.get('x-asset-type'),
                 size: input?.length || 0,
-                maxBytes: maxFileBytes
+                maxBytes: fileByteLimit
             });
             if (!validation.ok) return res.status(validation.status || 415).json({ error: validation.error });
 

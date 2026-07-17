@@ -1,6 +1,6 @@
 @font-face {
     font-family: "DumbPad Reading";
-    src: url("/font/SourceHanSerifSC-Regular-subset.woff2") format("woff2");
+    src: url("/font/changerwencai.woff2") format("woff2");
     font-weight: 400;
     font-style: normal;
     font-display: swap;
@@ -19,10 +19,129 @@
 }
 .vditor-reset pre > code{
     background: var(--code-bg);
+    background-image: none !important;
 }
 
 [data-theme="dark"] .vditor-reset pre > code{
     background: var(--code-bg);
+    background-image: none !important;
+}
+
+.typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] > pre {
+    position: relative;
+    box-sizing: border-box;
+    padding: 12px 16px 12px 54px !important;
+    border: 1px solid color-mix(in srgb, var(--border-color) 80%, transparent);
+    border-radius: 8px;
+    background: var(--code-bg) !important;
+    background-image: none !important;
+    font-family: var(--font-code) !important;
+    line-height: 1.55;
+    margin-bottom: 1em;
+}
+
+.typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] > pre.dumbpad-code-lines::before {
+    content: attr(data-line-numbers);
+    position: absolute;
+    top: 12px;
+    left: 0;
+    width: 40px;
+    box-sizing: border-box;
+    padding: 0 9px 0 4px;
+    border-right: 1px solid color-mix(in srgb, var(--border-color) 82%, transparent);
+    color: color-mix(in srgb, var(--muted-text) 78%, transparent);
+    font: 400 13px/1.55 var(--font-code);
+    text-align: right;
+    white-space: pre;
+    pointer-events: none;
+    user-select: none;
+}
+
+.typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] > pre > code {
+    display: block;
+    min-width: 0;
+    padding: 0 !important;
+    background: transparent !important;
+    background-image: none !important;
+    font: 400 13px/1.55 var(--font-code) !important;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+}
+
+.typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] > pre > .dumbpad-code-tools {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    z-index: 3;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-family: var(--font-code);
+}
+
+.typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] .dumbpad-code-language {
+    width: 44px !important;
+    min-width: 0 !important;
+    max-width: 72px;
+    height: 22px !important;
+    min-height: 0 !important;
+    box-sizing: border-box;
+    margin: 0 !important;
+    padding: 0 5px !important;
+    border: 1px solid color-mix(in srgb, var(--border-color) 76%, transparent);
+    border-radius: 6px;
+    outline: none;
+    background: color-mix(in srgb, var(--code-bg) 92%, var(--text-color) 8%);
+    color: var(--text-color);
+    font: 500 10px/20px var(--font-code) !important;
+    letter-spacing: 0;
+    transition: width 120ms ease;
+}
+
+.typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] .dumbpad-code-language:focus {
+    width: 72px !important;
+    border-color: color-mix(in srgb, var(--primary-color) 62%, var(--border-color));
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary-color) 14%, transparent);
+}
+
+.typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] .dumbpad-code-copy {
+    display: inline-grid;
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    place-items: center;
+    border: 1px solid color-mix(in srgb, var(--border-color) 76%, transparent);
+    border-radius: 6px;
+    background: color-mix(in srgb, var(--code-bg) 88%, var(--text-color) 12%);
+    color: var(--muted-text);
+    cursor: pointer;
+    opacity: 0.78;
+}
+
+.typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] .dumbpad-code-copy:hover,
+.typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] .dumbpad-code-copy:focus-visible,
+.typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] .dumbpad-code-copy.is-copied {
+    outline: none;
+    border-color: color-mix(in srgb, var(--primary-color) 58%, var(--border-color));
+    background: color-mix(in srgb, var(--code-bg) 82%, var(--primary-color) 18%);
+    color: var(--primary-color);
+    opacity: 1;
+}
+
+.typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] .dumbpad-code-copy svg {
+    width: 13px;
+    height: 13px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+.typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] >
+    .vditor-wysiwyg__pre:not([style*="display: none"]):not([style*="display:none"]) + .vditor-wysiwyg__preview {
+    display: none !important;
 }
 
 /* Vditor loads the GitHub light highlight stylesheet for both app themes.
@@ -146,7 +265,7 @@
     --danger-color: #dc2626;
     --danger-hover: #ef4444;
     --code-markdown: rgba(37, 100, 235, 0.2);
-    --code-bg: #f4f5f7;
+    --code-bg: #fafaf8;
     --transition: background-color 0.3s, color 0.3s;
     --input-element-transition: background-color 0.2s ease;
     --ease-out-expo: cubic-bezier(0.19, 1, 0.22, 1);
@@ -3963,6 +4082,137 @@ body.toc-active .floating-actions {
     opacity: 0;
     pointer-events: none;
     clip-path: inset(50%);
+}
+
+.article-upload-card {
+    display: inline-flex;
+    width: min(100%, 560px);
+    min-height: 66px;
+    box-sizing: border-box;
+    align-items: center;
+    gap: 12px;
+    margin: 8px 0;
+    padding: 11px 12px;
+    border: 1px solid color-mix(in srgb, var(--border-color) 86%, transparent);
+    border-radius: 9px;
+    background: color-mix(in srgb, var(--textarea-bg) 94%, var(--primary-color) 6%);
+    color: var(--text-color);
+    font-family: var(--font-reading);
+    line-height: 1.35;
+    user-select: none;
+    vertical-align: middle;
+}
+
+.article-upload-card.is-error {
+    border-color: color-mix(in srgb, #c94a43 48%, var(--border-color));
+    background: color-mix(in srgb, var(--textarea-bg) 92%, #c94a43 8%);
+}
+
+.article-upload-icon {
+    display: inline-grid;
+    flex: 0 0 34px;
+    width: 34px;
+    height: 34px;
+    place-items: center;
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--primary-color) 15%, transparent);
+    color: var(--primary-color);
+    font: 600 18px/1 var(--font-reading);
+}
+
+.article-upload-content {
+    display: flex;
+    min-width: 0;
+    flex: 1;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.article-upload-heading {
+    display: flex;
+    min-width: 0;
+    align-items: baseline;
+    gap: 8px;
+}
+
+.article-upload-name {
+    overflow: hidden;
+    min-width: 0;
+    flex: 1;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.article-upload-size,
+.article-upload-status {
+    color: var(--muted-text);
+    font-size: 11px;
+}
+
+.article-upload-progress {
+    display: block;
+    overflow: hidden;
+    height: 3px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--border-color) 68%, transparent);
+}
+
+.article-upload-progress-fill {
+    display: block;
+    height: 100%;
+    border-radius: inherit;
+    background: var(--primary-color);
+    transition: width 120ms linear;
+}
+
+.article-upload-card.is-error .article-upload-progress-fill {
+    background: #c94a43;
+}
+
+.article-upload-actions {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 4px;
+}
+
+.article-upload-actions button {
+    min-height: 30px;
+    padding: 0 9px;
+    border: 0;
+    border-radius: 7px;
+    background: transparent;
+    color: var(--muted-text);
+    font: 500 12px/1 var(--font-reading);
+    cursor: pointer;
+}
+
+.article-upload-actions button:hover,
+.article-upload-actions button:focus-visible {
+    outline: none;
+    background: var(--button-hover);
+    color: var(--text-color);
+}
+
+@media (max-width: 600px) {
+    .article-upload-card {
+        align-items: flex-start;
+        gap: 9px;
+        padding: 10px;
+    }
+
+    .article-upload-icon {
+        flex-basis: 30px;
+        width: 30px;
+        height: 30px;
+    }
+
+    .article-upload-actions {
+        flex-direction: column;
+        align-items: stretch;
+    }
 }
 
 .vditor-reset img.dumbpad-article-image {

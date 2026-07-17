@@ -19,6 +19,7 @@ function registerAuthRoutes(app, context) {
         siteTitle: SITE_TITLE,
         buildVersion: BUILD_VERSION,
         highlightLanguages: HIGHLIGHT_LANGUAGES,
+        assetMaxFileBytes: ASSET_MAX_FILE_BYTES = 20 * 1024 * 1024,
         authService = null,
         auditLogger = null
     } = context;
@@ -426,6 +427,7 @@ function registerAuthRoutes(app, context) {
             baseUrl: process.env.BASE_URL,
             version: BUILD_VERSION,
             highlightLanguages: HIGHLIGHT_LANGUAGES,
+            assetMaxFileBytes: ASSET_MAX_FILE_BYTES,
             authMode: v2Enabled ? 'v2' : 'legacy'
         });
     });

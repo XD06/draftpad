@@ -2,7 +2,7 @@
 
 const DEFAULT_MAX_FILE_BYTES = 20 * 1024 * 1024;
 const MIN_FILE_BYTES = 1;
-const MAX_CONFIGURED_FILE_BYTES = 1024 * 1024 * 1024;
+const MAX_CONFIGURED_FILE_BYTES = 100 * 1024 * 1024;
 
 const FILE_TYPES = Object.freeze({
     pdf: { type: 'application/pdf', mimes: ['application/pdf'] },
@@ -42,10 +42,15 @@ function normalizeMime(value) {
 function getMaxFileBytes(value = process.env.ASSET_MAX_FILE_BYTES) {
     if (value === undefined || value === null || value === '') return DEFAULT_MAX_FILE_BYTES;
     const parsed = Number(value);
-    if (!Number.isInteger(parsed) || parsed < MIN_FILE_BYTES || parsed > MAX_CONFIGURED_FILE_BYTES) {
+    if (!Number.isInteger(parsed) || parsed < MIN_FILE_BYTES) {
         return DEFAULT_MAX_FILE_BYTES;
     }
-    return parsed;
+    return Math.min(parsed, MAX_CONFIGURED_FILE_BYTES);
+}
+
+function formatLimitMegabytes(bytes) {
+    const value = Math.round((Number(bytes) / (1024 * 1024)) * 10) / 10;
+    return Number.isInteger(value) ? String(value) : value.toFixed(1);
 }
 
 function validateFileAssetUpload({ name, type, size, maxBytes = getMaxFileBytes() } = {}) {
@@ -58,7 +63,7 @@ function validateFileAssetUpload({ name, type, size, maxBytes = getMaxFileBytes(
     if (!policy) return { ok: false, error: 'Unsupported file type' };
     if (!Number.isFinite(bytes) || bytes < MIN_FILE_BYTES) return { ok: false, error: 'File body is required' };
     if (!Number.isFinite(limit) || limit < MIN_FILE_BYTES || bytes > limit) {
-        return { ok: false, error: '文件超过 20MB 限制', status: 413 };
+        return { ok: false, error: `文件超过 ${formatLimitMegabytes(limit)}MB 限制`, status: 413 };
     }
     if (mime && !policy.mimes.includes(mime)) {
         return { ok: false, error: 'File MIME type does not match its extension' };
@@ -72,6 +77,7 @@ function validateFileAssetUpload({ name, type, size, maxBytes = getMaxFileBytes(
 
 module.exports = {
     DEFAULT_MAX_FILE_BYTES,
+    MAX_CONFIGURED_FILE_BYTES,
     FILE_TYPES,
     getExtension,
     getMaxFileBytes,

@@ -43,6 +43,7 @@ const { createAgentModelClient } = require('./scripts/agent/agent-model-client')
 const { createAgentRunService } = require('./scripts/agent/agent-run-service');
 const { createAgentToolRegistry } = require('./scripts/agent/agent-tool-registry');
 const { createAgentWorkflowRegistry } = require('./scripts/agent/agent-workflow-registry');
+const { getMaxFileBytes } = require('./scripts/file-asset-policy');
 const ipaddr = require('ipaddr.js');
 
 function getAvailableHighlightLanguages() {
@@ -73,6 +74,7 @@ const NOTEPADS_FILE = path.join(DATA_DIR, 'notepads.json');
 const THOUGHTS_FILE = path.join(DATA_DIR, 'thoughts.json');
 const SITE_TITLE = process.env.SITE_TITLE || 'DumbPad';
 const PIN = process.env.DUMBPAD_PIN;
+const ASSET_MAX_FILE_BYTES = getMaxFileBytes();
 
 const COOKIE_NAME = 'dumbpad_auth';
 const COOKIE_MAX_AGE = process.env.COOKIE_MAX_AGE || 24; // default 24 in hours
@@ -347,7 +349,8 @@ registerAuthRoutes(app, {
     nodeEnv: NODE_ENV,
     siteTitle: SITE_TITLE,
     buildVersion: BUILD_VERSION,
-    highlightLanguages: HIGHLIGHT_LANGUAGES
+    highlightLanguages: HIGHLIGHT_LANGUAGES,
+    assetMaxFileBytes: ASSET_MAX_FILE_BYTES
 });
 
 registerShareRoutes(app, {
@@ -610,7 +613,8 @@ registerDataManagementRoutes(app, {
 
 registerAssetRoutes(app, {
     storage,
-    originValidationMiddleware
+    originValidationMiddleware,
+    maxFileBytes: ASSET_MAX_FILE_BYTES
 });
 
 registerThoughtRoutes(app, {

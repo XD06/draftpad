@@ -39,6 +39,10 @@ function run() {
         'display guard zero-width marker should be removed before saving'
     );
     assert(
+        stripHybridDisplayArtifacts(`\`\`\u2060\`python\n\uE001`) === '```python\n',
+        'pending fence and WYSIWYG caret sentinels must never leak into Markdown source'
+    );
+    assert(
         stripHybridDisplayArtifacts('前 \u200B[[time:create:2026-06-24 09:08:07]]\u200B 后') === '前 [[time:create:2026-06-24 09:08:07]] 后',
         'time marker caret guards should be removed before saving'
     );

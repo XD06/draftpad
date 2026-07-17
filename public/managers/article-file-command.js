@@ -33,6 +33,38 @@ export function findFileCommandBeforeCursor(value, selectionStart, selectionEnd)
     return { start: commandStart, end: start };
 }
 
+export function findFileCommandInMarkdownBlock(block = {}, textBeforeCursor = '') {
+    const blockType = String(block.type || '').toLowerCase();
+    if (blockType === 'code' || blockType === 'codespan') return null;
+
+    const visiblePrefix = String(textBeforeCursor || '');
+    const localRange = findFileCommandBeforeCursor(visiblePrefix, visiblePrefix.length, visiblePrefix.length);
+    if (!localRange) return null;
+
+    const occurrenceIndex = visiblePrefix
+        .slice(0, localRange.end)
+        .split(FILE_COMMAND)
+        .length - 2;
+    if (occurrenceIndex < 0) return null;
+
+    const raw = String(block.raw || '');
+    let rawOffset = -1;
+    let from = 0;
+    for (let index = 0; index <= occurrenceIndex; index += 1) {
+        rawOffset = raw.indexOf(FILE_COMMAND, from);
+        if (rawOffset < 0) return null;
+        from = rawOffset + FILE_COMMAND.length;
+    }
+
+    const blockStart = Number(block.start);
+    const blockEnd = Number(block.end);
+    if (!Number.isInteger(blockStart) || !Number.isInteger(blockEnd)) return null;
+    const start = blockStart + rawOffset;
+    const end = start + FILE_COMMAND.length;
+    if (start < blockStart || end > blockEnd) return null;
+    return { start, end };
+}
+
 export function replaceFileCommand(value, range, replacement = '') {
     const text = String(value || '');
     const start = clampOffset(text, range?.start);

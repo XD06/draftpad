@@ -25,6 +25,18 @@ function run() {
         'WYSIWYG /time handling should run before plain paragraph soft Enter handling'
     );
     assert(
+        source.includes("from './managers/code-fence-command.js'") &&
+            source.includes('if (this.handlePendingCodeFenceTyping(event)) return;') &&
+            source.includes('if (this.handlePendingCodeFenceEnter(event)) return;'),
+        'pending code fences should intercept the third backtick and Enter before Vditor command handling'
+    );
+    assert(
+        source.includes('handlePendingCodeFenceInput()') &&
+            source.includes('PENDING_CODE_FENCE_GUARD') &&
+            source.includes("this.container.addEventListener('beforeinput', this.pendingCodeFenceBeforeInputHandler, true)"),
+        'pending code-fence language typing should remain guarded for keyboard and beforeinput insertion paths'
+    );
+    assert(
         source.includes('this.notifyEditorValueChanged();'),
         'WYSIWYG /time handling should notify the outer save pipeline after DOM-local time marker changes'
     );
@@ -53,6 +65,11 @@ function run() {
         source.includes('startParagraph.parentElement !== root') &&
             source.includes("const caretGuard = document.createTextNode('\\u200B');"),
         'Plain WYSIWYG Enter should be limited to root paragraphs and keep a caret guard for stable soft breaks'
+    );
+    assert(
+        source.includes('isCaretAdjacentToTimeMarker(range)') &&
+            source.includes('if (this.isCaretAdjacentToTimeMarker(range)) return null;'),
+        'Enter immediately after a rendered /time marker should use Vditor paragraph creation instead of DumbPad soft breaks'
     );
     assert(
         !source.includes('this._lastValue = this.stripDisplayGuards(this.editor?.getValue?.() || this._lastValue || \'\');\n        this.scheduleDecorateRenderedMarks();'),

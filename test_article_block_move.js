@@ -93,4 +93,28 @@ const mismatch = moveStandaloneMarkdownBlock({
 });
 assert.strictEqual(mismatch.ok, false, 'a DOM/Markdown block mismatch should fail closed');
 
+const fencedSource = [
+    '开头段落',
+    '',
+    '```python',
+    "print('ok')",
+    '```',
+    '',
+    '/file'
+].join('\n');
+const fencedBlocks = splitTopLevelMarkdownBlocks(fencedSource, lexer);
+assert.strictEqual(fencedBlocks.ok, true, 'fenced code articles should still produce an exact top-level source map');
+assert.strictEqual(fencedBlocks.blocks.length, 3, 'a fenced code block should occupy one top-level source block');
+assert.strictEqual(fencedBlocks.blocks[2].raw, '/file', 'the command after fenced code should remain its own block');
+assert.strictEqual(
+    fencedBlocks.blocks[2].start,
+    fencedSource.lastIndexOf('/file'),
+    'each top-level block should expose its exact Markdown start offset'
+);
+assert.strictEqual(
+    fencedBlocks.blocks[2].end,
+    fencedSource.length,
+    'each top-level block should expose its exact Markdown end offset'
+);
+
 console.log('Article block move checks passed');

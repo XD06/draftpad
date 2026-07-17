@@ -20,7 +20,10 @@ function getMethodBody(name, nextMethod) {
     return match[1];
 }
 
-assert(assetClient.includes("fetch('/api/assets/images'"), 'image client should upload raw image bytes through the asset API');
+assert(
+    assetClient.includes("url: '/api/assets/images'") && assetClient.includes('xhr.send(file);'),
+    'image client should upload raw image bytes through the progress-aware asset API'
+);
 assert(assetClient.includes('MAX_IMAGE_ASSET_SIZE = 50 * 1024 * 1024'), 'image client should enforce the 50MB image limit');
 assert(hybrid.includes('bindArticleImageInteractions()'), 'hybrid editor should bind image paste and image interactions');
 assert(hybrid.includes('queueArticleImageUpload(file)'), 'article paste should upload image files');
@@ -107,7 +110,7 @@ assert.deepStrictEqual(
 const moveArticleImageToTarget = new Function(
     'moveStandaloneMarkdownBlock',
     'lexMarkdown',
-    `return function moveArticleImageToTarget(drag, dropTarget) {${getMethodBody('moveArticleImageToTarget', 'getSafeArticleImageDragValue')}}`
+    `return function moveArticleImageToTarget(drag, dropTarget) {${getMethodBody('moveArticleImageToTarget', 'createArticleMoveSourceIdentity')}}`
 )(() => ({ ok: true, value: 'after-with-exact-source' }), () => []);
 const imageSourceBlock = { nextElementSibling: { marker: 'origin-next' } };
 const imageTargetBlock = { before(block) { this.movedBlock = block; } };
@@ -120,6 +123,7 @@ assert.strictEqual(moveArticleImageToTarget.call({
     container: { querySelector: () => imageRoot },
     getArticleImageBlock: () => imageSourceBlock,
     getSafeArticleImageDragValue: () => ({ value: 'before', imageMarkdown: 'image-md' }),
+    createArticleMoveDropTargetFingerprint: () => ({ index: 2 }),
     isSafeArticleImageMove: (_before, next) => next === 'after-with-exact-source',
     commitArticleImageDragValue: value => { imageMoveState.committed = value; },
     editor: { getValue: () => { throw new Error('decorated DOM must not be serialized directly'); } }
@@ -177,6 +181,7 @@ const regularVditorInputContext = {
     isDecorating: false,
     suppressInput: false,
     isComposing: false,
+    handlePendingCodeFenceInput: () => false,
     handleWysiwygInput: () => { regularVditorInputState.handled += 1; }
 };
 handleVditorInput.call(regularVditorInputContext);

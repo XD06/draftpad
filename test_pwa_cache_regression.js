@@ -29,7 +29,7 @@ const requiredCoreAssets = [
 ];
 
 const deferredAssets = [
-    '/font/SourceHanSerifSC-Regular-subset.woff2',
+    '/font/changerwencai.woff2',
     '/font/FiraCode-Regular.ttf',
     '/hybrid-editor.js',
     '/vendor/vditor/index.css',

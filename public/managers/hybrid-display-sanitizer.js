@@ -13,7 +13,9 @@ function annotationSource(markedText = '', comment = '') {
 }
 
 export function stripHybridDisplayArtifacts(value = '') {
-    let output = String(value || '').replace(/\u200B(?=\s*<(?:mark\b|span\s+data-(?:draw|note)\b))/gi, '');
+    let output = String(value || '')
+        .replace(/[\u2060\uE001]/g, '')
+        .replace(/\u200B(?=\s*<(?:mark\b|span\s+data-(?:draw|note)\b))/gi, '');
     output = output
         .replace(/\u200B(?=\s*\[\[time:)/g, '')
         .replace(/(\[\[time:[^\]]+\]\])\u200B/g, '$1');

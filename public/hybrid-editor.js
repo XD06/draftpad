@@ -14,9 +14,20 @@ import {
     buildArticleFileMarkdown,
     FILE_COMMAND,
     findFileCommandBeforeCursor,
+    findFileCommandInMarkdownBlock,
     replaceFileCommand
 } from './managers/article-file-command.js';
-import { moveStandaloneMarkdownBlock } from './managers/article-block-move.js';
+import { moveStandaloneMarkdownBlock, splitTopLevelMarkdownBlocks } from './managers/article-block-move.js';
+import {
+    buildCodeFenceMarkdown,
+    buildPendingCodeFenceText,
+    normalizeCodeFenceLanguage,
+    parseCodeFenceCommand,
+    PENDING_CODE_FENCE_GUARD,
+    readCodeFenceBody,
+    readCodeFenceLanguage,
+    replaceCodeFenceLanguage
+} from './managers/code-fence-command.js';
 import { lexer as lexMarkdown } from '/js/marked/marked.esm.js';
 
 const HEADING_RE = /^(#{1,6})\s+(.+?)\s*#*\s*$/;
@@ -71,6 +82,7 @@ export class HybridMarkdownEditor {
         this.isComposing = false;
         this.assetApi = new AssetApiClient();
         this.assetUploadTasks = new Set();
+        this.articleUploadStates = new Map();
         this.articleFileCommand = null;
 
         this.container.innerHTML = '';
@@ -144,6 +156,7 @@ export class HybridMarkdownEditor {
         this.bindReadingModeGuard();
         this.bindArticleFileInteractions();
         this.bindArticleImageInteractions();
+        this.bindArticleUploadInteractions();
         this.createArticleFileInput();
         this.bindCompositionEvents();
         this.bindTimeCommand();
@@ -177,6 +190,7 @@ export class HybridMarkdownEditor {
         }
         this.preferLastValueUntilInput = false;
         if (this.isDecorating || this.suppressInput || this.isComposing) return;
+        if (this.handlePendingCodeFenceInput()) return;
         this.handleWysiwygInput();
     }
 
@@ -400,7 +414,7 @@ export class HybridMarkdownEditor {
         // Check if DOM has any rendered marks that editor.getValue()
         // might not preserve (Lute may strip or convert them).
         const hasRenderedMarks = root?.querySelector?.(
-            '.md-time-marker[data-time-source], mark.md-mark, [data-draw], .has-annotation'
+            '.md-time-marker[data-time-source], mark.md-mark, [data-draw], .has-annotation, .article-upload-card[data-article-upload-token], pre.dumbpad-code-lines[data-line-numbers]'
         );
 
         if (!hasRenderedMarks || typeof this.editor?.html2md !== 'function') {
@@ -408,6 +422,8 @@ export class HybridMarkdownEditor {
         }
 
         const clone = root.cloneNode(true);
+        this.restoreArticleUploadPlaceholders(clone);
+        this.restoreCodeBlockLineNumberDecorations(clone);
         this.restoreRenderedTimeMarkers(clone);
         this.restoreAllRenderedMarks(clone);
         return this.stripDisplayGuards(this.editor.html2md(clone.innerHTML) || rawValue);
@@ -458,6 +474,20 @@ export class HybridMarkdownEditor {
     restoreRenderedTimeMarkers(root) {
         root?.querySelectorAll?.('.md-time-marker[data-time-source]').forEach(marker => {
             marker.replaceWith(document.createTextNode(marker.dataset.timeSource || ''));
+        });
+    }
+
+    restoreArticleUploadPlaceholders(root) {
+        root?.querySelectorAll?.('.article-upload-card[data-article-upload-token]').forEach(card => {
+            card.replaceWith(document.createTextNode(card.dataset.articleUploadToken || ''));
+        });
+    }
+
+    restoreCodeBlockLineNumberDecorations(root) {
+        root?.querySelectorAll?.('pre.dumbpad-code-lines[data-line-numbers]').forEach(pre => {
+            pre.querySelector(':scope > .dumbpad-code-tools')?.remove();
+            pre.classList.remove('dumbpad-code-lines');
+            delete pre.dataset.lineNumbers;
         });
     }
 
@@ -672,7 +702,7 @@ export class HybridMarkdownEditor {
             this.editor?.enable?.();
         }
         this.container.querySelectorAll('[contenteditable]').forEach(el => {
-            if (el.classList?.contains('md-time-marker')) return;
+            if (el.classList?.contains('md-time-marker') || el.classList?.contains('article-upload-card')) return;
             el.setAttribute('contenteditable', enabled ? 'true' : 'false');
         });
         this.container.querySelectorAll('textarea').forEach(el => {
@@ -911,6 +941,11 @@ export class HybridMarkdownEditor {
             if (this.isDecorating || this.sourceMode || this.isComposing) return;
             const root = this.container.querySelector('.vditor-wysiwyg .vditor-reset');
             if (!root) return;
+
+            const needsCodeDecoration = root.querySelector(
+                '.vditor-wysiwyg__block[data-type="code-block"] > pre:not(.dumbpad-code-lines)'
+            );
+            if (needsCodeDecoration) this.decorateCodeBlockLineNumbers(root);
 
             // Check if any text node now contains raw marker source
             const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
@@ -1344,6 +1379,25 @@ export class HybridMarkdownEditor {
         return div.textContent || '';
     }
 
+    async copyTextToClipboard(text) {
+        const value = String(text || '');
+        if (!value) return false;
+        try {
+            await navigator.clipboard.writeText(value);
+            return true;
+        } catch (_error) {
+            const textarea = document.createElement('textarea');
+            textarea.value = value;
+            textarea.style.position = 'fixed';
+            textarea.style.left = '-9999px';
+            document.body.appendChild(textarea);
+            textarea.select();
+            const copied = document.execCommand('copy');
+            textarea.remove();
+            return copied;
+        }
+    }
+
     setupSelectionMenu() {
         this.selectionMenu = document.createElement('div');
         this.selectionMenu.className = 'selection-menu typora-selection-menu';
@@ -1376,20 +1430,7 @@ export class HybridMarkdownEditor {
         });
         const copyBtn = makeButton('复制', '复制', async () => {
             const text = this.currentSelectionData?.selectedText || window.getSelection()?.toString() || '';
-            if (text) {
-                try {
-                    await navigator.clipboard.writeText(text);
-                } catch (_error) {
-                    const textarea = document.createElement('textarea');
-                    textarea.value = text;
-                    textarea.style.position = 'fixed';
-                    textarea.style.left = '-9999px';
-                    document.body.appendChild(textarea);
-                    textarea.select();
-                    document.execCommand('copy');
-                    textarea.remove();
-                }
-            }
+            if (text) await this.copyTextToClipboard(text);
             this.hideSelectionMenu();
             window.getSelection()?.removeAllRanges();
         });
@@ -2182,6 +2223,7 @@ export class HybridMarkdownEditor {
 
         const sourceIndex = Array.from(root.children).indexOf(sourceBlock);
         const targetIndex = Array.from(root.children).indexOf(targetBlock);
+        const targetFingerprint = this.createArticleMoveDropTargetFingerprint(root, targetBlock);
         const moved = moveStandaloneMarkdownBlock({
             value: before.value,
             markdown: before.fileMarkdown,
@@ -2192,6 +2234,13 @@ export class HybridMarkdownEditor {
             expectedBlockCount: root.children.length
         });
         if (!moved.ok || !this.isSafeArticleFileMove(before, moved.value, drag.file)) {
+            if (!drag.structureRetryAttempted && this.scheduleArticleAssetMoveRetry({
+                kind: 'file',
+                sourceIdentity: this.createArticleMoveSourceIdentity('file', drag.file),
+                targetFingerprint,
+                placement: dropTarget.placement,
+                value: before.value
+            })) return false;
             this.editor?.tip?.('附件移动未保存，文章块结构与源码不一致', 3000);
             return false;
         }
@@ -2498,6 +2547,7 @@ export class HybridMarkdownEditor {
 
         const sourceIndex = Array.from(root.children).indexOf(sourceBlock);
         const targetIndex = Array.from(root.children).indexOf(targetBlock);
+        const targetFingerprint = this.createArticleMoveDropTargetFingerprint(root, targetBlock);
         const moved = moveStandaloneMarkdownBlock({
             value: before.value,
             markdown: before.imageMarkdown,
@@ -2508,6 +2558,13 @@ export class HybridMarkdownEditor {
             expectedBlockCount: root.children.length
         });
         if (!moved.ok || !this.isSafeArticleImageMove(before, moved.value, drag.image)) {
+            if (!drag.structureRetryAttempted && this.scheduleArticleAssetMoveRetry({
+                kind: 'image',
+                sourceIdentity: this.createArticleMoveSourceIdentity('image', drag.image),
+                targetFingerprint,
+                placement: dropTarget.placement,
+                value: before.value
+            })) return false;
             this.editor?.tip?.('图片移动未保存，文章块结构与源码不一致', 3000);
             return false;
         }
@@ -2521,6 +2578,98 @@ export class HybridMarkdownEditor {
         }
 
         this.commitArticleImageDragValue(moved.value, sourceBlock);
+        return true;
+    }
+
+    createArticleMoveSourceIdentity(kind, element) {
+        if (kind === 'image') {
+            return {
+                assetId: this.getArticleAssetId(element),
+                source: String(element?.getAttribute?.('src') || '')
+            };
+        }
+        return {
+            href: String(element?.getAttribute?.('href') || ''),
+            title: String(element?.getAttribute?.('title') || '')
+        };
+    }
+
+    createArticleMoveDropTargetFingerprint(root, block) {
+        const children = Array.from(root?.children || []);
+        const image = block?.querySelector?.('img.dumbpad-article-image');
+        const file = block?.querySelector?.('a.dumbpad-article-file');
+        return {
+            index: children.indexOf(block),
+            tagName: String(block?.tagName || '').toLowerCase(),
+            text: String(block?.textContent || '').replace(/\u200B/g, '').trim().slice(0, 180),
+            imageAssetId: this.getArticleAssetId(image),
+            imageSource: String(image?.getAttribute?.('src') || ''),
+            fileHref: String(file?.getAttribute?.('href') || ''),
+            fileTitle: String(file?.getAttribute?.('title') || '')
+        };
+    }
+
+    resolveArticleMoveDropTarget(root, targetFingerprint) {
+        const blocks = Array.from(root?.children || []);
+        if (!blocks.length || !targetFingerprint) return null;
+        const scored = blocks.map((block, index) => {
+            const current = this.createArticleMoveDropTargetFingerprint(root, block);
+            let score = -Math.abs(index - targetFingerprint.index);
+            if (current.tagName === targetFingerprint.tagName) score += 4;
+            if (targetFingerprint.text && current.text === targetFingerprint.text) score += 12;
+            if (targetFingerprint.imageAssetId && current.imageAssetId === targetFingerprint.imageAssetId) score += 18;
+            else if (targetFingerprint.imageSource && current.imageSource === targetFingerprint.imageSource) score += 14;
+            if (targetFingerprint.fileHref && current.fileHref === targetFingerprint.fileHref) score += 18;
+            if (targetFingerprint.fileTitle && current.fileTitle === targetFingerprint.fileTitle) score += 4;
+            return { block, score };
+        });
+        scored.sort((a, b) => b.score - a.score);
+        return scored[0]?.block || null;
+    }
+
+    findArticleMoveSource(root, kind, identity) {
+        if (!root || !identity) return null;
+        if (kind === 'image') {
+            return Array.from(root.querySelectorAll('img.dumbpad-article-image')).find(image => {
+                const assetId = this.getArticleAssetId(image);
+                const source = String(image.getAttribute('src') || '');
+                return (identity.assetId && assetId === identity.assetId) || (identity.source && source === identity.source);
+            }) || null;
+        }
+        return Array.from(root.querySelectorAll('a.dumbpad-article-file')).find(link => (
+            String(link.getAttribute('href') || '') === identity.href &&
+            String(link.getAttribute('title') || '') === identity.title
+        )) || null;
+    }
+
+    scheduleArticleAssetMoveRetry({ kind, sourceIdentity, targetFingerprint, placement, value }) {
+        if (this.pendingArticleMoveRetry || !sourceIdentity || !targetFingerprint || !value) return false;
+        this.pendingArticleMoveRetry = { kind, sourceIdentity, targetFingerprint, placement };
+        const scrollTop = this.container.querySelector('.vditor-wysiwyg')?.scrollTop || 0;
+        this.editor?.tip?.('正在校准旧文章结构…', 1800);
+        this.setValue(value, false);
+
+        setTimeout(() => {
+            const pending = this.pendingArticleMoveRetry;
+            this.pendingArticleMoveRetry = null;
+            if (!pending) return;
+            const root = this.container.querySelector('.vditor-wysiwyg .vditor-reset');
+            const scroller = this.container.querySelector('.vditor-wysiwyg');
+            if (scroller) scroller.scrollTop = scrollTop;
+            this.decorateArticleImages();
+            const source = this.findArticleMoveSource(root, pending.kind, pending.sourceIdentity);
+            const target = this.resolveArticleMoveDropTarget(root, targetFingerprint);
+            if (!source || !target) {
+                this.editor?.tip?.('资源移动未保存，请重试', 3000);
+                return;
+            }
+            const retryDrag = pending.kind === 'image'
+                ? { image: source, structureRetryAttempted: true }
+                : { file: source, structureRetryAttempted: true };
+            const retryTarget = { block: target, placement: pending.placement };
+            if (pending.kind === 'image') this.moveArticleImageToTarget(retryDrag, retryTarget);
+            else this.moveArticleFileToTarget(retryDrag, retryTarget);
+        }, 120);
         return true;
     }
 
@@ -2629,6 +2778,129 @@ export class HybridMarkdownEditor {
             else image.style.removeProperty('width');
         });
         this.decorateArticleFileLinks(root);
+        this.decorateArticleUploadPlaceholders(root);
+        this.decorateCodeBlockLineNumbers(root);
+    }
+
+    decorateCodeBlockLineNumbers(root = this.container.querySelector('.vditor-wysiwyg .vditor-reset')) {
+        root?.querySelectorAll?.('pre > code').forEach(code => {
+            const pre = code.parentElement;
+            if (!pre || pre.closest('.mermaid, .mermaid-block')) return;
+            const normalized = String(code.textContent || '').replace(/\r\n?/g, '\n').replace(/\n$/, '');
+            const lineCount = Math.max(1, normalized.split('\n').length);
+            const lineNumbers = Array.from({ length: lineCount }, (_item, index) => index + 1).join('\n');
+            pre.classList.add('dumbpad-code-lines');
+            pre.dataset.lineNumbers = lineNumbers;
+
+            if (!pre.classList.contains('vditor-wysiwyg__pre') || pre.querySelector(':scope > .dumbpad-code-tools')) return;
+            const block = pre.closest('.vditor-wysiwyg__block[data-type="code-block"]');
+            if (!block) return;
+            const tools = document.createElement('span');
+            tools.className = 'dumbpad-code-tools';
+            tools.setAttribute('contenteditable', 'false');
+
+            const languageInput = document.createElement('input');
+            languageInput.type = 'text';
+            languageInput.className = 'dumbpad-code-language';
+            languageInput.value = this.getRenderedCodeBlockLanguage(code);
+            languageInput.placeholder = '语言';
+            languageInput.title = '代码块语言，输入后按 Enter';
+            languageInput.setAttribute('aria-label', '代码块语言');
+            languageInput.setAttribute('autocomplete', 'off');
+            languageInput.setAttribute('spellcheck', 'false');
+            const commitLanguage = () => this.updateCodeBlockLanguage(block, languageInput.value);
+            languageInput.addEventListener('mousedown', event => event.stopPropagation());
+            languageInput.addEventListener('click', event => event.stopPropagation());
+            languageInput.addEventListener('keydown', event => {
+                event.stopPropagation();
+                if (event.key === 'Enter') {
+                    event.preventDefault();
+                    commitLanguage();
+                } else if (event.key === 'Escape') {
+                    event.preventDefault();
+                    languageInput.value = this.getRenderedCodeBlockLanguage(code);
+                    languageInput.blur();
+                }
+            });
+            languageInput.addEventListener('blur', commitLanguage);
+
+            const copyButton = document.createElement('button');
+            copyButton.type = 'button';
+            copyButton.className = 'dumbpad-code-copy';
+            copyButton.title = '复制代码';
+            copyButton.setAttribute('aria-label', '复制代码');
+            copyButton.setAttribute('contenteditable', 'false');
+            copyButton.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect width="14" height="14" x="8" y="8" rx="2"></rect><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"></path></svg>';
+            copyButton.addEventListener('mousedown', event => {
+                event.preventDefault();
+                event.stopPropagation();
+            });
+            copyButton.addEventListener('click', async event => {
+                event.preventDefault();
+                event.stopPropagation();
+                const currentCode = pre.querySelector(':scope > code');
+                const copied = await this.copyTextToClipboard(currentCode?.textContent || '');
+                if (!copied) return;
+                copyButton.classList.add('is-copied');
+                copyButton.title = '已复制';
+                this.editor?.tip?.('代码已复制', 1200);
+                clearTimeout(copyButton._copiedTimer);
+                copyButton._copiedTimer = setTimeout(() => {
+                    copyButton.classList.remove('is-copied');
+                    copyButton.title = '复制代码';
+                }, 1200);
+            });
+            tools.append(copyButton, languageInput);
+            pre.appendChild(tools);
+        });
+    }
+
+    getRenderedCodeBlockLanguage(code) {
+        const languageClass = Array.from(code?.classList || []).find(name => name.startsWith('language-'));
+        return languageClass ? languageClass.slice('language-'.length) : '';
+    }
+
+    resolveCodeBlockMarkdownContext(root, block, value) {
+        const parsed = splitTopLevelMarkdownBlocks(value, lexMarkdown);
+        if (!parsed.ok) return null;
+        const domIndex = Array.from(root.children).indexOf(block);
+        let markdownBlock = domIndex >= 0 && parsed.blocks.length === root.children.length
+            ? parsed.blocks[domIndex]
+            : null;
+        if (markdownBlock?.type !== 'code') markdownBlock = null;
+        if (!markdownBlock) {
+            const codeText = String(block.querySelector('.vditor-wysiwyg__pre > code')?.textContent || '')
+                .replace(/\r\n?/g, '\n')
+                .replace(/\n$/, '');
+            const candidates = parsed.blocks.filter(item => (
+                item.type === 'code' && String(readCodeFenceBody(item.raw) ?? '').replace(/\n$/, '') === codeText
+            ));
+            markdownBlock = candidates.length === 1 ? candidates[0] : null;
+        }
+        return markdownBlock ? { domIndex, markdownBlock } : null;
+    }
+
+    updateCodeBlockLanguage(block, requestedLanguage) {
+        const language = normalizeCodeFenceLanguage(requestedLanguage);
+        if (language === null) {
+            this.editor?.tip?.('语言仅支持字母、数字和 _ + . # -', 2200);
+            return false;
+        }
+        const root = this.container.querySelector('.vditor-wysiwyg .vditor-reset');
+        if (!root || !block || block.parentElement !== root) return false;
+        const value = this.getValue();
+        const context = this.resolveCodeBlockMarkdownContext(root, block, value);
+        if (!context) {
+            this.editor?.tip?.('未能定位代码块源码', 2200);
+            return false;
+        }
+        const currentLanguage = readCodeFenceLanguage(context.markdownBlock.raw);
+        if (currentLanguage === language) return false;
+        const replacement = replaceCodeFenceLanguage(context.markdownBlock.raw, language);
+        if (replacement === null) return false;
+        const next = `${value.slice(0, context.markdownBlock.start)}${replacement}${value.slice(context.markdownBlock.end)}`;
+        this.setWysiwygCodeFenceValue(next, context.domIndex);
+        return true;
     }
 
     decorateArticleFileLinks(root = this.container.querySelector('.vditor-wysiwyg .vditor-reset')) {
@@ -2648,21 +2920,227 @@ export class HybridMarkdownEditor {
         return this.queueArticleAssetUpload(file, { imageOnly: true });
     }
 
+    setAssetMaxFileBytes(value) {
+        return this.assetApi.setMaxFileBytes(value);
+    }
+
     queueArticleAssetUpload(file, { token = this.createArticleUploadToken(), alreadyInserted = false, imageOnly = false } = {}) {
         const isImage = imageOnly || isImageFile(file);
+        this.articleUploadStates.set(token, {
+            token,
+            file,
+            isImage,
+            phase: 'uploading',
+            loaded: 0,
+            total: Number(file?.size || 0),
+            percent: 0,
+            error: ''
+        });
         if (!alreadyInserted) this.insertArticleUploadPlaceholder(token);
-        const upload = isImage ? this.assetApi.uploadImage(file) : this.assetApi.uploadFile(file);
+        this.decorateArticleUploadPlaceholders();
+        requestAnimationFrame(() => this.decorateArticleUploadPlaceholders());
+        const uploadOptions = {
+            onProgress: progress => this.updateArticleUploadState(token, progress)
+        };
+        const upload = isImage ? this.assetApi.uploadImage(file, uploadOptions) : this.assetApi.uploadFile(file, uploadOptions);
         const task = upload
-            .then(asset => this.replaceArticleUploadPlaceholder(token, isImage ? this.buildArticleImageMarkdown(asset) : buildArticleFileMarkdown(asset)))
+            .then(asset => {
+                this.articleUploadStates.delete(token);
+                this.replaceArticleUploadPlaceholder(token, isImage ? this.buildArticleImageMarkdown(asset) : buildArticleFileMarkdown(asset));
+            })
             .catch(error => {
                 console.error(`Failed to upload article ${isImage ? 'image' : 'file'}:`, error);
                 const label = isImage ? '图片' : '文件';
-                this.replaceArticleUploadPlaceholder(token, `${label}上传失败：${file.name || label}`);
+                this.updateArticleUploadState(token, {
+                    phase: 'error',
+                    error: error?.message || `${label}上传失败`
+                });
                 this.editor?.tip?.(`${label}上传失败`, 3000);
             })
             .finally(() => this.assetUploadTasks.delete(task));
         this.assetUploadTasks.add(task);
         return task;
+    }
+
+    bindArticleUploadInteractions() {
+        if (this.articleUploadInteractionsBound) return;
+        this.articleUploadInteractionsBound = true;
+        this.container.addEventListener('click', event => {
+            const action = event.target.closest('[data-article-upload-action]');
+            const card = action?.closest?.('.article-upload-card[data-article-upload-token]');
+            if (!action || !card) return;
+            event.preventDefault();
+            event.stopPropagation();
+            event.stopImmediatePropagation?.();
+            const token = card.dataset.articleUploadToken || '';
+            if (action.dataset.articleUploadAction === 'retry') {
+                this.retryArticleUpload(token);
+            } else if (action.dataset.articleUploadAction === 'remove') {
+                this.removeArticleUploadPlaceholder(token);
+            }
+        }, true);
+    }
+
+    updateArticleUploadState(token, progress = {}) {
+        const current = this.articleUploadStates.get(token);
+        if (!current) return;
+        const next = { ...current, ...progress };
+        if (next.phase === 'processing') next.percent = 100;
+        next.percent = Math.min(100, Math.max(0, Number(next.percent) || 0));
+        this.articleUploadStates.set(token, next);
+        this.updateArticleUploadCard(token, next);
+    }
+
+    retryArticleUpload(token) {
+        const state = this.articleUploadStates.get(token);
+        if (!state?.file || state.phase !== 'error') return false;
+        this.queueArticleAssetUpload(state.file, {
+            token,
+            alreadyInserted: true,
+            imageOnly: state.isImage
+        });
+        return true;
+    }
+
+    removeArticleUploadPlaceholder(token) {
+        if (!token) return false;
+        this.articleUploadStates.delete(token);
+        this.replaceArticleUploadPlaceholder(token, '');
+        return true;
+    }
+
+    decorateArticleUploadPlaceholders(root = this.container.querySelector('.vditor-wysiwyg .vditor-reset')) {
+        if (!root || this.articleUploadStates.size === 0) return;
+        const tokens = Array.from(this.articleUploadStates.keys());
+        const existingTokens = new Set();
+        root.querySelectorAll('.article-upload-card[data-article-upload-token]').forEach(card => {
+            const token = card.dataset.articleUploadToken || '';
+            existingTokens.add(token);
+            const state = this.articleUploadStates.get(token);
+            if (state) this.renderArticleUploadCard(card, state);
+        });
+
+        const pendingTokens = tokens.filter(token => !existingTokens.has(token));
+        if (pendingTokens.length === 0) return;
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+        const nodes = [];
+        let node;
+        while ((node = walker.nextNode())) {
+            const protectedAncestor = node.parentElement?.closest?.('code, pre, .article-upload-card');
+            if (protectedAncestor && protectedAncestor !== root) continue;
+            if (pendingTokens.some(token => String(node.nodeValue || '').includes(token))) nodes.push(node);
+        }
+
+        nodes.forEach(textNode => {
+            let remaining = String(textNode.nodeValue || '');
+            const fragment = document.createDocumentFragment();
+            let decorated = false;
+            while (remaining) {
+                const match = pendingTokens
+                    .map(token => ({ token, index: remaining.indexOf(token) }))
+                    .filter(item => item.index >= 0)
+                    .sort((a, b) => a.index - b.index)[0];
+                if (!match) break;
+                if (match.index > 0) fragment.append(document.createTextNode(remaining.slice(0, match.index)));
+                const state = this.articleUploadStates.get(match.token);
+                if (state) {
+                    fragment.append(this.createArticleUploadCard(state));
+                    decorated = true;
+                } else {
+                    fragment.append(document.createTextNode(match.token));
+                }
+                remaining = remaining.slice(match.index + match.token.length);
+            }
+            if (!decorated) return;
+            if (remaining) fragment.append(document.createTextNode(remaining));
+            textNode.replaceWith(fragment);
+        });
+    }
+
+    createArticleUploadCard(state) {
+        const card = document.createElement('span');
+        card.className = 'article-upload-card';
+        card.dataset.articleUploadToken = state.token;
+        card.setAttribute('contenteditable', 'false');
+        card.setAttribute('role', 'status');
+        this.renderArticleUploadCard(card, state);
+        return card;
+    }
+
+    updateArticleUploadCard(token, state) {
+        const root = this.container.querySelector('.vditor-wysiwyg .vditor-reset');
+        const card = Array.from(root?.querySelectorAll('.article-upload-card[data-article-upload-token]') || [])
+            .find(item => item.dataset.articleUploadToken === token);
+        if (!card) {
+            this.decorateArticleUploadPlaceholders(root);
+            return;
+        }
+        this.renderArticleUploadCard(card, state);
+    }
+
+    renderArticleUploadCard(card, state) {
+        const phase = state.phase || 'uploading';
+        const percent = Math.round(Number(state.percent) || 0);
+        const name = state.file?.name || (state.isImage ? '图片' : '文件');
+        const size = this.formatArticleUploadBytes(state.total || state.file?.size || 0);
+        const status = phase === 'error'
+            ? (state.error || '上传失败')
+            : phase === 'processing'
+                ? '服务器处理中…'
+                : `上传中 ${percent}%`;
+        card.classList.toggle('is-error', phase === 'error');
+        card.dataset.uploadPhase = phase;
+        card.setAttribute('aria-label', `${name}，${status}`);
+        card.innerHTML = '';
+
+        const icon = document.createElement('span');
+        icon.className = 'article-upload-icon';
+        icon.setAttribute('aria-hidden', 'true');
+        icon.textContent = state.isImage ? '▧' : '↥';
+        const content = document.createElement('span');
+        content.className = 'article-upload-content';
+        const heading = document.createElement('span');
+        heading.className = 'article-upload-heading';
+        const fileName = document.createElement('span');
+        fileName.className = 'article-upload-name';
+        fileName.textContent = name;
+        const fileSize = document.createElement('span');
+        fileSize.className = 'article-upload-size';
+        fileSize.textContent = size;
+        heading.append(fileName, fileSize);
+        const statusRow = document.createElement('span');
+        statusRow.className = 'article-upload-status';
+        statusRow.textContent = status;
+        const progress = document.createElement('span');
+        progress.className = 'article-upload-progress';
+        const progressFill = document.createElement('span');
+        progressFill.className = 'article-upload-progress-fill';
+        progressFill.style.width = `${phase === 'error' ? Math.max(4, percent) : percent}%`;
+        progress.append(progressFill);
+        content.append(heading, statusRow, progress);
+        card.append(icon, content);
+
+        if (phase === 'error') {
+            const actions = document.createElement('span');
+            actions.className = 'article-upload-actions';
+            const retry = document.createElement('button');
+            retry.type = 'button';
+            retry.dataset.articleUploadAction = 'retry';
+            retry.textContent = '重试';
+            const remove = document.createElement('button');
+            remove.type = 'button';
+            remove.dataset.articleUploadAction = 'remove';
+            remove.textContent = '移除';
+            actions.append(retry, remove);
+            card.append(actions);
+        }
+    }
+
+    formatArticleUploadBytes(bytes) {
+        const value = Math.max(0, Number(bytes) || 0);
+        if (value < 1024) return `${value} B`;
+        if (value < 1024 * 1024) return `${(value / 1024).toFixed(value < 10 * 1024 ? 1 : 0)} KB`;
+        return `${(value / (1024 * 1024)).toFixed(value < 10 * 1024 * 1024 ? 1 : 0)} MB`;
     }
 
     insertArticleUploadPlaceholder(token) {
@@ -2944,11 +3422,173 @@ export class HybridMarkdownEditor {
         this.timeCommandKeydownHandler = (event) => {
             if (this.isReadingMode) return;
             if (this.sourceMode) return;
+            if (this.handlePendingCodeFenceTyping(event)) return;
+            if (this.handlePendingCodeFenceEnter(event)) return;
             if (this.handleWysiwygFileCommand(event)) return;
             if (this.handleWysiwygTimeCommand(event)) return;
             this.handleWysiwygSoftEnter(event);
         };
         this.container.addEventListener('keydown', this.timeCommandKeydownHandler, true);
+        this.pendingCodeFenceBeforeInputHandler = (event) => {
+            if (event.inputType !== 'insertText' || !String(event.data || '').includes('`')) return;
+            this.handlePendingCodeFenceTyping(event);
+        };
+        this.container.addEventListener('beforeinput', this.pendingCodeFenceBeforeInputHandler, true);
+    }
+
+    handlePendingCodeFenceTyping(event) {
+        const insertedText = event?.key || event?.data || '';
+        if (!event || !insertedText.includes('`') || event.ctrlKey || event.metaKey || event.altKey) {
+            return false;
+        }
+        if (!event.target?.closest?.('.vditor-wysiwyg')) return false;
+
+        const root = this.container.querySelector('.vditor-wysiwyg .vditor-reset');
+        const selection = window.getSelection();
+        const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
+        if (!root || !range?.collapsed || !root.contains(range.startContainer)) return false;
+        if (this.closestElement(range.startContainer, 'code, .md-time-marker')) return false;
+
+        let paragraph = this.closestElement(range.startContainer, 'p');
+        try {
+            let pendingText = null;
+            if (paragraph?.parentElement === root) {
+                const prefix = document.createRange();
+                prefix.selectNodeContents(paragraph);
+                prefix.setEnd(range.startContainer, range.startOffset);
+                const suffix = document.createRange();
+                suffix.selectNodeContents(paragraph);
+                suffix.setStart(range.startContainer, range.startOffset);
+                pendingText = buildPendingCodeFenceText(prefix.toString(), suffix.toString(), insertedText);
+            } else if (range.startContainer === root && root.childNodes.length === 0) {
+                pendingText = buildPendingCodeFenceText('', '', insertedText);
+                if (pendingText) {
+                    paragraph = document.createElement('p');
+                    paragraph.dataset.block = '0';
+                    root.append(paragraph);
+                }
+            }
+            if (!pendingText) return false;
+
+            event.preventDefault();
+            event.stopPropagation();
+            event.stopImmediatePropagation?.();
+            paragraph.textContent = pendingText;
+            paragraph.classList.add('dumbpad-pending-code-fence');
+            this.placeCaretInTextNode(paragraph.firstChild);
+            return true;
+        } catch (_error) {
+            return false;
+        }
+    }
+
+    handlePendingCodeFenceInput() {
+        const root = this.container.querySelector('.vditor-wysiwyg .vditor-reset');
+        if (!root) return false;
+        const pending = Array.from(root.children).find(block =>
+            String(block.textContent || '').includes(PENDING_CODE_FENCE_GUARD)
+        );
+        if (!pending) return false;
+
+        const language = parseCodeFenceCommand(pending.textContent || '');
+        if (language !== null) {
+            pending.classList.add('dumbpad-pending-code-fence');
+            return true;
+        }
+
+        pending.classList.remove('dumbpad-pending-code-fence');
+        const walker = document.createTreeWalker(pending, NodeFilter.SHOW_TEXT);
+        let node;
+        while ((node = walker.nextNode())) {
+            if (node.nodeValue?.includes(PENDING_CODE_FENCE_GUARD)) {
+                node.nodeValue = node.nodeValue.replaceAll(PENDING_CODE_FENCE_GUARD, '');
+            }
+        }
+        return false;
+    }
+
+    handlePendingCodeFenceEnter(event) {
+        if (!this.isArticleFileCommandKeydown(event) || !event.target?.closest?.('.vditor-wysiwyg')) return false;
+        const selection = window.getSelection();
+        const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
+        const paragraph = range ? this.closestElement(range.startContainer, 'p') : null;
+        const language = paragraph ? parseCodeFenceCommand(paragraph.textContent || '') : null;
+        if (language === null) return false;
+
+        const root = this.container.querySelector('.vditor-wysiwyg .vditor-reset');
+        if (!root || paragraph.parentElement !== root || typeof this.editor?.html2md !== 'function') return false;
+        const rawValue = this.editor.html2md(root.innerHTML) || '';
+        const parsed = splitTopLevelMarkdownBlocks(rawValue, lexMarkdown);
+        if (!parsed.ok) return false;
+
+        const domIndex = Array.from(root.children).indexOf(paragraph);
+        let markdownBlock = domIndex >= 0 && parsed.blocks.length === root.children.length
+            ? parsed.blocks[domIndex]
+            : null;
+        if (!markdownBlock?.raw.includes(PENDING_CODE_FENCE_GUARD)) {
+            const guardedBlocks = parsed.blocks.filter(block => block.raw.includes(PENDING_CODE_FENCE_GUARD));
+            markdownBlock = guardedBlocks.length === 1 ? guardedBlocks[0] : null;
+        }
+        if (!markdownBlock) return false;
+
+        const built = buildCodeFenceMarkdown(language);
+        const next = `${rawValue.slice(0, markdownBlock.start)}${built.markdown}${rawValue.slice(markdownBlock.end)}`;
+        this.stopArticleFileCommandEvent(event);
+        this.setWysiwygCodeFenceValue(next, domIndex);
+        return true;
+    }
+
+    setWysiwygCodeFenceValue(value, blockIndex) {
+        this.wysiwygCaretRestore = null;
+        this.setValue(value, true);
+        this.focusInsertedCodeBlock(blockIndex);
+    }
+
+    focusInsertedCodeBlock(blockIndex) {
+        clearTimeout(this.pendingCodeFenceFocusTimer);
+        let attempts = 0;
+        const tryFocus = () => {
+            attempts += 1;
+            const root = this.container.querySelector('.vditor-wysiwyg .vditor-reset');
+            if (!root) return false;
+            let block = root.children[Math.max(0, Number(blockIndex) || 0)];
+            if (!block?.matches?.('.vditor-wysiwyg__block[data-type="code-block"]')) {
+                const blocks = Array.from(root.querySelectorAll(':scope > .vditor-wysiwyg__block[data-type="code-block"]'));
+                block = blocks[blocks.length - 1] || null;
+            }
+            if (!block) return false;
+
+            const sourcePre = block.querySelector('.vditor-wysiwyg__pre');
+            const preview = block.querySelector('.vditor-wysiwyg__preview');
+            if (!sourcePre) return false;
+            if (getComputedStyle(sourcePre).display === 'none') {
+                preview?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+            }
+
+            const code = sourcePre.querySelector('code');
+            if (!code || getComputedStyle(sourcePre).display === 'none') return false;
+            const textNode = code.firstChild?.nodeType === Node.TEXT_NODE
+                ? code.firstChild
+                : code.insertBefore(document.createTextNode(''), code.firstChild || null);
+            const range = document.createRange();
+            range.setStart(textNode, 0);
+            range.collapse(true);
+            const selection = window.getSelection();
+            selection?.removeAllRanges();
+            selection?.addRange(range);
+            root.focus({ preventScroll: true });
+            this.decorateCodeBlockLineNumbers(root);
+            requestAnimationFrame(() => this.scrollRangeIntoView(range));
+            return true;
+        };
+
+        if (tryFocus()) return true;
+        const retry = () => {
+            if (tryFocus() || attempts >= 4) return;
+            this.pendingCodeFenceFocusTimer = setTimeout(retry, attempts * 80);
+        };
+        this.pendingCodeFenceFocusTimer = setTimeout(retry, 40);
+        return false;
     }
 
     isArticleFileCommandKeydown(event) {
@@ -2977,14 +3617,53 @@ export class HybridMarkdownEditor {
         return true;
     }
 
+    getCurrentWysiwygBlockCommandContext(root, range) {
+        if (!root || !range || !range.collapsed || !root.contains(range.startContainer)) return null;
+        let block = range.startContainer?.nodeType === Node.ELEMENT_NODE
+            ? range.startContainer
+            : range.startContainer?.parentElement;
+        while (block?.parentElement && block.parentElement !== root) block = block.parentElement;
+        if (!block || block.parentElement !== root) return null;
+
+        try {
+            const prefix = document.createRange();
+            prefix.selectNodeContents(block);
+            prefix.setEnd(range.startContainer, range.startOffset);
+            return {
+                blockIndex: Array.from(root.children).indexOf(block),
+                blockCount: root.children.length,
+                textBeforeCursor: prefix.toString().replace(/\u200B/g, '')
+            };
+        } catch (_error) {
+            return null;
+        }
+    }
+
     handleWysiwygFileCommand(event) {
         if (!this.isArticleFileCommandKeydown(event) || !event.target?.closest?.('.vditor-wysiwyg')) return false;
         const selection = window.getSelection();
         const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
         if (range && this.closestElement(range.startContainer, 'code, .md-time-marker')) return false;
+        const root = this.container.querySelector('.vditor-wysiwyg .vditor-reset');
+        const context = this.getCurrentWysiwygBlockCommandContext(root, range);
+        if (!context) return false;
         const value = this.getValue();
-        const caret = this.getCurrentWysiwygMarkdownOffset();
-        const commandRange = findFileCommandBeforeCursor(value, caret, caret);
+        const parsed = splitTopLevelMarkdownBlocks(value, lexMarkdown);
+        if (!parsed.ok) return false;
+
+        let commandRange = null;
+        if (context.blockCount === parsed.blocks.length && context.blockIndex >= 0) {
+            commandRange = findFileCommandInMarkdownBlock(
+                parsed.blocks[context.blockIndex],
+                context.textBeforeCursor
+            );
+        }
+        if (!commandRange) {
+            const candidates = parsed.blocks
+                .map(block => findFileCommandInMarkdownBlock(block, context.textBeforeCursor))
+                .filter(Boolean);
+            if (candidates.length === 1) [commandRange] = candidates;
+        }
         if (!commandRange) return false;
         this.stopArticleFileCommandEvent(event);
         this.requestArticleFileSelection(commandRange);
@@ -3066,11 +3745,33 @@ export class HybridMarkdownEditor {
         const startInlineCode = this.closestElement(range.startContainer, 'code');
         const endInlineCode = this.closestElement(range.endContainer, 'code');
         if (startInlineCode || endInlineCode) return null;
+        if (this.isCaretAdjacentToTimeMarker(range)) return null;
 
         const visibleText = startParagraph.textContent.replace(/\u200B/g, '').trim();
         if (!visibleText && range.collapsed) return null;
 
         return range.cloneRange();
+    }
+
+    isCaretAdjacentToTimeMarker(range) {
+        if (!range?.collapsed) return false;
+        if (this.closestElement(range.startContainer, '.md-time-marker')) return true;
+
+        let previous = null;
+        if (range.startContainer?.nodeType === Node.TEXT_NODE) {
+            const beforeCaret = String(range.startContainer.nodeValue || '')
+                .slice(0, range.startOffset)
+                .replace(/[\u200B\uFEFF]/g, '');
+            if (beforeCaret.trim()) return false;
+            previous = range.startContainer.previousSibling;
+        } else if (range.startContainer?.nodeType === Node.ELEMENT_NODE) {
+            previous = range.startContainer.childNodes[Math.max(0, range.startOffset - 1)] || null;
+        }
+
+        while (previous?.nodeType === Node.TEXT_NODE && !String(previous.nodeValue || '').replace(/[\u200B\uFEFF]/g, '').trim()) {
+            previous = previous.previousSibling;
+        }
+        return Boolean(previous?.nodeType === Node.ELEMENT_NODE && previous.matches?.('.md-time-marker'));
     }
 
     createRenderedTimeMarker(markerText) {

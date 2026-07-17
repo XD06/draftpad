@@ -15,20 +15,48 @@ function getMethodBody(name, nextMethod) {
     return match[1];
 }
 
-assert(assetClient.includes("fetch('/api/assets/files'"), 'ordinary article files should use the dedicated asset endpoint');
-assert(assetClient.includes('MAX_FILE_ASSET_SIZE = 20 * 1024 * 1024'), 'the client should enforce the 20 MiB default before upload');
+assert(assetClient.includes("url: '/api/assets/files'") && assetClient.includes('new XMLHttpRequest()'), 'ordinary article files should use the dedicated asset endpoint with upload progress support');
+assert(
+    assetClient.includes('HARD_MAX_FILE_ASSET_SIZE = 100 * 1024 * 1024') &&
+        hybrid.includes('setAssetMaxFileBytes(value)') &&
+        hybrid.includes('this.assetApi.setMaxFileBytes(value)'),
+    'the editor should enforce the server-provided file limit with a 100 MiB client ceiling'
+);
 assert(assetClient.includes('ARTICLE_FILE_ACCEPT'), 'the native picker should use an explicit safe file allow-list');
 assert(hybrid.includes("from './managers/article-file-command.js'"), 'hybrid editor should use the tested /file command helpers');
 assert(hybrid.includes("input.type = 'file'") && hybrid.includes('input.multiple = true') && hybrid.includes('input.accept = ARTICLE_FILE_ACCEPT'), 'the article picker should be native and support ordered multi-select');
 assert(hybrid.includes("input.addEventListener('cancel'"), 'cancelling the native picker should release the pending /file command');
 assert(hybrid.includes('handleSourceFileCommand(event)') && hybrid.includes('handleWysiwygFileCommand(event)'), 'both source and WYSIWYG modes should recognise /file');
+assert(
+    hybrid.includes('findFileCommandInMarkdownBlock') &&
+        hybrid.includes('splitTopLevelMarkdownBlocks') &&
+        hybrid.includes('getCurrentWysiwygBlockCommandContext(root, range)'),
+    'WYSIWYG /file should resolve through the exact top-level Markdown block instead of a whole-document DOM offset'
+);
+const wysiwygFileHandler = getMethodBody('handleWysiwygFileCommand', 'handleWysiwygTimeCommand');
+assert(
+    !wysiwygFileHandler.includes('getCurrentWysiwygMarkdownOffset()'),
+    'WYSIWYG /file must not depend on whole-document html2md caret mapping when fenced code is present'
+);
 assert(hybrid.includes("this.sourceTextarea.addEventListener('keydown', this.sourceCommandKeydownHandler)"), 'source mode should own its /file keyboard handling directly on the textarea');
 assert(hybrid.includes('if (this.handleSourceFileCommand(event)) return;') && hybrid.includes('handleTimeCommandKeydown(event);'), 'the source textarea should run /file before /time');
 assert(hybrid.includes('if (this.sourceMode) return;'), 'the outer editor key handler must leave source-mode events to the textarea');
 assert(hybrid.includes('if (this.handleWysiwygFileCommand(event)) return;'), 'the WYSIWYG /file handler should run before regular Enter handling');
 assert(hybrid.includes('replaceArticleFileCommandWithPlaceholders(commandRange, tokens)') && hybrid.includes("tokens.join('\\n\\n')"), 'multi-select should atomically replace /file at its original Markdown position');
 assert(hybrid.includes('this.queueArticleAssetUpload(file, { token: tokens[index], alreadyInserted: true });'), 'each selected file should reuse its own placeholder and upload task');
-assert(hybrid.includes('isImage ? this.assetApi.uploadImage(file) : this.assetApi.uploadFile(file)'), 'images and ordinary files should use their separate safe upload paths');
+assert(
+    hybrid.includes('isImage ? this.assetApi.uploadImage(file, uploadOptions) : this.assetApi.uploadFile(file, uploadOptions)'),
+    'images and ordinary files should use their separate safe upload paths with the same progress contract'
+);
+assert(
+    hybrid.includes('this.articleUploadStates = new Map()') &&
+        hybrid.includes('onProgress: progress => this.updateArticleUploadState(token, progress)') &&
+        hybrid.includes('decorateArticleUploadPlaceholders') &&
+        hybrid.includes('protectedAncestor !== root') &&
+        styles.includes('.article-upload-card') &&
+        styles.includes('.article-upload-progress-fill'),
+    'article uploads should show per-file byte progress without rewriting the Markdown on each update'
+);
 assert(hybrid.includes('buildArticleFileMarkdown(asset)'), 'ordinary files should become portable Markdown download links');
 assert(hybrid.includes("link.classList.add('dumbpad-article-file')") && hybrid.includes("link.setAttribute('download', '')"), 'marked file links should render as downloadable attachment cards');
 assert(hybrid.includes("target.closest('.vditor-reset a.dumbpad-article-file')"), 'reading mode should allow attachment card clicks');
@@ -76,6 +104,13 @@ assert(
 assert(
     !/this\.container\.addEventListener\('pointermove', event => \{[\s\S]*?\}, true\);/.test(articleFileInteractionBlock?.[0] || ''),
     'attachment pointer movement should not stop Vditor and the existing image drag controller in the capture phase'
+);
+assert(
+    hybrid.includes('scheduleArticleAssetMoveRetry({') &&
+        hybrid.includes("kind: 'file'") &&
+        hybrid.includes("kind: 'image'") &&
+        hybrid.includes('resolveArticleMoveDropTarget(root, targetFingerprint)'),
+    'a stale legacy-article DOM should get one guarded re-render retry instead of immediately rejecting an otherwise safe asset move'
 );
 
 const getArticleFileBlock = new Function('link', 'root', getMethodBody('getArticleFileBlock', 'startArticleFileDragAutoScroll'));
@@ -158,6 +193,7 @@ assert.strictEqual(moveArticleFileToTarget.call({
     container: { querySelector: () => fileRoot },
     getArticleFileBlock: () => fileSourceBlock,
     getSafeArticleFileDragValue: () => ({ value: 'before', fileMarkdown: 'file-md' }),
+    createArticleMoveDropTargetFingerprint: () => ({ index: 2 }),
     isSafeArticleFileMove: (_before, next) => next === 'after-with-exact-source',
     commitArticleImageDragValue: value => { fileMoveState.committed = value; },
     editor: { getValue: () => { throw new Error('decorated DOM must not be serialized directly'); } }

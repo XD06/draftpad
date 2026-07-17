@@ -24,17 +24,25 @@ export function splitTopLevelMarkdownBlocks(value, lexer) {
 
     const blocks = [];
     const gaps = [''];
+    let sourceOffset = 0;
 
     tokens.forEach(token => {
         const raw = String(token?.raw || '');
         if (token?.type === 'space') {
             gaps[blocks.length] += raw;
+            sourceOffset += raw.length;
             return;
         }
 
         const split = splitTrailingGap(raw);
-        blocks.push({ raw: split.block, type: String(token?.type || '') });
+        blocks.push({
+            raw: split.block,
+            type: String(token?.type || ''),
+            start: sourceOffset,
+            end: sourceOffset + split.block.length
+        });
         gaps.push(split.gap);
+        sourceOffset += raw.length;
     });
 
     const rebuilt = gaps[0] + blocks.map((block, index) => block.raw + gaps[index + 1]).join('');

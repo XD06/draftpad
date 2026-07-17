@@ -40,6 +40,7 @@ function cookieHeader(response) {
         siteTitle: 'DumbPad',
         buildVersion: 'test',
         highlightLanguages: [],
+        assetMaxFileBytes: 80 * 1024 * 1024,
         authService,
         auditLogger: {
             append(event) {
@@ -64,7 +65,9 @@ function cookieHeader(response) {
     };
 
     try {
-        let result = await request('/api/auth/status');
+        let result = await request('/api/config');
+        assert(result.body.assetMaxFileBytes === 80 * 1024 * 1024, 'public runtime config should expose the effective attachment limit');
+        result = await request('/api/auth/status');
         assert(result.body.mode === 'setup', 'V2 auth should begin with one-time setup');
 
         result = await request('/api/auth/setup/start', {
