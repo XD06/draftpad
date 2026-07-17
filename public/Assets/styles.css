@@ -4027,6 +4027,23 @@ body.toc-active .floating-actions {
     outline-offset: 2px;
 }
 
+.vditor-reset a.dumbpad-article-file.is-article-file-dragging {
+    cursor: grabbing;
+    opacity: 0.58;
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+.typora-editor-shell .vditor-tip {
+    position: fixed !important;
+    top: 72px !important;
+    z-index: 4300;
+}
+
+.typora-editor-shell:not(.is-reading-mode) .vditor-reset a.dumbpad-article-file {
+    touch-action: none;
+}
+
 .article-image-size-menu {
     position: fixed;
     z-index: 4200;
@@ -4042,6 +4059,57 @@ body.toc-active .floating-actions {
 
 .article-image-size-menu[hidden] {
     display: none;
+}
+
+.article-file-menu {
+    position: fixed;
+    z-index: 4200;
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    padding: 4px;
+    border: 1px solid var(--border-color);
+    border-radius: 7px;
+    background: var(--modal-bg);
+    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.16);
+}
+
+.article-file-menu[hidden] {
+    display: none;
+}
+
+.article-file-menu .article-file-download,
+.article-file-menu .article-file-delete {
+    display: inline-grid;
+    width: 28px;
+    min-width: 28px;
+    height: 28px;
+    place-items: center;
+    padding: 0;
+    border: 0;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--muted-text);
+    cursor: pointer;
+    text-decoration: none;
+}
+
+.article-file-menu .article-file-download:hover,
+.article-file-menu .article-file-download:focus-visible {
+    outline: none;
+    background: color-mix(in srgb, var(--primary-color) 16%, transparent);
+    color: var(--primary-color);
+}
+
+.article-file-menu .article-file-delete {
+    color: #d84a44;
+}
+
+.article-file-menu .article-file-delete:hover,
+.article-file-menu .article-file-delete:focus-visible {
+    outline: none;
+    background: color-mix(in srgb, #d84a44 12%, transparent);
+    color: #c53631;
 }
 
 .article-image-size-menu button {

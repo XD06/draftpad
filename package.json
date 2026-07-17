@@ -20,6 +20,7 @@
     "test:image-paste": "node test_image_paste_integration.js",
     "test:file-command": "node test_article_file_command.js",
     "test:file-command-integration": "node test_article_file_command_integration.js",
+    "test:article-block-move": "node test_article_block_move.js",
     "test:file-asset-policy": "node test_file_asset_policy.js",
     "test:thought-card-renderer": "node test_thought_card_renderer.js",
     "test:thought-editor": "node test_thought_editor.js",

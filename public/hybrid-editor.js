@@ -16,6 +16,8 @@ import {
     findFileCommandBeforeCursor,
     replaceFileCommand
 } from './managers/article-file-command.js';
+import { moveStandaloneMarkdownBlock } from './managers/article-block-move.js';
+import { lexer as lexMarkdown } from '/js/marked/marked.esm.js';
 
 const HEADING_RE = /^(#{1,6})\s+(.+?)\s*#*\s*$/;
 const MARK_PROTECTED_SELECTOR = [
@@ -89,10 +91,7 @@ export class HybridMarkdownEditor {
                 pin: false
             },
             customWysiwygToolbar: () => {},
-            input: () => {
-                if (this.isDecorating || this.suppressInput || this.isComposing) return;
-                this.handleWysiwygInput();
-            },
+            input: () => this.handleVditorInput(),
             after: () => {
                 this.ready = true;
                 this.createSourceModeControls();
@@ -143,6 +142,7 @@ export class HybridMarkdownEditor {
         this.themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
         this.setupSelectionMenu();
         this.bindReadingModeGuard();
+        this.bindArticleFileInteractions();
         this.bindArticleImageInteractions();
         this.createArticleFileInput();
         this.bindCompositionEvents();
@@ -159,14 +159,37 @@ export class HybridMarkdownEditor {
         }, 180);
     }
 
+    suppressNextVditorInput() {
+        this.skipNextVditorInput = true;
+        clearTimeout(this.skipNextVditorInputTimer);
+        this.skipNextVditorInputTimer = setTimeout(() => {
+            this.skipNextVditorInput = false;
+            this.skipNextVditorInputTimer = null;
+        }, 1200);
+    }
+
+    handleVditorInput() {
+        if (this.skipNextVditorInput) {
+            this.skipNextVditorInput = false;
+            clearTimeout(this.skipNextVditorInputTimer);
+            this.skipNextVditorInputTimer = null;
+            return;
+        }
+        this.preferLastValueUntilInput = false;
+        if (this.isDecorating || this.suppressInput || this.isComposing) return;
+        this.handleWysiwygInput();
+    }
+
     getValue() {
         if (this.sourceMode && this.sourceTextarea) return this.sourceTextarea.value;
+        if (this.preferLastValueUntilInput) return this.stripDisplayGuards(this._lastValue || this.pendingValue || '');
         if (!this.ready || !this.editor?.getValue) return this.stripDisplayGuards(this.pendingValue || this._lastValue || '');
         return this.readWysiwygMarkdownValue(this._lastValue || this.pendingValue || '');
     }
 
     setValue(value = '', emit = true) {
         const normalized = this.stripDisplayGuards(value);
+        this.preferLastValueUntilInput = false;
         this._lastValue = normalized;
         if (this.ready && this.editor?.setValue) {
             if (!emit) this.suppressProgrammaticInput();
@@ -195,6 +218,7 @@ export class HybridMarkdownEditor {
 
     setWysiwygValueAtMarkdownOffset(value = '', markdownOffset = 0, emit = true) {
         const normalized = this.stripDisplayGuards(value);
+        this.preferLastValueUntilInput = false;
         const safeOffset = Math.min(Math.max(0, Number(markdownOffset) || 0), normalized.length);
         const marker = '\uE001';
         const valueWithCaretMarker = `${normalized.slice(0, safeOffset)}${marker}${normalized.slice(safeOffset)}`;
@@ -299,18 +323,22 @@ export class HybridMarkdownEditor {
             if (nextScroller) nextScroller.scrollTop = scrollTop;
         };
         this.decorateRenderedMarks();
+        this.decorateArticleImages();
         this.scheduleDecorateRenderedMarks();
         requestAnimationFrame(() => {
             restoreScroll();
             this.decorateRenderedMarks();
+            this.decorateArticleImages();
         });
         setTimeout(() => {
             restoreScroll();
             this.decorateRenderedMarks();
+            this.decorateArticleImages();
         }, 80);
         setTimeout(() => {
             restoreScroll();
             this.decorateRenderedMarks();
+            this.decorateArticleImages();
         }, 240);
     }
 
@@ -1988,6 +2016,246 @@ export class HybridMarkdownEditor {
         });
     }
 
+    bindArticleFileInteractions() {
+        if (this.articleFileInteractionsBound) return;
+        this.articleFileInteractionsBound = true;
+
+        this.bindArticleFileDragging();
+
+        this.container.addEventListener('dragstart', event => {
+            const link = event.target.closest('.vditor-reset a.dumbpad-article-file');
+            if (link && !this.isReadingMode) event.preventDefault();
+        });
+
+        this.container.addEventListener('click', event => {
+            const link = event.target.closest('.vditor-reset a.dumbpad-article-file');
+            if (!link || this.isReadingMode) return;
+            if (Date.now() - (this.lastArticleFileDragAt || 0) < 250 || Date.now() - (this.lastArticleFileTapAt || 0) < 450) {
+                event.preventDefault();
+                event.stopPropagation();
+                event.stopImmediatePropagation?.();
+                return;
+            }
+            event.preventDefault();
+            event.stopPropagation();
+            event.stopImmediatePropagation?.();
+            this.openArticleFileMenu(link);
+        }, true);
+    }
+
+    bindArticleFileDragging() {
+        if (this.articleFileDragBound) return;
+        this.articleFileDragBound = true;
+
+        this.container.addEventListener('pointerdown', event => {
+            if (this.isReadingMode || this.sourceMode || (event.pointerType === 'mouse' && event.button !== 0)) return;
+            const file = event.target.closest('.vditor-reset a.dumbpad-article-file');
+            const root = this.container.querySelector('.vditor-wysiwyg .vditor-reset');
+            if (!file || !root?.contains(file) || !this.getArticleFileBlock(file, root)) return;
+
+            if (event.pointerType !== 'mouse') event.preventDefault();
+            this.articleFilePointerDrag = {
+                file,
+                pointerId: event.pointerId,
+                pointerType: event.pointerType,
+                startX: event.clientX,
+                startY: event.clientY,
+                active: false
+            };
+            file.setPointerCapture?.(event.pointerId);
+        });
+
+        this.container.addEventListener('pointermove', event => {
+            const drag = this.articleFilePointerDrag;
+            if (!drag || drag.pointerId !== event.pointerId) return;
+            if (!drag.active && Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) < 6) return;
+
+            drag.active = true;
+            event.preventDefault();
+            this.hideArticleFileMenu();
+            drag.file.classList.add('is-article-file-dragging');
+            const root = this.container.querySelector('.vditor-wysiwyg .vditor-reset');
+            root?.classList.add('is-article-image-drop-target');
+            if (!root) return;
+            drag.lastClientX = event.clientX;
+            drag.lastClientY = event.clientY;
+            drag.dropTarget = this.getArticleImageDropTarget(root, event);
+            this.showArticleImageDropCaret(root, drag.dropTarget, event);
+            this.startArticleFileDragAutoScroll(drag);
+        });
+
+        const finishPointerDrag = event => {
+            const drag = this.articleFilePointerDrag;
+            if (!drag || drag.pointerId !== event.pointerId) return;
+            this.articleFilePointerDrag = null;
+            drag.file.classList.remove('is-article-file-dragging');
+            this.container.querySelector('.vditor-reset')?.classList.remove('is-article-image-drop-target');
+            this.stopArticleImageDragAutoScroll(drag);
+            this.hideTimeMarkerDropCaret();
+            drag.file.releasePointerCapture?.(event.pointerId);
+            if (!drag.active) {
+                if (drag.pointerType !== 'mouse') {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    this.lastArticleFileTapAt = Date.now();
+                    this.openArticleFileMenu(drag.file);
+                }
+                return;
+            }
+
+            event.preventDefault();
+            this.lastArticleFileDragAt = Date.now();
+            const root = this.container.querySelector('.vditor-wysiwyg .vditor-reset');
+            if (!root) return;
+            const dropTarget = drag.dropTarget || this.getArticleImageDropTarget(root, event);
+            this.moveArticleFileToTarget(drag, dropTarget);
+        };
+
+        this.container.addEventListener('pointerup', finishPointerDrag);
+        this.container.addEventListener('pointercancel', finishPointerDrag);
+    }
+
+    getArticleFileBlock(link, root) {
+        if (!link || !root) return null;
+
+        let block = link;
+        while (block.parentElement && block.parentElement !== root) {
+            block = block.parentElement;
+        }
+        if (block.parentElement !== root) return null;
+
+        const links = Array.from(block.querySelectorAll('a.dumbpad-article-file'));
+        const isNestedContent = Boolean(link.closest('li, blockquote, td, th'));
+        const text = String(block.textContent || '').replace(/\u200B/g, '').trim();
+        const linkText = String(link.textContent || '').replace(/\u200B/g, '').trim();
+        if (links.length !== 1 || links[0] !== link || isNestedContent || text !== linkText) return null;
+        if (block.matches('ul, ol, table, blockquote')) return null;
+        return block;
+    }
+
+    startArticleFileDragAutoScroll(drag) {
+        const scroller = this.container.querySelector('.vditor-wysiwyg');
+        if (!drag || !scroller) return;
+        const rect = scroller.getBoundingClientRect();
+        const edge = Math.min(72, Math.max(40, rect.height * 0.16));
+        const topDistance = drag.lastClientY - rect.top;
+        const bottomDistance = rect.bottom - drag.lastClientY;
+        if (topDistance < edge) {
+            drag.autoScrollSpeed = -Math.max(4, Math.round((edge - topDistance) / 5));
+        } else if (bottomDistance < edge) {
+            drag.autoScrollSpeed = Math.max(4, Math.round((edge - bottomDistance) / 5));
+        } else {
+            this.stopArticleImageDragAutoScroll(drag);
+            return;
+        }
+
+        if (drag.autoScrollFrame) return;
+        const tick = () => {
+            if (this.articleFilePointerDrag !== drag || !drag.active || !drag.autoScrollSpeed) {
+                this.stopArticleImageDragAutoScroll(drag);
+                return;
+            }
+            scroller.scrollTop += drag.autoScrollSpeed;
+            const root = this.container.querySelector('.vditor-wysiwyg .vditor-reset');
+            if (root) {
+                const pointer = { clientX: drag.lastClientX, clientY: drag.lastClientY };
+                drag.dropTarget = this.getArticleImageDropTarget(root, pointer);
+                this.showArticleImageDropCaret(root, drag.dropTarget, pointer);
+            }
+            drag.autoScrollFrame = requestAnimationFrame(tick);
+        };
+        drag.autoScrollFrame = requestAnimationFrame(tick);
+    }
+
+    moveArticleFileToTarget(drag, dropTarget) {
+        const root = this.container.querySelector('.vditor-wysiwyg .vditor-reset');
+        const sourceBlock = this.getArticleFileBlock(drag?.file, root);
+        const targetBlock = dropTarget?.block;
+        if (!root || !sourceBlock || !targetBlock || !root.contains(targetBlock)) return false;
+        if (sourceBlock === targetBlock) return false;
+
+        const before = this.getSafeArticleFileDragValue(root, drag.file);
+        if (!before) {
+            this.editor?.tip?.('附件需独占一段，且源码中只能出现一次', 3000);
+            return false;
+        }
+
+        const sourceIndex = Array.from(root.children).indexOf(sourceBlock);
+        const targetIndex = Array.from(root.children).indexOf(targetBlock);
+        const moved = moveStandaloneMarkdownBlock({
+            value: before.value,
+            markdown: before.fileMarkdown,
+            sourceIndex,
+            targetIndex,
+            placement: dropTarget.placement,
+            lexer: lexMarkdown,
+            expectedBlockCount: root.children.length
+        });
+        if (!moved.ok || !this.isSafeArticleFileMove(before, moved.value, drag.file)) {
+            this.editor?.tip?.('附件移动未保存，文章块结构与源码不一致', 3000);
+            return false;
+        }
+
+        if (dropTarget.placement === 'before') {
+            if (sourceBlock.nextElementSibling === targetBlock) return false;
+            targetBlock.before(sourceBlock);
+        } else {
+            if (sourceBlock.previousElementSibling === targetBlock) return false;
+            targetBlock.after(sourceBlock);
+        }
+
+        this.commitArticleImageDragValue(moved.value, sourceBlock);
+        return true;
+    }
+
+    getSafeArticleFileDragValue(root, link) {
+        if (!root || !link) return null;
+        const value = this.stripDisplayGuards(this._lastValue || this.pendingValue || '');
+        const fileMarkdown = this.findStandaloneArticleFileMarkdown(value, link);
+        return value && fileMarkdown ? { value, fileMarkdown } : null;
+    }
+
+    findStandaloneArticleFileMarkdown(value, link) {
+        const href = String(link?.getAttribute?.('href') || '');
+        const title = String(link?.getAttribute?.('title') || '');
+        if (!href || !title.startsWith('dumbpad-file=1')) return null;
+        const escapedHref = this.escapeRegExp(href);
+        const escapedTitle = this.escapeRegExp(title);
+        const expression = new RegExp(`\\[(?:\\\\.|[^\\]\\n])*\\]\\(${escapedHref}\\s+"${escapedTitle}"\\)`, 'g');
+        const matches = Array.from(String(value || '').matchAll(expression));
+        if (matches.length !== 1) return null;
+
+        const match = matches[0];
+        const start = match.index;
+        const markdown = match[0];
+        const lineStart = value.lastIndexOf('\n', start - 1) + 1;
+        const lineEndIndex = value.indexOf('\n', start + markdown.length);
+        const lineEnd = lineEndIndex < 0 ? value.length : lineEndIndex;
+        if (value.slice(lineStart, lineEnd).trim() !== markdown) return null;
+        return markdown;
+    }
+
+    removeStandaloneArticleFileMarkdown(value, markdown) {
+        const start = value.indexOf(markdown);
+        if (start < 0 || value.indexOf(markdown, start + markdown.length) >= 0) return null;
+        const lineStart = value.lastIndexOf('\n', start - 1) + 1;
+        const lineEndIndex = value.indexOf('\n', start + markdown.length);
+        const lineEnd = lineEndIndex < 0 ? value.length : lineEndIndex + 1;
+        if (value.slice(lineStart, lineEnd).trim() !== markdown) return null;
+        return `${value.slice(0, lineStart)}${value.slice(lineEnd)}`
+            .replace(/[ \t]+\n/g, '\n')
+            .replace(/\n{3,}/g, '\n\n')
+            .trim();
+    }
+
+    isSafeArticleFileMove(before, next, link) {
+        const markdown = before?.fileMarkdown;
+        if (!markdown || !next) return false;
+        const beforeWithoutFile = this.removeStandaloneArticleFileMarkdown(before.value, markdown);
+        const nextWithoutFile = this.removeStandaloneArticleFileMarkdown(next, markdown);
+        return beforeWithoutFile !== null && nextWithoutFile !== null && beforeWithoutFile === nextWithoutFile;
+    }
+
     bindArticleImageInteractions() {
         this.bindArticleImageDragging();
 
@@ -2224,11 +2492,26 @@ export class HybridMarkdownEditor {
 
         const before = this.getSafeArticleImageDragValue(root, drag.image);
         if (!before) {
-            this.editor?.tip?.('图片需独占一段，且文章不能包含未保存的标记装饰', 3000);
+            this.editor?.tip?.('图片需独占一段，且源码中只能出现一次', 3000);
             return false;
         }
 
-        const originNextSibling = sourceBlock.nextElementSibling;
+        const sourceIndex = Array.from(root.children).indexOf(sourceBlock);
+        const targetIndex = Array.from(root.children).indexOf(targetBlock);
+        const moved = moveStandaloneMarkdownBlock({
+            value: before.value,
+            markdown: before.imageMarkdown,
+            sourceIndex,
+            targetIndex,
+            placement: dropTarget.placement,
+            lexer: lexMarkdown,
+            expectedBlockCount: root.children.length
+        });
+        if (!moved.ok || !this.isSafeArticleImageMove(before, moved.value, drag.image)) {
+            this.editor?.tip?.('图片移动未保存，文章块结构与源码不一致', 3000);
+            return false;
+        }
+
         if (dropTarget.placement === 'before') {
             if (sourceBlock.nextElementSibling === targetBlock) return false;
             targetBlock.before(sourceBlock);
@@ -2237,23 +2520,13 @@ export class HybridMarkdownEditor {
             targetBlock.after(sourceBlock);
         }
 
-        const next = this.stripDisplayGuards(this.editor?.getValue?.() || '');
-        if (!this.isSafeArticleImageMove(before, next, drag.image)) {
-            if (originNextSibling) root.insertBefore(sourceBlock, originNextSibling);
-            else root.appendChild(sourceBlock);
-            this.editor?.tip?.('图片移动未保存，已保护原文内容', 3000);
-            return false;
-        }
-
-        this.commitArticleImageDragValue(next, sourceBlock);
+        this.commitArticleImageDragValue(moved.value, sourceBlock);
         return true;
     }
 
     getSafeArticleImageDragValue(root, image) {
-        if (!root || !image || root.querySelector(
-            '.md-time-marker[data-time-source], mark.md-mark, [data-draw], .has-annotation'
-        )) return null;
-        const value = this.stripDisplayGuards(this.editor?.getValue?.() || '');
+        if (!root || !image) return null;
+        const value = this.stripDisplayGuards(this._lastValue || this.pendingValue || '');
         const imageMarkdown = this.findStandaloneArticleImageMarkdown(value, image);
         return value && imageMarkdown ? { value, imageMarkdown } : null;
     }
@@ -2299,6 +2572,7 @@ export class HybridMarkdownEditor {
 
     commitArticleImageDragValue(value, sourceBlock) {
         this._lastValue = value;
+        this.preferLastValueUntilInput = true;
         if (this.sourceTextarea) this.sourceTextarea.value = value;
         this.buildHeadingIndex();
 
@@ -2308,6 +2582,7 @@ export class HybridMarkdownEditor {
         const selection = window.getSelection();
         selection?.removeAllRanges();
         selection?.addRange(range);
+        this.suppressNextVditorInput();
         sourceBlock.dispatchEvent(new InputEvent('input', {
             bubbles: true,
             inputType: 'insertReplacementText'
@@ -2364,6 +2639,7 @@ export class HybridMarkdownEditor {
             link.classList.add('dumbpad-article-file');
             link.setAttribute('download', '');
             link.setAttribute('contenteditable', 'false');
+            link.draggable = false;
             link.setAttribute('aria-label', `下载附件：${link.textContent || '文件'}`);
         });
     }
@@ -2600,6 +2876,68 @@ export class HybridMarkdownEditor {
         this.hideArticleImageSizeMenu();
         this.notifyEditorValueChanged();
         this.editor?.focus?.();
+    }
+
+    ensureArticleFileMenu() {
+        if (this.articleFileMenu) return this.articleFileMenu;
+        const menu = document.createElement('div');
+        menu.className = 'article-file-menu';
+        menu.hidden = true;
+        menu.setAttribute('role', 'toolbar');
+        menu.setAttribute('aria-label', '附件操作');
+        menu.innerHTML = `
+            <a class="article-file-download" data-file-download download title="下载附件" aria-label="下载附件">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"></path><path d="m7 10 5 5 5-5"></path><path d="M5 21h14"></path></svg>
+            </a>
+            <button type="button" class="article-file-delete" data-file-delete title="删除附件" aria-label="删除附件">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"></path><path d="M8 6V4h8v2"></path><path d="M19 6l-1 14H6L5 6"></path><path d="M10 11v5"></path><path d="M14 11v5"></path></svg>
+            </button>
+        `;
+        menu.addEventListener('mousedown', event => event.preventDefault());
+        menu.addEventListener('click', event => {
+            const deleteButton = event.target.closest('[data-file-delete]');
+            if (!deleteButton || !this.activeArticleFile) return;
+            const link = this.activeArticleFile;
+            this.deleteArticleFile(link);
+        });
+        document.body.appendChild(menu);
+        document.addEventListener('mousedown', event => {
+            if (!menu.hidden && !menu.contains(event.target) && event.target !== this.activeArticleFile) {
+                this.hideArticleFileMenu();
+            }
+        });
+        this.articleFileMenu = menu;
+        return menu;
+    }
+
+    openArticleFileMenu(link) {
+        if (!link?.isConnected || this.isReadingMode) return;
+        this.activeArticleFile = link;
+        const menu = this.ensureArticleFileMenu();
+        const download = menu.querySelector('[data-file-download]');
+        download.href = link.getAttribute('href') || '';
+        download.download = String(link.textContent || '附件').replace(/^📎\s*/, '').split('·')[0].trim() || '附件';
+        const rect = link.getBoundingClientRect();
+        menu.hidden = false;
+        const menuWidth = menu.offsetWidth || 68;
+        const centeredLeft = rect.left + ((rect.width - menuWidth) / 2);
+        menu.style.left = `${Math.max(10, Math.min(window.innerWidth - menuWidth - 10, centeredLeft))}px`;
+        menu.style.top = `${Math.min(window.innerHeight - menu.offsetHeight - 10, rect.bottom + 8)}px`;
+    }
+
+    hideArticleFileMenu() {
+        if (this.articleFileMenu) this.articleFileMenu.hidden = true;
+        this.activeArticleFile = null;
+    }
+
+    deleteArticleFile(link) {
+        if (!link?.isConnected) return;
+        const caretGuard = document.createTextNode('\u200B');
+        link.replaceWith(caretGuard);
+        this.hideArticleFileMenu();
+        this.notifyEditorValueChanged();
+        this.editor?.focus?.();
+        this.placeCaretInTextNode(caretGuard);
     }
 
     bindTimeCommand() {

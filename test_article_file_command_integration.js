@@ -6,6 +6,14 @@ const root = __dirname;
 const hybrid = fs.readFileSync(path.join(root, 'public', 'hybrid-editor.js'), 'utf8');
 const assetClient = fs.readFileSync(path.join(root, 'public', 'managers', 'asset-api-client.js'), 'utf8');
 const styles = fs.readFileSync(path.join(root, 'public', 'Assets', 'styles.css'), 'utf8');
+const articleFileInteractionBlock = hybrid.match(/    bindArticleFileInteractions\(\) \{[\s\S]*?\r?\n    \}\r?\n\r?\n    bindArticleImageInteractions/);
+
+function getMethodBody(name, nextMethod) {
+    const expression = new RegExp(`    ${name}\\([^)]*\\) \\{([\\s\\S]*?)\\r?\\n    \\}\\r?\\n\\r?\\n    ${nextMethod}`);
+    const match = hybrid.match(expression);
+    assert(match, `${name} should remain an independently testable editor method`);
+    return match[1];
+}
 
 assert(assetClient.includes("fetch('/api/assets/files'"), 'ordinary article files should use the dedicated asset endpoint');
 assert(assetClient.includes('MAX_FILE_ASSET_SIZE = 20 * 1024 * 1024'), 'the client should enforce the 20 MiB default before upload');
@@ -25,5 +33,135 @@ assert(hybrid.includes('buildArticleFileMarkdown(asset)'), 'ordinary files shoul
 assert(hybrid.includes("link.classList.add('dumbpad-article-file')") && hybrid.includes("link.setAttribute('download', '')"), 'marked file links should render as downloadable attachment cards');
 assert(hybrid.includes("target.closest('.vditor-reset a.dumbpad-article-file')"), 'reading mode should allow attachment card clicks');
 assert(styles.includes('.article-file-command-input') && styles.includes('.vditor-reset a.dumbpad-article-file'), 'the hidden picker and attachment card need isolated styles');
+assert(hybrid.includes('this.bindArticleFileInteractions();'), 'ordinary article files should use guarded editor interactions instead of browser-native drag and drop');
+assert(
+    articleFileInteractionBlock?.[0].includes("event.target.closest('.vditor-reset a.dumbpad-article-file')") &&
+        articleFileInteractionBlock?.[0].includes("event.preventDefault();"),
+    'ordinary attachment drag starts should be intercepted before contenteditable can copy the link'
+);
+assert(
+        articleFileInteractionBlock?.[0].includes('this.bindArticleFileDragging();') &&
+        hybrid.includes('getArticleFileBlock(link, root)') &&
+        hybrid.includes('moveArticleFileToTarget(drag, dropTarget)') &&
+        hybrid.includes('isSafeArticleFileMove(before, moved.value, drag.file)'),
+    'a standalone attachment should use guarded pointer movement and reject a result that is not a true Markdown move'
+);
+assert(
+    hybrid.includes('ensureArticleFileMenu()') &&
+        hybrid.includes('data-file-download') &&
+        hybrid.includes('data-file-delete') &&
+        hybrid.includes('deleteArticleFile(link)') &&
+        hybrid.includes("menu.setAttribute('aria-label', '附件操作')"),
+    'editing an attachment should expose accessible icon-only download and delete actions'
+);
+assert(
+    styles.includes('.article-file-menu') &&
+        styles.includes('.article-file-download') &&
+        styles.includes('.article-file-delete'),
+    'attachment action controls should have dedicated menu styles instead of borrowing text-button styling'
+);
+assert(
+    /this\.container\.addEventListener\('click', event => \{[\s\S]*?this\.openArticleFileMenu\(link\);[\s\S]*?\}, true\);/.test(articleFileInteractionBlock?.[0] || '') &&
+        articleFileInteractionBlock?.[0].includes('event.preventDefault();') &&
+        articleFileInteractionBlock?.[0].includes('event.stopImmediatePropagation?.();'),
+    'attachment card clicks must intercept Vditor before it opens the download link'
+);
+assert(
+    articleFileInteractionBlock?.[0].includes("this.container.addEventListener('pointerup', finishPointerDrag);") &&
+        articleFileInteractionBlock?.[0].includes("this.container.addEventListener('pointercancel', finishPointerDrag);") &&
+        !articleFileInteractionBlock?.[0].includes("this.container.addEventListener('pointerup', finishPointerDrag, true);") &&
+        articleFileInteractionBlock?.[0].includes("if (event.pointerType !== 'mouse') event.preventDefault();"),
+    'attachment pointer input should follow the proven image drag event semantics instead of competing capture-phase handlers'
+);
+assert(
+    !/this\.container\.addEventListener\('pointermove', event => \{[\s\S]*?\}, true\);/.test(articleFileInteractionBlock?.[0] || ''),
+    'attachment pointer movement should not stop Vditor and the existing image drag controller in the capture phase'
+);
+
+const getArticleFileBlock = new Function('link', 'root', getMethodBody('getArticleFileBlock', 'startArticleFileDragAutoScroll'));
+const dragRoot = { marker: 'root' };
+const dragLink = {
+    textContent: '📎 roadmap.txt',
+    closest: () => null
+};
+const dragBlock = {
+    parentElement: dragRoot,
+    textContent: '\u200B📎 roadmap.txt',
+    querySelectorAll: selector => selector === 'a.dumbpad-article-file' ? [dragLink] : [],
+    matches: () => false
+};
+dragLink.parentElement = dragBlock;
+assert.strictEqual(
+    getArticleFileBlock(dragLink, dragRoot),
+    dragBlock,
+    'a Vditor zero-width guard must not make a standalone attachment ineligible for dragging'
+);
+
+const deleteArticleFile = new Function(
+    'document',
+    `return function deleteArticleFile(link) {${getMethodBody('deleteArticleFile', 'bindTimeCommand')}}`
+)({ createTextNode: value => ({ nodeType: 3, nodeValue: value }) });
+const deletedBlock = {
+    textContent: '📎 roadmap.txt',
+    removed: false,
+    remove() { this.removed = true; }
+};
+const deletedLink = {
+    isConnected: true,
+    closest: () => deletedBlock,
+    replaceWith(node) { this.replacement = node; }
+};
+const deleteState = { hidden: false, notified: false, focused: false, caret: null };
+deleteArticleFile.call({
+    hideArticleFileMenu() { deleteState.hidden = true; },
+    notifyEditorValueChanged() { deleteState.notified = true; },
+    editor: { focus() { deleteState.focused = true; } },
+    placeCaretInTextNode(node) { deleteState.caret = node; }
+}, deletedLink);
+assert.strictEqual(deletedLink.replacement?.nodeValue, '\u200B', 'deleting an attachment should leave an editable zero-width caret guard in its original block');
+assert.strictEqual(deletedBlock.removed, false, 'deleting a standalone attachment should preserve its editable block instead of collapsing selection to the editor start');
+assert.strictEqual(deleteState.caret, deletedLink.replacement, 'deleting an attachment should restore the caret at the retained guard');
+assert(deleteState.hidden && deleteState.notified && deleteState.focused, 'deleting an attachment should preserve existing menu, save, and focus behavior');
+
+const getSafeArticleFileDragValue = new Function(
+    `return function getSafeArticleFileDragValue(root, link) {${getMethodBody('getSafeArticleFileDragValue', 'findStandaloneArticleFileMarkdown')}}`
+)();
+const decoratedFileValue = getSafeArticleFileDragValue.call({
+    _lastValue: '[[time:create:2026-07-17 15:30:00]]\n\n[file](/api/assets/test/download "dumbpad-file=1")',
+    stripDisplayGuards: value => value,
+    findStandaloneArticleFileMarkdown: () => '[file](/api/assets/test/download "dumbpad-file=1")'
+}, {
+    querySelector: () => ({ className: 'md-time-marker' })
+}, {});
+assert.deepStrictEqual(
+    decoratedFileValue,
+    {
+        value: '[[time:create:2026-07-17 15:30:00]]\n\n[file](/api/assets/test/download "dumbpad-file=1")',
+        fileMarkdown: '[file](/api/assets/test/download "dumbpad-file=1")'
+    },
+    'a rendered /time marker elsewhere in the article must not disable a standalone attachment move'
+);
+
+const moveArticleFileToTarget = new Function(
+    'moveStandaloneMarkdownBlock',
+    'lexMarkdown',
+    `return function moveArticleFileToTarget(drag, dropTarget) {${getMethodBody('moveArticleFileToTarget', 'getSafeArticleFileDragValue')}}`
+)(() => ({ ok: true, value: 'after-with-exact-source' }), () => []);
+const fileSourceBlock = { nextElementSibling: { marker: 'origin-next' } };
+const fileTargetBlock = { before(block) { this.movedBlock = block; } };
+const fileRoot = {
+    children: [fileSourceBlock, { marker: 'middle' }, fileTargetBlock],
+    contains: () => true
+};
+const fileMoveState = { committed: null };
+assert.strictEqual(moveArticleFileToTarget.call({
+    container: { querySelector: () => fileRoot },
+    getArticleFileBlock: () => fileSourceBlock,
+    getSafeArticleFileDragValue: () => ({ value: 'before', fileMarkdown: 'file-md' }),
+    isSafeArticleFileMove: (_before, next) => next === 'after-with-exact-source',
+    commitArticleImageDragValue: value => { fileMoveState.committed = value; },
+    editor: { getValue: () => { throw new Error('decorated DOM must not be serialized directly'); } }
+}, { file: {} }, { block: fileTargetBlock, placement: 'before' }), true, 'attachment movement should commit the exact source-block reorder without serializing the decorated DOM');
+assert.strictEqual(fileMoveState.committed, 'after-with-exact-source', 'the exact source-block attachment move value should be committed');
 
 console.log('Article file command integration checks passed');

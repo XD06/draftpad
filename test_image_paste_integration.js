@@ -11,6 +11,14 @@ const assetClient = fs.readFileSync(path.join(root, 'public', 'managers', 'asset
 const articleImageInteractionBlock = hybrid.match(/    bindArticleImageInteractions\(\) \{[\s\S]*?\r?\n    \}\r?\n\r?\n    bindArticleImageDragging/);
 const articleImageMoveBlock = hybrid.match(/    moveArticleImageToTarget\(drag, dropTarget\) \{[\s\S]*?\r?\n    \}\r?\n\r?\n    isLegacyArticleImage/);
 const articleImageUploadReplaceBlock = hybrid.match(/    replaceArticleUploadPlaceholder\(token, replacement\) \{[\s\S]*?\r?\n    \}\r?\n\r?\n    ensureArticleImageLightbox/);
+const renderAfterMutationBlock = hybrid.match(/    renderAfterMutation\(scrollTop = 0\) \{[\s\S]*?\r?\n    \}\r?\n\r?\n    focus\(\)/);
+
+function getMethodBody(name, nextMethod) {
+    const expression = new RegExp(`    ${name}\\([^)]*\\) \\{([\\s\\S]*?)\\r?\\n    \\}\\r?\\n\\r?\\n    ${nextMethod}`);
+    const match = hybrid.match(expression);
+    assert(match, `${name} should remain an independently testable editor method`);
+    return match[1];
+}
 
 assert(assetClient.includes("fetch('/api/assets/images'"), 'image client should upload raw image bytes through the asset API');
 assert(assetClient.includes('MAX_IMAGE_ASSET_SIZE = 50 * 1024 * 1024'), 'image client should enforce the 50MB image limit');
@@ -31,11 +39,13 @@ assert(styles.includes('user-select: none;') && styles.includes('-webkit-user-dr
 assert(!hybrid.includes('dumbpad-upload://'), 'article upload placeholders should not use a blocked custom image URL');
 assert(
     articleImageMoveBlock?.[0].includes('this.getSafeArticleImageDragValue(root, drag.image)') &&
-        articleImageMoveBlock?.[0].includes('this.isSafeArticleImageMove(before, next, drag.image)') &&
-        articleImageMoveBlock?.[0].includes('this.commitArticleImageDragValue(next, sourceBlock)') &&
+        articleImageMoveBlock?.[0].includes('moveStandaloneMarkdownBlock({') &&
+        articleImageMoveBlock?.[0].includes('this.isSafeArticleImageMove(before, moved.value, drag.image)') &&
+        articleImageMoveBlock?.[0].includes('this.commitArticleImageDragValue(moved.value, sourceBlock)') &&
         !articleImageMoveBlock?.[0].includes('html2md') &&
+        !articleImageMoveBlock?.[0].includes('editor?.getValue') &&
         !articleImageMoveBlock?.[0].includes('this.setValue(next, true);'),
-    'article image moves must use Vditor DOM serialization only after a source-preservation guard passes'
+    'article image moves must reorder the exact source Markdown block without serializing the decorated DOM'
 );
 assert(
     hybrid.includes('let block = image;') &&
@@ -74,6 +84,128 @@ assert(
 assert(articleImageUploadReplaceBlock?.[0].includes('setWysiwygValueAtMarkdownOffset(next, nextCaret, true);'), 'article upload replacement should preserve the established editor update path');
 assert(/article-image-lightbox-download" download title="下载原图" aria-label="下载原图">\r?\n\s*<svg/.test(hybrid), 'article image lightbox controls should use icon buttons');
 assert(hybrid.includes('deleteArticleImage(image)'), 'article image size menu should provide a delete action');
+
+const getSafeArticleImageDragValue = new Function(
+    `return function getSafeArticleImageDragValue(root, image) {${getMethodBody('getSafeArticleImageDragValue', 'findStandaloneArticleImageMarkdown')}}`
+)();
+const decoratedImageValue = getSafeArticleImageDragValue.call({
+    _lastValue: '[[time:create:2026-07-17 15:30:00]]\n\n![image](/api/assets/test/preview)',
+    stripDisplayGuards: value => value,
+    findStandaloneArticleImageMarkdown: () => '![image](/api/assets/test/preview)'
+}, {
+    querySelector: () => ({ className: 'md-time-marker' })
+}, {});
+assert.deepStrictEqual(
+    decoratedImageValue,
+    {
+        value: '[[time:create:2026-07-17 15:30:00]]\n\n![image](/api/assets/test/preview)',
+        imageMarkdown: '![image](/api/assets/test/preview)'
+    },
+    'a rendered /time marker elsewhere in the article must not disable a standalone image move'
+);
+
+const moveArticleImageToTarget = new Function(
+    'moveStandaloneMarkdownBlock',
+    'lexMarkdown',
+    `return function moveArticleImageToTarget(drag, dropTarget) {${getMethodBody('moveArticleImageToTarget', 'getSafeArticleImageDragValue')}}`
+)(() => ({ ok: true, value: 'after-with-exact-source' }), () => []);
+const imageSourceBlock = { nextElementSibling: { marker: 'origin-next' } };
+const imageTargetBlock = { before(block) { this.movedBlock = block; } };
+const imageRoot = {
+    children: [imageSourceBlock, { marker: 'middle' }, imageTargetBlock],
+    contains: () => true
+};
+const imageMoveState = { committed: null };
+assert.strictEqual(moveArticleImageToTarget.call({
+    container: { querySelector: () => imageRoot },
+    getArticleImageBlock: () => imageSourceBlock,
+    getSafeArticleImageDragValue: () => ({ value: 'before', imageMarkdown: 'image-md' }),
+    isSafeArticleImageMove: (_before, next) => next === 'after-with-exact-source',
+    commitArticleImageDragValue: value => { imageMoveState.committed = value; },
+    editor: { getValue: () => { throw new Error('decorated DOM must not be serialized directly'); } }
+}, { image: {} }, { block: imageTargetBlock, placement: 'before' }), true, 'image movement should commit the exact source-block reorder without serializing the decorated DOM');
+assert.strictEqual(imageMoveState.committed, 'after-with-exact-source', 'the exact source-block image move value should be committed');
+
+const commitArticleImageDragValue = new Function(
+    'document',
+    'window',
+    'InputEvent',
+    `return function commitArticleImageDragValue(value, sourceBlock) {${getMethodBody('commitArticleImageDragValue', 'isLegacyArticleImage')}}`
+)(
+    { createRange: () => ({ selectNodeContents() {}, collapse() {} }) },
+    { getSelection: () => ({ removeAllRanges() {}, addRange() {} }) },
+    function InputEvent(type, options) { return { type, ...options }; }
+);
+const commitSequence = [];
+const commitContext = {
+    suppressNextVditorInput: () => commitSequence.push('suppress'),
+    buildHeadingIndex() {},
+    sourceTextarea: null,
+    onInput: () => commitSequence.push('save'),
+    dispatch() {},
+    renderAfterMutation() {},
+    container: { querySelector: () => ({ scrollTop: 0 }) }
+};
+commitArticleImageDragValue.call(commitContext, 'exact-source-value', {
+    dispatchEvent: () => commitSequence.push('dispatch')
+});
+assert(
+    commitSequence.indexOf('suppress') >= 0 && commitSequence.indexOf('suppress') < commitSequence.indexOf('dispatch'),
+    'a programmatic block move must suppress DumbPad input serialization before dispatching Vditor\'s undo event'
+);
+assert.strictEqual(commitContext.preferLastValueUntilInput, true, 'a committed block move should keep getValue pinned to the exact source until the next real edit');
+
+const handleVditorInput = new Function(
+    'clearTimeout',
+    `return function handleVditorInput() {${getMethodBody('handleVditorInput', 'getValue')}}`
+)(() => {});
+const vditorInputState = { skipped: true, handled: 0 };
+handleVditorInput.call({
+    skipNextVditorInput: true,
+    skipNextVditorInputTimer: 1,
+    isDecorating: false,
+    suppressInput: false,
+    isComposing: false,
+    handleWysiwygInput: () => { vditorInputState.handled += 1; }
+});
+assert.strictEqual(vditorInputState.handled, 0, 'the delayed Vditor callback created by a block move should be skipped exactly once');
+
+const regularVditorInputState = { handled: 0 };
+const regularVditorInputContext = {
+    skipNextVditorInput: false,
+    preferLastValueUntilInput: true,
+    isDecorating: false,
+    suppressInput: false,
+    isComposing: false,
+    handleWysiwygInput: () => { regularVditorInputState.handled += 1; }
+};
+handleVditorInput.call(regularVditorInputContext);
+assert.strictEqual(regularVditorInputState.handled, 1, 'the next real Vditor input should continue through the normal save path');
+assert.strictEqual(regularVditorInputContext.preferLastValueUntilInput, false, 'a real edit should release the exact-value pin before normal serialization resumes');
+assert(
+    renderAfterMutationBlock?.[0].includes('this.decorateArticleImages();') &&
+        (renderAfterMutationBlock?.[0].match(/this\.decorateArticleImages\(\);/g) || []).length >= 3,
+    'Vditor async re-renders after a move should restore image and attachment drag decoration for subsequent moves'
+);
+
+const getValue = new Function(
+    `return function getValue() {${getMethodBody('getValue', 'setValue')}}`
+)();
+assert.strictEqual(getValue.call({
+    sourceMode: false,
+    sourceTextarea: null,
+    ready: true,
+    preferLastValueUntilInput: true,
+    _lastValue: 'exact-source-value',
+    pendingValue: '',
+    stripDisplayGuards: value => value,
+    editor: { getValue: () => { throw new Error('exact block moves must not be reserialized during save checks'); } }
+}), 'exact-source-value', 'save checks after a block move should read the exact committed Markdown value');
+assert(
+    styles.includes('.typora-editor-shell .vditor-tip') &&
+        /\.typora-editor-shell \.vditor-tip[\s\S]*?top:\s*72px[\s\S]*?z-index:\s*4300/.test(styles),
+    'editor tips should render below the fixed title bar and above the editor surface'
+);
 assert(thoughts.includes("this.quickAddInput.addEventListener('paste'"), 'Quick Add should accept pasted images');
 assert(thoughts.includes("textarea.addEventListener('paste'"), 'Thought edit textarea should accept pasted images');
 assert(thoughts.includes('uploadImage: file => this.assetApi.uploadImage(file)'), 'Thought image attachments should use asset storage');
