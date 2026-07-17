@@ -1,8 +1,20 @@
 # DumbPad AI 流程与 Agent 框架设计
 
-> 状态：审查稿
+> 状态：阶段 A 的 `recall_context` 已落地；后续阶段仍为设计约束，未开始实现
 > 日期：2026-07-15
 > 目标：在不改变 DumbPad 快速记录、本地优先和低风险演进原则的前提下，为 AI 建立可扩展、可解释、可审计的流程框架。
+
+## 实施状态（2026-07-15）
+
+本文件的阶段 A 首个垂直切片已经实现，范围严格限制为 Thought 中用户主动点击的只读 `recall_context`：
+
+- 运行时位于 `scripts/agent/`，含 AgentRun 契约与 local/S3 派生存储、只读上下文、工具注册、封闭工作流、独立模型适配、状态机和 SSE 编码。
+- HTTP 边界为 `/api/agent/capability`、`/api/agent/runs`、运行查询、SSE 和取消；既有 `ai-queue`、Insight 与 WebSocket 没有被改作 Agent 运行通道。
+- Thought 卡片提供“找回相关内容”入口、进度、取消、结构化引用和来源版本过期提示。引用可打开 Thought 或文章；该能力默认由 `AI_AGENT_ENABLED=false` 关闭。
+- AgentRun 是派生数据，保存最小状态、来源引用和终态结果；不保存原始 Prompt、工具原始结果、逐字文本增量或密钥。服务重启会把未完成运行标为 `server_restarted`，不会续跑。
+- `test:agent` 使用 fake model 覆盖契约、local/S3、权限和上下文限制、步骤/取消/SSE、前端状态和真实 HTTP 路由；未实现 Proposal、Notepad 入口、`develop_thought`、`review_inbox` 或任何写工具。
+
+后续接手者应把这一段当作当前基线：新增能力从新的 `workflowId` 和最小只读工具开始，不要把阶段 A 扩成通用聊天或让模型直接写入内容。
 
 ## 1. 结论先行
 

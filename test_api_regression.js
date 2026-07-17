@@ -237,6 +237,8 @@ function assertThoughtsFrontendRegressions() {
         openApi.openapi === '3.1.0' &&
         openApi.paths?.['/api/thoughts'] &&
         openApi.paths?.['/api/notes/{id}'] &&
+        openApi.paths?.['/api/assets/files'] &&
+        openApi.components?.schemas?.FileAsset &&
         openApi.components?.securitySchemes?.pinBearer,
         'developer API contract should expose a valid OpenAPI document for note and Thought management'
     );
@@ -335,9 +337,8 @@ function assertThoughtsFrontendRegressions() {
         ? thoughtsCss.slice(thoughtFadeInStart, thoughtFadeInEnd)
         : '';
     assert(
-        thoughtFadeInSource &&
-        !thoughtFadeInSource.includes('transform:'),
-        'Thought view fade-in should not transform the view container because fixed FAB children drift with transformed ancestors'
+        !thoughtFadeInSource || !thoughtFadeInSource.includes('transform:'),
+        'if restored, Thought view fade-in must not transform the view container because fixed FAB children drift with transformed ancestors'
     );
     assert(
         hybridEditorSource.includes("target.closest('.vditor-copy, .code-lang-copy-button')") &&

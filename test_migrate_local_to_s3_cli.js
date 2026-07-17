@@ -54,12 +54,13 @@ assert(output.prefix === 'dumbpad-real-preview', 'output should include target p
 assert(output.sourceSummary.notepadCount === 2, 'output should count notepads');
 assert(output.sourceSummary.thoughtCount === 2, 'output should count thoughts');
 assert(output.uploaded === 6, 'dry-run should report root files plus split thoughts');
-assert(output.missing === 6, 'dry-run should report optional missing directories');
+assert(output.missing === 7, 'dry-run should report optional missing directories, including derived agent-runs');
 assert(output.reportPath.startsWith(reportDir), 'report should be written to report dir');
 assert(fs.existsSync(output.reportPath), 'report file should exist');
 
 const report = JSON.parse(fs.readFileSync(output.reportPath, 'utf8'));
 assert(report.uploaded.some(item => item.key === 'dumbpad-real-preview/thoughts/t1.json'), 'report should include split thought t1');
 assert(report.uploaded.some(item => item.key === 'dumbpad-real-preview/Research.txt'), 'report should include text note');
+assert(report.missing.some(item => item.label === 'agent-runs'), 'report should include the optional derived agent-runs directory');
 
 console.log('Local to S3 migration CLI dry-run checks passed');

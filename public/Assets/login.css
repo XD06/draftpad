@@ -1,0 +1,208 @@
+@font-face {
+    font-family: "DumbPad Reading";
+    src: url("/font/SourceHanSerifSC-Regular-subset.woff2") format("woff2");
+    font-weight: 400;
+    font-style: normal;
+    font-display: swap;
+}
+
+@font-face {
+    font-family: "DumbPad Code";
+    src: url("/font/FiraCode-Regular.ttf") format("truetype");
+    font-weight: 400;
+    font-style: normal;
+    font-display: swap;
+}
+
+:root {
+    --login-ink: #25272d;
+    --login-copy: #656973;
+    --login-soft: #8d929b;
+    --login-paper: #fbfbfa;
+    --login-canvas: #f0f1f3;
+    --login-line: #e1e3e7;
+    --login-brand: #bf2e4e;
+    --login-brand-soft: #f8eaed;
+}
+
+[data-theme="dark"] {
+    --login-ink: #ececf0;
+    --login-copy: #afb1ba;
+    --login-soft: #858994;
+    --login-paper: #1c1e24;
+    --login-canvas: #14161b;
+    --login-line: #30323a;
+    --login-brand: #e25a78;
+    --login-brand-soft: #3d2029;
+}
+
+.dumbpad-login-body {
+    height: 100dvh;
+    margin: 0;
+    overflow: hidden;
+    background: var(--login-canvas);
+    color: var(--login-ink);
+    font-family: "DumbPad Reading", "Source Han Serif SC", "Noto Serif SC", Georgia, serif;
+}
+
+.dumbpad-login-shell {
+    width: min(1180px, calc(100% - 48px));
+    box-sizing: border-box;
+    height: 100dvh;
+    min-height: 0;
+    margin: 0 auto;
+    padding: 22px 0 28px;
+    display: flex;
+    flex-direction: column;
+}
+
+.dumbpad-login-stage {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    display: grid;
+    grid-template-columns: minmax(0, 1.14fr) minmax(375px, 0.86fr);
+    overflow: hidden;
+    border: 1px solid var(--login-line);
+    border-radius: 16px;
+    background: var(--login-paper);
+    box-shadow: 0 20px 48px rgba(31, 36, 46, 0.09);
+}
+
+.dumbpad-login-stage::before {
+    content: "";
+    position: absolute;
+    z-index: 0;
+    right: -340px;
+    top: -400px;
+    width: 650px;
+    height: 650px;
+    border: 1px solid color-mix(in srgb, var(--login-brand) 22%, transparent);
+    border-radius: 50%;
+    box-shadow: 0 0 0 76px color-mix(in srgb, var(--login-brand) 4%, transparent), 0 0 0 152px color-mix(in srgb, var(--login-brand) 2%, transparent);
+}
+
+.dumbpad-login-story, .dumbpad-login-panel { position: relative; z-index: 1; }
+
+.dumbpad-login-story {
+    align-self: center;
+    padding: 70px clamp(48px, 8vw, 108px);
+}
+
+.dumbpad-login-story-icon {
+    width: 74px;
+    height: 74px;
+    margin-bottom: 31px;
+    filter: drop-shadow(0 13px 13px color-mix(in srgb, var(--login-brand) 24%, transparent));
+}
+
+.dumbpad-login-eyebrow, .dumbpad-login-kicker {
+    margin: 0;
+    color: var(--login-brand);
+    font-family: "DumbPad Code", "Fira Code", ui-monospace, monospace;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0;
+}
+
+.dumbpad-login-story h1 {
+    max-width: none;
+    margin: 14px 0 18px;
+    font-size: 32px;
+    font-weight: 600;
+    line-height: 1.2;
+    letter-spacing: 0;
+    white-space: nowrap;
+    text-wrap: nowrap;
+}
+
+.dumbpad-login-story > p:not(.dumbpad-login-eyebrow) {
+    max-width: 395px;
+    margin: 0;
+    color: var(--login-copy);
+    font-size: 15px;
+    line-height: 1.85;
+}
+
+.dumbpad-login-signals { display: flex; gap: 22px; margin-top: 38px; color: var(--login-soft); font-family: "DumbPad Code", "Fira Code", ui-monospace, monospace; font-size: 11px; }
+.dumbpad-login-signals span::before { content: ""; display: inline-block; width: 5px; height: 5px; margin: 0 7px 2px 0; border-radius: 50%; background: var(--login-brand); }
+
+.dumbpad-login-panel {
+    display: grid;
+    align-items: center;
+    padding: 56px clamp(38px, 5vw, 70px);
+    border-left: 1px solid var(--login-line);
+    background-color: color-mix(in srgb, var(--login-paper) 88%, var(--login-canvas));
+    background-image:
+        linear-gradient(rgba(37, 39, 45, 0.024) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(37, 39, 45, 0.024) 1px, transparent 1px);
+    background-size: 22px 22px;
+}
+
+.dumbpad-login-content { width: min(100%, 326px); margin: auto; }
+.dumbpad-login-content h2 { margin: 0 0 7px; color: var(--login-ink); font-family: ui-sans-serif, system-ui, sans-serif; font-size: 24px; font-weight: 680; letter-spacing: 0; }
+.dumbpad-login-lead { margin: 0 0 25px; color: var(--login-copy); font-family: ui-sans-serif, system-ui, sans-serif; font-size: 13px; line-height: 1.65; }
+.dumbpad-login-form { display: grid; gap: 8px; }
+.dumbpad-login-form label { margin-top: 8px; color: var(--login-copy); font-family: ui-sans-serif, system-ui, sans-serif; font-size: 12px; font-weight: 650; }
+.dumbpad-login-form input { box-sizing: border-box; width: 100%; height: 48px; padding: 0 13px; border: 1px solid var(--login-line); border-radius: 8px; background: color-mix(in srgb, var(--login-paper) 96%, var(--login-canvas)); color: var(--login-ink); font: 14px ui-sans-serif, system-ui, sans-serif; outline: none; transition: border-color 120ms ease-out, box-shadow 120ms ease-out, background-color 120ms ease-out; }
+.dumbpad-login-form input:focus { border-color: var(--login-brand); box-shadow: 0 0 0 3px color-mix(in srgb, var(--login-brand) 13%, transparent); }
+.dumbpad-login-form > button[type="submit"],
+.dumbpad-login-content #finish-setup {
+    width: 100%;
+    min-height: 48px;
+    margin-top: 13px;
+    border: 1px solid color-mix(in srgb, var(--login-brand) 74%, #40101c);
+    border-radius: 8px;
+    background: var(--login-brand);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22), 0 8px 16px color-mix(in srgb, var(--login-brand) 19%, transparent);
+    color: #fff;
+    font: 680 14px ui-sans-serif, system-ui, sans-serif;
+    cursor: pointer;
+    transition: transform 120ms ease-out, background-color 120ms ease-out, box-shadow 120ms ease-out;
+}
+
+.dumbpad-login-form > button[type="submit"]:hover,
+.dumbpad-login-content #finish-setup:hover {
+    background: color-mix(in srgb, var(--login-brand) 88%, #40101c);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22), 0 10px 19px color-mix(in srgb, var(--login-brand) 25%, transparent);
+    transform: translateY(-1px);
+}
+
+.dumbpad-login-form > button[type="submit"]:active,
+.dumbpad-login-content #finish-setup:active {
+    transform: translateY(0);
+    box-shadow: inset 0 1px 2px rgba(64, 16, 28, 0.22);
+}
+
+.dumbpad-login-form > button[type="submit"]:focus-visible,
+.dumbpad-login-content #finish-setup:focus-visible {
+    outline: 3px solid color-mix(in srgb, var(--login-brand) 28%, transparent);
+    outline-offset: 2px;
+}
+.dumbpad-login-totp { display: none; }
+.dumbpad-login-totp.is-visible { display: grid; gap: 7px; margin-top: 8px; }
+.dumbpad-login-totp p { margin: 0; color: var(--login-soft); font: 12px/1.55 ui-sans-serif, system-ui, sans-serif; }
+.dumbpad-login-trust { display: flex; gap: 9px; align-items: flex-start; margin: 18px 0 0; color: var(--login-soft); font: 12px/1.55 ui-sans-serif, system-ui, sans-serif; }
+.dumbpad-login-trust span { flex: 0 0 15px; height: 15px; display: grid; place-items: center; border-radius: 50%; background: var(--login-brand-soft); color: var(--login-brand); font-size: 9px; font-weight: 800; }
+.dumbpad-login-error { min-height: 20px; margin: 15px 0 0; color: var(--login-brand); font: 12px/1.55 ui-sans-serif, system-ui, sans-serif; }
+.dumbpad-login-secret { display: flex; gap: 8px; align-items: stretch; margin: 0 0 20px; padding: 8px; border: 1px solid var(--login-line); border-radius: 9px; background: color-mix(in srgb, var(--login-paper) 90%, var(--login-canvas)); }
+.dumbpad-login-secret code { flex: 1; align-self: center; overflow-wrap: anywhere; color: var(--login-ink); font: 12px/1.5 "DumbPad Code", "Fira Code", ui-monospace, monospace; }
+.dumbpad-login-content .dumbpad-login-secondary { width: auto; min-height: 34px; margin: 0; padding: 0 12px; background: transparent; border: 1px solid var(--login-line); color: var(--login-copy); box-shadow: none; font-size: 12px; }
+.dumbpad-login-content .dumbpad-login-text-action { display: block; margin: 14px 0 0; padding: 0; border: 0; color: var(--login-soft); text-decoration: underline; text-underline-offset: 3px; }
+.dumbpad-login-recovery { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin: 0 0 14px; padding: 13px; border: 1px solid var(--login-line); border-radius: 9px; background: color-mix(in srgb, var(--login-paper) 90%, var(--login-canvas)); }
+.dumbpad-login-recovery code { color: var(--login-ink); font: 11px/1.5 "DumbPad Code", "Fira Code", ui-monospace, monospace; }
+.dumbpad-login-content #finish-setup { margin-top: 10px; }
+.dumbpad-login-footer { margin: 17px 0 0; color: var(--login-soft); text-align: center; font: 11px "DumbPad Code", "Fira Code", ui-monospace, monospace; letter-spacing: 0; }
+
+@media (max-width: 760px) {
+    .dumbpad-login-body { height: auto; min-height: 100dvh; overflow: auto; }
+    .dumbpad-login-shell { width: min(100% - 28px, 540px); height: auto; min-height: 100dvh; padding: 11px 0 20px; }
+    .dumbpad-login-stage { display: block; min-height: calc(100dvh - 31px); border-radius: 14px; }
+    .dumbpad-login-story { display: none; }
+    .dumbpad-login-panel { min-height: calc(100dvh - 31px); padding: 42px 29px; border: 0; background: transparent; }
+    .dumbpad-login-panel::before { content: ""; display: block; width: 66px; height: 66px; margin: 0 0 31px; border-radius: 18px; background: url("dumbpad-512.png") center / contain no-repeat; filter: drop-shadow(0 10px 10px color-mix(in srgb, var(--login-brand) 18%, transparent)); }
+    .dumbpad-login-content { margin: 0; }
+    .dumbpad-login-content h2 { font-size: 26px; }
+    .dumbpad-login-footer { display: none; }
+    .dumbpad-login-signals { display: none; }
+}

@@ -8,6 +8,7 @@ const s3 = require('./scripts/s3-service');
 const PORT = Number(process.env.TEST_PORT || 19010);
 const BASE_URL = `http://127.0.0.1:${PORT}`;
 const REQUIRED_ENV = ['S3_ENDPOINT', 'S3_REGION', 'S3_BUCKET', 'S3_ACCESS_KEY', 'S3_PREFIX'];
+const REAL_SMOKE_CONFIRM_ENV = 'DUMBPAD_REAL_S3_SMOKE_CONFIRM_PREFIX';
 
 function assert(condition, message) {
     if (!condition) throw new Error(message);
@@ -80,6 +81,11 @@ async function run() {
     if (!process.env.S3_SECRET_KEY && !process.env.S3_API_KEY) missing.push('S3_SECRET_KEY or S3_API_KEY');
     if (missing.length) {
         throw new Error(`Missing required env for real S3 smoke: ${missing.join(', ')}`);
+    }
+    if (String(process.env[REAL_SMOKE_CONFIRM_ENV] || '').trim() !== String(process.env.S3_PREFIX || '').replace(/^\/+|\/+$/g, '')) {
+        throw new Error(
+            `Real S3 smoke is destructive and requires ${REAL_SMOKE_CONFIRM_ENV} to exactly match S3_PREFIX.`
+        );
     }
 
     const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dumbpad-real-s3-'));

@@ -26,6 +26,7 @@
 | 垃圾桶 | `trash/index.json`、`trash/notepads/*.json`、`trash/thoughts/*.json` | 用户数据 | 是 | 否 | 保存已删除文章和 Thought 的恢复 payload；永久删除后才移除。 |
 | AI meta | `thoughts.meta/*.json` | 派生数据 | 建议同步 | 是 | 保存摘要、实体、主题、embedding、AI 标签建议、状态。同步可提升速度，但丢失后可 backfill。 |
 | AI relation | `relations/*.json` 中 `source=ai` | 派生数据 | 建议同步 | 是 | 可通过 `relations-rebuild` 重建。 |
+| AgentRun | `agent-runs/<runId>.json`、`agent-runs/active-index.json` | 派生数据 | 可选 | 是 | 用户主动“找回相关内容”的运行状态、最小审计摘要和结构化引用；不保存 Prompt、工具原始结果或文本增量。 |
 | 搜索索引 | `indexes/*.json` | 派生数据 | 可选 | 是 | 用于加速搜索，启动或迁移后可重建。 |
 | 前端启动缓存 | localStorage `dumbpad_startup_cache` | 本机缓存 | 否 | 是 | 只用于快速首屏和离线兜底，不是同步真相。 |
 
@@ -46,6 +47,8 @@ S3 key 结构：
 - `thoughts.meta/<id>.json`
 - `relations/<id>.json`
 - `relations.suppressed/<id>.json`
+- `agent-runs/<runId>.json`
+- `agent-runs/active-index.json`
 - `indexes/<name>.json`
 - `trash/index.json`
 - `trash/notepads/<trashId>.json`
@@ -135,6 +138,14 @@ AI 标签只作为 `aiTags` 建议返回。用户点击接受后才写入 `thoug
 
 AI 日志应保留在后端控制台，用于定位任务是否入队、模型是否调用、耗时和失败原因；日志不得输出 API key 或完整敏感正文。
 
+交互 Agent 与上述后台队列是两条独立运行线：
+
+- `POST /api/agent/runs` 仅由用户在 Thought 中明确发起；阶段 A 只提供只读 `recall_context`，不能修改 Thought、Notepad、标签、任务或 relation。
+- AgentRun 通过 `agent-runs/` 独立保存；服务重启时未完成运行标记为可重试失败，绝不继续执行或伪造完成。
+- 单次生成使用 SSE，WebSocket 仍只负责主数据和既有 AI 状态通知。
+- Agent 只能读取服务端预先构建的有限 `allowedReadSet`，并以 `sourceRef` 引用实际读取过的片段。搜索索引尚未就绪时跳过文章候选，不能为 Agent 触发全量索引构建。
+- 模型、网络、运行记录或 SSE 失败都不得阻塞 Thought/Notepad 的写入、同步或现有后台 AI。
+
 ## 7. WebSocket 边界
 
 当前事件：
@@ -197,6 +208,7 @@ WebSocket 只负责通知：
 - 不把 AI backfill 或 relation rebuild 放到启动关键路径。
 - 不让 S3 直连暴露到前端。
 - 不因为 AI provider 不可用而影响 Thought 创建、修改、删除。
+- 不让 AgentRun、Agent SSE 或 Agent provider 失败影响用户主数据写入；AgentRun 是可删除、可重建的派生数据。
 - 不因为 S3 之外的派生数据失败而阻断用户主数据写入。
 - 多端同步要先保证用户数据，再优化 AI meta、relation、索引等派生数据。
 - 每个新的同步功能都要说明它写入的是用户数据还是派生数据。

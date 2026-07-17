@@ -148,6 +148,7 @@ Thumbs.db
 
 # Local browser/test artifacts
 .playwright-cli/
+.superpowers/
 .tmp/
 scratch/
 .docker-update.override.yml

@@ -28,6 +28,7 @@ The current branch is the refactored application line. Treat the codebase as the
 - `scripts/storage.js` is the user-data storage boundary for local JSON/txt and S3-compatible storage.
 - `scripts/ai-provider.js` encapsulates AI provider calls and falls back to noop behavior when AI config is absent.
 - `scripts/ai-queue.js` owns background Thought AI analysis, relation generation, and status broadcasts.
+- `scripts/agent/` owns the separate interactive Agent line: `recall_context` runs, constrained read-only tools, AgentRun persistence, model adapter, and SSE. Do not route it through `ai-queue`, WebSocket, or Thought/Notepad writes.
 - Frontend code lives mainly under `public/`; large Thought behavior has been split into focused modules, including `public/managers/thought-tags.js` for tag normalization, persistence, tag-filter/Quick Add tag HTML helpers, and AI suggested tag HTML, `public/managers/thought-ai-status.js` for AI status normalization, pending-delay calculation, socket detail application, labels/icons/detail HTML, `public/managers/thought-card-renderer.js` for pure Thought card HTML rendering, `public/managers/thought-relations-panel.js` for relation panel and manual relation option HTML, `public/managers/thought-relations-state.js` for local relation count/pending state transitions, `public/managers/thought-editor.js` for legacy subtask parsing, editable parts, subtask cleanup/sorting, edit-row HTML, and local subtask mutations, `public/managers/thought-quick-add.js` for Quick Add local pending/create outbox data construction, and `public/managers/thought-text-formatting.js` for HTML escaping, linkify, and regex escaping.
 
 ## Root JavaScript Files
@@ -71,6 +72,7 @@ npm run test:thought-modules
 npm run test:note-sync
 npm run test:pwa-cache
 npm run test:ai-queue
+npm run test:agent
 npm run test:s3-storage
 npm run test:s3-prefix
 ```
@@ -92,6 +94,7 @@ Useful test mapping:
 - `npm run test:thought-text-formatting` - pure Thought text formatting checks, including escaping, regex escaping, and existing linkify punctuation behavior.
 - `npm run test:thought-swipe` - Thought swipe distance, warning visibility, clamping, and delete-threshold state checks.
 - `npm run test:ai-queue` - AI queue and relation generation behavior.
+- `npm run test:agent` - AgentRun contract/storage, constrained context tools, model protocol, SSE, Thought panel state, and HTTP route integration with a fake provider.
 - `npm run test:relations` - relation scoring/calculation helpers.
 - `npm run test:s3-storage` and `npm run test:s3-prefix` - mocked/local S3 boundary checks.
 

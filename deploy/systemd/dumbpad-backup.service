@@ -1,0 +1,11 @@
+[Unit]
+Description=DumbPad encrypted backup snapshot
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/opt/dumbpad
+EnvironmentFile=/etc/dumbpad/backup.env
+ExecStart=/usr/bin/node /opt/dumbpad/scripts/backup/backup-cli.js snapshot

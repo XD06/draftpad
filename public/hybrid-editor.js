@@ -9,7 +9,13 @@ import {
     replaceTimeMarker,
     TIME_COMMAND
 } from './managers/time-command.js';
-import { AssetApiClient, isImageFile } from './managers/asset-api-client.js';
+import { ARTICLE_FILE_ACCEPT, AssetApiClient, isImageFile } from './managers/asset-api-client.js';
+import {
+    buildArticleFileMarkdown,
+    FILE_COMMAND,
+    findFileCommandBeforeCursor,
+    replaceFileCommand
+} from './managers/article-file-command.js';
 
 const HEADING_RE = /^(#{1,6})\s+(.+?)\s*#*\s*$/;
 const MARK_PROTECTED_SELECTOR = [
@@ -63,6 +69,7 @@ export class HybridMarkdownEditor {
         this.isComposing = false;
         this.assetApi = new AssetApiClient();
         this.assetUploadTasks = new Set();
+        this.articleFileCommand = null;
 
         this.container.innerHTML = '';
         this.container.classList.add('typora-editor-shell');
@@ -137,6 +144,7 @@ export class HybridMarkdownEditor {
         this.setupSelectionMenu();
         this.bindReadingModeGuard();
         this.bindArticleImageInteractions();
+        this.createArticleFileInput();
         this.bindCompositionEvents();
         this.bindTimeCommand();
         this.bindMarkerProtection();
@@ -668,6 +676,12 @@ export class HybridMarkdownEditor {
                 this.sourceCaretOffset = this.sourceTextarea.selectionStart;
             });
         });
+        this.sourceCommandKeydownHandler = (event) => {
+            if (this.isReadingMode || !this.sourceMode || this.isComposing) return;
+            if (this.handleSourceFileCommand(event)) return;
+            handleTimeCommandKeydown(event);
+        };
+        this.sourceTextarea.addEventListener('keydown', this.sourceCommandKeydownHandler);
 
         this.sourceToggle = document.createElement('button');
         this.sourceToggle.type = 'button';
@@ -1900,11 +1914,78 @@ export class HybridMarkdownEditor {
             if (target.closest('.has-annotation, [data-note], .md-mark, [data-draw], .md-time-marker')) return;
             if (target.closest('.vditor-copy, .code-lang-copy-button')) return;
             if (target.closest('.vditor-reset img[data-dumbpad-asset], .vditor-reset img[src*="/api/assets/"], .vditor-reset img[src^="data:image/"]')) return;
+            if (target.closest('.vditor-reset a.dumbpad-article-file')) return;
             if (target.closest('.vditor-reset')) {
                 event.preventDefault();
                 event.stopPropagation();
             }
         }, true);
+    }
+
+    createArticleFileInput() {
+        if (this.articleFileInput) return this.articleFileInput;
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.multiple = true;
+        input.accept = ARTICLE_FILE_ACCEPT;
+        input.className = 'article-file-command-input';
+        input.tabIndex = -1;
+        input.setAttribute('aria-hidden', 'true');
+        input.addEventListener('change', () => this.handleArticleFileSelection());
+        input.addEventListener('cancel', () => {
+            this.articleFileCommand = null;
+        });
+        this.container.appendChild(input);
+        this.articleFileInput = input;
+        return input;
+    }
+
+    requestArticleFileSelection(commandRange) {
+        const input = this.createArticleFileInput();
+        if (!commandRange) return false;
+        this.articleFileCommand = { ...commandRange };
+        input.value = '';
+        input.click();
+        return true;
+    }
+
+    createArticleUploadToken() {
+        return `[[资源上传中 ${Date.now()}-${Math.random().toString(36).slice(2, 8)}]]`;
+    }
+
+    replaceArticleFileCommandWithPlaceholders(commandRange, tokens) {
+        const replacement = tokens.join('\n\n');
+        if (this.sourceMode && this.sourceTextarea) {
+            const replaced = replaceFileCommand(this.sourceTextarea.value, commandRange, replacement);
+            if (!replaced) return false;
+            this.sourceTextarea.value = replaced.value;
+            this.sourceTextarea.setSelectionRange(replaced.selectionStart, replaced.selectionEnd);
+            this.emitSourceInput();
+            return true;
+        }
+
+        const value = this.getValue();
+        const replaced = replaceFileCommand(value, commandRange, replacement);
+        if (!replaced) return false;
+        this.setWysiwygValueAtMarkdownOffset(replaced.value, replaced.selectionStart, true);
+        return true;
+    }
+
+    handleArticleFileSelection() {
+        const commandRange = this.articleFileCommand;
+        this.articleFileCommand = null;
+        const input = this.articleFileInput;
+        const files = Array.from(input?.files || []);
+        if (!commandRange || files.length === 0) return;
+
+        const tokens = files.map(() => this.createArticleUploadToken());
+        if (!this.replaceArticleFileCommandWithPlaceholders(commandRange, tokens)) {
+            this.editor?.tip?.('插入位置已变化，请重新输入 /file', 3500);
+            return;
+        }
+        files.forEach((file, index) => {
+            this.queueArticleAssetUpload(file, { token: tokens[index], alreadyInserted: true });
+        });
     }
 
     bindArticleImageInteractions() {
@@ -2272,17 +2353,36 @@ export class HybridMarkdownEditor {
             if (width) image.style.width = `${width}px`;
             else image.style.removeProperty('width');
         });
+        this.decorateArticleFileLinks(root);
+    }
+
+    decorateArticleFileLinks(root = this.container.querySelector('.vditor-wysiwyg .vditor-reset')) {
+        root?.querySelectorAll('a').forEach(link => {
+            const href = String(link.getAttribute('href') || '');
+            const title = String(link.getAttribute('title') || '');
+            if (!title.startsWith('dumbpad-file=1') || !/^\/api\/assets\/[a-f0-9-]{16,64}\/download$/i.test(href)) return;
+            link.classList.add('dumbpad-article-file');
+            link.setAttribute('download', '');
+            link.setAttribute('contenteditable', 'false');
+            link.setAttribute('aria-label', `下载附件：${link.textContent || '文件'}`);
+        });
     }
 
     queueArticleImageUpload(file) {
-        const token = `[[图片上传中 ${Date.now()}-${Math.random().toString(36).slice(2, 8)}]]`;
-        this.insertArticleUploadPlaceholder(token);
-        const task = this.assetApi.uploadImage(file)
-            .then(asset => this.replaceArticleUploadPlaceholder(token, asset))
+        return this.queueArticleAssetUpload(file, { imageOnly: true });
+    }
+
+    queueArticleAssetUpload(file, { token = this.createArticleUploadToken(), alreadyInserted = false, imageOnly = false } = {}) {
+        const isImage = imageOnly || isImageFile(file);
+        if (!alreadyInserted) this.insertArticleUploadPlaceholder(token);
+        const upload = isImage ? this.assetApi.uploadImage(file) : this.assetApi.uploadFile(file);
+        const task = upload
+            .then(asset => this.replaceArticleUploadPlaceholder(token, isImage ? this.buildArticleImageMarkdown(asset) : buildArticleFileMarkdown(asset)))
             .catch(error => {
-                console.error('Failed to upload article image:', error);
-                this.replaceArticleUploadPlaceholder(token, `图片上传失败：${file.name || '图片'}`);
-                this.editor?.tip?.('图片上传失败', 3000);
+                console.error(`Failed to upload article ${isImage ? 'image' : 'file'}:`, error);
+                const label = isImage ? '图片' : '文件';
+                this.replaceArticleUploadPlaceholder(token, `${label}上传失败：${file.name || label}`);
+                this.editor?.tip?.(`${label}上传失败`, 3000);
             })
             .finally(() => this.assetUploadTasks.delete(task));
         this.assetUploadTasks.add(task);
@@ -2505,15 +2605,52 @@ export class HybridMarkdownEditor {
     bindTimeCommand() {
         this.timeCommandKeydownHandler = (event) => {
             if (this.isReadingMode) return;
-            if (this.sourceMode) {
-                if (this.isComposing) return;
-                handleTimeCommandKeydown(event);
-                return;
-            }
+            if (this.sourceMode) return;
+            if (this.handleWysiwygFileCommand(event)) return;
             if (this.handleWysiwygTimeCommand(event)) return;
             this.handleWysiwygSoftEnter(event);
         };
         this.container.addEventListener('keydown', this.timeCommandKeydownHandler, true);
+    }
+
+    isArticleFileCommandKeydown(event) {
+        return Boolean(
+            event && event.key === 'Enter' && !event.ctrlKey && !event.metaKey &&
+            !event.altKey && !event.shiftKey && !event.isComposing && !this.isComposing
+        );
+    }
+
+    stopArticleFileCommandEvent(event) {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation?.();
+    }
+
+    handleSourceFileCommand(event) {
+        if (!this.isArticleFileCommandKeydown(event) || event.target !== this.sourceTextarea) return false;
+        const commandRange = findFileCommandBeforeCursor(
+            this.sourceTextarea.value,
+            this.sourceTextarea.selectionStart,
+            this.sourceTextarea.selectionEnd
+        );
+        if (!commandRange) return false;
+        this.stopArticleFileCommandEvent(event);
+        this.requestArticleFileSelection(commandRange);
+        return true;
+    }
+
+    handleWysiwygFileCommand(event) {
+        if (!this.isArticleFileCommandKeydown(event) || !event.target?.closest?.('.vditor-wysiwyg')) return false;
+        const selection = window.getSelection();
+        const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
+        if (range && this.closestElement(range.startContainer, 'code, .md-time-marker')) return false;
+        const value = this.getValue();
+        const caret = this.getCurrentWysiwygMarkdownOffset();
+        const commandRange = findFileCommandBeforeCursor(value, caret, caret);
+        if (!commandRange) return false;
+        this.stopArticleFileCommandEvent(event);
+        this.requestArticleFileSelection(commandRange);
+        return true;
     }
 
     handleWysiwygTimeCommand(event) {

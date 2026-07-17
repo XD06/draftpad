@@ -90,6 +90,9 @@ function run() {
     assert(rendered.html.includes('subtasks-summary-row'), 'card render should include collapsed subtask summary');
     assert(rendered.html.includes('<mark>first</mark>'), 'card render should preserve search highlighting in subtasks');
     assert(rendered.html.includes('thought-attachment-add-footer'), 'card footer should include a browse-mode attachment control');
+    assert(rendered.html.includes('<button type="button" class="thought-dot"'), 'completion control should be a native button so it does not compete with card gestures');
+    assert(rendered.html.includes('aria-pressed="false"'), 'incomplete thoughts should expose their completion state to assistive technology');
+    assert(!rendered.html.includes('thought-agent-recall-btn'), 'agent recall should not occupy the compact card footer');
 
     const empty = renderThoughtCard({
         thought: {
@@ -107,6 +110,18 @@ function run() {
     assert(empty.isLong === false, 'short cards without subtasks should not be expandable');
     assert(empty.html.includes('subtask-add-footer'), 'cards without subtasks should expose footer add-subtask action');
     assert(empty.html.includes('relations-count is-zero'), 'zero relation count should keep zero badge class');
+
+    const completed = renderThoughtCard({
+        thought: {
+            id: 'thought-completed',
+            text: 'Completed body',
+            completed: true,
+            createdAt: 1700000000000
+        },
+        query: '',
+        ...helpers()
+    });
+    assert(completed.html.includes('aria-pressed="true"'), 'completed thoughts should expose their completion state to assistive technology');
 
     const withAttachments = renderThoughtCard({
         thought: {

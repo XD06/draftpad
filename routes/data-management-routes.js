@@ -1,6 +1,10 @@
 const fs = require('fs').promises;
 const fsSync = require('fs');
 const path = require('path');
+const {
+    assertDestructiveDataOperationEnabled,
+    destructiveDataOperationsEnabled
+} = require('../scripts/data-operation-policy');
 
 function compactInventory(inventory) {
     return {
@@ -92,8 +96,28 @@ function registerDataManagementRoutes(app, context) {
         storage,
         s3PrefixTools,
         localToS3Migration,
-        s3Service
+        s3Service,
+        auditLogger = null
     } = context;
+
+    function audit(req, action, details = {}, outcome = 'success') {
+        if (!auditLogger) return;
+        auditLogger.append({
+            type: 'data.operation',
+            actor: req.auth?.session?.sessionId || null,
+            ip: req.ip || null,
+            outcome,
+            details: { action, ...details }
+        }).catch(error => console.warn('Audit logging failed:', error.message));
+    }
+
+    function auditFailure(req, action, error) {
+        audit(req, action, {
+            method: req.method,
+            path: req.path,
+            reason: error?.code || error?.status || 'request_failed'
+        }, 'failure');
+    }
 
     app.get('/api/data-management/status', async (req, res) => {
         try {
@@ -108,6 +132,9 @@ function registerDataManagementRoutes(app, context) {
                 backend: storage.backend,
                 layout: storage.layout,
                 dataDir: storage.paths.DATA_DIR,
+                safety: {
+                    destructiveDataOperationsEnabled: destructiveDataOperationsEnabled()
+                },
                 s3: {
                     configured: storage.backend === 's3',
                     bucket: process.env.S3_BUCKET || '',
@@ -165,12 +192,14 @@ function registerDataManagementRoutes(app, context) {
             }
 
             const activePrefix = await storage.setS3Prefix(prefix);
+            audit(req, 's3.select-space', { prefix: activePrefix });
             res.json({
                 success: true,
                 prefix: activePrefix,
                 requiresReload: true
             });
         } catch (err) {
+            auditFailure(req, 's3.select-space', err);
             sendDataManagementError(res, 'Error selecting S3 space:', err, 'Error selecting S3 space');
         }
     });
@@ -209,11 +238,13 @@ function registerDataManagementRoutes(app, context) {
         try {
             const prefix = cleanPrefix(req.body?.prefix || currentS3Prefix(storage));
             const dryRun = req.body?.dryRun !== false;
+            if (!dryRun) assertDestructiveDataOperationEnabled('Deleting an S3 data space');
             if (!dryRun) requireConfirmedPrefix(prefix, req.body?.confirmPrefix);
             const result = await s3PrefixTools.deletePrefix(prefix, {
                 dryRun,
                 confirmPrefix: req.body?.confirmPrefix
             });
+            if (!dryRun) audit(req, 's3.delete-prefix', { prefix: result.prefix, objectCount: result.objectCount, totalBytes: result.totalBytes });
             res.json({
                 action: result.action,
                 prefix: result.prefix,
@@ -222,6 +253,7 @@ function registerDataManagementRoutes(app, context) {
                 dryRun: result.dryRun
             });
         } catch (err) {
+            auditFailure(req, 's3.delete-prefix', err);
             sendDataManagementError(res, 'Error deleting S3 prefix:', err, 'Error deleting S3 prefix');
         }
     });
@@ -232,6 +264,7 @@ function registerDataManagementRoutes(app, context) {
             const prefix = cleanPrefix(req.body?.prefix || currentS3Prefix(storage));
             const reportDir = String(req.body?.reportDir || '').trim();
             const dryRun = req.body?.dryRun !== false;
+            if (!dryRun) assertDestructiveDataOperationEnabled('Importing local data into S3');
             if (!sourceDataDir) return res.status(400).json({ error: 'sourceDataDir is required' });
             if (!prefix) return res.status(400).json({ error: 'prefix is required' });
             if (!dryRun) requireConfirmedPrefix(prefix, req.body?.confirmPrefix);
@@ -244,6 +277,7 @@ function registerDataManagementRoutes(app, context) {
             if (dryRun) args.push('--dry-run');
 
             const report = await localToS3Migration.run(args);
+            if (!dryRun) audit(req, 'local.import-s3', { prefix, objectCount: report.uploaded.length, totalBytes: report.totalBytes });
             res.json({
                 dryRun: report.dryRun,
                 dataDir: report.dataDir,
@@ -255,6 +289,7 @@ function registerDataManagementRoutes(app, context) {
                 reportPath: report.reportPath
             });
         } catch (err) {
+            auditFailure(req, 'local.import-s3', err);
             sendDataManagementError(res, 'Error importing local data to S3:', err, 'Error importing local data to S3');
         }
     });
@@ -266,6 +301,7 @@ function registerDataManagementRoutes(app, context) {
             const backupPrefix = cleanPrefix(req.body?.backupPrefix);
             const reportDir = String(req.body?.reportDir || '').trim();
             const dryRun = req.body?.dryRun !== false;
+            if (!dryRun) assertDestructiveDataOperationEnabled('Overwriting an S3 data space from local data');
             if (!sourceDataDir) return res.status(400).json({ error: 'sourceDataDir is required' });
             if (!prefix) return res.status(400).json({ error: 'prefix is required' });
             if (!backupPrefix) return res.status(400).json({ error: 'backupPrefix is required' });
@@ -288,6 +324,7 @@ function registerDataManagementRoutes(app, context) {
                 await s3PrefixTools.backupPrefix(prefix, backupPrefix, { dryRun: false });
                 await s3PrefixTools.deletePrefix(prefix, { dryRun: false, confirmPrefix: prefix });
                 await localToS3Migration.run(importArgs);
+                audit(req, 'local.overwrite-s3', { prefix, objectCount: deletion.objectCount, totalBytes: deletion.totalBytes });
             }
 
             res.json({
@@ -315,6 +352,7 @@ function registerDataManagementRoutes(app, context) {
                 }
             });
         } catch (err) {
+            auditFailure(req, 'local.overwrite-s3', err);
             sendDataManagementError(res, 'Error overwriting S3 from local data:', err, 'Error overwriting S3 from local data');
         }
     });
@@ -324,6 +362,7 @@ function registerDataManagementRoutes(app, context) {
             const prefix = cleanPrefix(req.body?.prefix || currentS3Prefix(storage));
             const targetDataDir = assertSafeDataDir(req.body?.targetDataDir || storage.paths.DATA_DIR);
             const dryRun = req.body?.dryRun !== false;
+            if (!dryRun) assertDestructiveDataOperationEnabled('Overwriting local data from S3');
             const localBackupDir = path.resolve(
                 String(req.body?.localBackupDir || `${targetDataDir}.backup-${Date.now()}`)
             );
@@ -345,10 +384,12 @@ function registerDataManagementRoutes(app, context) {
                 await copyDirectoryIfExists(targetDataDir, localBackupDir);
                 await emptyDirectory(targetDataDir);
                 result.restored = await restorePrefixToLocal(prefix, targetDataDir, s3Service);
+                audit(req, 's3.overwrite-local', { prefix, objectCount: result.restored.written, totalBytes: result.restored.totalBytes });
             }
 
             res.json(result);
         } catch (err) {
+            auditFailure(req, 's3.overwrite-local', err);
             sendDataManagementError(res, 'Error overwriting local data from S3:', err, 'Error overwriting local data from S3');
         }
     });

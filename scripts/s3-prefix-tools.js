@@ -2,6 +2,7 @@ require('dotenv').config();
 
 const path = require('path');
 const s3 = require('./s3-service');
+const { assertCliDestructivePrefix } = require('./data-operation-policy');
 
 function cleanPrefix(prefix) {
     return String(prefix || '').replace(/^\/+|\/+$/g, '');
@@ -108,6 +109,7 @@ const RESERVED_SPACE_DIRS = new Set([
     'thoughts.meta',
     'relations',
     'relations.suppressed',
+    'agent-runs',
     'indexes'
 ]);
 
@@ -248,6 +250,9 @@ async function runCli(argv = process.argv.slice(2)) {
     } else if (args.action === 'backup') {
         result = await backupPrefix(args.prefix, args.backupPrefix, { dryRun: args.dryRun });
     } else if (args.action === 'delete') {
+        if (!args.dryRun) {
+            assertCliDestructivePrefix('Deleting an S3 data space', args.prefix);
+        }
         result = await deletePrefix(args.prefix, {
             dryRun: args.dryRun,
             confirmPrefix: args.confirmPrefix

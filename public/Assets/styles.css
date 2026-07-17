@@ -3956,6 +3956,15 @@ body.toc-active .floating-actions {
 }
 
 /* Article image assets */
+.article-file-command-input {
+    position: fixed;
+    width: 1px;
+    height: 1px;
+    opacity: 0;
+    pointer-events: none;
+    clip-path: inset(50%);
+}
+
 .vditor-reset img.dumbpad-article-image {
     display: block;
     max-width: 100%;
@@ -3982,6 +3991,40 @@ body.toc-active .floating-actions {
 .vditor-reset.is-article-image-drop-target {
     outline: 1px dashed color-mix(in srgb, var(--primary-color) 42%, transparent);
     outline-offset: 4px;
+}
+
+.vditor-reset a.dumbpad-article-file {
+    display: inline-flex;
+    align-items: center;
+    max-width: min(100%, 560px);
+    min-height: 36px;
+    margin: 10px 0;
+    padding: 7px 11px;
+    overflow: hidden;
+    border: 1px solid color-mix(in srgb, var(--border-color) 78%, var(--primary-color));
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--surface-subtle) 82%, var(--textarea-bg));
+    color: var(--text-color);
+    font-size: 13px;
+    line-height: 1.35;
+    text-decoration: none;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    vertical-align: middle;
+    cursor: pointer;
+}
+
+.vditor-reset a.dumbpad-article-file:hover,
+.vditor-reset a.dumbpad-article-file:focus-visible {
+    outline: none;
+    border-color: color-mix(in srgb, var(--primary-color) 62%, var(--border-color));
+    background: color-mix(in srgb, var(--primary-color) 11%, var(--textarea-bg));
+    color: var(--primary-color);
+}
+
+.vditor-reset a.dumbpad-article-file:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--primary-color) 45%, transparent);
+    outline-offset: 2px;
 }
 
 .article-image-size-menu {

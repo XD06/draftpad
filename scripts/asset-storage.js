@@ -34,27 +34,30 @@ function createAssetStorage(storage) {
         return path.join(localRoot, id);
     }
 
-    async function writeAsset({ id, metadata, original, preview }) {
+    async function writeAsset({ id, metadata, original, preview = null }) {
         const safeId = safeAssetId(id);
         if (!safeId) throw new Error('Invalid asset id');
+        if (!original?.buffer) throw new Error('Asset original is required');
 
         if (storage.backend === 's3') {
             const prefix = assetPrefix(safeId);
-            await Promise.all([
+            const writes = [
                 s3.putObject(joinS3Key(prefix, 'original'), original.buffer, original.contentType),
-                s3.putObject(joinS3Key(prefix, 'preview'), preview.buffer, preview.contentType),
                 s3.putObject(joinS3Key(prefix, 'meta.json'), JSON.stringify(metadata, null, 2), 'application/json')
-            ]);
+            ];
+            if (preview?.buffer) writes.push(s3.putObject(joinS3Key(prefix, 'preview'), preview.buffer, preview.contentType));
+            await Promise.all(writes);
             return metadata;
         }
 
         const target = localAssetDir(safeId);
         await fs.mkdir(target, { recursive: true });
-        await Promise.all([
+        const writes = [
             fs.writeFile(path.join(target, 'original'), original.buffer),
-            fs.writeFile(path.join(target, 'preview'), preview.buffer),
             fs.writeFile(path.join(target, 'meta.json'), JSON.stringify(metadata, null, 2), 'utf8')
-        ]);
+        ];
+        if (preview?.buffer) writes.push(fs.writeFile(path.join(target, 'preview'), preview.buffer));
+        await Promise.all(writes);
         return metadata;
     }
 
@@ -68,11 +71,13 @@ function createAssetStorage(storage) {
             const prefix = assetPrefix(safeId);
             metadata = await s3.getJSONObject(joinS3Key(prefix, 'meta.json'), null);
             if (!metadata) return null;
+            if (variant === 'preview' && !metadata.previewType) return null;
             buffer = await s3.getObjectBuffer(joinS3Key(prefix, variant));
         } else {
             const target = localAssetDir(safeId);
             try {
                 metadata = JSON.parse(await fs.readFile(path.join(target, 'meta.json'), 'utf8'));
+                if (variant === 'preview' && !metadata.previewType) return null;
                 buffer = await fs.readFile(path.join(target, variant));
             } catch (error) {
                 if (error.code === 'ENOENT') return null;

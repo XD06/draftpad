@@ -3,11 +3,48 @@
   "info": {
     "title": "DumbPad API",
     "version": "1.0.8",
-    "description": "DumbPad content-management API. Authenticate with the dumbpad_auth cookie or an Authorization: Bearer <PIN> header."
+    "description": "DumbPad content-management API. Legacy deployments authenticate with a PIN; AUTH_V2_ENABLED deployments use an opaque browser session or a scoped API token. API tokens cannot access authentication or data-management routes."
   },
   "servers": [{ "url": "/" }],
-  "security": [{ "cookieAuth": [] }, { "pinBearer": [] }],
+  "security": [{ "cookieAuth": [] }, { "sessionCookieAuth": [] }, { "apiTokenBearer": [] }, { "pinBearer": [] }],
   "paths": {
+    "/api/auth/status": {
+      "get": { "security": [], "summary": "Read authentication mode and setup status", "responses": { "200": { "description": "Legacy, setup, or login status without secrets" } } }
+    },
+    "/api/auth/setup/start": {
+      "post": { "security": [], "summary": "Begin one-time V2 password and TOTP setup", "responses": { "200": { "description": "Temporary setup id and TOTP secret" }, "401": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/auth/setup/confirm": {
+      "post": { "security": [], "summary": "Confirm V2 TOTP setup and return one-time recovery codes", "responses": { "200": { "description": "Initialized session and recovery codes" }, "400": { "$ref": "#/components/responses/Error" }, "401": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/auth/login": {
+      "post": { "security": [], "summary": "Create an opaque V2 browser session", "responses": { "200": { "description": "Session cookie and expiry metadata" }, "401": { "$ref": "#/components/responses/Error" }, "429": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/auth/recovery/start": {
+      "post": { "security": [], "summary": "Validate a recovery code and begin TOTP replacement", "responses": { "200": { "description": "Temporary recovery id and new TOTP secret" }, "401": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/auth/recovery/confirm": {
+      "post": { "security": [], "summary": "Confirm a replacement TOTP secret using a one-time recovery code", "responses": { "200": { "description": "Recovered session" }, "400": { "$ref": "#/components/responses/Error" }, "401": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/auth/elevate": {
+      "post": { "security": [{ "sessionCookieAuth": [] }], "summary": "Verify TOTP for a short high-risk-operation window", "responses": { "200": { "description": "Elevation expiry" }, "401": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/auth/logout": {
+      "post": { "security": [{ "sessionCookieAuth": [] }], "summary": "Revoke the current V2 browser session", "responses": { "200": { "description": "Session revoked" } } }
+    },
+    "/api/auth/api-tokens": {
+      "get": { "security": [{ "sessionCookieAuth": [] }], "summary": "List scoped API token metadata after elevation", "responses": { "200": { "description": "Token metadata" }, "403": { "$ref": "#/components/responses/Error" } } },
+      "post": { "security": [{ "sessionCookieAuth": [] }], "summary": "Create a scoped API token after elevation", "responses": { "201": { "description": "One-time plaintext token and metadata" }, "403": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/auth/api-tokens/{tokenId}": {
+      "delete": { "security": [{ "sessionCookieAuth": [] }], "summary": "Revoke a scoped API token after elevation", "responses": { "200": { "description": "Token revoked" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/auth/devices": {
+      "get": { "security": [{ "sessionCookieAuth": [] }], "summary": "List trusted-device metadata after elevation", "responses": { "200": { "description": "Trusted devices" }, "403": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/auth/devices/{deviceId}": {
+      "delete": { "security": [{ "sessionCookieAuth": [] }], "summary": "Revoke a trusted device after elevation", "responses": { "200": { "description": "Device and linked sessions revoked" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" } } }
+    },
     "/api/notepads": {
       "get": { "summary": "List notepads", "responses": { "200": { "description": "Notepad metadata" } } },
       "post": { "summary": "Create a notepad", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/NotepadCreate" } } } }, "responses": { "200": { "description": "Created notepad", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Notepad" } } } }, "400": { "$ref": "#/components/responses/Error" } } }
@@ -30,12 +67,23 @@
         "responses": { "201": { "description": "Created image asset", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ImageAsset" } } } }, "413": { "$ref": "#/components/responses/Error" }, "415": { "$ref": "#/components/responses/Error" } }
       }
     },
+    "/api/assets/files": {
+      "post": {
+        "summary": "Upload an allow-listed ordinary file asset for article download",
+        "parameters": [
+          { "name": "X-Asset-Name", "in": "header", "required": true, "description": "URL-encoded filename", "schema": { "type": "string" } },
+          { "name": "X-Asset-Type", "in": "header", "description": "Browser-reported MIME, checked against the filename extension", "schema": { "type": "string" } }
+        ],
+        "requestBody": { "required": true, "content": { "application/octet-stream": { "schema": { "type": "string", "format": "binary" } } } },
+        "responses": { "201": { "description": "Created ordinary file asset", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/FileAsset" } } } }, "413": { "$ref": "#/components/responses/Error" }, "415": { "$ref": "#/components/responses/Error" } }
+      }
+    },
     "/api/assets/{id}/{variant}": {
       "parameters": [
         { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "pattern": "^[a-fA-F0-9-]{16,64}$" } },
         { "name": "variant", "in": "path", "required": true, "schema": { "type": "string", "enum": ["preview", "original", "download"] } }
       ],
-      "get": { "summary": "Read an image preview, original, or download", "responses": { "200": { "description": "Binary image response" }, "404": { "$ref": "#/components/responses/Error" } } }
+      "get": { "summary": "Read an image preview, original, or ordinary-file download", "responses": { "200": { "description": "Binary asset response" }, "404": { "$ref": "#/components/responses/Error" } } }
     },
     "/api/thoughts": {
       "get": {
@@ -62,6 +110,28 @@
       "patch": { "summary": "Mutate a Thought with optimistic concurrency", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ThoughtMutation" } } } }, "responses": { "200": { "description": "Updated Thought" }, "409": { "$ref": "#/components/responses/Error" } } },
       "delete": { "summary": "Move a Thought to trash", "responses": { "200": { "description": "Trashed" }, "404": { "$ref": "#/components/responses/Error" } } }
     },
+    "/api/agent/capability": {
+      "get": { "summary": "Read interactive AI Agent capability", "responses": { "200": { "description": "Enabled/configured capability without provider secrets" } } }
+    },
+    "/api/agent/runs": {
+      "post": {
+        "summary": "Start or reuse a read-only recall_context Agent run",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentRunCreate" } } } },
+        "responses": { "200": { "description": "Reused active run" }, "202": { "description": "Queued Agent run" }, "400": { "$ref": "#/components/responses/Error" }, "429": { "$ref": "#/components/responses/Error" }, "503": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/agent/runs/{runId}": {
+      "parameters": [{ "name": "runId", "in": "path", "required": true, "schema": { "type": "string" } }],
+      "get": { "summary": "Read an Agent run result or progress", "responses": { "200": { "description": "Agent run", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentRunResponse" } } } }, "404": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/agent/runs/{runId}/events": {
+      "parameters": [{ "name": "runId", "in": "path", "required": true, "schema": { "type": "string" } }],
+      "get": { "summary": "Stream Agent run progress via SSE", "parameters": [{ "name": "Last-Event-ID", "in": "header", "schema": { "type": "integer", "minimum": 0 } }], "responses": { "200": { "description": "text/event-stream with resumable user-visible events" }, "404": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/agent/runs/{runId}/cancel": {
+      "parameters": [{ "name": "runId", "in": "path", "required": true, "schema": { "type": "string" } }],
+      "post": { "summary": "Cancel an active Agent run", "responses": { "200": { "description": "Current/cancelled Agent run" }, "404": { "$ref": "#/components/responses/Error" } } }
+    },
     "/api/search": {
       "get": { "summary": "Search Notepads", "parameters": [{ "name": "q", "in": "query", "schema": { "type": "string" } }, { "name": "page", "in": "query", "schema": { "type": "integer", "minimum": 1 } }, { "name": "pageSize", "in": "query", "schema": { "type": "integer", "minimum": 1 } }], "responses": { "200": { "description": "Search results with match ranges" } } }
     },
@@ -70,7 +140,9 @@
   "components": {
     "securitySchemes": {
       "cookieAuth": { "type": "apiKey", "in": "cookie", "name": "dumbpad_auth" },
-      "pinBearer": { "type": "http", "scheme": "bearer", "description": "DumbPad PIN for trusted automation only." }
+      "sessionCookieAuth": { "type": "apiKey", "in": "cookie", "name": "dumbpad_auth_session" },
+      "apiTokenBearer": { "type": "http", "scheme": "bearer", "description": "Scoped V2 content API token; cannot access auth or data-management routes." },
+      "pinBearer": { "type": "http", "scheme": "bearer", "description": "Legacy DumbPad PIN for trusted automation only. Disabled in V2." }
     },
     "parameters": {
       "NotepadId": { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
@@ -85,12 +157,15 @@
       "Note": { "type": "object", "required": ["content", "version"], "properties": { "content": { "type": "string" }, "version": { "type": "integer" } } },
       "NoteSave": { "type": "object", "required": ["content"], "properties": { "content": { "type": "string" }, "baseVersion": { "type": "integer" }, "userId": { "type": "string" }, "saveId": { "type": "string" } } },
       "NotePatch": { "allOf": [{ "$ref": "#/components/schemas/NoteSave" }, { "type": "object", "required": ["action"], "properties": { "action": { "type": "string", "enum": ["append", "prepend", "replace", "replace_first", "overwrite"] }, "text": { "type": "string" }, "target": { "type": "string" }, "replacement": { "type": "string" } } }] },
-      "ImageAsset": { "type": "object", "required": ["id", "assetId", "name", "type", "size", "previewUrl", "originalUrl", "downloadUrl"], "properties": { "id": { "type": "string" }, "assetId": { "type": "string" }, "name": { "type": "string" }, "type": { "type": "string", "pattern": "^image/" }, "size": { "type": "integer", "format": "int64" }, "previewUrl": { "type": "string" }, "originalUrl": { "type": "string" }, "downloadUrl": { "type": "string" } } },
+      "ImageAsset": { "type": "object", "required": ["id", "assetId", "name", "type", "size", "kind", "previewUrl", "originalUrl", "downloadUrl"], "properties": { "id": { "type": "string" }, "assetId": { "type": "string" }, "name": { "type": "string" }, "type": { "type": "string", "pattern": "^image/" }, "kind": { "const": "image" }, "size": { "type": "integer", "format": "int64" }, "previewUrl": { "type": "string" }, "originalUrl": { "type": "string" }, "downloadUrl": { "type": "string" } } },
+      "FileAsset": { "type": "object", "required": ["id", "assetId", "name", "type", "size", "kind", "previewUrl", "originalUrl", "downloadUrl"], "properties": { "id": { "type": "string" }, "assetId": { "type": "string" }, "name": { "type": "string" }, "type": { "type": "string" }, "kind": { "const": "file" }, "size": { "type": "integer", "format": "int64", "maximum": 20971520 }, "previewUrl": { "type": "null" }, "originalUrl": { "type": "string" }, "downloadUrl": { "type": "string" } } },
       "SubItem": { "type": "object", "required": ["id", "text", "completed"], "properties": { "id": { "type": "string" }, "text": { "type": "string" }, "completed": { "type": "boolean" } } },
       "Thought": { "type": "object", "required": ["id", "text", "version", "createdAt", "updatedAt"], "properties": { "id": { "type": "string" }, "text": { "type": "string" }, "subItems": { "type": "array", "items": { "$ref": "#/components/schemas/SubItem" } }, "tags": { "type": "array", "items": { "type": "string" } }, "completed": { "type": "boolean" }, "pinned": { "type": "boolean" }, "version": { "type": "integer" }, "createdAt": { "type": "integer" }, "updatedAt": { "type": "integer" } } },
       "ThoughtCreate": { "type": "object", "required": ["text"], "properties": { "text": { "type": "string" }, "subItems": { "type": "array", "items": { "$ref": "#/components/schemas/SubItem" } }, "tags": { "type": "array", "items": { "type": "string" } }, "completed": { "type": "boolean" } } },
       "ThoughtMutation": { "type": "object", "required": ["action"], "properties": { "action": { "type": "string", "enum": ["toggle_complete", "toggle_pin", "overwrite", "add_subitem", "update_subitem", "delete_subitem", "toggle_subitem", "append", "replace"] }, "baseVersion": { "type": "integer" }, "text": { "type": "string" }, "subId": { "type": "string" }, "subItems": { "type": "array", "items": { "$ref": "#/components/schemas/SubItem" } }, "tags": { "type": "array", "items": { "type": "string" } }, "completed": { "type": "boolean" }, "pinned": { "type": "boolean" } } },
-      "ThoughtPage": { "type": "object", "required": ["items", "hasMore"], "properties": { "items": { "type": "array", "items": { "$ref": "#/components/schemas/Thought" } }, "nextCursor": { "type": ["string", "null"] }, "hasMore": { "type": "boolean" } } }
+      "ThoughtPage": { "type": "object", "required": ["items", "hasMore"], "properties": { "items": { "type": "array", "items": { "$ref": "#/components/schemas/Thought" } }, "nextCursor": { "type": ["string", "null"] }, "hasMore": { "type": "boolean" } } },
+      "AgentRunCreate": { "type": "object", "required": ["workflowId", "source", "idempotencyKey"], "properties": { "workflowId": { "type": "string", "enum": ["recall_context"] }, "source": { "type": "object", "required": ["kind", "id"], "properties": { "kind": { "type": "string", "enum": ["thought"] }, "id": { "type": "string" } } }, "idempotencyKey": { "type": "string", "minLength": 8, "maxLength": 256 } } },
+      "AgentRunResponse": { "type": "object", "required": ["run"], "properties": { "run": { "type": "object", "required": ["id", "workflowId", "status"], "properties": { "id": { "type": "string" }, "workflowId": { "type": "string", "enum": ["recall_context"] }, "status": { "type": "string", "enum": ["queued", "running", "cancelling", "cancelled", "completed", "failed"] }, "sourceStale": { "type": "boolean" }, "result": { "type": "object", "properties": { "summary": { "type": "string" }, "claims": { "type": "array" }, "citations": { "type": "array" } } }, "error": { "$ref": "#/components/schemas/Error" } } } } }
     }
   }
 }

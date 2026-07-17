@@ -8,9 +8,9 @@ const styles = fs.readFileSync(path.join(root, 'public', 'Assets', 'styles.css')
 const thoughts = fs.readFileSync(path.join(root, 'public', 'managers', 'thoughts.js'), 'utf8');
 const attachments = fs.readFileSync(path.join(root, 'public', 'managers', 'thought-attachments.js'), 'utf8');
 const assetClient = fs.readFileSync(path.join(root, 'public', 'managers', 'asset-api-client.js'), 'utf8');
-const articleImageInteractionBlock = hybrid.match(/    bindArticleImageInteractions\(\) \{[\s\S]*?\n    \}\n\n    getArticleAssetId/);
-const articleImageMoveBlock = hybrid.match(/    moveArticleImageToTarget\(drag, dropTarget\) \{[\s\S]*?\n    \}\n\n    isLegacyArticleImage/);
-const articleImageUploadReplaceBlock = hybrid.match(/    replaceArticleUploadPlaceholder\(token, replacement\) \{[\s\S]*?\n    \}\n\n    ensureArticleImageLightbox/);
+const articleImageInteractionBlock = hybrid.match(/    bindArticleImageInteractions\(\) \{[\s\S]*?\r?\n    \}\r?\n\r?\n    bindArticleImageDragging/);
+const articleImageMoveBlock = hybrid.match(/    moveArticleImageToTarget\(drag, dropTarget\) \{[\s\S]*?\r?\n    \}\r?\n\r?\n    isLegacyArticleImage/);
+const articleImageUploadReplaceBlock = hybrid.match(/    replaceArticleUploadPlaceholder\(token, replacement\) \{[\s\S]*?\r?\n    \}\r?\n\r?\n    ensureArticleImageLightbox/);
 
 assert(assetClient.includes("fetch('/api/assets/images'"), 'image client should upload raw image bytes through the asset API');
 assert(assetClient.includes('MAX_IMAGE_ASSET_SIZE = 50 * 1024 * 1024'), 'image client should enforce the 50MB image limit');
@@ -72,7 +72,7 @@ assert(
     'mobile image dragging should suppress browser panning, while the lightbox uses a centered dynamic-viewport layout'
 );
 assert(articleImageUploadReplaceBlock?.[0].includes('setWysiwygValueAtMarkdownOffset(next, nextCaret, true);'), 'article upload replacement should preserve the established editor update path');
-assert(hybrid.includes('article-image-lightbox-download" download title="下载原图" aria-label="下载原图">\n                    <svg'), 'article image lightbox controls should use icon buttons');
+assert(/article-image-lightbox-download" download title="下载原图" aria-label="下载原图">\r?\n\s*<svg/.test(hybrid), 'article image lightbox controls should use icon buttons');
 assert(hybrid.includes('deleteArticleImage(image)'), 'article image size menu should provide a delete action');
 assert(thoughts.includes("this.quickAddInput.addEventListener('paste'"), 'Quick Add should accept pasted images');
 assert(thoughts.includes("textarea.addEventListener('paste'"), 'Thought edit textarea should accept pasted images');

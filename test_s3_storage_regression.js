@@ -188,12 +188,16 @@ async function waitForSearch(query) {
     assert(result.response.ok, 'S3 data-management status should succeed');
     assert(result.body.backend === 's3', 'data-management status should expose s3 backend');
     assert(result.body.s3.bucket === 'dumbpad-test', 'data-management status should expose bucket');
+    assert(
+        result.body.safety?.destructiveDataOperationsEnabled === false,
+        'data-management status should expose destructive operations as disabled by default'
+    );
 
     result = await request('/api/data-management/s3/delete', {
         method: 'POST',
         body: JSON.stringify({ prefix: 'dumbpad', dryRun: false, confirmPrefix: 'wrong' })
     });
-    assert(result.response.status === 400, 'confirmed S3 delete should reject mismatched confirm prefix');
+    assert(result.response.status === 403, 'S3 deletion should be disabled before prefix confirmation is evaluated');
     assert(
         !consoleErrors.some(line => line.includes('Confirm prefix must be exactly "dumbpad"')),
         'expected data-management 400 errors should not print server error stacks'
@@ -235,7 +239,7 @@ async function waitForSearch(query) {
             confirmPrefix: 'wrong'
         })
     });
-    assert(result.response.status === 400, 'local overwrite S3 should reject mismatched confirm prefix');
+    assert(result.response.status === 403, 'local overwrite S3 should be disabled before prefix confirmation is evaluated');
     assert(
         !consoleErrors.some(line => line.includes('Error overwriting S3 from local data')),
         'local overwrite S3 confirmation rejection should not log as server error'
@@ -261,7 +265,7 @@ async function waitForSearch(query) {
             confirmPrefix: 'wrong'
         })
     });
-    assert(result.response.status === 400, 'S3 overwrite local should reject mismatched confirm prefix');
+    assert(result.response.status === 403, 'S3 overwrite local should be disabled before prefix confirmation is evaluated');
     assert(
         !consoleErrors.some(line => line.includes('Error overwriting local data from S3')),
         'S3 overwrite local confirmation rejection should not log as server error'

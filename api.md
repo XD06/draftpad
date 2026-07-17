@@ -1,15 +1,73 @@
 # DumbPad API 文档
 
 Base URL: `http://localhost:PORT`  
-认证方式: Cookie (`dumbpad_auth`) 或 Header (`Authorization: Bearer <PIN>`)
+认证方式取决于部署模式：默认兼容旧 PIN；启用个人安全模式后使用浏览器会话或受限 API token。
 
-机器可读 OpenAPI 3.1 文档：`/openapi.json`。PIN 等同于完整账号权限，仅应在受信任的本地脚本或服务端自动化中使用，不能嵌入浏览器前端或公开客户端。
+机器可读 OpenAPI 3.1 文档：`/openapi.json`。API token 只应存在于受信任的本地脚本或服务端自动化中，不能嵌入浏览器前端或公开客户端。
 
-除 `/api/verify-pin`、`/api/pin-required`、`/api/config` 外，`/api/*` 默认需要通过 PIN 认证。浏览器端通常使用 Cookie；脚本或集成可以使用 `Authorization: Bearer <PIN>`。
+除登录和配置端点外，`/api/*` 默认需要认证。浏览器使用 HttpOnly Cookie；自动化使用 `Authorization: Bearer <token>`。启用 `AUTH_V2_ENABLED=true` 后，旧 PIN Cookie 与 PIN Bearer 都不再可用，token 只可访问内容 API，不能访问认证、数据空间、备份或恢复管理端点。
 
 ---
 
 ## Auth 与配置 API
+
+### 认证模式
+
+| 模式 | 启用条件 | 浏览器认证 | 自动化认证 |
+|---|---|---|---|
+| Legacy | 默认 | `dumbpad_auth` PIN Cookie | `Authorization: Bearer <PIN>`，拥有完整权限，仅用于迁移兼容 |
+| Personal security V1 | `AUTH_V2_ENABLED=true` | `dumbpad_auth_session` 随机会话 Cookie | `Authorization: Bearer <API token>`，仅 `content:*` / `thoughts:*` scope |
+
+Personal security V1 的初次设置用旧 PIN 或一次性 `AUTH_BOOTSTRAP_TOKEN` 验证。设置完成后，登录使用主密码；可信设备可跳过日常 TOTP，新设备和高风险数据管理操作需要 TOTP。API token 不能调用 `/api/auth/*` 或 `/api/data-management/*`，也没有存储、备份、认证管理 scope。
+
+### GET /api/auth/status
+
+读取认证状态，不泄露认证密钥或配置值。未启用 V2 时响应 `{ "mode": "legacy" }`；启用且尚未初始化时返回 `{ "mode": "setup" }`，初始化后返回 `{ "mode": "login" }`。
+
+### POST /api/auth/setup/start
+
+仅在 V2 未初始化时可用。请求体包含 `legacyPin` 或 `bootstrapToken`、至少 12 字符的 `password` 和可选 `deviceLabel`。成功响应返回 10 分钟有效的 `setupId`、`totpSecret` 和 `otpAuthUri`；密钥只用于随后的本次设置，不能写入日志。
+
+### POST /api/auth/setup/confirm
+
+请求 `{ "setupId": "...", "totpCode": "123456" }`。验证 TOTP 后创建认证状态、首次会话和十个仅显示一次的 `recoveryCodes`。恢复码必须由用户自行保存，服务端只保存其哈希。
+
+### POST /api/auth/login
+
+请求：
+
+```json
+{
+  "password": "long administrator password",
+  "totpCode": "123456",
+  "trustDevice": true,
+  "deviceLabel": "Windows · browser"
+}
+```
+
+可信设备只需要主密码；新设备必须同时提供 `totpCode`。成功后写入随机会话 Cookie；最多保存五台可信设备。达到上限时登录仍成功，但响应 `deviceTrustLimited: true`，不签发新的可信设备 Cookie，也不会自动挤掉旧设备。
+
+### POST /api/auth/recovery/start 与 POST /api/auth/recovery/confirm
+
+当验证器不可用时，先用主密码和一枚恢复码调用 `recovery/start`，再用返回的临时新 `totpSecret` 配置验证器，并将 `recoveryId` 与新验证码提交到 `recovery/confirm`。恢复码只能使用一次；完成后旧 TOTP 密钥失效。
+
+### POST /api/auth/elevate
+
+已登录浏览器提交 `{ "totpCode": "123456" }` 后获得最多 10 分钟的高风险验证。创建/撤销 API token、撤销可信设备和任何非只读数据管理请求均需要此状态。
+
+### POST /api/auth/logout
+
+撤销当前浏览器会话并清除认证 Cookie。
+
+### API token 与可信设备
+
+| Endpoint | 说明 |
+|---|---|
+| `POST /api/auth/api-tokens` | 高风险验证后创建 `{ name, scopes, expiresAt? }`；token 仅在本次响应返回一次。允许 scope：`content:read`、`content:write`、`thoughts:read`、`thoughts:write`。 |
+| `GET /api/auth/api-tokens` | 高风险验证后列出 token 元数据，不返回 token 明文。 |
+| `DELETE /api/auth/api-tokens/:tokenId` | 高风险验证后立即撤销 token。 |
+| `GET /api/auth/devices` | 高风险验证后列出可信设备元数据，不返回设备 token。 |
+| `DELETE /api/auth/devices/:deviceId` | 高风险验证后撤销设备及其关联会话。 |
 
 ### POST /api/verify-pin
 
@@ -294,9 +352,9 @@ Note 是某个 Notepad 的正文内容。保存接口使用 `baseVersion` 做乐
 
 ---
 
-## 图片资源 API
+## 文章资源 API
 
-图片使用独立资源层保存。上传时原始文件完整保留，同时生成浏览用 WebP 预览；文章正文和 Thought 附件只保存资源 URL，因此大图不会被编码进 Markdown 或 Thought JSON。原图保真下载，预览仅用于页面展示。
+图片与文章附件使用独立资源层保存。图片上传时原始文件完整保留，同时生成浏览用 WebP 预览；普通附件只保存原文件和元数据。文章正文只保存资源 URL，因此不会把文件编码进 Markdown。原图/附件均可保真下载，预览仅用于图片展示。
 
 ### POST /api/assets/images
 
@@ -317,6 +375,7 @@ Note 是某个 Notepad 的正文内容。保存接口使用 `baseVersion` 做乐
   "assetId": "f2f621c1-5d64-462f-8e3a-5bc1dd4c16a7",
   "name": "architecture-4k.png",
   "type": "image/png",
+  "kind": "image",
   "size": 8240551,
   "previewUrl": "/api/assets/f2f621c1-5d64-462f-8e3a-5bc1dd4c16a7/preview",
   "originalUrl": "/api/assets/f2f621c1-5d64-462f-8e3a-5bc1dd4c16a7/original",
@@ -328,20 +387,45 @@ Note 是某个 Notepad 的正文内容。保存接口使用 `baseVersion` 做乐
 
 ```bash
 curl -X POST http://localhost:3000/api/assets/images \
-  -H "Authorization: Bearer $DUMBPAD_PIN" \
+  -H "Authorization: Bearer $DUMBPAD_API_TOKEN" \
   -H "Content-Type: image/png" \
   -H "X-Asset-Name: architecture-4k.png" \
   --data-binary @architecture-4k.png
 ```
 
+### POST /api/assets/files
+
+上传一份普通文章附件。请求体是原始二进制内容，不是 JSON 或 Base64。默认单文件最大 `20MiB`，可通过服务端 `ASSET_MAX_FILE_BYTES` 调整。
+
+允许 PDF、纯文本/Markdown/CSV、Office 文档、音视频和 ZIP/RAR/7z；HTML、SVG、脚本和可执行文件会被拒绝。服务端会校验扩展名与声明 MIME 的匹配，并且所有普通附件都强制下载，不能以内联页面执行。
+
+**请求头：**
+
+| Header | 必填 | 说明 |
+|---|---|---|
+| `Content-Type` | 是 | 固定为 `application/octet-stream` |
+| `X-Asset-Name` | 是 | `encodeURIComponent` 编码后的原始文件名 |
+| `X-Asset-Type` | 否 | 浏览器报告的原始 MIME，用于与扩展名交叉校验 |
+
+**响应：** 与图片资源相同，但 `kind` 为 `file`，`previewUrl` 为 `null`。
+
+```bash
+curl -X POST http://localhost:3000/api/assets/files \
+  -H "Authorization: Bearer $DUMBPAD_API_TOKEN" \
+  -H "Content-Type: application/octet-stream" \
+  -H "X-Asset-Name: report.pdf" \
+  -H "X-Asset-Type: application/pdf" \
+  --data-binary @report.pdf
+```
+
 ### GET /api/assets/:id/:variant
 
-读取图片资源。
+读取图片或普通附件资源。
 
 | `variant` | 行为 |
 |---|---|
-| `preview` | 返回 WebP 预览，适合列表和正文渲染 |
-| `original` | 返回上传时的原始字节与原始 MIME |
+| `preview` | 仅图片可用，返回 WebP 预览，适合正文渲染 |
+| `original` | 返回上传时的原始字节与原始 MIME；普通附件仍强制下载 |
 | `download` | 返回原始字节，并带 `Content-Disposition: attachment` |
 
 不存在或非法 id 返回 `404`；`preview`、`original`、`download` 之外的 variant 同样返回 `404`。
@@ -885,6 +969,87 @@ loosely_related
 
 ---
 
+## 交互 AI Agent API（阶段 A）
+
+交互 Agent 是用户主动发起的只读工作流，与 Thought 创建后的后台 AI 队列完全独立。首期只开放 `recall_context`：从当前 Thought 中找回有限的相关 Thought/文章片段，返回可核验引用；不会写入 Thought、Notepad、标签、任务或 relation。
+
+需要显式配置 `AI_AGENT_ENABLED=true`、`AI_AGENT_BASE_URL`、`AI_AGENT_API_KEY` 与 `AI_AGENT_MODEL`。未配置时创建运行返回 `503`，不会回退到 `AI_CHAT_MODEL` 或 `AI_INSIGHT_MODEL`。
+
+### GET /api/agent/capability
+
+读取当前 Agent 是否可用，不返回密钥或 provider URL。
+
+```json
+{
+  "enabled": true,
+  "ready": true,
+  "reason": null,
+  "model": "your-agent-model"
+}
+```
+
+### POST /api/agent/runs
+
+创建一次异步运行。当前只接受 Thought 来源；相同主体、工作流、来源版本和 `idempotencyKey` 在未结束前会复用同一个运行。
+
+```json
+{
+  "workflowId": "recall_context",
+  "source": { "kind": "thought", "id": "thought-id" },
+  "idempotencyKey": "client-generated-unique-key"
+}
+```
+
+**响应：** `202`（新建）或 `200`（复用）
+
+```json
+{
+  "runId": "agr_...",
+  "status": "queued",
+  "reused": false,
+  "run": { "id": "agr_...", "workflowId": "recall_context", "status": "queued" }
+}
+```
+
+### GET /api/agent/runs/:runId
+
+读取运行终态或当前状态。`result` 中的 `claims` 只能引用同一次工具读取实际返回的 `citations`；`sourceStale=true` 表示当前 Thought 已在运行后改变，结果仍可阅读但基于旧版本。
+
+```json
+{
+  "run": {
+    "id": "agr_...",
+    "status": "completed",
+    "sourceStale": false,
+    "result": {
+      "summary": "找到两条可回看的旧想法。",
+      "claims": [{ "text": "…", "citationIds": ["src_1"] }],
+      "citations": [{ "citationId": "src_1", "sourceRef": { "kind": "thought", "id": "...", "version": 3, "excerptHash": "sha256:...", "label": "...", "location": { "start": 0, "end": 120 } } }]
+    }
+  }
+}
+```
+
+### GET /api/agent/runs/:runId/events
+
+以 SSE 推送单次运行的用户可见进度。支持 `Last-Event-ID` 或 `?lastEventId=` 续传；内存缓冲不足时发送 `run.reset`，客户端应改用 `GET /api/agent/runs/:runId` 恢复终态。事件包括 `run.started`、`retrieval.started`、`retrieval.completed`、`generation.started`、`text.delta`、`run.completed`、`run.failed` 与 `run.cancelled`。
+
+浏览器同源请求使用登录 Cookie。原生 `EventSource` 不能携带 Bearer header，因此外部 API 客户端若使用 PIN Bearer 认证，应使用可设置请求头的流式 HTTP 客户端，而不是把 PIN 放到 URL。
+
+### POST /api/agent/runs/:runId/cancel
+
+幂等请求取消未结束运行。取消只停止模型/工具调用，不会回滚或改写任何用户内容。
+
+**错误：**
+
+- `400` — 工作流、来源、运行 ID 或幂等键非法。
+- `401` / `403` — 未认证或运行不属于当前主体。
+- `404` — Thought 或运行不存在。
+- `429` — 超出单次工具/上下文/每日运行限制。
+- `503` — Agent 模型未配置。
+
+---
+
 ## Trash API
 
 垃圾桶保存已删除的文章和 Thought。它属于用户数据，local 和 S3 backend 都通过 `scripts/storage.js` 写入同一组逻辑路径：
@@ -1066,6 +1231,8 @@ loosely_related
 
 ### POST /api/data-management/s3/delete
 
+> 默认禁用。只有部署环境显式设置 `DUMBPAD_ENABLE_DESTRUCTIVE_DATA_OPERATIONS=true` 时，非 dry-run 请求才可能执行；该遗留接口将被归档/恢复流程替代。
+
 删除指定 S3 prefix 下的对象。危险操作必须先 dry-run，再用 `confirmPrefix` 执行。
 
 **请求体：**
@@ -1095,6 +1262,8 @@ loosely_related
 ```
 
 ### POST /api/data-management/local-overwrite-s3
+
+> 默认禁用。只有部署环境显式设置 `DUMBPAD_ENABLE_DESTRUCTIVE_DATA_OPERATIONS=true` 时，非 dry-run 请求才可能执行；不得用于日常同步。
 
 用本地 data 覆盖 S3 prefix。接口会先计算现有对象、备份和删除预览。
 

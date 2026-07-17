@@ -75,7 +75,9 @@ function run() {
     assert(
         source.includes("this.container.addEventListener('compositionstart'") &&
             source.includes("this.container.addEventListener('compositionend'") &&
-            source.includes('if (this.isComposing) return;'),
+            source.includes('this.isComposing = true;') &&
+            source.includes('this.isComposing = false;') &&
+            source.includes('this.isReadingMode || !this.sourceMode || this.isComposing'),
         'Composition input should defer marker decoration until the IME commits text'
     );
     assert(

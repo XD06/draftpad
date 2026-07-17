@@ -43,6 +43,9 @@ import {
     renderAIStatusLoading
 } from './thought-ai-status.js';
 import { renderThoughtCard } from './thought-card-renderer.js';
+import AgentApiClient from './agent-api-client.js';
+import { ThoughtAgentController } from './thought-agent-controller.js';
+import { renderThoughtAgentPanel } from './thought-agent-panel.js';
 import { buildAttachmentsFromFiles, getImageAttachments } from './thought-attachments.js';
 import { AssetApiClient, getAssetDownloadUrl, getAssetOriginalUrl, getAssetPreviewUrl, isImageFile } from './asset-api-client.js';
 import { getThoughtSwipeState } from './thought-swipe.js';
@@ -56,6 +59,7 @@ export class ThoughtsManager {
     constructor(app) {
         this.app = app;
         this.apiClient = app.apiClient || new ThoughtApiClient();
+        this.agentApi = app.agentApi || new AgentApiClient();
         this.assetApi = app.assetApi || new AssetApiClient();
         this.outbox = app.outbox || new ThoughtOutbox();
         this.view = document.getElementById('thoughts-view');
@@ -99,6 +103,7 @@ export class ThoughtsManager {
         this.manualRelationSearchSeq = 0;
         this.openRelationsPanelIds = new Set();
         this.openAIStatusPanelIds = new Set();
+        this.openAgentPanelIds = new Set();
         this.expandedThoughtIds = new Set();
         this.activeThoughtSelection = null;
         this.thoughtSelectionToolbar = null;
@@ -110,6 +115,10 @@ export class ThoughtsManager {
         this._hasMoreThoughts = false;
         this._isLoadingThoughtPage = false;
         this._thoughtPageFilterKey = '';
+        this.thoughtAgentController = app.thoughtAgentController || new ThoughtAgentController({
+            apiClient: this.agentApi,
+            onStateChange: (thoughtId, state) => this.handleThoughtAgentStateChange(thoughtId, state)
+        });
 
         this.initDateFilter();
         this.initEventListeners();
@@ -1317,6 +1326,7 @@ export class ThoughtsManager {
                 this.openAIStatusPanel(card, thought);
             }
         });
+
     }
 
     setThoughtCardExpanded(card, thoughtId, expanded, { collapseOthers = false } = {}) {
@@ -1349,10 +1359,13 @@ export class ThoughtsManager {
         const dotEl = card.querySelector('.thought-dot');
         const thoughtCopyBtn = card.querySelector('.thought-copy-btn');
 
-        dotEl.onclick = (e) => {
-            e.stopPropagation();
-            this.toggleComplete(thought.id);
-        };
+        if (dotEl) {
+            dotEl.onclick = (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                this.toggleComplete(thought.id);
+            };
+        }
 
         if (thoughtCopyBtn) {
             thoughtCopyBtn.addEventListener('click', (e) => {
@@ -1510,6 +1523,7 @@ export class ThoughtsManager {
             event.target.closest('.thought-ai-tag-suggestion') ||
             event.target.closest('.thought-tag-remove') ||
             event.target.closest('.thought-relations-panel') ||
+            event.target.closest('.thought-agent-panel-container') ||
             event.target.closest('.thought-tag') ||
             event.target.closest('.thought-attachment') ||
             event.target.closest('.thought-attachment-add-footer') ||
@@ -1521,6 +1535,150 @@ export class ThoughtsManager {
             event.target.closest('.thought-link') ||
             card.classList.contains('editing')
         );
+    }
+
+    handleThoughtAgentStateChange(thoughtId, state) {
+        const id = String(thoughtId || '');
+        if (!id || !this.timeline) return;
+        const card = this.timeline.querySelector(`.thought-card[data-id="${CSS.escape(id)}"]`);
+        if (!card) return;
+        const thought = this.thoughts.find(item => item.id === id);
+        if (!thought) return;
+        this.syncThoughtAgentDisclosure(card, state);
+        const panel = card.querySelector('[data-agent-panel-host]');
+        if (panel && !panel.hidden) {
+            this.renderThoughtAgentPanel(card, thought, state);
+        }
+    }
+
+    syncThoughtAgentDisclosure(card, state = {}) {
+        const button = card?.querySelector('[data-agent-toggle]');
+        if (!button) return;
+        const active = ['queued', 'running', 'cancelling'].includes(String(state.status || '').toLowerCase());
+        const panel = card.querySelector('[data-agent-panel-host]');
+        button.classList.toggle('is-running', active);
+        button.title = active ? '正在找回相关内容' : '找回相关内容';
+        button.setAttribute('aria-label', button.title);
+        button.setAttribute('aria-expanded', panel && !panel.hidden ? 'true' : 'false');
+    }
+
+    toggleThoughtAgentPanel(card, thought) {
+        const existing = card?.querySelector('[data-agent-panel-host]');
+        if (existing && !existing.hidden) {
+            this.closeThoughtAgentPanel(card, thought);
+            return;
+        }
+        this.openThoughtAgentPanel(card, thought, { start: true });
+    }
+
+    closeThoughtAgentPanel(card, thought) {
+        const panel = card?.querySelector('[data-agent-panel-host]');
+        if (panel) {
+            panel.hidden = true;
+            panel.innerHTML = '';
+        }
+        card?.classList.remove('agent-panel-open');
+        if (thought?.id) this.openAgentPanelIds.delete(thought.id);
+        this.syncThoughtAgentDisclosure(card, this.thoughtAgentController.getState(thought?.id));
+    }
+
+    openThoughtAgentPanel(card, thought, { start = false } = {}) {
+        const panel = card?.querySelector('[data-agent-panel-host]');
+        if (!card || !thought?.id || !panel || !panel.hidden) return;
+        if (!panel.dataset.agentEventsBound) {
+            panel.addEventListener('click', async (event) => {
+                event.stopPropagation();
+                if (event.target.closest('[data-agent-close]')) {
+                    this.closeThoughtAgentPanel(card, thought);
+                    return;
+                }
+                if (event.target.closest('[data-agent-cancel]')) {
+                    await this.thoughtAgentController.cancel(thought.id);
+                    return;
+                }
+                if (event.target.closest('[data-agent-retry]')) {
+                    const currentThought = this.thoughts.find(item => item.id === thought.id) || thought;
+                    await this.thoughtAgentController.retry(currentThought);
+                    return;
+                }
+                const citationButton = event.target.closest('[data-agent-citation]');
+                if (citationButton) {
+                    this.handleThoughtAgentCitation(thought.id, citationButton.dataset.agentCitation);
+                }
+            });
+            panel.dataset.agentEventsBound = 'true';
+        }
+        panel.hidden = false;
+        card.classList.add('agent-panel-open');
+        this.openAIStatusPanelIds.add(thought.id);
+        this.openAgentPanelIds.add(thought.id);
+        this.renderThoughtAgentPanel(card, thought);
+        if (start) this.thoughtAgentController.start(thought);
+    }
+
+    renderThoughtAgentPanel(card, thought, state = this.thoughtAgentController.getState(thought?.id)) {
+        const panel = card?.querySelector('[data-agent-panel-host]');
+        if (!panel || !thought?.id) return;
+        panel.innerHTML = renderThoughtAgentPanel({
+            state,
+            thought,
+            escapeHtml: value => this.escapeHtml(value)
+        });
+        this.syncThoughtAgentDisclosure(card, state);
+    }
+
+    async handleThoughtAgentCitation(thoughtId, citationId) {
+        const state = this.thoughtAgentController.getState(thoughtId);
+        const citation = (state.citations || []).find((item, index) => {
+            const source = item?.sourceRef || item?.source || item || {};
+            return String(item?.citationId || item?.id || source?.id || index) === String(citationId);
+        });
+        const source = citation?.sourceRef || citation?.source || citation || {};
+        const kind = String(source.kind || '').toLowerCase();
+        try {
+            if (kind === 'thought') {
+                await this.openThoughtAgentThoughtCitation(source.id);
+            } else if (kind === 'notepad' || kind === 'note') {
+                const opened = await this.app.openNotepadCitation?.({ thoughtId, citation, source, state });
+                if (!opened) throw new Error('文章来源不可用');
+            } else {
+                throw new Error('引用来源不可用');
+            }
+            this.app.onThoughtAgentCitation?.({ thoughtId, citation, source, state });
+        } catch (error) {
+            this.app.toaster?.show(error?.message || '无法打开引用来源', 'error', false, 2200);
+        }
+    }
+
+    async openThoughtAgentThoughtCitation(targetId) {
+        const id = String(targetId || '').trim();
+        if (!id) throw new Error('引用 Thought 不存在');
+        const highlight = () => {
+            const card = this.timeline?.querySelector(`.thought-card[data-id="${CSS.escape(id)}"]`);
+            if (!card) return false;
+            card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            card.classList.add('relation-focus');
+            setTimeout(() => card.classList.remove('relation-focus'), 1800);
+            return true;
+        };
+        if (highlight()) return true;
+
+        const target = await this.apiClient.get(id);
+        if (!target?.id) throw new Error('引用 Thought 已不存在');
+        if (!this.thoughts.some(item => item.id === target.id)) {
+            // A citation is a direct, user-initiated navigation request. Keep
+            // the fetched card locally so pagination/filter state cannot make
+            // a verified source unreachable; the next normal refresh restores
+            // the user's filtered timeline.
+            this.thoughts = [{
+                ...target,
+                relationCount: Number(target.relationCount || 0),
+                aiStatus: target.aiStatus || 'missing'
+            }, ...this.thoughts];
+            this.render();
+        }
+        if (!highlight()) throw new Error('无法定位引用 Thought');
+        return true;
     }
 
     openThoughtAttachmentPicker(thought) {
@@ -2297,6 +2455,7 @@ export class ThoughtsManager {
     closeAIStatusPanel(card, thought) {
         const existing = card?.querySelector('.thought-ai-detail-panel');
         const button = card?.querySelector('.thought-ai-status');
+        this.closeThoughtAgentPanel(card, thought);
         existing?.remove();
         card?.classList.remove('ai-detail-open');
         button?.setAttribute('aria-expanded', 'false');
@@ -2324,6 +2483,10 @@ export class ThoughtsManager {
             const insightToggle = e.target.closest('[data-insight-toggle]');
             if (insightToggle && !e.target.closest('a')) {
                 this.toggleAIInsight(panel);
+                return;
+            }
+            if (e.target.closest('[data-agent-toggle]')) {
+                this.toggleThoughtAgentPanel(card, thought);
             }
         });
         panel.addEventListener('keydown', (e) => {
@@ -2360,6 +2523,11 @@ export class ThoughtsManager {
         if (!panel.isConnected) return null;
         panel.innerHTML = this.renderAIStatusDetail(detail);
         await this.hydrateAIInsightMarkdown(panel, detail.insight);
+        const card = panel.closest('.thought-card');
+        const thought = this.thoughts.find(item => item.id === thoughtId);
+        if (card && thought && this.openAgentPanelIds.has(thoughtId)) {
+            this.openThoughtAgentPanel(card, thought, { start: false });
+        }
         return detail;
     }
 

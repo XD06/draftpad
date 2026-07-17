@@ -2,6 +2,7 @@ const crypto = require('crypto');
 const express = require('express');
 const sharp = require('sharp');
 const { createAssetStorage, safeAssetId } = require('../scripts/asset-storage');
+const { getMaxFileBytes, validateFileAssetUpload } = require('../scripts/file-asset-policy');
 
 const MAX_IMAGE_BYTES = 50 * 1024 * 1024;
 const MAX_IMAGE_PIXELS = 100 * 1000 * 1000;
@@ -36,7 +37,8 @@ function responseAsset(metadata) {
         name: metadata.name,
         type: metadata.type,
         size: metadata.size,
-        previewUrl: `/api/assets/${id}/preview`,
+        kind: metadata.kind || 'image',
+        previewUrl: metadata.previewType ? `/api/assets/${id}/preview` : null,
         originalUrl: `/api/assets/${id}/original`,
         downloadUrl: `/api/assets/${id}/download`
     };
@@ -44,6 +46,7 @@ function responseAsset(metadata) {
 
 function registerAssetRoutes(app, { storage, originValidationMiddleware }) {
     const assets = createAssetStorage(storage);
+    const maxFileBytes = getMaxFileBytes();
 
     app.post(
         '/api/assets/images',
@@ -97,6 +100,45 @@ function registerAssetRoutes(app, { storage, originValidationMiddleware }) {
         }
     );
 
+    app.post(
+        '/api/assets/files',
+        originValidationMiddleware,
+        express.raw({ type: 'application/octet-stream', limit: maxFileBytes }),
+        async (req, res) => {
+            const input = Buffer.isBuffer(req.body) ? req.body : null;
+            const requestedName = decodeAssetName(req.get('x-asset-name'));
+            const validation = validateFileAssetUpload({
+                name: requestedName,
+                type: req.get('x-asset-type'),
+                size: input?.length || 0,
+                maxBytes: maxFileBytes
+            });
+            if (!validation.ok) return res.status(validation.status || 415).json({ error: validation.error });
+
+            try {
+                const id = createAssetId();
+                const metadata = {
+                    version: 1,
+                    kind: 'file',
+                    id,
+                    name: requestedName,
+                    type: validation.type,
+                    size: input.length,
+                    createdAt: Date.now()
+                };
+                await assets.writeAsset({
+                    id,
+                    metadata,
+                    original: { buffer: input, contentType: validation.type }
+                });
+                res.status(201).json(responseAsset(metadata));
+            } catch (error) {
+                console.error('Failed to store file asset:', error);
+                res.status(500).json({ error: 'Unable to store file asset' });
+            }
+        }
+    );
+
     app.get('/api/assets/:id/:variant', async (req, res) => {
         const id = safeAssetId(req.params.id);
         if (!id) return res.status(404).json({ error: 'Asset not found' });
@@ -110,7 +152,7 @@ function registerAssetRoutes(app, { storage, originValidationMiddleware }) {
             if (!asset) return res.status(404).json({ error: 'Asset not found' });
             res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
             res.type(asset.contentType);
-            if (req.params.variant === 'download') {
+            if (req.params.variant === 'download' || asset.metadata?.kind === 'file') {
                 res.attachment(asset.filename);
             } else {
                 res.setHeader('Content-Disposition', 'inline');

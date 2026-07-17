@@ -257,7 +257,24 @@ document.addEventListener('DOMContentLoaded', async () => {
                     thoughtsManager = new ThoughtsManager({
                         toaster,
                         confirmationManager,
-                        openEditorView: () => openEditorView()
+                        openEditorView: () => openEditorView(),
+                        openNotepadCitation: async ({ source } = {}) => {
+                            const notepadId = String(source?.id || '').trim();
+                            if (!notepadId) return false;
+                            if (!findNotepadByIdOrName(currentNotepads, notepadId)) {
+                                await loadNotepads({ loadCurrentNote: false });
+                            }
+                            if (!findNotepadByIdOrName(currentNotepads, notepadId)) return false;
+                            if (thoughtsManager?.isActive) {
+                                // Switch through the existing view method so
+                                // editor/cache lifecycle stays unchanged, then
+                                // replace the hash without a second toggle.
+                                await thoughtsManager.updateViewState(false);
+                                window.history.replaceState({}, '', `${window.location.pathname}${window.location.search}`);
+                            }
+                            await selectNotepad(notepadId);
+                            return true;
+                        }
                     });
                     thoughtsManager.app.openSearch = () => openCommandSearch?.();
                     return thoughtsManager;
@@ -665,7 +682,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         await refreshCloudStatus(false);
         setCloudResult({
             mode: 'auto-sync',
-            note: '基础保存、启动缓存、WebSocket 更新和 AI 后台分析由应用自动处理。需要强制覆盖时再使用本地覆盖云端或云端覆盖本地。'
+            note: '基础保存、启动缓存、WebSocket 更新和 AI 后台分析由应用自动处理。发生冲突时请先保留本地内容并查看同步状态；旧式强制覆盖入口已关闭。'
         }, '自动同步');
         toaster.show('自动同步状态已刷新', 'success', false, 1800);
     }
@@ -870,7 +887,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         }).filter(note => isValidNotepadId(note.id));
     }
 
-    function renderCachedNotepad(notepadId, content) {
+    function renderCachedNotepad(notepadId, content, { updateLocation = true } = {}) {
         if (!findNotepadByIdOrName(currentNotepads, notepadId)) return false;
         currentNotepadId = notepadId;
         isApplyingRemoteUpdate = true;
@@ -887,10 +904,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (emptyState) emptyState.style.display = 'none';
         if (hybridEditor) hybridEditor.style.display = 'block';
 
+        const currentNotepad = currentNotepads.find(note => note.id === notepadId);
+        if (currentNotepad) trackRecentFile(currentNotepad);
         updateSidebarSelection(notepadId);
         renderRecentFiles(notepadId, currentNotepads, selectNotepad, deleteNotepadById, renameNotepadById, toggleNotepadPin);
         const name = getCurrentNotepadName();
-        updateUrlWithNotepad(name);
+        if (updateLocation) updateUrlWithNotepad(name);
         applyCurrentNotepadTitle();
         return true;
     }
@@ -914,7 +933,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             id !== currentNotepadId &&
             list.indexOf(id) === index &&
             !cached[id]?.dirty &&
-            !cached[id]?.content
+            !cached[id]
         )).slice(0, STARTUP_NOTE_PREFETCH_LIMIT);
         const concurrency = 2;
         let cursor = 0;
@@ -1050,12 +1069,13 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     let loadingNotepadId = null;
     const dirtyConflictNotepadIds = new Set();
-    async function loadNotes(notepadId) { 
+    async function loadNotes(notepadId, { deferRemote = false } = {}) {
         if (!findNotepadByIdOrName(currentNotepads, notepadId)) return;
         await ensureEditor();
         const cachedBeforeFetch = getCachedNote(notepadId);
-        if (cachedBeforeFetch?.content || cachedBeforeFetch?.dirty) {
-            renderCachedNotepad(notepadId, cachedBeforeFetch.content || '');
+        const renderedFromCache = Boolean(cachedBeforeFetch);
+        if (renderedFromCache) {
+            renderCachedNotepad(notepadId, cachedBeforeFetch.content || '', { updateLocation: false });
         }
         if (!navigator.onLine) {
             setStartupSyncStatus('error', '服务器不可用，本地可读');
@@ -1063,55 +1083,64 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
         if (loadingNotepadId === notepadId) return; // Prevent redundant loading
         loadingNotepadId = notepadId;
-        try { 
-            const data = await fetchNoteData(notepadId);
-            if (loadingNotepadId !== notepadId) return;
+        const refreshFromServer = async () => {
+            try {
+                const data = await fetchNoteData(notepadId);
+                if (loadingNotepadId !== notepadId) return;
 
-            const cachedNote = getCachedNote(notepadId);
-            if (cachedNote?.dirty && currentNotepadId === notepadId) {
-                setCurrentNoteVersion(notepadId, cachedNote.version);
-                if (Number(data.version) > Number(cachedNote.version || 0)) {
-                    if ((data.content || '') === (cachedNote.content || '')) {
-                        dirtyConflictNotepadIds.delete(notepadId);
-                        cacheSyncedNote(notepadId, cachedNote.content || '', { version: data.version });
-                        setCurrentNoteVersion(notepadId, data.version);
-                        hasUnsavedChanges = false;
-                        hideNoteConflictToast();
-                        setStartupSyncStatus('synced', '已同步');
+                const cachedNote = getCachedNote(notepadId);
+                if (cachedNote?.dirty && currentNotepadId === notepadId) {
+                    setCurrentNoteVersion(notepadId, cachedNote.version);
+                    if (Number(data.version) > Number(cachedNote.version || 0)) {
+                        if ((data.content || '') === (cachedNote.content || '')) {
+                            dirtyConflictNotepadIds.delete(notepadId);
+                            cacheSyncedNote(notepadId, cachedNote.content || '', { version: data.version });
+                            setCurrentNoteVersion(notepadId, data.version);
+                            hasUnsavedChanges = false;
+                            hideNoteConflictToast();
+                            setStartupSyncStatus('synced', '已同步');
+                            return;
+                        }
+                        cacheConflictNote(notepadId, cachedNote.content || '', {
+                            localVersion: cachedNote.version,
+                            remoteVersion: data.version
+                        });
+                        dirtyConflictNotepadIds.add(notepadId);
+                        setStartupSyncStatus('error', '有远端更新，本地已保留');
                         return;
                     }
-                    cacheConflictNote(notepadId, cachedNote.content || '', {
-                        localVersion: cachedNote.version,
-                        remoteVersion: data.version
-                    });
-                    dirtyConflictNotepadIds.add(notepadId);
-                    setStartupSyncStatus('error', '有远端更新，本地已保留');
+                    dirtyConflictNotepadIds.delete(notepadId);
+                    cacheDirtyNote(notepadId, cachedNote.content || '', { version: cachedNote.version });
+                    setStartupSyncStatus('cached', '本地未同步');
                     return;
                 }
+
+                if (editor.value !== (data.content || '')) editor.value = data.content || '';
+                hasUnsavedChanges = false;
                 dirtyConflictNotepadIds.delete(notepadId);
-                cacheDirtyNote(notepadId, cachedNote.content || '', { version: cachedNote.version });
-                setStartupSyncStatus('cached', '本地未同步');
-                return;
+                setCurrentNoteVersion(notepadId, data.version);
+                cacheSyncedNote(notepadId, data.content || '', { version: data.version });
+                setStartupSyncStatus('synced', '已同步');
+
+                if (!renderedFromCache) {
+                    const currentNotepad = currentNotepads.find(n => n.id === notepadId);
+                    if (currentNotepad) trackRecentFile(currentNotepad);
+                    updateSidebarSelection(notepadId);
+                    renderRecentFiles(notepadId, currentNotepads, selectNotepad, deleteNotepadById, renameNotepadById, toggleNotepadPin);
+                }
+            } catch (err) {
+                console.warn('Error loading notes:', err);
+                setStartupSyncStatus('error', '服务器不可用，本地可读');
+            } finally {
+                if (loadingNotepadId === notepadId) loadingNotepadId = null;
             }
+        };
 
-            if (editor.value !== (data.content || '')) editor.value = data.content || '';
-            hasUnsavedChanges = false;
-            dirtyConflictNotepadIds.delete(notepadId);
-            setCurrentNoteVersion(notepadId, data.version);
-            cacheSyncedNote(notepadId, data.content || '', { version: data.version });
-            setStartupSyncStatus('synced', '已同步');
-
-            const currentNotepad = currentNotepads.find(n => n.id === notepadId); 
-            if (currentNotepad) trackRecentFile(currentNotepad); 
-            
-            updateSidebarSelection(notepadId);
-            renderRecentFiles(notepadId, currentNotepads, selectNotepad, deleteNotepadById, renameNotepadById, toggleNotepadPin);
-        } catch (err) { 
-            console.warn('Error loading notes:', err);
-            setStartupSyncStatus('error', '服务器不可用，本地可读');
-        } finally {
-            if (loadingNotepadId === notepadId) loadingNotepadId = null;
-        } 
+        if (renderedFromCache && deferRemote) {
+            void refreshFromServer();
+            return;
+        }
+        await refreshFromServer();
     }
 
     let remoteUpdateTimeout;
@@ -1899,6 +1928,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     let selectionToken = 0;
+    let activeNotepadLoaded = false;
     async function openEditorView() {
         if (currentNotepads.length === 0) {
             await loadNotepads({ loadCurrentNote: false });
@@ -1912,6 +1942,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     async function selectNotepad(id, query = "") {
+        const selectedNotepad = findNotepadByIdOrName(currentNotepads, id);
+        if (!selectedNotepad) return;
+        if (selectedNotepad.id === currentNotepadId && activeNotepadLoaded && !query) return;
         const token = ++selectionToken;
         // Flush any pending debounced save for the current notepad before
         // switching. performSaveNotes guards on currentNotepadId ===
@@ -1925,8 +1958,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                 saveNotes(pendingContent, true, false).catch(() => {});
             }
         }
-        const selectedNotepad = findNotepadByIdOrName(currentNotepads, id);
-        currentNotepadId = selectedNotepad?.id || null;
+        currentNotepadId = selectedNotepad.id;
+        activeNotepadLoaded = false;
         applyCurrentNotepadTitle();
         
         // --- UI Visibility ---
@@ -1946,10 +1979,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         document.getElementById('sidebar-left')?.classList.remove('visible');
         document.getElementById('sidebar-overlay')?.classList.remove('visible');
 
-        await loadNotes(currentNotepadId);
+        await loadNotes(currentNotepadId, { deferRemote: true });
         if (token !== selectionToken) return;
+        activeNotepadLoaded = true;
 
-        updateToC(); // Update TOC on selection
+        requestAnimationFrame(() => {
+            if (token === selectionToken && currentNotepadId === selectedNotepad.id) updateToC();
+        });
 
         applyCurrentNotepadTitle();
 

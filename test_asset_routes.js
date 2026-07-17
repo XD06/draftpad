@@ -59,6 +59,37 @@ async function run() {
             body: Buffer.from('not an image')
         });
         assert.strictEqual(invalid.status, 415, 'invalid image bytes should be rejected');
+
+        const fileBytes = Buffer.from('%PDF-1.4 demo document');
+        const fileUpload = await fetch(`${baseUrl}/api/assets/files`, {
+            method: 'POST',
+            headers: {
+                'content-type': 'application/octet-stream',
+                'x-asset-name': encodeURIComponent('计划.pdf'),
+                'x-asset-type': 'application/pdf'
+            },
+            body: fileBytes
+        });
+        assert.strictEqual(fileUpload.status, 201, 'an allowed ordinary file should be accepted');
+        const fileAsset = await fileUpload.json();
+        assert.strictEqual(fileAsset.kind, 'file');
+        assert.strictEqual(fileAsset.previewUrl, null, 'ordinary files should not claim an image preview');
+
+        const fileOriginal = await fetch(`${baseUrl}${fileAsset.originalUrl}`);
+        assert.strictEqual(fileOriginal.status, 200);
+        assert.match(fileOriginal.headers.get('content-disposition') || '', /attachment/i, 'ordinary file originals must force download');
+        assert.deepStrictEqual(Buffer.from(await fileOriginal.arrayBuffer()), fileBytes, 'ordinary file bytes must round-trip unchanged');
+
+        const rejectedFile = await fetch(`${baseUrl}/api/assets/files`, {
+            method: 'POST',
+            headers: {
+                'content-type': 'application/octet-stream',
+                'x-asset-name': encodeURIComponent('unsafe.html'),
+                'x-asset-type': 'text/html'
+            },
+            body: Buffer.from('<script>alert(1)</script>')
+        });
+        assert.strictEqual(rejectedFile.status, 415, 'HTML uploads must be rejected');
         console.log('Asset route checks passed');
     } finally {
         await new Promise(resolve => server.close(resolve));

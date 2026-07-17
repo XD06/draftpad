@@ -83,6 +83,8 @@ export function renderThoughtCard({
     });
     const isLong = bodyText.split('\n').length > 6 || bodyText.length > 200 || subItems.length > 3;
     const isPinned = thought.pinned === true;
+    const isCompleted = thought.completed === true;
+    const completionLabel = isCompleted ? '恢复为待办' : '标记为已完成';
     const attachments = Array.isArray(thought.attachments) ? thought.attachments : [];
 
     return {
@@ -99,9 +101,9 @@ export function renderThoughtCard({
                 </div>
                 <div class="timeline-node"></div>
                 <div class="thought-card-header">
-                    <div class="thought-dot" title="点击切换完成状态">
+                    <button type="button" class="thought-dot" title="${completionLabel}" aria-label="${completionLabel}" aria-pressed="${isCompleted}">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="20 6 9 17 4 12"></polyline></svg>
-                    </div>
+                    </button>
                     <div class="thought-time">${dateStr}</div>
                     <button class="thought-pin-btn ${isPinned ? 'pinned' : ''}" data-pin="${escapeHtml(thought.id)}" title="${isPinned ? '取消置顶' : '置顶'}" aria-label="${isPinned ? '取消置顶' : '置顶'}">
                         <svg class="thought-pin-icon" viewBox="0 0 24 24" fill="${isPinned ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">

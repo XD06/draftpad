@@ -13,6 +13,7 @@ const requiredCoreAssets = [
     '/managers/thought-ai-status.js',
     '/managers/thought-api-client.js',
     '/managers/asset-api-client.js',
+    '/managers/article-file-command.js',
     '/managers/thought-attachments.js',
     '/managers/thought-card-renderer.js',
     '/managers/thought-editor.js',

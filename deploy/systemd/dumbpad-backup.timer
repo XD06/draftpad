@@ -1,0 +1,10 @@
+[Unit]
+Description=Run DumbPad backup during low-activity hours
+
+[Timer]
+OnCalendar=*-*-* 03:30:00
+Persistent=true
+Unit=dumbpad-backup.service
+
+[Install]
+WantedBy=timers.target

@@ -407,11 +407,11 @@
                             </div>
                         </div>
                         <div class="settings-cloud-main-actions">
-                            <button id="settings-local-overwrite-cloud" type="button" class="settings-cloud-action danger">
+                            <button id="settings-local-overwrite-cloud" type="button" class="settings-cloud-action danger" hidden>
                                 <span>本地覆盖云端</span>
                                 <small>先备份云端，再上传本地 data</small>
                             </button>
-                            <button id="settings-cloud-overwrite-local" type="button" class="settings-cloud-action danger">
+                            <button id="settings-cloud-overwrite-local" type="button" class="settings-cloud-action danger" hidden>
                                 <span>云端覆盖本地</span>
                                 <small>先备份本地，再恢复当前 prefix</small>
                             </button>
@@ -420,7 +420,7 @@
                                 <small>后台保存与 AI 分析，不打断记录</small>
                             </button>
                         </div>
-                        <details class="settings-cloud-advanced">
+                        <details class="settings-cloud-advanced" hidden>
                             <summary>高级维护</summary>
                             <div class="settings-cloud-grid">
                                 <label class="settings-label">
@@ -447,11 +447,11 @@
                             <div class="settings-cloud-actions">
                                 <button id="settings-cloud-inventory" type="button">当前空间盘点</button>
                                 <button id="settings-import-dry-run" type="button">导入预览</button>
-                                <button id="settings-import-run" type="button" class="danger">执行导入</button>
+                                <button id="settings-import-run" type="button" class="danger" hidden>执行导入</button>
                                 <button id="settings-backup-dry-run" type="button">备份预览</button>
                                 <button id="settings-backup-run" type="button" class="danger">执行备份</button>
                                 <button id="settings-delete-dry-run" type="button">清空预览</button>
-                                <button id="settings-delete-run" type="button" class="danger">清空当前空间</button>
+                                <button id="settings-delete-run" type="button" class="danger" hidden>清空当前空间</button>
                                 <button id="settings-local-overwrite-cloud-dry-run" type="button">本地覆盖云端预览</button>
                                 <button id="settings-cloud-overwrite-local-dry-run" type="button">云端覆盖本地预览</button>
                             </div>

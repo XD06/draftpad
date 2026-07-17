@@ -138,6 +138,9 @@ function run() {
     assert(detail.includes('1536维'), 'detail should include embedding dimensions');
     assert(detail.includes('thought-ai-insight'), 'detail should include the manual insight section');
     assert(detail.includes('thought-ai-insight-run'), 'detail should include the manual insight run action');
+    assert(detail.includes('thought-agent-disclosure'), 'AI detail should contain the collapsed related-content recovery entry');
+    assert(detail.includes('data-agent-toggle'), 'related-content recovery should be toggled from within AI detail');
+    assert(detail.includes('data-agent-panel-host') && detail.includes('hidden'), 'related-content recovery output should be hidden until explicitly opened');
 
     const insightSection = ai.renderAIInsightSection({
         insight: {
