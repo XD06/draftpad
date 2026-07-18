@@ -1,5 +1,5 @@
 export const CODE_LANGUAGE_CATALOG = [
-    { id: 'plaintext', label: '纯文本', aliases: ['text', 'plain', 'txt', 'plaintxt'] },
+    { id: 'plaintext', label: 'Plaintxt', aliases: ['text', 'plain', 'txt', 'plaintxt'], icon: 'plaintext.png' },
     { id: 'javascript', label: 'JavaScript', aliases: ['js'], icon: 'javascript.png' },
     { id: 'python', label: 'Python', aliases: ['py'], icon: 'python.png' },
     { id: 'cpp', label: 'C++', aliases: ['c++'], icon: 'cpp.png' },
@@ -7,7 +7,7 @@ export const CODE_LANGUAGE_CATALOG = [
     { id: 'java', label: 'Java', aliases: [], icon: 'java.png' },
     { id: 'typescript', label: 'TypeScript', aliases: ['ts'], icon: 'typescript.png' },
     { id: 'go', label: 'Go', aliases: [], icon: 'go.png' },
-    { id: 'rust', label: 'Rust', aliases: ['rs'] },
+    { id: 'rust', label: 'Rust', aliases: ['rs'], icon: 'rust.png' },
     { id: 'php', label: 'PHP', aliases: [], icon: 'php.png' },
     { id: 'csharp', label: 'C#', aliases: ['cs', 'c#'], icon: 'csharp.png' },
     { id: 'swift', label: 'Swift', aliases: [], icon: 'swift.png' },
@@ -18,21 +18,21 @@ export const CODE_LANGUAGE_CATALOG = [
     { id: 'scss', label: 'Sass/SCSS', aliases: ['sass'] },
     { id: 'less', label: 'Less', aliases: [] },
     { id: 'xml', label: 'XML', aliases: [] },
-    { id: 'json', label: 'JSON', aliases: [] },
-    { id: 'bash', label: 'Shell', aliases: ['sh', 'shell'] },
-    { id: 'powershell', label: 'PowerShell', aliases: ['ps', 'pwsh'] },
+    { id: 'json', label: 'JSON', aliases: [], icon: 'json.png' },
+    { id: 'bash', label: 'Shell', aliases: ['sh', 'shell'], icon: 'bash.png' },
+    { id: 'powershell', label: 'PowerShell', aliases: ['ps', 'pwsh'], icon: 'powershell.png' },
     { id: 'yaml', label: 'YAML', aliases: ['yml'] },
     { id: 'toml', label: 'TOML', aliases: [] },
-    { id: 'dockerfile', label: 'Dockerfile', aliases: ['docker'] },
+    { id: 'dockerfile', label: 'Dockerfile', aliases: ['docker'], icon: 'dockerfile.png' },
     { id: 'ini', label: 'INI', aliases: ['conf'] },
-    { id: 'sql', label: 'SQL', aliases: [] },
-    { id: 'markdown', label: 'Markdown', aliases: ['md'] },
+    { id: 'sql', label: 'SQL', aliases: [], icon: 'sql.png' },
+    { id: 'markdown', label: 'Markdown', aliases: ['md'], icon: 'markdown.png' },
     { id: 'textile', label: 'Textile', aliases: [] },
     { id: 'latex', label: 'LaTeX', aliases: ['tex'] },
     { id: 'diff', label: 'Diff', aliases: ['patch'] },
     { id: 'http', label: 'HTTP', aliases: [] },
-    { id: 'nginx', label: 'Nginx', aliases: [] },
-    { id: 'mermaid', label: 'Mermaid', aliases: [] }
+    { id: 'nginx', label: 'Nginx', aliases: [], icon: 'nginx.png' },
+    { id: 'mermaid', label: 'Mermaid', aliases: [], icon: 'mermaid.png' }
 ];
 
 const DEFAULT_LANGUAGE_IDS = ['plaintext', 'javascript', 'python'];

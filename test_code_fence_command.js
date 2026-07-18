@@ -48,6 +48,22 @@ assert(hybrid.includes('this.setWysiwygCodeFenceValue(next, domIndex);'), 'confi
 assert(hybrid.includes('focusInsertedCodeBlock(blockIndex)'), 'the editor should activate the rendered code source layer after creating a fence');
 assert(hybrid.includes("languageButton.className = 'dumbpad-code-language-badge'"), 'editable rendered code blocks should expose the current language as a compact badge');
 assert(hybrid.includes('commitCodeLanguageSelection(value)'), 'the external language picker should update the matching Markdown fence');
+assert(
+    hybrid.includes('readPendingCodeFenceRangeText(range)') &&
+        hybrid.includes('range.cloneContents()') &&
+        hybrid.includes('span[data-type="backslash"]') &&
+        hybrid.includes("wrapper.textContent === '\\\\`'") &&
+        hybrid.includes('this.readPendingCodeFenceRangeText(prefix)') &&
+        hybrid.includes('this.readPendingCodeFenceRangeText(suffix)'),
+    'adjacent code fences should ignore Vditor display-only backslashes around typed backticks'
+);
+assert(
+    hybrid.includes('stripDisplayGuardsPreservingPendingCodeFence(value') &&
+        hybrid.includes('.split(PENDING_CODE_FENCE_GUARD)') &&
+        hybrid.includes('.join(PENDING_CODE_FENCE_GUARD)') &&
+        hybrid.includes('preservePendingCodeFence: true'),
+    'confirming a pending fence should preserve its private locator through safe DOM serialization'
+);
 
 const enterMethod = hybrid.match(/    handlePendingCodeFenceEnter\([^)]*\) \{([\s\S]*?)\r?\n    \}\r?\n\r?\n    isArticleFileCommandKeydown/);
 assert(enterMethod, 'code fence Enter handling should remain independently inspectable');

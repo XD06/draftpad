@@ -31,21 +31,99 @@ assert(
     'the visible code surface should keep the same bottom margin in reading and editing modes'
 );
 assert(hybrid.includes('decorateCodeBlockLineNumbers(root)') && hybrid.includes('pre.dataset.lineNumbers = lineNumbers'), 'the editor should calculate visual line-number metadata after rendering');
-assert(hybrid.includes('needsCodeDecoration') && hybrid.includes('this.decorateCodeBlockLineNumbers(root);'), 'Vditor code DOM replacements should be redecorated in the mutation microtask before paint');
+assert(
+    hybrid.includes('new MutationObserver(records') &&
+        hybrid.includes('const changedCode = new Set()') &&
+        hybrid.includes('this.decorateCodeBlockLineNumbers(root, changedCode)'),
+    'Vditor code DOM replacements should redecorate only changed code blocks before paint'
+);
+assert(
+    hybrid.includes("const DISPLAY_MERMAID_LANGUAGE = 'dumbpad-mermaid'") &&
+        hybrid.includes('restoreEditorDisplayLanguages') &&
+        hybrid.includes(".replace(/(^|\\n)([ \\t]*`{3,})mermaid"),
+    'Mermaid source should bypass Vditor diagram rendering inside the editor and restore on serialization'
+);
+assert(
+    hybrid.includes('bindMermaidPasteNormalization()') &&
+        hybrid.includes("event.clipboardData?.getData('text/plain')") &&
+        hybrid.includes('this.prepareMermaidDisplayValue(text)') &&
+        hybrid.includes('new DataTransfer()') &&
+        hybrid.includes("new ClipboardEvent('paste'") &&
+        hybrid.includes('event.target.dispatchEvent(normalizedEvent)') &&
+        hybrid.includes("this.closestElement(range.startContainer, 'code')") &&
+        hybrid.includes('event.clipboardData?.files?.length'),
+    'Mermaid clipboard text should be normalized before Vditor can render it without intercepting files or code content'
+);
 assert(hybrid.includes('restoreCodeBlockLineNumberDecorations(clone)'), 'Markdown serialization should remove line-number decoration metadata');
 assert(
-    hybrid.includes("tools.className = 'dumbpad-code-tools'") &&
+    hybrid.includes("root?.querySelectorAll?.('pre').forEach(pre =>") &&
+        hybrid.includes("pre.querySelector(':scope > .dumbpad-code-header')?.remove()") &&
+        hybrid.includes('delete pre.dataset.dumbpadCodeSignature'),
+    'Markdown serialization should always remove code headers even if Vditor replaced their decoration metadata'
+);
+assert(
+    hybrid.includes('scheduleMissingCodeBlockDecoration()') &&
+        hybrid.includes("?.querySelectorAll('pre > code')") &&
+        hybrid.includes('pair => candidateSet.add(pair)'),
+    'typing should restore headers on both Vditor code surfaces after either surface is replaced'
+);
+assert(
+    hybrid.includes("el.closest?.('.dumbpad-code-header')") &&
+        hybrid.includes("tools.setAttribute('contenteditable', 'false')"),
+    'global editor enable/disable must never make code toolbar labels editable code content'
+);
+assert(
+    hybrid.includes('bindCodeBlockCaretPlacement()') &&
+        hybrid.includes('restoreCodeCaretFromPointer(pending)') &&
+        hybrid.includes('caretRangeFromPoint'),
+    'opening a code block should restore the caret at the pointer location instead of the first character'
+);
+assert(
+    hybrid.includes('renderMermaidDiagrams()') &&
+        hybrid.includes('window.Vditor.mermaidRender(') &&
+        hybrid.includes("render.className = 'dumbpad-mermaid-render language-mermaid'") &&
+        hybrid.includes("root?.querySelectorAll?.('.dumbpad-mermaid-render').forEach(render => render.remove())"),
+    'Mermaid should remain safe source while editing and render on entering reading mode'
+);
+assert(
+    hybrid.includes('serializeWysiwygRoot(root, fallback') &&
+        hybrid.includes("const rawValue = this.serializeWysiwygRoot(root, this._lastValue || '', {") &&
+        hybrid.includes("clone.querySelectorAll('.dumbpad-mermaid-render').forEach(render => render.remove())"),
+    'every code-fence DOM serialization path should strip toolbars and reading-only Mermaid renders'
+);
+assert(
+    hybrid.includes('restoreSerializedCodeLanguages(serialized, codeLanguages)') &&
+        hybrid.includes('replaceCodeFenceLanguage(block.raw, language)') &&
+        hybrid.includes("root.querySelectorAll(':scope > .vditor-wysiwyg__block[data-type=\"code-block\"]')"),
+    'serialization should restore each rendered code block language, including Mermaid, before saving'
+);
+assert(
+    hybrid.includes('ensurePendingCodeFenceParagraph(root, range)') &&
+        hybrid.includes("root.insertBefore(paragraph, root.childNodes[offset] || null)"),
+    'a fence typed directly beside another code block should get a paragraph host before Vditor auto-renders it'
+);
+assert(
+    hybrid.includes("tools.className = 'dumbpad-code-header dumbpad-code-tools'") &&
         hybrid.includes("copyButton.className = 'dumbpad-code-copy'") &&
         hybrid.includes("copyButton.setAttribute('aria-label', '复制代码')") &&
-        hybrid.includes("pre.querySelector(':scope > code')"),
-    'the editable code surface should provide an accessible copy icon that reads the current code'
+        hybrid.includes("pre.querySelector(':scope > code')") &&
+        hybrid.includes('tools.append(languageButton, copyButton)'),
+    'the editable code surface should provide a left-aligned language control and accessible copy action in one header'
 );
-assert(styles.includes('> pre > .dumbpad-code-tools'), 'the editable code tools should use the code block visual language');
+assert(
+    hybrid.includes('createCodeCopyButton(pre)') &&
+        hybrid.includes("header.querySelector(':scope > .dumbpad-code-copy')") &&
+        styles.includes('> pre > .vditor-copy') &&
+        styles.includes('display: none !important;'),
+    'reading code blocks should keep the shared copy action in the header and suppress the floating Vditor copy control'
+);
+assert(styles.includes('> pre > .dumbpad-code-header'), 'reading and editing code tools should share one integrated header surface');
 assert(
     hybrid.includes("languageButton.className = 'dumbpad-code-language-badge'") &&
         hybrid.includes("languageBadge.className = 'dumbpad-code-language-badge is-readonly'") &&
+        hybrid.includes("header.className = 'dumbpad-code-header is-readonly'") &&
         styles.includes('.dumbpad-code-language-badge'),
-    'the code language should remain visible as a compact badge in editing and reading surfaces'
+    'the code language should remain visible at the left edge of the integrated header in editing and reading surfaces'
 );
 assert(
     hybrid.includes("popover.className = 'dumbpad-code-language-popover'") &&
@@ -65,8 +143,9 @@ assert(
 assert(
     hybrid.includes("icon.className = 'dumbpad-code-language-icon'") &&
         styles.includes('.dumbpad-code-language-icon') &&
-        codeBlockSurfaceRule.includes('padding: 30px 16px 12px 54px !important;'),
-    'language badges should support compact icons in a reserved top tool row above code content'
+        codeBlockSurfaceRule.includes('padding: 29px 16px 12px 54px !important;') &&
+        styles.includes('height: 24px;'),
+    'language badges should support compact icons in a thin header with a small gap before the first code line'
 );
 assert(
     styles.includes('white-space: pre-wrap;') && styles.includes('overflow-wrap: anywhere;') && styles.includes('min-width: 0;'),

@@ -37,6 +37,6 @@ assert.strictEqual(resolveCodeLanguage('vue'), 'vue', 'valid custom language nam
 assert.strictEqual(resolveCodeLanguage('中文'), null, 'invalid fence language text should be rejected');
 assert.strictEqual(getCodeLanguageIconPath('python'), '/Assets/code-language-icons/python.png', 'known languages should expose their bundled icon');
 assert.strictEqual(getCodeLanguageIconPath('py'), '/Assets/code-language-icons/python.png', 'aliases should resolve to the canonical bundled icon');
-assert.strictEqual(getCodeLanguageIconPath('plaintext'), '', 'languages without a bundled logo should use the compact text fallback');
+assert.strictEqual(getCodeLanguageIconPath('plaintext'), '/Assets/code-language-icons/plaintext.png', 'plaintext should expose its bundled icon');
 
 console.log('Code language catalog checks passed');

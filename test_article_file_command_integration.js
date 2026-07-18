@@ -6,7 +6,7 @@ const root = __dirname;
 const hybrid = fs.readFileSync(path.join(root, 'public', 'hybrid-editor.js'), 'utf8');
 const assetClient = fs.readFileSync(path.join(root, 'public', 'managers', 'asset-api-client.js'), 'utf8');
 const styles = fs.readFileSync(path.join(root, 'public', 'Assets', 'styles.css'), 'utf8');
-const articleFileInteractionBlock = hybrid.match(/    bindArticleFileInteractions\(\) \{[\s\S]*?\r?\n    \}\r?\n\r?\n    bindArticleImageInteractions/);
+const articleFileInteractionBlock = hybrid.match(/    bindArticleFileInteractions\(\) \{[\s\S]*?\r?\n    \}\r?\n\r?\n    bindMermaidPasteNormalization/);
 
 function getMethodBody(name, nextMethod) {
     const expression = new RegExp(`    ${name}\\([^)]*\\) \\{([\\s\\S]*?)\\r?\\n    \\}\\r?\\n\\r?\\n    ${nextMethod}`);

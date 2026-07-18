@@ -30,7 +30,7 @@
 .typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] > pre {
     position: relative;
     box-sizing: border-box;
-    padding: 30px 16px 12px 54px !important;
+    padding: 29px 16px 12px 54px !important;
     border: 1px solid color-mix(in srgb, var(--border-color) 80%, transparent);
     border-radius: 8px;
     background: var(--code-bg) !important;
@@ -43,7 +43,7 @@
 .typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] > pre.dumbpad-code-lines::before {
     content: attr(data-line-numbers);
     position: absolute;
-    top: 30px;
+    top: 29px;
     left: 0;
     width: 40px;
     box-sizing: border-box;
@@ -69,32 +69,46 @@
     word-break: break-word;
 }
 
-.typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] > pre > .dumbpad-code-tools {
+.typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] > pre > .dumbpad-code-header {
     position: absolute;
-    top: 4px;
-    right: 4px;
+    inset: 0 0 auto;
     z-index: 3;
-    display: inline-flex;
+    display: flex;
+    width: 100%;
+    height: 24px;
+    box-sizing: border-box;
+    padding: 0 6px 0 8px;
     align-items: center;
-    gap: 4px;
+    justify-content: space-between;
+    border-bottom: 1px solid color-mix(in srgb, var(--border-color) 64%, transparent);
+    border-radius: 7px 7px 0 0;
+    background: color-mix(in srgb, var(--code-bg) 92%, var(--border-color) 8%);
     font-family: var(--font-code);
+}
+
+.typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] > pre > .dumbpad-code-header.is-readonly {
+    user-select: none;
+}
+
+.typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] > pre > .dumbpad-code-header.is-readonly .dumbpad-code-language-badge {
+    pointer-events: none;
 }
 
 .typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] .dumbpad-code-language-badge {
     display: inline-flex;
-    max-width: 92px;
-    height: 19px !important;
+    max-width: 104px;
+    height: 18px !important;
     box-sizing: border-box;
     margin: 0 !important;
-    padding: 0 5px 0 4px !important;
+    padding: 0 4px !important;
     align-items: center;
     gap: 3px;
-    border: 1px solid color-mix(in srgb, var(--border-color) 76%, transparent);
-    border-radius: 5px;
+    border: 0;
+    border-radius: 4px;
     outline: none;
-    background: color-mix(in srgb, var(--code-bg) 92%, var(--text-color) 8%);
-    color: var(--muted-text);
-    font: 500 9px/17px var(--font-code) !important;
+    background: transparent;
+    color: color-mix(in srgb, var(--muted-text) 78%, var(--text-color));
+    font: 600 10px/18px var(--font-code) !important;
     letter-spacing: 0;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -103,9 +117,9 @@
 
 .typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] .dumbpad-code-language-icon {
     display: block;
-    flex: 0 0 12px;
-    width: 12px;
-    height: 12px;
+    flex: 0 0 11px;
+    width: 11px;
+    height: 11px;
     object-fit: contain;
     pointer-events: none;
 }
@@ -117,6 +131,10 @@
     white-space: nowrap;
 }
 
+.typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] .dumbpad-code-language-token::before {
+    content: attr(data-language-label);
+}
+
 .typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] button.dumbpad-code-language-badge {
     cursor: pointer;
 }
@@ -124,34 +142,52 @@
 .typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] button.dumbpad-code-language-badge:hover,
 .typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] button.dumbpad-code-language-badge:focus-visible,
 .typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] button.dumbpad-code-language-badge[aria-expanded="true"] {
-    border-color: color-mix(in srgb, var(--primary-color) 62%, var(--border-color));
+    background: color-mix(in srgb, var(--primary-color) 10%, transparent);
     color: var(--primary-color);
-    box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary-color) 14%, transparent);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--primary-color) 28%, transparent);
 }
 
-.typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] > pre > .dumbpad-code-language-badge.is-readonly {
-    position: absolute;
-    top: 4px;
-    right: 4px;
-    z-index: 3;
-    pointer-events: none;
-    user-select: none;
+.typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] > pre > .vditor-copy {
+    display: none !important;
 }
 
-.typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] > pre:has(> .dumbpad-code-language-badge.is-readonly) .vditor-copy span {
-    right: 100px;
-    top: 6px;
+.typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] > .dumbpad-mermaid-render {
+    display: none;
+}
+
+.typora-editor-shell.is-reading-mode .vditor-reset .vditor-wysiwyg__block[data-type="code-block"]:has(> .dumbpad-mermaid-render) > pre {
+    display: none !important;
+}
+
+.typora-editor-shell.is-reading-mode .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] > .dumbpad-mermaid-render {
+    display: flex;
+    min-height: 96px;
+    margin: 0 0 1em;
+    padding: 14px;
+    align-items: center;
+    justify-content: center;
+    overflow: auto;
+    border: 1px solid color-mix(in srgb, var(--border-color) 80%, transparent);
+    border-radius: 8px;
+    background: var(--code-bg);
+}
+
+.typora-editor-shell.is-reading-mode .dumbpad-mermaid-render svg {
+    display: block;
+    max-width: 100%;
+    height: auto;
+    margin: auto;
 }
 
 .typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] .dumbpad-code-copy {
     display: inline-grid;
-    width: 20px;
-    height: 20px;
+    width: 18px;
+    height: 18px;
     padding: 0;
     place-items: center;
-    border: 1px solid color-mix(in srgb, var(--border-color) 76%, transparent);
-    border-radius: 6px;
-    background: color-mix(in srgb, var(--code-bg) 88%, var(--text-color) 12%);
+    border: 0;
+    border-radius: 4px;
+    background: transparent;
     color: var(--muted-text);
     cursor: pointer;
     opacity: 0.78;
@@ -161,8 +197,7 @@
 .typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] .dumbpad-code-copy:focus-visible,
 .typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] .dumbpad-code-copy.is-copied {
     outline: none;
-    border-color: color-mix(in srgb, var(--primary-color) 58%, var(--border-color));
-    background: color-mix(in srgb, var(--code-bg) 82%, var(--primary-color) 18%);
+    background: color-mix(in srgb, var(--primary-color) 12%, transparent);
     color: var(--primary-color);
     opacity: 1;
 }

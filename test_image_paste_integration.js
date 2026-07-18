@@ -161,7 +161,7 @@ assert.strictEqual(commitContext.preferLastValueUntilInput, true, 'a committed b
 
 const handleVditorInput = new Function(
     'clearTimeout',
-    `return function handleVditorInput() {${getMethodBody('handleVditorInput', 'getValue')}}`
+    `return function handleVditorInput() {${getMethodBody('handleVditorInput', 'scheduleMissingCodeBlockDecoration')}}`
 )(() => {});
 const vditorInputState = { skipped: true, handled: 0 };
 handleVditorInput.call({
@@ -178,6 +178,7 @@ const regularVditorInputState = { handled: 0 };
 const regularVditorInputContext = {
     skipNextVditorInput: false,
     preferLastValueUntilInput: true,
+    scheduleMissingCodeBlockDecoration() {},
     isDecorating: false,
     suppressInput: false,
     isComposing: false,
@@ -188,8 +189,8 @@ handleVditorInput.call(regularVditorInputContext);
 assert.strictEqual(regularVditorInputState.handled, 1, 'the next real Vditor input should continue through the normal save path');
 assert.strictEqual(regularVditorInputContext.preferLastValueUntilInput, false, 'a real edit should release the exact-value pin before normal serialization resumes');
 assert(
-    renderAfterMutationBlock?.[0].includes('this.decorateArticleImages();') &&
-        (renderAfterMutationBlock?.[0].match(/this\.decorateArticleImages\(\);/g) || []).length >= 3,
+    renderAfterMutationBlock?.[0].includes('this.decorateArticleImages({ decorateCode: false });') &&
+        renderAfterMutationBlock?.[0].includes('this.scheduleArticleDecorationPass(120);'),
     'Vditor async re-renders after a move should restore image and attachment drag decoration for subsequent moves'
 );
 

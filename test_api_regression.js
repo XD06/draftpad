@@ -341,8 +341,8 @@ function assertThoughtsFrontendRegressions() {
         'if restored, Thought view fade-in must not transform the view container because fixed FAB children drift with transformed ancestors'
     );
     assert(
-        hybridEditorSource.includes("target.closest('.vditor-copy, .code-lang-copy-button')") &&
-        hybridEditorSource.indexOf("target.closest('.vditor-copy, .code-lang-copy-button')") <
+        hybridEditorSource.includes("target.closest('.vditor-copy, .code-lang-copy-button, .dumbpad-code-copy')") &&
+        hybridEditorSource.indexOf("target.closest('.vditor-copy, .code-lang-copy-button, .dumbpad-code-copy')") <
             hybridEditorSource.indexOf("target.closest('.vditor-reset')"),
         'reading mode click guard should allow code block copy buttons before blocking editor clicks'
     );

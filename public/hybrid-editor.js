@@ -45,6 +45,11 @@ const MARK_PROTECTED_SELECTOR = [
     '.md-time-marker'
 ].join(',');
 
+// Vditor renders `language-mermaid` during every WYSIWYG setValue/input pass.
+// Keep Mermaid source intact while using a private display-only language so a
+// malformed or expensive diagram cannot block the editor itself.
+const DISPLAY_MERMAID_LANGUAGE = 'dumbpad-mermaid';
+
 function slugify(text, seen) {
     const base = String(text || '')
         .trim()
@@ -95,6 +100,9 @@ export class HybridMarkdownEditor {
         this.codeLanguageSuggestions = [];
         this.activeCodeLanguageSuggestion = -1;
         this.isCodeLanguageComposing = false;
+        this.decorationGeneration = 0;
+        this.articleDecorationTimers = new Set();
+        this.codeDecorationFrame = 0;
 
         this.container.innerHTML = '';
         this.container.classList.add('typora-editor-shell');
@@ -144,8 +152,7 @@ export class HybridMarkdownEditor {
                 this.scheduleDecorateRenderedMarks();
                 setTimeout(() => this.decorateRenderedMarks(), 80);
                 setTimeout(() => this.decorateRenderedMarks(), 240);
-                setTimeout(() => this.decorateArticleImages(), 80);
-                setTimeout(() => this.decorateArticleImages(), 240);
+                this.scheduleArticleDecorationPass();
             }
         });
 
@@ -166,11 +173,13 @@ export class HybridMarkdownEditor {
         this.setupSelectionMenu();
         this.bindReadingModeGuard();
         this.bindArticleFileInteractions();
+        this.bindMermaidPasteNormalization();
         this.bindArticleImageInteractions();
         this.bindArticleUploadInteractions();
         this.createArticleFileInput();
         this.bindCompositionEvents();
         this.bindTimeCommand();
+        this.bindCodeBlockCaretPlacement();
         this.bindMarkerProtection();
         this.buildHeadingIndex();
     }
@@ -199,10 +208,26 @@ export class HybridMarkdownEditor {
             this.skipNextVditorInputTimer = null;
             return;
         }
+        this.scheduleMissingCodeBlockDecoration();
         this.preferLastValueUntilInput = false;
         if (this.isDecorating || this.suppressInput || this.isComposing) return;
         if (this.handlePendingCodeFenceInput()) return;
         this.handleWysiwygInput();
+    }
+
+    scheduleMissingCodeBlockDecoration() {
+        cancelAnimationFrame(this.missingCodeDecorationFrame);
+        this.missingCodeDecorationFrame = requestAnimationFrame(() => {
+            this.missingCodeDecorationFrame = 0;
+            const root = this.container.querySelector('.vditor-wysiwyg .vditor-reset');
+            if (!root || this.sourceMode || this.isComposing) return;
+            const missing = new Set(
+                Array.from(root.querySelectorAll('pre > code')).filter(code =>
+                    !code.parentElement?.querySelector(':scope > .dumbpad-code-header')
+                )
+            );
+            if (missing.size) this.decorateCodeBlockLineNumbers(root, missing);
+        });
     }
 
     getValue() {
@@ -214,6 +239,9 @@ export class HybridMarkdownEditor {
 
     setValue(value = '', emit = true) {
         const normalized = this.stripDisplayGuards(value);
+        this.cancelPendingArticleDecorations();
+        clearTimeout(this.pendingCodeFenceFocusTimer);
+        this.pendingCodeFenceFocusTimer = null;
         this.preferLastValueUntilInput = false;
         this._lastValue = normalized;
         if (this.ready && this.editor?.setValue) {
@@ -223,13 +251,11 @@ export class HybridMarkdownEditor {
             this.decorateRenderedMarks();
             this.decorateArticleImages();
             this.scheduleDecorateRenderedMarks();
-            // Vditor's async re-processing can strip decorations
-            // after the synchronous and next-frame passes.  Retry
-            // at 80 ms and 240 ms to ensure marks survive.
+            this.scheduleArticleDecorationPass();
+            // Vditor's async re-processing can strip inline marks after the
+            // synchronous pass; keep the mark-only retries, not full scans.
             setTimeout(() => this.decorateRenderedMarks(), 80);
             setTimeout(() => this.decorateRenderedMarks(), 240);
-            setTimeout(() => this.decorateArticleImages(), 80);
-            setTimeout(() => this.decorateArticleImages(), 240);
         } else {
             this.pendingValue = normalized;
         }
@@ -243,6 +269,7 @@ export class HybridMarkdownEditor {
 
     setWysiwygValueAtMarkdownOffset(value = '', markdownOffset = 0, emit = true) {
         const normalized = this.stripDisplayGuards(value);
+        this.cancelPendingArticleDecorations();
         this.preferLastValueUntilInput = false;
         const safeOffset = Math.min(Math.max(0, Number(markdownOffset) || 0), normalized.length);
         const marker = '\uE001';
@@ -258,15 +285,14 @@ export class HybridMarkdownEditor {
             this.decorateRenderedMarks();
             this.decorateArticleImages();
             this.scheduleDecorateRenderedMarks();
+            this.scheduleArticleDecorationPass();
             setTimeout(() => {
                 this.restoreWysiwygCaretFromMarker();
                 this.decorateRenderedMarks();
-                this.decorateArticleImages();
             }, 80);
             setTimeout(() => {
                 if (!this.restoreWysiwygCaretFromMarker()) this.restoreWysiwygCaretFallback();
                 this.decorateRenderedMarks();
-                this.decorateArticleImages();
             }, 240);
         } else {
             this.pendingValue = normalized;
@@ -353,18 +379,9 @@ export class HybridMarkdownEditor {
         requestAnimationFrame(() => {
             restoreScroll();
             this.decorateRenderedMarks();
-            this.decorateArticleImages();
+            this.decorateArticleImages({ decorateCode: false });
         });
-        setTimeout(() => {
-            restoreScroll();
-            this.decorateRenderedMarks();
-            this.decorateArticleImages();
-        }, 80);
-        setTimeout(() => {
-            restoreScroll();
-            this.decorateRenderedMarks();
-            this.decorateArticleImages();
-        }, 240);
+        this.scheduleArticleDecorationPass(120);
     }
 
     focus() {
@@ -407,8 +424,13 @@ export class HybridMarkdownEditor {
         return this.container.querySelector('.vditor-reset')?.innerHTML || '';
     }
 
-    prepareDisplayValue(value = '') {
+    prepareMermaidDisplayValue(value = '') {
         return String(value || '')
+            .replace(/(^|\n)([ \t]*`{3,})mermaid([ \t]*)(?=\n|$|\uE001)/gi, `$1$2${DISPLAY_MERMAID_LANGUAGE}$3`);
+    }
+
+    prepareDisplayValue(value = '') {
+        return this.prepareMermaidDisplayValue(value)
             .split('\n')
             .map(line => /^\s*<(?:mark\b|span\s+data-(?:draw|note)\b)/i.test(line) ? `\u200B${line}` : line)
             .join('\n');
@@ -425,19 +447,95 @@ export class HybridMarkdownEditor {
         // Check if DOM has any rendered marks that editor.getValue()
         // might not preserve (Lute may strip or convert them).
         const hasRenderedMarks = root?.querySelector?.(
-            '.md-time-marker[data-time-source], mark.md-mark, [data-draw], .has-annotation, .article-upload-card[data-article-upload-token], pre.dumbpad-code-lines[data-line-numbers]'
+            '.md-time-marker[data-time-source], mark.md-mark, [data-draw], .has-annotation, .article-upload-card[data-article-upload-token], pre.dumbpad-code-lines[data-line-numbers], pre > .dumbpad-code-header, .vditor-wysiwyg__block[data-type="code-block"]'
         );
 
         if (!hasRenderedMarks || typeof this.editor?.html2md !== 'function') {
-            return this.stripDisplayGuards(rawValue);
+            return this.restoreEditorDisplayLanguages(this.stripDisplayGuards(rawValue));
         }
 
+        return this.serializeWysiwygRoot(root, rawValue);
+    }
+
+    serializeWysiwygRoot(root, fallback = '', { preservePendingCodeFence = false } = {}) {
+        if (!root || typeof this.editor?.html2md !== 'function') {
+            return this.restoreEditorDisplayLanguages(this.stripDisplayGuards(fallback));
+        }
+        const codeLanguages = Array.from(
+            root.querySelectorAll(':scope > .vditor-wysiwyg__block[data-type="code-block"]')
+        ).map(block => {
+            const code = block.querySelector('.vditor-wysiwyg__pre > code, .vditor-wysiwyg__preview > code');
+            return this.getRenderedCodeBlockLanguage(code);
+        });
         const clone = root.cloneNode(true);
+        clone.querySelectorAll('.dumbpad-mermaid-render').forEach(render => render.remove());
         this.restoreArticleUploadPlaceholders(clone);
         this.restoreCodeBlockLineNumberDecorations(clone);
         this.restoreRenderedTimeMarkers(clone);
         this.restoreAllRenderedMarks(clone);
-        return this.stripDisplayGuards(this.editor.html2md(clone.innerHTML) || rawValue);
+        const rawSerialized = this.editor.html2md(clone.innerHTML) || fallback;
+        const cleanSerialized = preservePendingCodeFence
+            ? this.stripDisplayGuardsPreservingPendingCodeFence(rawSerialized)
+            : this.stripDisplayGuards(rawSerialized);
+        const serialized = this.restoreEditorDisplayLanguages(cleanSerialized);
+        return this.restoreSerializedCodeLanguages(serialized, codeLanguages);
+    }
+
+    stripDisplayGuardsPreservingPendingCodeFence(value = '') {
+        return String(value || '')
+            .split(PENDING_CODE_FENCE_GUARD)
+            .map(part => this.stripDisplayGuards(part))
+            .join(PENDING_CODE_FENCE_GUARD);
+    }
+
+    restoreSerializedCodeLanguages(value = '', codeLanguages = []) {
+        const parsed = splitTopLevelMarkdownBlocks(value, lexMarkdown);
+        if (!parsed.ok) return value;
+        const codeBlockIndexes = parsed.blocks
+            .map((block, index) => block.type === 'code' ? index : -1)
+            .filter(index => index >= 0);
+        if (codeBlockIndexes.length !== codeLanguages.length) return value;
+        let changed = false;
+        let codeIndex = 0;
+        const blocks = parsed.blocks.map(block => {
+            if (block.type !== 'code') return block.raw;
+            const language = String(codeLanguages[codeIndex++] || '');
+            if (!language) return block.raw;
+            const current = readCodeFenceLanguage(block.raw);
+            if (current === language) return block.raw;
+            const replacement = replaceCodeFenceLanguage(block.raw, language);
+            if (replacement === null) return block.raw;
+            changed = true;
+            return replacement;
+        });
+        if (!changed) return value;
+        return parsed.gaps[0] + blocks.map((block, index) => block + parsed.gaps[index + 1]).join('');
+    }
+
+    restoreEditorDisplayLanguages(value = '') {
+        return String(value || '').replace(
+            new RegExp(`(^|\\n)([ \\t]*` + '`{3,})' + DISPLAY_MERMAID_LANGUAGE + `([ \\t]*)(?=\\n|$|\\uE001)`, 'gi'),
+            `$1$2mermaid$3`
+        );
+    }
+
+    cancelPendingArticleDecorations() {
+        this.decorationGeneration += 1;
+        this.articleDecorationTimers.forEach(timer => clearTimeout(timer));
+        this.articleDecorationTimers.clear();
+        if (this.codeDecorationFrame) cancelAnimationFrame(this.codeDecorationFrame);
+        this.codeDecorationFrame = 0;
+    }
+
+    scheduleArticleDecorationPass(delay = 120) {
+        const generation = this.decorationGeneration;
+        const timer = setTimeout(() => {
+            this.articleDecorationTimers.delete(timer);
+            if (generation !== this.decorationGeneration) return;
+            this.decorateArticleImages();
+            if (this.isReadingMode) this.renderMermaidDiagrams();
+        }, delay);
+        this.articleDecorationTimers.add(timer);
     }
 
     /**
@@ -495,11 +593,13 @@ export class HybridMarkdownEditor {
     }
 
     restoreCodeBlockLineNumberDecorations(root) {
-        root?.querySelectorAll?.('pre.dumbpad-code-lines[data-line-numbers]').forEach(pre => {
+        root?.querySelectorAll?.('pre').forEach(pre => {
+            pre.querySelector(':scope > .dumbpad-code-header')?.remove();
             pre.querySelector(':scope > .dumbpad-code-tools')?.remove();
             pre.querySelector(':scope > .dumbpad-code-language-badge')?.remove();
             pre.classList.remove('dumbpad-code-lines');
             delete pre.dataset.lineNumbers;
+            delete pre.dataset.dumbpadCodeSignature;
         });
     }
 
@@ -665,11 +765,110 @@ export class HybridMarkdownEditor {
         this.container.classList.toggle('is-reading-mode', this.isReadingMode);
         if (this.sourceToggle) this.sourceToggle.hidden = this.isReadingMode;
         this.setEditable(!this.isReadingMode);
+        if (this.isReadingMode) this.renderMermaidDiagrams();
+        else this.restoreMermaidCodePreviews();
+    }
+
+    bindCodeBlockCaretPlacement() {
+        this.container.addEventListener('pointerdown', event => {
+            if (this.isReadingMode || this.sourceMode || event.button !== 0) return;
+            clearTimeout(this.pendingCodeFenceFocusTimer);
+            this.pendingCodeFenceFocusTimer = null;
+            const preview = event.target?.closest?.('.vditor-wysiwyg__preview');
+            const block = preview?.closest?.('.vditor-wysiwyg__block[data-type="code-block"]');
+            const source = block?.querySelector?.('.vditor-wysiwyg__pre > code');
+            if (!preview || !source) return;
+            const previewRect = preview.getBoundingClientRect();
+            this.pendingCodePointer = {
+                contentX: Math.max(0, event.clientX - previewRect.left),
+                contentY: Math.max(0, event.clientY - previewRect.top),
+                source
+            };
+        }, true);
+        this.container.addEventListener('click', event => {
+            const pending = this.pendingCodePointer;
+            this.pendingCodePointer = null;
+            if (!pending?.source?.isConnected || this.isReadingMode || this.sourceMode) return;
+            requestAnimationFrame(() => this.restoreCodeCaretFromPointer(pending));
+        }, true);
+    }
+
+    restoreCodeCaretFromPointer({ contentX, contentY, source }) {
+        const documentAtPoint = source.ownerDocument;
+        const sourceRect = source.getBoundingClientRect();
+        const clientX = sourceRect.left + contentX;
+        const clientY = sourceRect.top + contentY;
+        let range = documentAtPoint.caretRangeFromPoint?.(clientX, clientY) || null;
+        if (!range && documentAtPoint.caretPositionFromPoint) {
+            const position = documentAtPoint.caretPositionFromPoint(clientX, clientY);
+            if (position) {
+                range = documentAtPoint.createRange();
+                range.setStart(position.offsetNode, position.offset);
+                range.collapse(true);
+            }
+        }
+        if (!range || !source.contains(range.startContainer)) {
+            const text = source.textContent || '';
+            const rect = source.getBoundingClientRect();
+            const style = getComputedStyle(source);
+            const lineHeight = parseFloat(style.lineHeight) || 20;
+            const lines = text.split('\n');
+            const lineIndex = Math.min(lines.length - 1, Math.max(0, Math.floor((clientY - rect.top) / lineHeight)));
+            const before = lines.slice(0, lineIndex).reduce((count, line) => count + line.length + 1, 0);
+            const averageWidth = Math.max(6, (parseFloat(style.fontSize) || 13) * 0.62);
+            const column = Math.min(lines[lineIndex]?.length || 0, Math.max(0, Math.round((clientX - rect.left) / averageWidth)));
+            const walker = documentAtPoint.createTreeWalker(source, NodeFilter.SHOW_TEXT);
+            let node;
+            let remaining = before + column;
+            while ((node = walker.nextNode())) {
+                if (remaining <= node.nodeValue.length) {
+                    range = documentAtPoint.createRange();
+                    range.setStart(node, remaining);
+                    range.collapse(true);
+                    break;
+                }
+                remaining -= node.nodeValue.length;
+            }
+        }
+        if (!range || !source.contains(range.startContainer)) return;
+        const selection = window.getSelection();
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+    }
+
+    renderMermaidDiagrams() {
+        const root = this.container.querySelector('.vditor-wysiwyg .vditor-reset');
+        if (!root || !window.Vditor?.mermaidRender) return;
+        let hasMermaid = false;
+        root.querySelectorAll('.vditor-wysiwyg__preview > code').forEach(code => {
+            if (this.getRenderedCodeBlockLanguage(code) !== 'mermaid') return;
+            const preview = code.parentElement;
+            const block = preview?.closest?.('.vditor-wysiwyg__block[data-type="code-block"]');
+            if (!block || block.querySelector(':scope > .dumbpad-mermaid-render')) return;
+            const render = document.createElement('div');
+            render.className = 'dumbpad-mermaid-render language-mermaid';
+            render.setAttribute('contenteditable', 'false');
+            render.textContent = code.textContent || '';
+            block.appendChild(render);
+            hasMermaid = true;
+        });
+        if (!hasMermaid) return;
+        window.Vditor.mermaidRender(
+            root,
+            '/vendor/vditor-package',
+            document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'classic'
+        );
+    }
+
+    restoreMermaidCodePreviews() {
+        const root = this.container.querySelector('.vditor-wysiwyg .vditor-reset');
+        root?.querySelectorAll?.('.dumbpad-mermaid-render').forEach(render => render.remove());
+        this.decorateCodeBlockLineNumbers(root);
     }
 
     handleWysiwygInput() {
         this.scheduleDecorateRenderedMarks();
-        requestAnimationFrame(() => this.decorateArticleImages());
+        requestAnimationFrame(() => this.decorateArticleImages({ decorateCode: false }));
         clearTimeout(this.typingDecorateTimer);
         this.typingDecorateTimer = setTimeout(() => this.decorateRenderedMarks(), 80);
         this.emitChange();
@@ -715,7 +914,8 @@ export class HybridMarkdownEditor {
             this.editor?.enable?.();
         }
         this.container.querySelectorAll('[contenteditable]').forEach(el => {
-            if (el.classList?.contains('md-time-marker') || el.classList?.contains('article-upload-card')) return;
+            if (el.classList?.contains('md-time-marker') || el.classList?.contains('article-upload-card') ||
+                el.closest?.('.dumbpad-code-header')) return;
             el.setAttribute('contenteditable', enabled ? 'true' : 'false');
         });
         this.container.querySelectorAll('textarea').forEach(el => {
@@ -950,15 +1150,35 @@ export class HybridMarkdownEditor {
      * before the browser paints, so the user never sees the raw source.
      */
     bindMarkerProtection() {
-        this.markerObserver = new MutationObserver(() => {
+        this.markerObserver = new MutationObserver(records => {
             if (this.isDecorating || this.sourceMode || this.isComposing) return;
             const root = this.container.querySelector('.vditor-wysiwyg .vditor-reset');
             if (!root) return;
 
-            const needsCodeDecoration = root.querySelector(
-                '.vditor-wysiwyg__block[data-type="code-block"] > pre:not(.dumbpad-code-lines)'
-            );
-            if (needsCodeDecoration) this.decorateCodeBlockLineNumbers(root);
+            const changedCode = new Set();
+            let inspectMarks = false;
+            records.forEach(record => {
+                const origin = record.target?.nodeType === Node.ELEMENT_NODE
+                    ? record.target
+                    : record.target?.parentElement;
+                if (origin?.closest?.('.dumbpad-code-header, .dumbpad-code-language-popover')) return;
+                const code = origin?.closest?.('pre > code');
+                if (code) changedCode.add(code);
+                if (record.type === 'characterData') inspectMarks = true;
+                record.addedNodes?.forEach(node => {
+                    if (node.nodeType !== Node.ELEMENT_NODE) return;
+                    node.querySelectorAll?.('pre > code').forEach(item => changedCode.add(item));
+                    if (!node.closest?.('pre, code, .dumbpad-code-header')) inspectMarks = true;
+                });
+            });
+            if (changedCode.size) {
+                cancelAnimationFrame(this.codeDecorationFrame);
+                this.codeDecorationFrame = requestAnimationFrame(() => {
+                    this.codeDecorationFrame = 0;
+                    this.decorateCodeBlockLineNumbers(root, changedCode);
+                });
+            }
+            if (!inspectMarks) return;
 
             // Check if any text node now contains raw marker source
             const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
@@ -1994,7 +2214,7 @@ export class HybridMarkdownEditor {
             if (!this.isReadingMode) return;
             const target = event.target;
             if (target.closest('.has-annotation, [data-note], .md-mark, [data-draw], .md-time-marker')) return;
-            if (target.closest('.vditor-copy, .code-lang-copy-button')) return;
+            if (target.closest('.vditor-copy, .code-lang-copy-button, .dumbpad-code-copy')) return;
             if (target.closest('.vditor-reset img[data-dumbpad-asset], .vditor-reset img[src*="/api/assets/"], .vditor-reset img[src^="data:image/"]')) return;
             if (target.closest('.vditor-reset a.dumbpad-article-file')) return;
             if (target.closest('.vditor-reset')) {
@@ -2316,6 +2536,46 @@ export class HybridMarkdownEditor {
         const beforeWithoutFile = this.removeStandaloneArticleFileMarkdown(before.value, markdown);
         const nextWithoutFile = this.removeStandaloneArticleFileMarkdown(next, markdown);
         return beforeWithoutFile !== null && nextWithoutFile !== null && beforeWithoutFile === nextWithoutFile;
+    }
+
+    bindMermaidPasteNormalization() {
+        if (this.mermaidPasteBound) return;
+        this.mermaidPasteBound = true;
+        this.container.addEventListener('paste', event => {
+            if (event.dumbpadMermaidNormalized) return;
+            if (this.isReadingMode || this.sourceMode || !this.isEditorInputTarget(event.target)) return;
+            if (event.clipboardData?.files?.length) return;
+
+            const selection = window.getSelection();
+            const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
+            if (range && this.closestElement(range.startContainer, 'code')) return;
+            if (event.target?.closest?.('code, .vditor-wysiwyg__pre')) return;
+
+            const text = event.clipboardData?.getData('text/plain') || '';
+            if (!text) return;
+            const displayValue = this.prepareMermaidDisplayValue(text);
+            if (displayValue === text) return;
+
+            let normalizedEvent;
+            try {
+                const transfer = new DataTransfer();
+                transfer.setData('text/plain', displayValue);
+                normalizedEvent = new ClipboardEvent('paste', {
+                    clipboardData: transfer,
+                    bubbles: true,
+                    cancelable: true,
+                    composed: true
+                });
+                Object.defineProperty(normalizedEvent, 'dumbpadMermaidNormalized', { value: true });
+            } catch (_error) {
+                return;
+            }
+
+            event.preventDefault();
+            event.stopPropagation();
+            event.stopImmediatePropagation?.();
+            event.target.dispatchEvent(normalizedEvent);
+        }, true);
     }
 
     bindArticleImageInteractions() {
@@ -2777,7 +3037,7 @@ export class HybridMarkdownEditor {
         return match ? Number(match[1]) : 0;
     }
 
-    decorateArticleImages() {
+    decorateArticleImages({ decorateCode = true } = {}) {
         const root = this.container.querySelector('.vditor-wysiwyg .vditor-reset');
         root?.querySelectorAll('img').forEach(image => {
             const id = this.getArticleAssetId(image);
@@ -2792,68 +3052,88 @@ export class HybridMarkdownEditor {
         });
         this.decorateArticleFileLinks(root);
         this.decorateArticleUploadPlaceholders(root);
-        this.decorateCodeBlockLineNumbers(root);
+        if (decorateCode) this.decorateCodeBlockLineNumbers(root);
     }
 
-    decorateCodeBlockLineNumbers(root = this.container.querySelector('.vditor-wysiwyg .vditor-reset')) {
-        root?.querySelectorAll?.('pre > code').forEach(code => {
+    decorateCodeBlockLineNumbers(root = this.container.querySelector('.vditor-wysiwyg .vditor-reset'), codePres = null) {
+        const candidateSet = codePres
+            ? new Set(codePres)
+            : Array.from(root?.querySelectorAll?.('pre > code') || []);
+        if (codePres) {
+            Array.from(codePres).forEach(code => {
+                code.closest('.vditor-wysiwyg__block[data-type="code-block"]')
+                    ?.querySelectorAll('pre > code')
+                    .forEach(pair => candidateSet.add(pair));
+            });
+        }
+        const candidates = Array.from(candidateSet);
+        candidates.forEach(code => {
             const pre = code.parentElement;
             if (!pre || pre.closest('.mermaid, .mermaid-block')) return;
             const normalized = String(code.textContent || '').replace(/\r\n?/g, '\n').replace(/\n$/, '');
             const lineCount = Math.max(1, normalized.split('\n').length);
             const lineNumbers = Array.from({ length: lineCount }, (_item, index) => index + 1).join('\n');
-            pre.classList.add('dumbpad-code-lines');
-            pre.dataset.lineNumbers = lineNumbers;
-
             const language = this.getRenderedCodeBlockLanguage(code);
+            const signature = `${pre.classList.contains('vditor-wysiwyg__preview') ? 'preview' : 'edit'}:${language}:${normalized}`;
+            const hasHeader = Boolean(pre.querySelector(':scope > .dumbpad-code-header'));
+            if (pre.dataset.dumbpadCodeSignature === signature && hasHeader &&
+                pre.dataset.lineNumbers === lineNumbers) return;
+            pre.classList.add('dumbpad-code-lines');
+            if (pre.dataset.lineNumbers !== lineNumbers) pre.dataset.lineNumbers = lineNumbers;
+
             const displayLanguage = language || 'plaintext';
             if (pre.classList.contains('vditor-wysiwyg__preview')) {
-                let languageBadge = pre.querySelector(':scope > .dumbpad-code-language-badge');
+                pre.querySelector(':scope > .dumbpad-code-language-badge')?.remove();
+                let header = pre.querySelector(':scope > .dumbpad-code-header.is-readonly');
+                if (!header) {
+                    header = document.createElement('span');
+                    header.className = 'dumbpad-code-header is-readonly';
+                    header.setAttribute('contenteditable', 'false');
+                    header.setAttribute('aria-label', '代码块工具栏');
+                    pre.appendChild(header);
+                }
+                let languageBadge = header.querySelector(':scope > .dumbpad-code-language-badge');
                 if (!languageBadge) {
                     languageBadge = document.createElement('span');
                     languageBadge.className = 'dumbpad-code-language-badge is-readonly';
                     languageBadge.setAttribute('contenteditable', 'false');
                     languageBadge.setAttribute('aria-label', '代码块语言');
-                    pre.appendChild(languageBadge);
+                    header.appendChild(languageBadge);
                 }
-                this.renderCodeLanguageBadge(languageBadge, displayLanguage);
-                languageBadge.dataset.codeLanguage = language;
+                if (languageBadge.dataset.codeLanguage !== language) {
+                    this.renderCodeLanguageBadge(languageBadge, displayLanguage);
+                    languageBadge.dataset.codeLanguage = language;
+                }
+                let copyButton = header.querySelector(':scope > .dumbpad-code-copy');
+                if (!copyButton) {
+                    copyButton = this.createCodeCopyButton(pre);
+                    header.appendChild(copyButton);
+                }
+                pre.dataset.dumbpadCodeSignature = signature;
                 return;
             }
 
-            if (!pre.classList.contains('vditor-wysiwyg__pre') || pre.querySelector(':scope > .dumbpad-code-tools')) return;
+            if (!pre.classList.contains('vditor-wysiwyg__pre')) return;
             const block = pre.closest('.vditor-wysiwyg__block[data-type="code-block"]');
             if (!block) return;
+            const existingTools = pre.querySelector(':scope > .dumbpad-code-tools');
+            if (existingTools) {
+                const languageButton = existingTools.querySelector(':scope > .dumbpad-code-language-badge');
+                if (languageButton && languageButton.dataset.codeLanguage !== language) {
+                    this.renderCodeLanguageBadge(languageButton, displayLanguage);
+                    languageButton.dataset.codeLanguage = language;
+                    languageButton.title = `设置代码块语言：${displayLanguage}`;
+                    languageButton.setAttribute('aria-label', `设置代码块语言，当前为 ${displayLanguage}`);
+                }
+                pre.dataset.dumbpadCodeSignature = signature;
+                return;
+            }
             const tools = document.createElement('span');
-            tools.className = 'dumbpad-code-tools';
+            tools.className = 'dumbpad-code-header dumbpad-code-tools';
             tools.setAttribute('contenteditable', 'false');
+            tools.setAttribute('aria-label', '代码块工具栏');
 
-            const copyButton = document.createElement('button');
-            copyButton.type = 'button';
-            copyButton.className = 'dumbpad-code-copy';
-            copyButton.title = '复制代码';
-            copyButton.setAttribute('aria-label', '复制代码');
-            copyButton.setAttribute('contenteditable', 'false');
-            copyButton.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect width="14" height="14" x="8" y="8" rx="2"></rect><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"></path></svg>';
-            copyButton.addEventListener('mousedown', event => {
-                event.preventDefault();
-                event.stopPropagation();
-            });
-            copyButton.addEventListener('click', async event => {
-                event.preventDefault();
-                event.stopPropagation();
-                const currentCode = pre.querySelector(':scope > code');
-                const copied = await this.copyTextToClipboard(currentCode?.textContent || '');
-                if (!copied) return;
-                copyButton.classList.add('is-copied');
-                copyButton.title = '已复制';
-                this.editor?.tip?.('代码已复制', 1200);
-                clearTimeout(copyButton._copiedTimer);
-                copyButton._copiedTimer = setTimeout(() => {
-                    copyButton.classList.remove('is-copied');
-                    copyButton.title = '复制代码';
-                }, 1200);
-            });
+            const copyButton = this.createCodeCopyButton(pre);
 
             const languageButton = document.createElement('button');
             languageButton.type = 'button';
@@ -2875,9 +3155,40 @@ export class HybridMarkdownEditor {
                 this.openCodeLanguagePopover(block, languageButton);
             });
 
-            tools.append(copyButton, languageButton);
+            tools.append(languageButton, copyButton);
             pre.appendChild(tools);
+            pre.dataset.dumbpadCodeSignature = signature;
         });
+    }
+
+    createCodeCopyButton(pre) {
+        const copyButton = document.createElement('button');
+        copyButton.type = 'button';
+        copyButton.className = 'dumbpad-code-copy';
+        copyButton.title = '复制代码';
+        copyButton.setAttribute('aria-label', '复制代码');
+        copyButton.setAttribute('contenteditable', 'false');
+        copyButton.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect width="14" height="14" x="8" y="8" rx="2"></rect><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"></path></svg>';
+        copyButton.addEventListener('mousedown', event => {
+            event.preventDefault();
+            event.stopPropagation();
+        });
+        copyButton.addEventListener('click', async event => {
+            event.preventDefault();
+            event.stopPropagation();
+            const currentCode = pre.querySelector(':scope > code');
+            const copied = await this.copyTextToClipboard(currentCode?.textContent || '');
+            if (!copied) return;
+            copyButton.classList.add('is-copied');
+            copyButton.title = '已复制';
+            this.editor?.tip?.('代码已复制', 1200);
+            clearTimeout(copyButton._copiedTimer);
+            copyButton._copiedTimer = setTimeout(() => {
+                copyButton.classList.remove('is-copied');
+                copyButton.title = '复制代码';
+            }, 1200);
+        });
+        return copyButton;
     }
 
     renderCodeLanguageBadge(badge, language) {
@@ -2898,14 +3209,16 @@ export class HybridMarkdownEditor {
         const token = document.createElement('span');
         token.className = 'dumbpad-code-language-token';
         token.setAttribute('translate', 'no');
-        token.textContent = displayLanguage;
+        token.dataset.languageLabel = displayLanguage;
+        token.setAttribute('aria-hidden', 'true');
         parts.push(token);
         badge.replaceChildren(...parts);
     }
 
     getRenderedCodeBlockLanguage(code) {
         const languageClass = Array.from(code?.classList || []).find(name => name.startsWith('language-'));
-        return languageClass ? languageClass.slice('language-'.length) : '';
+        const language = languageClass ? languageClass.slice('language-'.length) : '';
+        return language === DISPLAY_MERMAID_LANGUAGE ? 'mermaid' : language;
     }
 
     ensureCodeLanguagePopover() {
@@ -3050,9 +3363,9 @@ export class HybridMarkdownEditor {
         const anchor = this.activeCodeLanguageAnchor;
         if (!popover || popover.hidden || !anchor?.isConnected) return;
         const rect = anchor.getBoundingClientRect();
-        const width = popover.offsetWidth || 220;
+        const width = popover.offsetWidth || 120;
         const height = popover.offsetHeight || 120;
-        const left = Math.min(Math.max(8, rect.right - width), Math.max(8, window.innerWidth - width - 8));
+        const left = Math.min(Math.max(8, rect.left), Math.max(8, window.innerWidth - width - 8));
         let top = rect.bottom + 5;
         if (top + height > window.innerHeight - 8 && rect.top > height + 8) top = rect.top - height - 5;
         popover.style.left = `${Math.round(left)}px`;
@@ -3679,6 +3992,7 @@ export class HybridMarkdownEditor {
 
         let paragraph = this.closestElement(range.startContainer, 'p');
         try {
+            if (!paragraph) paragraph = this.ensurePendingCodeFenceParagraph(root, range);
             let pendingText = null;
             if (paragraph?.parentElement === root) {
                 const prefix = document.createRange();
@@ -3687,14 +4001,11 @@ export class HybridMarkdownEditor {
                 const suffix = document.createRange();
                 suffix.selectNodeContents(paragraph);
                 suffix.setStart(range.startContainer, range.startOffset);
-                pendingText = buildPendingCodeFenceText(prefix.toString(), suffix.toString(), insertedText);
-            } else if (range.startContainer === root && root.childNodes.length === 0) {
-                pendingText = buildPendingCodeFenceText('', '', insertedText);
-                if (pendingText) {
-                    paragraph = document.createElement('p');
-                    paragraph.dataset.block = '0';
-                    root.append(paragraph);
-                }
+                pendingText = buildPendingCodeFenceText(
+                    this.readPendingCodeFenceRangeText(prefix),
+                    this.readPendingCodeFenceRangeText(suffix),
+                    insertedText
+                );
             }
             if (!pendingText) return false;
 
@@ -3708,6 +4019,52 @@ export class HybridMarkdownEditor {
         } catch (_error) {
             return false;
         }
+    }
+
+    readPendingCodeFenceRangeText(range) {
+        if (!range?.cloneContents) return range?.toString?.() || '';
+        const fragment = range.cloneContents();
+        fragment.querySelectorAll?.('span[data-type="backslash"]').forEach(wrapper => {
+            const slash = wrapper.firstElementChild;
+            if (slash?.textContent === '\\' && wrapper.textContent === '\\`') slash.remove();
+        });
+        return fragment.textContent || '';
+    }
+
+    ensurePendingCodeFenceParagraph(root, range) {
+        if (!root || !range?.collapsed) return null;
+        if (range.startContainer?.nodeType === Node.TEXT_NODE && range.startContainer.parentNode === root) {
+            const source = range.startContainer;
+            const paragraph = document.createElement('p');
+            paragraph.dataset.block = '0';
+            paragraph.textContent = source.nodeValue || '';
+            const offset = Math.min(range.startOffset, paragraph.textContent.length);
+            source.replaceWith(paragraph);
+            range.setStart(paragraph.firstChild || paragraph, offset);
+            range.collapse(true);
+            return paragraph;
+        }
+        if (range.startContainer !== root) return null;
+
+        const offset = Math.min(Math.max(0, range.startOffset), root.childNodes.length);
+        const previous = root.childNodes[offset - 1];
+        if (previous?.nodeType === Node.TEXT_NODE && /^[\u200B\uFEFF`]*$/.test(previous.nodeValue || '')) {
+            const paragraph = document.createElement('p');
+            paragraph.dataset.block = '0';
+            paragraph.textContent = previous.nodeValue || '';
+            previous.replaceWith(paragraph);
+            range.setStart(paragraph.firstChild || paragraph, paragraph.textContent.length);
+            range.collapse(true);
+            return paragraph;
+        }
+
+        const paragraph = document.createElement('p');
+        paragraph.dataset.block = '0';
+        paragraph.appendChild(document.createTextNode(''));
+        root.insertBefore(paragraph, root.childNodes[offset] || null);
+        range.setStart(paragraph.firstChild, 0);
+        range.collapse(true);
+        return paragraph;
     }
 
     handlePendingCodeFenceInput() {
@@ -3745,7 +4102,9 @@ export class HybridMarkdownEditor {
 
         const root = this.container.querySelector('.vditor-wysiwyg .vditor-reset');
         if (!root || paragraph.parentElement !== root || typeof this.editor?.html2md !== 'function') return false;
-        const rawValue = this.editor.html2md(root.innerHTML) || '';
+        const rawValue = this.serializeWysiwygRoot(root, this._lastValue || '', {
+            preservePendingCodeFence: true
+        });
         const parsed = splitTopLevelMarkdownBlocks(rawValue, lexMarkdown);
         if (!parsed.ok) return false;
 
@@ -4271,9 +4630,13 @@ export class HybridMarkdownEditor {
             range.collapse(true);
             const caretNode = document.createTextNode(marker);
             range.insertNode(caretNode);
+            clone.querySelectorAll('.dumbpad-mermaid-render').forEach(render => render.remove());
+            this.restoreCodeBlockLineNumberDecorations(clone);
             this.restoreRenderedTimeMarkers(clone);
             this.restoreAllRenderedMarks(clone);
-            const markdown = this.stripDisplayGuards(this.editor.html2md(clone.innerHTML) || '');
+            const markdown = this.restoreEditorDisplayLanguages(
+                this.stripDisplayGuards(this.editor.html2md(clone.innerHTML) || '')
+            );
             const markdownOffset = markdown.indexOf(marker);
             return markdownOffset >= 0 ? markdownOffset : null;
         } catch (_error) {
