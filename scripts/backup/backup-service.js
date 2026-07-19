@@ -2,6 +2,7 @@ const crypto = require('crypto');
 const fs = require('fs').promises;
 const path = require('path');
 const { collectCanonicalLocalFiles } = require('./canonical-local-source');
+const { MAX_BACKUP_BYTES } = require('./backup-readiness');
 const {
     blockIdForBuffer,
     decodeBlock,
@@ -169,7 +170,11 @@ async function createSnapshot({
     if (!repository) throw new Error('A backup repository is required');
     if (typeof collectFiles !== 'function') throw new Error('A canonical backup source is required');
     if (!Buffer.isBuffer(masterKey) || masterKey.length !== 32) throw new Error('A parsed 32-byte backup master key is required');
-    if (!Number.isFinite(maxBytes) || maxBytes <= 0) throw new Error('A positive backup capacity is required');
+    if (!Number.isFinite(maxBytes) || maxBytes <= 0 || maxBytes > MAX_BACKUP_BYTES) {
+        const error = new Error('Backup capacity is outside the enforced safety limit');
+        error.code = 'BACKUP_CAPACITY_INVALID';
+        throw error;
+    }
     if (!['scheduled', 'high-risk'].includes(kind)) throw new Error('Backup kind must be scheduled or high-risk');
 
     await repository.initialize();
@@ -221,6 +226,169 @@ async function createSnapshot({
     };
 }
 
+async function verifySnapshot({ repository, masterKey, snapshotId } = {}) {
+    if (!repository) throw new Error('A backup repository is required');
+    if (!Buffer.isBuffer(masterKey) || masterKey.length !== 32) throw new Error('A parsed 32-byte backup master key is required');
+    if (!snapshotId) throw new Error('A backup snapshot id is required');
+
+    try {
+        const manifest = await readManifest(repository, snapshotId, masterKey);
+        const verifiedBlocks = new Map();
+        let verifiedBytes = 0;
+
+        for (const file of manifest.files || []) {
+            const originalBytes = Number(file.originalBytes);
+            if (!file.blockId || !Number.isInteger(originalBytes) || originalBytes < 0) {
+                throw new Error('Invalid backup manifest entry');
+            }
+            let raw = verifiedBlocks.get(file.blockId);
+            if (!raw) {
+                raw = decodeBlock(await repository.readBlock(file.blockId), originalBytes, masterKey);
+                if (blockIdForBuffer(raw, masterKey) !== file.blockId) {
+                    throw new Error('Backup block content verification failed');
+                }
+                verifiedBlocks.set(file.blockId, raw);
+            } else if (raw.length !== originalBytes) {
+                throw new Error('Backup manifest block size mismatch');
+            }
+            verifiedBytes += originalBytes;
+        }
+
+        return {
+            valid: true,
+            snapshot: snapshotSummary(manifest),
+            verifiedFiles: (manifest.files || []).length,
+            verifiedBlocks: verifiedBlocks.size,
+            verifiedBytes
+        };
+    } catch (cause) {
+        const error = new Error('Backup snapshot integrity verification failed');
+        error.code = 'BACKUP_INTEGRITY_FAILED';
+        throw error;
+    }
+}
+
+async function inspectBackupRepository({
+    repository,
+    masterKey,
+    maxBytes,
+    now = Date.now(),
+    staleAfterMs = 48 * 60 * 60 * 1000,
+    snapshotId = ''
+} = {}) {
+    if (!repository) throw new Error('A backup repository is required');
+    if (!Buffer.isBuffer(masterKey) || masterKey.length !== 32) throw new Error('A parsed 32-byte backup master key is required');
+    if (!Number.isFinite(maxBytes) || maxBytes <= 0 || maxBytes > MAX_BACKUP_BYTES) {
+        const error = new Error('Backup capacity is outside the enforced safety limit');
+        error.code = 'BACKUP_CAPACITY_INVALID';
+        throw error;
+    }
+
+    const [manifestIds, usageBytes] = await Promise.all([
+        repository.listManifestIds(),
+        repository.usageBytes()
+    ]);
+    const orderedIds = manifestIds.slice().sort().reverse();
+    const manifestResults = await Promise.all(orderedIds.map(async id => {
+        try {
+            return { id, manifest: await readManifest(repository, id, masterKey), valid: true };
+        } catch {
+            return { id, manifest: null, valid: false };
+        }
+    }));
+    const corruptManifestCount = manifestResults.filter(item => !item.valid).length;
+    const manifests = manifestResults
+        .filter(item => item.valid)
+        .map(item => item.manifest)
+        .sort((left, right) => right.createdAt - left.createdAt);
+    const usageRatio = usageBytes / maxBytes;
+    if (!manifestResults.length) {
+        return {
+            status: 'empty',
+            healthy: false,
+            snapshotCount: 0,
+            usageBytes,
+            maxBytes,
+            usageRatio,
+            latestSnapshot: null,
+            integrity: null,
+            warnings: [{ id: 'no_snapshots', message: '备份仓库中没有可恢复快照' }]
+        };
+    }
+
+    const selectedManifestResult = snapshotId
+        ? manifestResults.find(item => item.id === snapshotId)
+        : manifestResults[0];
+    if (!selectedManifestResult) throw new Error('The selected backup snapshot was not found');
+    if (!selectedManifestResult.valid) {
+        return {
+            status: 'unhealthy',
+            healthy: false,
+            snapshotCount: manifestResults.length,
+            validSnapshotCount: manifests.length,
+            corruptManifestCount,
+            usageBytes,
+            maxBytes,
+            usageRatio,
+            latestSnapshot: manifests[0] ? snapshotSummary(manifests[0]) : null,
+            integrity: { valid: false },
+            warnings: [{ id: 'manifest_corrupt', message: '待检查的备份清单无法通过解密校验' }]
+        };
+    }
+
+    const selected = selectedManifestResult.manifest;
+    const warnings = [];
+    if (corruptManifestCount) {
+        warnings.push({ id: 'manifest_corrupt', message: '备份仓库中存在无法通过解密校验的清单' });
+    }
+    const ageMs = Math.max(0, Number(now) - Number(manifests[0].createdAt));
+    let integrity;
+    try {
+        integrity = await verifySnapshot({ repository, masterKey, snapshotId: selected.id });
+    } catch (error) {
+        if (error?.code !== 'BACKUP_INTEGRITY_FAILED') throw error;
+        return {
+            status: 'unhealthy',
+            healthy: false,
+            snapshotCount: manifestResults.length,
+            validSnapshotCount: manifests.length,
+            corruptManifestCount,
+            usageBytes,
+            maxBytes,
+            usageRatio,
+            latestSnapshot: snapshotSummary(manifests[0]),
+            checkedSnapshot: snapshotSummary(selected),
+            ageMs,
+            integrity: { valid: false },
+            warnings: [...warnings, { id: 'integrity_failed', message: '备份快照内容完整性校验失败' }]
+        };
+    }
+    if (Number.isFinite(staleAfterMs) && staleAfterMs > 0 && ageMs > staleAfterMs) {
+        warnings.push({ id: 'snapshot_stale', message: '最新备份已超过允许的新鲜度窗口' });
+    }
+    if (usageRatio >= 0.9) {
+        warnings.push({ id: 'capacity_critical', message: '备份仓库容量已达到 90% 或更高' });
+    } else if (usageRatio >= 0.7) {
+        warnings.push({ id: 'capacity_warning', message: '备份仓库容量已达到 70% 或更高' });
+    }
+
+    return {
+        status: warnings.length ? 'warning' : 'healthy',
+        healthy: true,
+        snapshotCount: manifestResults.length,
+        validSnapshotCount: manifests.length,
+        corruptManifestCount,
+        usageBytes,
+        maxBytes,
+        usageRatio,
+        latestSnapshot: snapshotSummary(manifests[0]),
+        checkedSnapshot: snapshotSummary(selected),
+        ageMs,
+        integrity,
+        warnings
+    };
+}
+
 async function restoreLocalSnapshot({ repository, masterKey, snapshotId, targetDirectory } = {}) {
     if (!repository) throw new Error('A backup repository is required');
     if (!Buffer.isBuffer(masterKey) || masterKey.length !== 32) throw new Error('A parsed 32-byte backup master key is required');
@@ -238,11 +406,30 @@ async function restoreLocalSnapshot({ repository, masterKey, snapshotId, targetD
         restoredBytes += raw.length;
     }
 
+    let verifiedFiles = 0;
+    let verifiedBytes = 0;
+    try {
+        for (const file of manifest.files.slice().sort((left, right) => left.path.localeCompare(right.path))) {
+            const restored = await fs.readFile(resolveRestorePath(target, file.path));
+            if (restored.length !== Number(file.originalBytes) || blockIdForBuffer(restored, masterKey) !== file.blockId) {
+                throw new Error('Restore target content mismatch');
+            }
+            verifiedFiles += 1;
+            verifiedBytes += restored.length;
+        }
+    } catch (cause) {
+        const error = new Error('Restored local data failed post-write verification');
+        error.code = 'BACKUP_RESTORE_VERIFICATION_FAILED';
+        throw error;
+    }
+
     return {
         snapshot: snapshotSummary(manifest),
         targetDirectory: target,
         restoredFiles: manifest.files.length,
-        restoredBytes
+        restoredBytes,
+        verifiedFiles,
+        verifiedBytes
     };
 }
 
@@ -264,11 +451,42 @@ async function restoreS3Snapshot({ repository, masterKey, snapshotId, targetObje
         restoredBytes += raw.length;
     }
 
+    let verifiedFiles = 0;
+    let verifiedBytes = 0;
+    try {
+        const expected = manifest.files.slice().sort((left, right) => left.path.localeCompare(right.path));
+        const inventory = (await targetObjectStore.list(`${cleanPrefix}/`))
+            .slice()
+            .sort((left, right) => String(left.key || '').localeCompare(String(right.key || '')));
+        if (inventory.length !== expected.length) throw new Error('Restore target object count mismatch');
+
+        for (let index = 0; index < expected.length; index++) {
+            const file = expected[index];
+            const expectedKey = `${cleanPrefix}/${file.path}`;
+            const item = inventory[index];
+            if (String(item?.key || '') !== expectedKey || Number(item?.size) !== Number(file.originalBytes)) {
+                throw new Error('Restore target inventory mismatch');
+            }
+            const restored = await targetObjectStore.get(expectedKey);
+            if (restored.length !== Number(file.originalBytes) || blockIdForBuffer(restored, masterKey) !== file.blockId) {
+                throw new Error('Restore target content mismatch');
+            }
+            verifiedFiles += 1;
+            verifiedBytes += restored.length;
+        }
+    } catch (cause) {
+        const error = new Error('Restored S3 data failed post-write verification');
+        error.code = 'BACKUP_RESTORE_VERIFICATION_FAILED';
+        throw error;
+    }
+
     return {
         snapshot: snapshotSummary(manifest),
         targetPrefix: cleanPrefix,
         restoredFiles: manifest.files.length,
-        restoredBytes
+        restoredBytes,
+        verifiedFiles,
+        verifiedBytes
     };
 }
 
@@ -278,9 +496,11 @@ module.exports = {
     TRASH_RETENTION_MS,
     createSnapshot,
     createLocalSnapshot,
+    inspectBackupRepository,
     listSnapshotManifests,
     pruneRepository,
     retainedSnapshotIds,
     restoreLocalSnapshot,
-    restoreS3Snapshot
+    restoreS3Snapshot,
+    verifySnapshot
 };

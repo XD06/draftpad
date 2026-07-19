@@ -7,8 +7,13 @@ services:
       - "${PORT:-3000}:${PORT:-3000}"
     volumes:
       - ${DATA_DIR:-./data}:/app/data
+      - ${AUTH_STATE_DIR:-./security}:/app/security
     env_file:
       - .env
     environment:
       # Override data dir inside container to match the mounted volume
       - DATA_DIR=/app/data
+      # Authentication state, trusted devices, API tokens, and the audit chain
+      # must survive container recreation and stay outside the user-data mount.
+      - AUTH_STATE_DIR=/app/security
+      - AUTH_AUDIT_DIR=/app/security/audit

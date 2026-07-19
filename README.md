@@ -151,11 +151,11 @@ S3_PREFIX=optional-prefix
 - `npm run test:s3-real` 会在结束时删除目标 `S3_PREFIX` 下的对象。运行前必须在命令环境中额外设置 `DUMBPAD_REAL_S3_SMOKE_CONFIRM_PREFIX` 为完全相同的 prefix，并使用专用测试空间。
 - 前端不会直接连接 S3，所有云端操作都走后端 API。
 
-个人安全模式在准备好独立持久目录后才启用：设置 `AUTH_V2_ENABLED=true`、`AUTH_STATE_DIR=/var/lib/dumbpad-security` 和一个随机 32 字节 `AUTH_MASTER_KEY`。首次访问用旧 PIN 或一次性 `AUTH_BOOTSTRAP_TOKEN` 完成主密码、TOTP 与恢复码设置；以后已登录设备不被打断，可信设备在会话过期后只要求主密码，新设备和高危数据操作才要求 TOTP。系统最多保存 5 台可信设备，超过时仍能用密码加 TOTP 登录，只是不再自动信任新设备。不要把 `AUTH_MASTER_KEY` 放进仓库、浏览器或应用数据桶。
+个人安全模式在准备好独立持久目录后才启用：设置 `AUTH_V2_ENABLED=true`、`AUTH_STATE_DIR=/var/lib/dumbpad-security` 和一个随机 32 字节 `AUTH_MASTER_KEY`。Docker Compose 会把该宿主机目录挂载到容器内 `/app/security`，认证状态、可信设备、API token 与审计链不会因重建容器丢失。首次访问用旧 PIN 或一次性 `AUTH_BOOTSTRAP_TOKEN` 完成主密码、TOTP 与恢复码设置；以后已登录设备不被打断，可信设备在会话过期后只要求主密码，新设备和高危数据操作才要求 TOTP。不要把 `AUTH_MASTER_KEY` 放进仓库、浏览器或应用数据桶。
 
-备份由宿主机而非应用容器执行。`deploy/systemd/backup.env.example` 是 root-only 备份配置模板；它使用 `BACKUP_DIR=/var/lib/dumbpad-backups`、1GiB 去重加密仓库和独立 `BACKUP_S3_*` 桶。主数据使用 S3 时，备份 CLI 要求一套只读 `S3_*` 源凭证和独立备份仓库配置，缺少独立备份桶会拒绝执行。恢复只能写入空的本地目录或新的空 S3 prefix，绝不覆盖正在使用的数据空间。
+备份由宿主机而非应用容器执行。`deploy/systemd/backup.env.example` 是 root-only 备份配置模板；它使用 `BACKUP_DIR=/var/lib/dumbpad-backups`、每仓库 1GiB 硬上限的去重加密仓库和独立 `BACKUP_S3_*` 桶。备份 CLI 不再自动加载项目 `.env`，无参数时只运行只读 `health`；写快照必须显式使用 `snapshot`。S3 源 Adapter 只暴露读取能力，运行桶与备份桶、两套凭证相同都会被写路径拒绝。
 
-最小部署步骤：将模板复制为仅 root 可读的 `/etc/dumbpad/backup.env`，填入只读运行桶凭证、仅用于备份桶的另一套凭证及独立 `BACKUP_MASTER_KEY`；根据实际项目路径调整 `deploy/systemd/dumbpad-backup.service` 中的 `WorkingDirectory` 和 `ExecStart`，安装 service/timer 后运行一次 `node scripts/backup/backup-cli.js snapshot`，再用 `list` 和一次“恢复到新目标”的演练验证。备份容量和保留规则在 [数据安全 V1 设计](docs/superpowers/specs/2026-07-16-data-safety-v1-design.md) 中说明。
+最小部署步骤：将模板复制为仅 root 可读的 `/etc/dumbpad/backup.env`，填入只读运行桶凭证、仅用于备份桶的另一套凭证及独立 `BACKUP_MASTER_KEY`；先运行 `node scripts/backup/backup-cli.js readiness` 查看脱敏配置检查，再显式运行 `snapshot` 和 `health`。安装 `systemd` service/timer 后，快照成功会自动追加一次完整性健康检查。`restore-local` 只接受空的新目录；`restore-s3` 还必须临时提供独立的 `RESTORE_S3_ENDPOINT/REGION/BUCKET/ACCESS_KEY/SECRET_KEY`，并拒绝活动数据 prefix、其父子 prefix、备份桶及复用凭证。恢复完成后会回读全部文件/对象并校验字节，且不会自动删除演练目标。备份容量和保留规则见[数据安全 V1 设计](docs/superpowers/specs/2026-07-16-data-safety-v1-design.md)。
 
 AI 关联使用 OpenAI-compatible 接口；不配置 Key 时自动使用 noop provider：
 

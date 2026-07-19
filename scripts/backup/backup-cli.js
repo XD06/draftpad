@@ -1,5 +1,3 @@
-require('dotenv').config();
-
 const path = require('path');
 const { collectCanonicalLocalFiles } = require('./canonical-local-source');
 const { collectCanonicalS3Files } = require('./canonical-s3-source');
@@ -7,18 +5,34 @@ const { parseMasterKey } = require('./backup-crypto');
 const { LocalBackupRepository } = require('./local-backup-repository');
 const {
     createSnapshot,
+    inspectBackupRepository,
     listSnapshotManifests,
     pruneRepository,
     restoreLocalSnapshot,
     restoreS3Snapshot
 } = require('./backup-service');
+const {
+    assertBackupRuntimeSafety,
+    evaluateBackupReadiness,
+    MAX_BACKUP_BYTES,
+    resolveBackupMaxBytes
+} = require('./backup-readiness');
 const { S3BackupRepository } = require('./s3-backup-repository');
-const { cleanPrefix, createS3ObjectStore } = require('./s3-object-store');
+const {
+    cleanPrefix,
+    createReadOnlyS3ObjectStore,
+    createS3ObjectStore
+} = require('./s3-object-store');
+const {
+    assertRestoreTargetIsolation,
+    restoreS3ConfigFromEnv
+} = require('./backup-restore-policy');
 
-const DEFAULT_BACKUP_MAX_BYTES = 1024 * 1024 * 1024;
+const DEFAULT_BACKUP_MAX_BYTES = MAX_BACKUP_BYTES;
+const DEFAULT_BACKUP_STALE_AFTER_MS = 48 * 60 * 60 * 1000;
 
 function parseArgs(argv = process.argv.slice(2)) {
-    const args = { command: argv[0] || 'snapshot', kind: 'scheduled', repository: 'local', snapshotId: '', targetDirectory: '', targetPrefix: '' };
+    const args = { command: argv[0] || 'health', kind: 'scheduled', repository: 'local', snapshotId: '', targetDirectory: '', targetPrefix: '' };
     for (let index = 1; index < argv.length; index++) {
         const value = argv[index];
         if (value === '--kind') args.kind = argv[++index] || '';
@@ -57,7 +71,7 @@ function backupS3RepositoryFromEnv(env = process.env) {
 }
 
 function sourceS3ObjectStoreFromEnv(env = process.env) {
-    return createS3ObjectStore({
+    return createReadOnlyS3ObjectStore({
         endpoint: env.S3_ENDPOINT,
         region: env.S3_REGION || 'auto',
         bucket: env.S3_BUCKET,
@@ -66,8 +80,12 @@ function sourceS3ObjectStoreFromEnv(env = process.env) {
     });
 }
 
+function restoreS3ObjectStoreFromEnv(env = process.env) {
+    return createS3ObjectStore(restoreS3ConfigFromEnv(env));
+}
+
 async function snapshotTargets({ args, env, masterKey }) {
-    const maxBytes = positiveNumber(env.BACKUP_MAX_BYTES, DEFAULT_BACKUP_MAX_BYTES);
+    const { maxBytes } = assertBackupRuntimeSafety(env);
     const createdAt = Date.now();
     const localRepository = localRepositoryFromEnv(env);
     const sourceIsS3 = env.STORAGE_BACKEND === 's3';
@@ -91,6 +109,8 @@ async function snapshotTargets({ args, env, masterKey }) {
 
 async function run(argv = process.argv.slice(2), env = process.env) {
     const args = parseArgs(argv);
+    if (args.command === 'readiness') return evaluateBackupReadiness(env);
+
     const masterKey = parseMasterKey(env.BACKUP_MASTER_KEY);
     const localRepository = localRepositoryFromEnv(env);
     const remoteRepository = backupS3RepositoryFromEnv(env);
@@ -111,38 +131,69 @@ async function run(argv = process.argv.slice(2), env = process.env) {
             sourceBytes: manifest.sourceBytes
         })));
     }
-    if (args.command === 'prune') return pruneRepository(repository, masterKey);
+    if (args.command === 'health') {
+        return inspectBackupRepository({
+            repository,
+            masterKey,
+            maxBytes: resolveBackupMaxBytes(env.BACKUP_MAX_BYTES),
+            staleAfterMs: positiveNumber(env.BACKUP_STALE_AFTER_MS, DEFAULT_BACKUP_STALE_AFTER_MS),
+            snapshotId: args.snapshotId
+        });
+    }
+    if (args.command === 'prune') {
+        assertBackupRuntimeSafety(env);
+        return pruneRepository(repository, masterKey);
+    }
     if (args.command === 'restore-local') {
         if (!args.snapshotId || !args.targetDirectory) throw new Error('restore-local requires --snapshot and --target-directory');
+        if (args.repository === 's3') assertBackupRuntimeSafety(env);
         return restoreLocalSnapshot({ repository, masterKey, snapshotId: args.snapshotId, targetDirectory: args.targetDirectory });
     }
     if (args.command === 'restore-s3') {
         if (!args.snapshotId || !args.targetPrefix) throw new Error('restore-s3 requires --snapshot and --target-prefix');
+        if (args.repository === 's3') assertBackupRuntimeSafety(env);
+        const target = assertRestoreTargetIsolation(env, args.targetPrefix);
         return restoreS3Snapshot({
             repository,
             masterKey,
             snapshotId: args.snapshotId,
-            targetObjectStore: sourceS3ObjectStoreFromEnv(env),
-            targetPrefix: args.targetPrefix
+            targetObjectStore: restoreS3ObjectStoreFromEnv(env),
+            targetPrefix: target.targetPrefix
         });
     }
     throw new Error(`Unknown backup command: ${args.command}`);
 }
 
+function formatCliError(error) {
+    const candidate = String(error?.code || '').trim();
+    const controlled = /^(?:BACKUP|RESTORE)_[A-Z0-9_]+$/.test(candidate) || candidate === 'UNSAFE_BACKUP_DIRECTORY';
+    return {
+        status: 'error',
+        code: controlled ? candidate : 'BACKUP_COMMAND_FAILED',
+        message: controlled
+            ? 'Backup safety or integrity policy rejected the command'
+            : 'Backup command failed without exposing provider or storage details'
+    };
+}
+
 if (require.main === module) {
     run().then(result => {
         console.log(JSON.stringify(result, null, 2));
+        if (result?.ready === false || result?.healthy === false) process.exitCode = 2;
     }).catch(error => {
-        console.error(error.message || error);
+        console.error(JSON.stringify(formatCliError(error)));
         process.exit(1);
     });
 }
 
 module.exports = {
     DEFAULT_BACKUP_MAX_BYTES,
+    DEFAULT_BACKUP_STALE_AFTER_MS,
     backupS3RepositoryFromEnv,
+    formatCliError,
     localRepositoryFromEnv,
     parseArgs,
     run,
+    restoreS3ObjectStoreFromEnv,
     sourceS3ObjectStoreFromEnv
 };

@@ -11,6 +11,7 @@ const {
     pruneRepository,
     restoreLocalSnapshot
 } = require('./scripts/backup/backup-service');
+const { MAX_BACKUP_BYTES } = require('./scripts/backup/backup-readiness');
 
 function assert(condition, message) {
     if (!condition) throw new Error(message);
@@ -43,6 +44,14 @@ async function expectError(callback, code, message) {
 }
 
 (async () => {
+    let rootRepositoryRefused = false;
+    try {
+        new LocalBackupRepository(path.parse(process.cwd()).root);
+    } catch (error) {
+        rootRepositoryRefused = error?.code === 'UNSAFE_BACKUP_DIRECTORY';
+    }
+    assert(rootRepositoryRefused, 'the local backup repository must reject a filesystem root');
+
     const tempRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'dumbpad-backup-test-'));
     const sourceDirectory = path.join(tempRoot, 'source');
     const repositoryDirectory = path.join(tempRoot, 'repository');
@@ -93,6 +102,7 @@ async function expectError(callback, code, message) {
             targetDirectory: restoreDirectory
         });
         assert(restored.restoredFiles === 6, 'restore should write every canonical file');
+        assert(restored.verifiedFiles === 6 && restored.verifiedBytes === restored.restoredBytes, 'local restore should read back and verify every restored file');
         assert(await fs.promises.readFile(path.join(restoreDirectory, 'default.txt'), 'utf8') === 'second note', 'restore should preserve latest text');
         assert(await fs.promises.readFile(path.join(restoreDirectory, 'assets', 'image-a', 'original'), 'utf8') === 'original-image-bytes', 'restore should preserve original attachment bytes');
         assert(!await fileExists(restoreDirectory, 'assets/image-a/preview'), 'restore should omit regenerable image previews');
@@ -118,6 +128,17 @@ async function expectError(callback, code, message) {
 
         const capacityRepository = new LocalBackupRepository(capacityRepositoryDirectory);
         await writeFile(sourceDirectory, 'large.bin', crypto.randomBytes(8192));
+        await expectError(
+            () => createLocalSnapshot({
+                sourceDirectory,
+                repository: capacityRepository,
+                masterKey,
+                maxBytes: MAX_BACKUP_BYTES + 1,
+                createdAt: Date.UTC(2026, 6, 14)
+            }),
+            'BACKUP_CAPACITY_INVALID',
+            'the backup service itself should enforce the 1 GiB hard ceiling'
+        );
         await expectError(
             () => createLocalSnapshot({
                 sourceDirectory,

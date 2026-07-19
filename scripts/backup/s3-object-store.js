@@ -95,8 +95,18 @@ function createS3ObjectStore({ endpoint, region = 'auto', bucket, accessKeyId, s
     };
 }
 
+function createReadOnlyS3ObjectStore(options = {}) {
+    const store = createS3ObjectStore(options);
+    return Object.freeze({
+        list: store.list,
+        has: store.has,
+        get: store.get
+    });
+}
+
 module.exports = {
     cleanPrefix,
+    createReadOnlyS3ObjectStore,
     createS3ObjectStore,
     joinKey
 };

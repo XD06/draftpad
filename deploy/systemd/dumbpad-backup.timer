@@ -2,7 +2,7 @@
 Description=Run DumbPad backup during low-activity hours
 
 [Timer]
-OnCalendar=*-*-* 03:30:00
+OnCalendar=*-*-* 03:30:00 Asia/Shanghai
 Persistent=true
 Unit=dumbpad-backup.service
 

@@ -65,6 +65,10 @@ function createMemoryObjectStore(initial = {}) {
     });
     assert(restored.restoredFiles === contents.length, 'S3 restore should reconstruct every canonical file');
     assert(
+        restored.verifiedFiles === contents.length && restored.verifiedBytes === restored.restoredBytes,
+        'S3 restore should read back and verify every restored object before reporting success'
+    );
+    assert(
         (await restoreTarget.get('dumbpad-restored/default.txt')).toString('utf8') === 'S3 backup source',
         'S3 restore should preserve text bytes'
     );
@@ -86,6 +90,23 @@ function createMemoryObjectStore(initial = {}) {
         refused = /must be empty/.test(error.message);
     }
     assert(refused, 'S3 restore should refuse to overwrite a non-empty prefix');
+
+    const corruptTarget = createMemoryObjectStore();
+    const originalPut = corruptTarget.put.bind(corruptTarget);
+    corruptTarget.put = async (key, value) => originalPut(key, Buffer.from(`corrupt:${Buffer.from(value).length}`));
+    let corruptRestoreRefused = false;
+    try {
+        await restoreS3Snapshot({
+            repository,
+            masterKey,
+            snapshotId: snapshot.id,
+            targetObjectStore: corruptTarget,
+            targetPrefix: 'dumbpad-corrupt-restore'
+        });
+    } catch (error) {
+        corruptRestoreRefused = error?.code === 'BACKUP_RESTORE_VERIFICATION_FAILED';
+    }
+    assert(corruptRestoreRefused, 'S3 restore must fail when the target does not preserve the restored bytes');
 
     console.log('S3 backup repository checks passed');
 })().catch(error => {

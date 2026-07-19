@@ -36,6 +36,11 @@ async function listFiles(directory, relative = '') {
 class LocalBackupRepository {
     constructor(rootDirectory) {
         this.rootDirectory = path.resolve(rootDirectory);
+        if (path.parse(this.rootDirectory).root === this.rootDirectory) {
+            const error = new Error('Backup repository cannot be a filesystem root');
+            error.code = 'UNSAFE_BACKUP_DIRECTORY';
+            throw error;
+        }
     }
 
     blockPath(blockId) {
@@ -55,9 +60,9 @@ class LocalBackupRepository {
 
     async initialize() {
         await Promise.all([
-            fs.mkdir(path.join(this.rootDirectory, 'blocks'), { recursive: true }),
-            fs.mkdir(path.join(this.rootDirectory, 'manifests'), { recursive: true }),
-            fs.mkdir(path.join(this.rootDirectory, 'trash'), { recursive: true })
+            fs.mkdir(path.join(this.rootDirectory, 'blocks'), { recursive: true, mode: 0o700 }),
+            fs.mkdir(path.join(this.rootDirectory, 'manifests'), { recursive: true, mode: 0o700 }),
+            fs.mkdir(path.join(this.rootDirectory, 'trash'), { recursive: true, mode: 0o700 })
         ]);
     }
 
@@ -72,9 +77,9 @@ class LocalBackupRepository {
 
     async writeBlock(blockId, buffer) {
         const target = this.blockPath(blockId);
-        await fs.mkdir(path.dirname(target), { recursive: true });
+        await fs.mkdir(path.dirname(target), { recursive: true, mode: 0o700 });
         try {
-            await fs.writeFile(target, buffer, { flag: 'wx' });
+            await fs.writeFile(target, buffer, { flag: 'wx', mode: 0o600 });
             return true;
         } catch (error) {
             if (error.code === 'EEXIST') return false;
@@ -92,8 +97,8 @@ class LocalBackupRepository {
 
     async writeManifest(snapshotId, buffer) {
         const target = this.manifestPath(snapshotId);
-        await fs.mkdir(path.dirname(target), { recursive: true });
-        await fs.writeFile(target, buffer, { flag: 'wx' });
+        await fs.mkdir(path.dirname(target), { recursive: true, mode: 0o700 });
+        await fs.writeFile(target, buffer, { flag: 'wx', mode: 0o600 });
     }
 
     async readManifest(snapshotId, { trash = false } = {}) {
@@ -116,7 +121,7 @@ class LocalBackupRepository {
     async moveManifestToTrash(snapshotId, { trashedAt = Date.now() } = {}) {
         const source = this.manifestPath(snapshotId);
         const target = this.manifestPath(snapshotId, { trash: true });
-        await fs.mkdir(path.dirname(target), { recursive: true });
+        await fs.mkdir(path.dirname(target), { recursive: true, mode: 0o700 });
         await fs.rename(source, target);
         await fs.writeFile(this.trashInfoPath(snapshotId), JSON.stringify({ trashedAt }), { encoding: 'utf8', mode: 0o600 });
     }
