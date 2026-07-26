@@ -25,6 +25,8 @@ const CORE_ASSETS = [
   "/managers/settings-data-panel.js",
   "/managers/storage.js",
   "/managers/note-sync-controller.js",
+  "/managers/editor-performance.js",
+  "/managers/heading-index.js",
   "/managers/thoughts.js",
   "/managers/agent-api-client.js",
   "/managers/thought-agent-state.js",

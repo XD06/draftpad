@@ -6,6 +6,8 @@ const root = __dirname;
 const styles = fs.readFileSync(path.join(root, 'public', 'Assets', 'styles.css'), 'utf8');
 const app = fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8');
 const server = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
+const hybrid = fs.readFileSync(path.join(root, 'public', 'hybrid-editor.js'), 'utf8');
+const editorPerformance = fs.readFileSync(path.join(root, 'public', 'managers', 'editor-performance.js'), 'utf8');
 const readingFont = path.join(root, 'font', 'changerwencai.woff2');
 
 assert(fs.existsSync(readingFont), 'the reading font subset must be present');
@@ -27,5 +29,24 @@ assert(
 );
 assert(server.includes("const compression = require('compression');"), 'server should load response compression middleware');
 assert(server.includes('app.use(compression({ threshold: 1024 }));'), 'server should enable response compression before static routes');
+assert(
+    app.includes("from './managers/editor-performance.js'") &&
+        app.includes('editorPerformanceMonitor.beginSwitch()') &&
+        app.includes('editorPerformanceMonitor.markFirstContent(token)'),
+    'article selection should expose opt-in first-content timing through the dedicated monitor'
+);
+assert(
+    hybrid.includes("performanceMonitor.measure('editor_set_value_ms'") &&
+        hybrid.includes("performanceMonitor.count('serialize_wysiwyg'") &&
+        hybrid.includes('scheduleArticleDecorationPass(') &&
+        hybrid.includes('performanceMonitor.scheduleFinish('),
+    'the editor should report setValue, serialization, decoration, and stable completion to the monitor'
+);
+assert(
+    editorPerformance.includes("get('debugPerformance') === '1'") &&
+        !editorPerformance.includes('localStorage') &&
+        !editorPerformance.includes('fetch('),
+    'editor performance diagnostics must be explicitly enabled, memory-only, and local'
+);
 
 console.log('Startup performance regression checks passed');
