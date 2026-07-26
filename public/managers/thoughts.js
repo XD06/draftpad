@@ -3145,10 +3145,13 @@ export class ThoughtsManager {
         let saveStarted = false;
         const saveAndExit = () => {
             if (saveStarted) return;
-            if (!textarea || !textarea.isConnected) {
+            if (!textarea) {
                 saveStarted = true;
                 return;
             }
+            // Even when a background render() rebuilt the card and detached the
+            // textarea, commit the captured working copies (text/subtasks/
+            // attachments) instead of silently discarding the user's edits.
             saveStarted = true;
             editCommitted = true;
             const newText = textarea.value.trim();
@@ -3205,6 +3208,9 @@ export class ThoughtsManager {
             if (!card.isConnected) {
                 document.removeEventListener('click', handleClickOutside);
                 card._clickOutsideHandler = null;
+                // The card was rebuilt while editing; commit the captured
+                // working copy so the in-progress edit is not lost.
+                saveAndExit();
                 return;
             }
             if (!e.target.isConnected) return;

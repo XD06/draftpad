@@ -6,6 +6,10 @@ import ConfirmationManager from './managers/confirmation.js';
 import NoteSyncController from './managers/note-sync-controller.js';
 import SettingsDataPanel from './managers/settings-data-panel.js';
 import {
+    createEditorPerformanceMonitor,
+    isEditorPerformanceEnabled
+} from './managers/editor-performance.js';
+import {
     getStartupNotepadId,
     renderSidebar,
     renderRecentFiles,
@@ -37,6 +41,36 @@ import {
 document.addEventListener('DOMContentLoaded', async () => {
     const DEBUG = false;
     const THEME_KEY = 'dumbpad_theme';
+    let editorPerformanceDiagnostics = null;
+    const publishEditorPerformanceDiagnostics = summary => {
+        if (!editorPerformanceDiagnostics) return;
+        editorPerformanceDiagnostics.textContent = JSON.stringify(summary);
+    };
+    const editorPerformanceMonitor = createEditorPerformanceMonitor({
+        enabled: isEditorPerformanceEnabled(window.location.search),
+        onSummaryChange: publishEditorPerformanceDiagnostics
+    });
+    let editorPerformanceSwitchToken = null;
+    if (editorPerformanceMonitor.enabled) {
+        editorPerformanceDiagnostics = document.createElement('output');
+        editorPerformanceDiagnostics.id = 'editor-performance-diagnostics';
+        editorPerformanceDiagnostics.hidden = true;
+        editorPerformanceDiagnostics.setAttribute('aria-hidden', 'true');
+        editorPerformanceDiagnostics.setAttribute('data-readonly-diagnostics', 'editor-performance');
+        document.body.appendChild(editorPerformanceDiagnostics);
+        publishEditorPerformanceDiagnostics(editorPerformanceMonitor.summary());
+        window.__dumbpadEditorPerformance = Object.freeze({
+            reset: () => editorPerformanceMonitor.reset(),
+            summary: () => editorPerformanceMonitor.summary()
+        });
+    }
+    const markEditorPerformanceContent = token => {
+        if (!editorPerformanceMonitor.enabled || token === null || token === undefined) return;
+        requestAnimationFrame(() => editorPerformanceMonitor.markFirstContent(token));
+        // Completion belongs to the selection trace, even when two articles
+        // have identical (including empty) Markdown and setValue is skipped.
+        editorPerformanceMonitor.scheduleFinish(token, 260);
+    };
     let appSettings = {};
     let isApplyingRemoteUpdate = false;
     let hasUnsavedChanges = false;
@@ -309,8 +343,21 @@ document.addEventListener('DOMContentLoaded', async () => {
         preparePrintContent: async () => ({ formattedContent: await renderMarkdown(editor.value), mainStyles: '', previewStyles: '', highlightStyles: '', printStyles: '' })
     };
 
-    // Generate user ID for lightweight multi-tab update filtering.
-    const userId = Math.random().toString(36).substring(2, 15);
+    // Stable per-browser user ID for own-update filtering. Persisting it means
+    // multiple tabs / the PWA of the same browser are recognised as the same
+    // origin instead of being treated as concurrent "other devices".
+    const userId = (() => {
+        const key = 'dumbpad_device_id_v1';
+        try {
+            const existing = localStorage.getItem(key);
+            if (existing) return existing;
+            const generated = window.crypto?.randomUUID?.() || Math.random().toString(36).substring(2, 15);
+            localStorage.setItem(key, generated);
+            return generated;
+        } catch {
+            return Math.random().toString(36).substring(2, 15);
+        }
+    })();
     window.userId = userId; 
     const wsClient = new WSClient({ debug: DEBUG });
     if (navigator.onLine) wsClient.connect();
@@ -355,6 +402,51 @@ document.addEventListener('DOMContentLoaded', async () => {
                 dirtyConflictNotepadIds.delete(currentNotepadId);
                 hideNoteConflictToast();
                 setStartupSyncStatus('synced', '已同步');
+                return;
+            }
+            // Try a local three-way merge before warning: disjoint edits are
+            // merged silently so a routine two-device session does not surface
+            // a scary conflict toast that the 409 path would auto-resolve later.
+            const remoteContent = typeof detail.content === 'string' ? detail.content : null;
+            const cachedNote = getCachedNote(currentNotepadId);
+            const merge = remoteContent === null
+                ? { ok: false, reason: 'missing_remote' }
+                : noteSyncController.mergeContents({
+                    base: cachedNote?.baseContent,
+                    local: editor.value,
+                    remote: remoteContent
+                });
+            if (merge.ok) {
+                setCurrentNoteVersion(currentNotepadId, remoteVersion);
+                dirtyConflictNotepadIds.delete(currentNotepadId);
+                hideNoteConflictToast();
+                if (merge.content === remoteContent) {
+                    isApplyingRemoteUpdate = true;
+                    editor.value = merge.content;
+                    isApplyingRemoteUpdate = false;
+                    hasUnsavedChanges = false;
+                    cacheSyncedNote(currentNotepadId, merge.content, { version: remoteVersion });
+                    setStartupSyncStatus('synced', '已同步');
+                    debouncedUpdateToC();
+                    return;
+                }
+                editorRevision += 1;
+                const mergedRevision = editorRevision;
+                const mergedNotepadId = currentNotepadId;
+                isApplyingRemoteUpdate = true;
+                editor.value = merge.content;
+                isApplyingRemoteUpdate = false;
+                hasUnsavedChanges = true;
+                cacheDirtyNote(mergedNotepadId, merge.content, {
+                    version: remoteVersion,
+                    baseContent: remoteContent
+                });
+                setStartupSyncStatus('syncing', '已自动合并，正在同步');
+                toaster.show('已自动合并远端修改', 'success', false, 2200);
+                debouncedUpdateToC();
+                setTimeout(() => {
+                    saveNotes(merge.content, true, false, 0, mergedNotepadId, mergedRevision);
+                }, 0);
                 return;
             }
             showNoteConflictToast('warning', 5000);
@@ -893,11 +985,18 @@ document.addEventListener('DOMContentLoaded', async () => {
         currentNotepadId = notepadId;
         isApplyingRemoteUpdate = true;
         if (editor.value !== (content || '')) editor.value = content || '';
+        markEditorPerformanceContent(editorPerformanceSwitchToken);
         isApplyingRemoteUpdate = false;
         hasUnsavedChanges = false;
         const cachedNote = loadStartupCache()?.notes?.[notepadId];
         const noteIsDirty = !!cachedNote?.dirty;
-        setCurrentNoteVersion(notepadId, cachedNote?.version);
+        if (Number.isFinite(Number(cachedNote?.version))) {
+            setCurrentNoteVersion(notepadId, cachedNote.version);
+        } else if (notepadId === currentNotepadId) {
+            // Unknown cached version: clear instead of keeping the previous
+            // notepad's version, which would poison baseVersion on early saves.
+            currentNoteVersion = null;
+        }
         setStartupSyncStatus('cached', noteIsDirty ? '本地未同步' : '本地快照');
 
         const emptyState = document.getElementById('empty-state');
@@ -1117,6 +1216,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 }
 
                 if (editor.value !== (data.content || '')) editor.value = data.content || '';
+                markEditorPerformanceContent(editorPerformanceSwitchToken);
                 hasUnsavedChanges = false;
                 dirtyConflictNotepadIds.delete(notepadId);
                 setCurrentNoteVersion(notepadId, data.version);
@@ -1144,7 +1244,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         await refreshFromServer();
     }
 
-    let remoteUpdateTimeout;
     let tocUpdateTimeout;
     function debouncedUpdateToC() {
         clearTimeout(tocUpdateTimeout);
@@ -1160,7 +1259,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             return;
         }
 
-        const toc = editorInstance.generateToC();
+        const toc = editorInstance.generateToC(pendingEditorValue || undefined);
         if (toc.length === 0) {
             tocContainer?.classList.remove('visible');
             document.body.classList.remove('toc-active');
@@ -1244,6 +1343,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     vditorScript
                 ]);
                 editorInstance = new HybridMarkdownEditor(document.getElementById('hybrid-editor'), {
+                    performanceMonitor: editorPerformanceMonitor.enabled ? editorPerformanceMonitor : null,
                     input: (value) => {
                         pendingEditorValue = value || '';
                         if (isApplyingRemoteUpdate) return;
@@ -1251,10 +1351,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                         editorRevision += 1;
                         debouncedSave(value);
                         debouncedUpdateToC();
-                        clearTimeout(remoteUpdateTimeout);
-                        remoteUpdateTimeout = setTimeout(() => {
-                            wsClient.sendUpdate('update', { notepadId: currentNotepadId, content: value, userId });
-                        }, 700);
+                        // Note: the old realtime 'update' broadcast was removed —
+                        // receivers drop version-less notes_update events, so it
+                        // only wasted bandwidth without providing live preview.
                     }
                 });
                 editorInstance.setAssetMaxFileBytes(runtimeConfig.assetMaxFileBytes);
@@ -1947,6 +2046,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const selectedNotepad = findNotepadByIdOrName(currentNotepads, id);
         if (!selectedNotepad) return;
         if (selectedNotepad.id === currentNotepadId && activeNotepadLoaded && !query) return;
+        editorPerformanceSwitchToken = editorPerformanceMonitor.beginSwitch();
         const token = ++selectionToken;
         // Flush any pending debounced save for the current notepad before
         // switching. performSaveNotes guards on currentNotepadId ===

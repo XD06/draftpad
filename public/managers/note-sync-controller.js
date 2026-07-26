@@ -100,10 +100,15 @@ export default class NoteSyncController {
     }
 
     mergeContents({ base, local, remote } = {}) {
-        if (![base, local, remote].every(value => typeof value === 'string')) {
+        if (typeof local !== 'string' || typeof remote !== 'string') {
             return { ok: false, reason: 'missing_base' };
         }
+        // Identical contents never conflict, even when the base snapshot is
+        // missing (first edit, cleared cache), so check before requiring base.
         if (local === remote) return { ok: true, content: local, reason: 'identical' };
+        if (typeof base !== 'string') {
+            return { ok: false, reason: 'missing_base' };
+        }
         if (local === base) return { ok: true, content: remote, reason: 'remote_only' };
         if (remote === base) return { ok: true, content: local, reason: 'local_only' };
 

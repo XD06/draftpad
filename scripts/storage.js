@@ -249,19 +249,23 @@ function prepareAgentRunForStorage(run) {
         : assertValidAgentRun(candidate);
 }
 
+function thoughtIndexEntryFrom(thought) {
+    return {
+        id: thought.id,
+        type: 'thought',
+        textPreview: String(thought.text || '').slice(0, 300),
+        tags: Array.isArray(thought.tags) ? thought.tags : [],
+        completed: !!thought.completed,
+        pinned: thought.pinned === true,
+        pinnedAt: Number(thought.pinnedAt || 0),
+        createdAt: thought.createdAt || 0,
+        updatedAt: thought.updatedAt || 0
+    };
+}
+
 function thoughtIndexFrom(thoughts) {
     return {
-        items: thoughts.map(thought => ({
-            id: thought.id,
-            type: 'thought',
-            textPreview: String(thought.text || '').slice(0, 300),
-            tags: Array.isArray(thought.tags) ? thought.tags : [],
-            completed: !!thought.completed,
-            pinned: thought.pinned === true,
-            pinnedAt: Number(thought.pinnedAt || 0),
-            createdAt: thought.createdAt || 0,
-            updatedAt: thought.updatedAt || 0
-        })),
+        items: thoughts.map(thought => thoughtIndexEntryFrom(thought)),
         updatedAt: Date.now()
     };
 }
@@ -443,6 +447,32 @@ async function emptyTrash() {
 
 async function writeThoughtIndex(thoughts) {
     await writeIndex('thoughts-index', thoughtIndexFrom(thoughts));
+}
+
+// Incrementally upsert a single entry in the thoughts index. Falls back to a
+// full rebuild only when the existing index is missing or unusable, so single
+// thought writes stay O(1) instead of re-reading every thought (S3: N GETs).
+async function upsertThoughtIndexEntry(thought) {
+    const index = await readIndex('thoughts-index');
+    if (!hasUsableThoughtPageIndex(index, 'timeline')) {
+        await writeThoughtIndex(await readThoughts());
+        return;
+    }
+    const items = index.items.filter(item => item.id !== thought.id);
+    items.unshift(thoughtIndexEntryFrom(thought));
+    await writeIndex('thoughts-index', { items, updatedAt: Date.now() });
+}
+
+async function removeThoughtIndexEntry(id) {
+    const index = await readIndex('thoughts-index');
+    if (!hasUsableThoughtPageIndex(index, 'timeline')) {
+        await writeThoughtIndex(await readThoughts());
+        return;
+    }
+    await writeIndex('thoughts-index', {
+        items: index.items.filter(item => item.id !== id),
+        updatedAt: Date.now()
+    });
 }
 
 async function readSplitThoughts() {
@@ -675,7 +705,7 @@ async function writeThought(thought) {
     if (isS3Backend()) {
         if (STORAGE_LAYOUT === 'split') {
             await s3WriteJSON(`thoughts/${safeId(thought.id)}.json`, thought);
-            await writeThoughtIndex(await readS3SplitThoughts());
+            await upsertThoughtIndexEntry(thought);
             return;
         }
 
@@ -689,7 +719,7 @@ async function writeThought(thought) {
 
     if (STORAGE_LAYOUT === 'split') {
         await writeJSON(thoughtPath(thought.id), thought);
-        await writeThoughtIndex(await readSplitThoughts());
+        await upsertThoughtIndexEntry(thought);
         return;
     }
 
@@ -707,7 +737,7 @@ async function deleteThought(id) {
             const key = `thoughts/${safeId(id)}.json`;
             const existed = await s3PathExists(key);
             await s3.deleteObject(s3Key(key));
-            await writeThoughtIndex(await readS3SplitThoughts());
+            await removeThoughtIndexEntry(id);
             return existed;
         }
 
@@ -721,7 +751,7 @@ async function deleteThought(id) {
         const filePath = thoughtPath(id);
         const existed = await pathExists(filePath);
         await fs.rm(filePath, { force: true });
-        await writeThoughtIndex(await readSplitThoughts());
+        await removeThoughtIndexEntry(id);
         return existed;
     }
 

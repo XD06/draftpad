@@ -12,10 +12,6 @@ function registerThoughtRoutes(app, context) {
         return storage.readThoughts();
     }
 
-    async function saveThoughts(thoughts) {
-        await storage.saveThoughts(thoughts);
-    }
-
     async function withThoughtWriteLock(task) {
         return storage.withThoughtWriteLock(task);
     }
@@ -90,12 +86,11 @@ function registerThoughtRoutes(app, context) {
         };
     }
 
-    function createThoughtId(existingThoughts = []) {
-        const existingIds = new Set(existingThoughts.map(thought => String(thought.id)));
+    async function createThoughtId() {
         let id = '';
         do {
             id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-        } while (existingIds.has(id));
+        } while (await storage.readThought(id));
         return id;
     }
 
@@ -611,10 +606,9 @@ function registerThoughtRoutes(app, context) {
             if (!text) return res.status(400).json({ error: 'Text is required' });
 
             const newThought = await withThoughtWriteLock(async () => {
-                const thoughts = await readThoughts();
                 const now = Date.now();
                 const thought = {
-                    id: createThoughtId(thoughts),
+                    id: await createThoughtId(),
                     text,
                     subItems: subItems || [],
                     tags: tags || [],
@@ -628,8 +622,7 @@ function registerThoughtRoutes(app, context) {
                     updatedAt: now
                 };
 
-                thoughts.unshift(thought);
-                await saveThoughts(thoughts);
+                await storage.writeThought(thought);
                 return thought;
             });
 
@@ -689,12 +682,10 @@ function registerThoughtRoutes(app, context) {
             const { action, text, target, replacement, baseVersion } = req.body;
 
             const result = await withThoughtWriteLock(async () => {
-                const thoughts = await readThoughts();
-                const index = thoughts.findIndex(t => t.id === id);
+                const thought = await storage.readThought(id);
 
-                if (index === -1) return { status: 404, body: { error: 'Thought not found' } };
+                if (!thought) return { status: 404, body: { error: 'Thought not found' } };
 
-                const thought = thoughts[index];
                 const sourceBefore = createAnalysisSourceSignature(thought);
                 const clientVersion = Number(baseVersion);
                 if (Number.isFinite(clientVersion) && (thought.version || 1) > clientVersion) {
@@ -788,7 +779,7 @@ function registerThoughtRoutes(app, context) {
                     thought.aiStatus = visibleAIStatus(thought.id, meta, thought.aiStatus || 'missing');
                     thought.aiError = meta?.error || null;
                     thought.relationCount = await storage.readRelationCount(thought.id);
-                    await saveThoughts(thoughts);
+                    await storage.writeThought(thought);
                 }
 
                 return { status: 200, body: { success: true, thought }, thought, modified };
@@ -813,15 +804,11 @@ function registerThoughtRoutes(app, context) {
             const { id } = req.params;
 
             const result = await withThoughtWriteLock(async () => {
-                let thoughts = await readThoughts();
-                const thoughtToDelete = thoughts.find(t => t.id === id);
-                const initialLen = thoughts.length;
-                thoughts = thoughts.filter(t => t.id !== id);
-
-                if (thoughts.length === initialLen) return null;
+                const thoughtToDelete = await storage.readThought(id);
+                if (!thoughtToDelete) return null;
 
                 const trashItem = await storage.moveThoughtToTrash(thoughtToDelete);
-                await saveThoughts(thoughts);
+                await storage.deleteThought(id);
                 return { trashItem, thoughtToDelete };
             });
 

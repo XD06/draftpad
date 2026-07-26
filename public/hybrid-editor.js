@@ -1,4 +1,4 @@
-import { stripHybridDisplayArtifacts } from './managers/hybrid-display-sanitizer.js';
+import { stripHybridDisplayArtifacts, collapseOverEscapedEmphasis, stripInactiveArticleUploadTokens } from './managers/hybrid-display-sanitizer.js';
 import {
     buildTimeMarker,
     buildUpdatedTimeMarker,
@@ -34,8 +34,7 @@ import {
     replaceCodeFenceLanguage
 } from './managers/code-fence-command.js';
 import { lexer as lexMarkdown } from '/js/marked/marked.esm.js';
-
-const HEADING_RE = /^(#{1,6})\s+(.+?)\s*#*\s*$/;
+import { buildMarkdownHeadingIndex } from './managers/heading-index.js';
 const MARK_PROTECTED_SELECTOR = [
     'pre:not(.vditor-reset)',
     'code',
@@ -50,18 +49,6 @@ const MARK_PROTECTED_SELECTOR = [
 // malformed or expensive diagram cannot block the editor itself.
 const DISPLAY_MERMAID_LANGUAGE = 'dumbpad-mermaid';
 
-function slugify(text, seen) {
-    const base = String(text || '')
-        .trim()
-        .toLowerCase()
-        .replace(/[^\p{L}\p{N}\s-]/gu, '')
-        .replace(/\s+/g, '-')
-        .replace(/-+/g, '-') || 'section';
-    const count = seen.get(base) || 0;
-    seen.set(base, count + 1);
-    return count ? `${base}-${count}` : base;
-}
-
 function debounce(fn, wait = 80) {
     let timer;
     return (...args) => {
@@ -71,7 +58,7 @@ function debounce(fn, wait = 80) {
 }
 
 export class HybridMarkdownEditor {
-    constructor(container, { input } = {}) {
+    constructor(container, { input, performanceMonitor = null } = {}) {
         const Vditor = window.Vditor;
         if (!Vditor) {
             throw new Error('Vditor failed to load.');
@@ -79,6 +66,7 @@ export class HybridMarkdownEditor {
 
         this.container = container;
         this.onInput = input || (() => {});
+        this.performanceMonitor = performanceMonitor;
         this.listeners = new Map();
         this.isReadingMode = false;
         this.headingLineBySlug = new Map();
@@ -102,6 +90,7 @@ export class HybridMarkdownEditor {
         this.isCodeLanguageComposing = false;
         this.decorationGeneration = 0;
         this.articleDecorationTimers = new Set();
+        this.markDecorationTimers = new Set();
         this.codeDecorationFrame = 0;
 
         this.container.innerHTML = '';
@@ -124,6 +113,8 @@ export class HybridMarkdownEditor {
             customWysiwygToolbar: () => {},
             input: () => this.handleVditorInput(),
             after: () => {
+                const performanceToken = this.getPerformanceToken();
+                const generation = this.decorationGeneration;
                 this.ready = true;
                 this.createSourceModeControls();
                 if (this.pendingValue) {
@@ -134,7 +125,7 @@ export class HybridMarkdownEditor {
                 }
                 this.syncTheme();
                 this.setEditable(!this.isReadingMode);
-                this.buildHeadingIndex();
+                this.buildHeadingIndex(this._lastValue || this.pendingValue);
                 this.bindAnnotationPopover();
                 this.bindTimeMarkerPopover();
                 this.bindTimeMarkerDragging();
@@ -148,11 +139,11 @@ export class HybridMarkdownEditor {
                 // etc.) that can strip rendered inline marks back to
                 // raw source text.  Retry at increasing delays to
                 // catch each wave of re-processing.
-                this.decorateRenderedMarks();
-                this.scheduleDecorateRenderedMarks();
-                setTimeout(() => this.decorateRenderedMarks(), 80);
-                setTimeout(() => this.decorateRenderedMarks(), 240);
-                this.scheduleArticleDecorationPass();
+                this.decorateRenderedMarks(true, performanceToken);
+                this.scheduleDecorateRenderedMarks(performanceToken, generation);
+                this.scheduleMarkDecorationRetry(80, performanceToken, generation);
+                this.scheduleMarkDecorationRetry(240, performanceToken, generation);
+                this.scheduleArticleDecorationPass(120, performanceToken);
             }
         });
 
@@ -161,7 +152,7 @@ export class HybridMarkdownEditor {
                 ? this.sourceTextarea.value
                 : this.readWysiwygMarkdownValue(this._lastValue || '');
             this._lastValue = value;
-            this.buildHeadingIndex();
+            this.buildHeadingIndex(value);
             this.onInput(value);
             this.dispatch('input', { value });
             this.dispatch('change', { value });
@@ -181,7 +172,23 @@ export class HybridMarkdownEditor {
         this.bindTimeCommand();
         this.bindCodeBlockCaretPlacement();
         this.bindMarkerProtection();
-        this.buildHeadingIndex();
+        this.bindCodeLineNumberRealignment();
+        this.buildHeadingIndex(this._lastValue || this.pendingValue);
+    }
+
+    // Soft-wrap gutter padding depends on the rendered code width, so keep the
+    // numbers aligned when the viewport (or late font loading) changes the
+    // wrap points of long code lines.
+    bindCodeLineNumberRealignment() {
+        const realign = () => {
+            clearTimeout(this.codeLineNumberRealignTimer);
+            this.codeLineNumberRealignTimer = setTimeout(() => {
+                const root = this.container.querySelector('.vditor-wysiwyg .vditor-reset');
+                if (root && !this.sourceMode && !this.isComposing) this.decorateCodeBlockLineNumbers(root);
+            }, 150);
+        };
+        window.addEventListener('resize', realign);
+        document.fonts?.ready?.then?.(realign);
     }
 
     suppressProgrammaticInput() {
@@ -231,6 +238,7 @@ export class HybridMarkdownEditor {
     }
 
     getValue() {
+        this.performanceMonitor?.count?.('get_value', 1, this.getPerformanceToken());
         if (this.sourceMode && this.sourceTextarea) return this.sourceTextarea.value;
         if (this.preferLastValueUntilInput) return this.stripDisplayGuards(this._lastValue || this.pendingValue || '');
         if (!this.ready || !this.editor?.getValue) return this.stripDisplayGuards(this.pendingValue || this._lastValue || '');
@@ -240,27 +248,35 @@ export class HybridMarkdownEditor {
     setValue(value = '', emit = true) {
         const normalized = this.stripDisplayGuards(value);
         this.cancelPendingArticleDecorations();
+        const performanceToken = this.getPerformanceToken();
+        const generation = this.decorationGeneration;
         clearTimeout(this.pendingCodeFenceFocusTimer);
         this.pendingCodeFenceFocusTimer = null;
         this.preferLastValueUntilInput = false;
         this._lastValue = normalized;
         if (this.ready && this.editor?.setValue) {
             if (!emit) this.suppressProgrammaticInput();
-            this.editor.setValue(this.prepareDisplayValue(normalized));
+            const applyValue = () => this.editor.setValue(this.prepareDisplayValue(normalized));
+            if (this.performanceMonitor?.enabled) this.performanceMonitor.measure('editor_set_value_ms', applyValue, performanceToken);
+            else applyValue();
             this.setEditable(!this.isReadingMode);
-            this.decorateRenderedMarks();
-            this.decorateArticleImages();
-            this.scheduleDecorateRenderedMarks();
-            this.scheduleArticleDecorationPass();
+            const decorate = () => {
+                this.decorateRenderedMarks(true, performanceToken);
+                this.decorateArticleImages({}, performanceToken);
+            };
+            if (this.performanceMonitor?.enabled) this.performanceMonitor.measure('editor_sync_decorations_ms', decorate, performanceToken);
+            else decorate();
+            this.scheduleDecorateRenderedMarks(performanceToken, generation);
+            this.scheduleArticleDecorationPass(120, performanceToken);
             // Vditor's async re-processing can strip inline marks after the
             // synchronous pass; keep the mark-only retries, not full scans.
-            setTimeout(() => this.decorateRenderedMarks(), 80);
-            setTimeout(() => this.decorateRenderedMarks(), 240);
+            this.scheduleMarkDecorationRetry(80, performanceToken, generation);
+            this.scheduleMarkDecorationRetry(240, performanceToken, generation);
         } else {
             this.pendingValue = normalized;
         }
         if (this.sourceTextarea) this.sourceTextarea.value = normalized;
-        this.buildHeadingIndex();
+        this.buildHeadingIndex(normalized);
         if (emit) {
             this.onInput(normalized);
             this.dispatch('input', { value: normalized });
@@ -270,6 +286,8 @@ export class HybridMarkdownEditor {
     setWysiwygValueAtMarkdownOffset(value = '', markdownOffset = 0, emit = true) {
         const normalized = this.stripDisplayGuards(value);
         this.cancelPendingArticleDecorations();
+        const performanceToken = this.getPerformanceToken();
+        const generation = this.decorationGeneration;
         this.preferLastValueUntilInput = false;
         const safeOffset = Math.min(Math.max(0, Number(markdownOffset) || 0), normalized.length);
         const marker = '\uE001';
@@ -279,27 +297,29 @@ export class HybridMarkdownEditor {
         if (this.ready && this.editor?.setValue) {
             this.suppressProgrammaticInput();
             this.wysiwygCaretRestore = { marker, markdownOffset: safeOffset };
-            this.editor.setValue(this.prepareDisplayValue(valueWithCaretMarker));
+            const applyValue = () => this.editor.setValue(this.prepareDisplayValue(valueWithCaretMarker));
+            if (this.performanceMonitor?.enabled) this.performanceMonitor.measure('editor_set_value_ms', applyValue, performanceToken);
+            else applyValue();
             this.setEditable(!this.isReadingMode);
             this.restoreWysiwygCaretFromMarker();
-            this.decorateRenderedMarks();
-            this.decorateArticleImages();
-            this.scheduleDecorateRenderedMarks();
-            this.scheduleArticleDecorationPass();
-            setTimeout(() => {
+            this.decorateRenderedMarks(true, performanceToken);
+            this.decorateArticleImages({}, performanceToken);
+            this.scheduleDecorateRenderedMarks(performanceToken, generation);
+            this.scheduleArticleDecorationPass(120, performanceToken);
+            this.scheduleMarkDecorationRetry(80, performanceToken, generation, () => {
                 this.restoreWysiwygCaretFromMarker();
-                this.decorateRenderedMarks();
-            }, 80);
-            setTimeout(() => {
+                this.decorateRenderedMarks(true, performanceToken);
+            });
+            this.scheduleMarkDecorationRetry(240, performanceToken, generation, () => {
                 if (!this.restoreWysiwygCaretFromMarker()) this.restoreWysiwygCaretFallback();
-                this.decorateRenderedMarks();
-            }, 240);
+                this.decorateRenderedMarks(true, performanceToken);
+            });
         } else {
             this.pendingValue = normalized;
         }
 
         if (this.sourceTextarea) this.sourceTextarea.value = normalized;
-        this.buildHeadingIndex();
+        this.buildHeadingIndex(normalized);
         if (emit) {
             this.onInput(normalized);
             this.dispatch('input', { value: normalized });
@@ -362,7 +382,7 @@ export class HybridMarkdownEditor {
             : this.stripDisplayGuards(value);
         this._lastValue = normalized;
         if (this.sourceTextarea) this.sourceTextarea.value = normalized;
-        this.buildHeadingIndex();
+        this.buildHeadingIndex(this._lastValue);
         this.onInput(normalized);
         this.dispatch('input', { value: normalized });
         this.dispatch('change', { value: normalized });
@@ -437,7 +457,12 @@ export class HybridMarkdownEditor {
     }
 
     stripDisplayGuards(value = '') {
-        return stripHybridDisplayArtifacts(value);
+        // Collapse Lute's over-escaped emphasis markers so the serialize/parse
+        // round-trip stays idempotent (#: backslashes must not accumulate),
+        // then drop upload placeholder tokens that have no live upload state
+        // (stale tokens must never survive a refresh or reach other devices).
+        const cleaned = collapseOverEscapedEmphasis(stripHybridDisplayArtifacts(value));
+        return stripInactiveArticleUploadTokens(cleaned, token => this.articleUploadStates.has(token));
     }
 
     readWysiwygMarkdownValue(fallback = '') {
@@ -454,6 +479,15 @@ export class HybridMarkdownEditor {
             return this.restoreEditorDisplayLanguages(this.stripDisplayGuards(rawValue));
         }
 
+        const performanceToken = this.getPerformanceToken();
+        if (this.performanceMonitor?.enabled) {
+            this.performanceMonitor.count('serialize_wysiwyg', 1, performanceToken);
+            return this.performanceMonitor.measure(
+                'serialize_wysiwyg_ms',
+                () => this.serializeWysiwygRoot(root, rawValue),
+                performanceToken
+            );
+        }
         return this.serializeWysiwygRoot(root, rawValue);
     }
 
@@ -473,12 +507,23 @@ export class HybridMarkdownEditor {
         this.restoreCodeBlockLineNumberDecorations(clone);
         this.restoreRenderedTimeMarkers(clone);
         this.restoreAllRenderedMarks(clone);
-        const rawSerialized = this.editor.html2md(clone.innerHTML) || fallback;
+        const rawSerialized = this.wysiwygDom2Md(clone.innerHTML) || fallback;
         const cleanSerialized = preservePendingCodeFence
             ? this.stripDisplayGuardsPreservingPendingCodeFence(rawSerialized)
             : this.stripDisplayGuards(rawSerialized);
         const serialized = this.restoreEditorDisplayLanguages(cleanSerialized);
         return this.restoreSerializedCodeLanguages(serialized, codeLanguages);
+    }
+
+    // Serialize WYSIWYG DOM with Lute's VditorDOM2Md: unlike HTML2Md it keeps
+    // soft line breaks inside paragraphs (#36: single newlines must survive the
+    // source-mode round-trip), keeps `_`/`$` markers intact, and skips the
+    // duplicate code-block preview surface. HTML2Md stays only as a fallback
+    // for bundles that do not expose the internal lute instance.
+    wysiwygDom2Md(html) {
+        const lute = this.editor?.vditor?.lute;
+        if (typeof lute?.VditorDOM2Md === 'function') return lute.VditorDOM2Md(html);
+        return this.editor.html2md(html);
     }
 
     stripDisplayGuardsPreservingPendingCodeFence(value = '') {
@@ -523,19 +568,47 @@ export class HybridMarkdownEditor {
         this.decorationGeneration += 1;
         this.articleDecorationTimers.forEach(timer => clearTimeout(timer));
         this.articleDecorationTimers.clear();
+        this.markDecorationTimers.forEach(timer => clearTimeout(timer));
+        this.markDecorationTimers.clear();
+        cancelAnimationFrame(this.decorateFrame);
+        this.decorateFrame = 0;
         if (this.codeDecorationFrame) cancelAnimationFrame(this.codeDecorationFrame);
         this.codeDecorationFrame = 0;
     }
 
-    scheduleArticleDecorationPass(delay = 120) {
+    getPerformanceToken() {
+        return this.performanceMonitor?.activeToken?.() ?? null;
+    }
+
+    scheduleMarkDecorationRetry(delay, performanceToken = this.getPerformanceToken(), generation = this.decorationGeneration, callback = null) {
+        const timer = setTimeout(() => {
+            this.markDecorationTimers.delete(timer);
+            if (generation !== this.decorationGeneration) return;
+            (callback || (() => this.decorateRenderedMarks(true, performanceToken)))();
+        }, delay);
+        this.markDecorationTimers.add(timer);
+        return timer;
+    }
+
+    scheduleArticleDecorationPass(delay = 120, performanceToken = this.getPerformanceToken()) {
         const generation = this.decorationGeneration;
         const timer = setTimeout(() => {
             this.articleDecorationTimers.delete(timer);
             if (generation !== this.decorationGeneration) return;
-            this.decorateArticleImages();
-            if (this.isReadingMode) this.renderMermaidDiagrams();
+            const decorate = () => {
+                this.decorateArticleImages({}, performanceToken);
+                if (this.isReadingMode) this.renderMermaidDiagrams();
+            };
+            if (this.performanceMonitor?.enabled) {
+                this.performanceMonitor.measure('editor_delayed_decorations_ms', decorate, performanceToken);
+            } else {
+                decorate();
+            }
         }, delay);
         this.articleDecorationTimers.add(timer);
+        if (this.performanceMonitor?.enabled && performanceToken !== null) {
+            this.performanceMonitor.scheduleFinish(performanceToken, Math.max(260, delay));
+        }
     }
 
     /**
@@ -603,27 +676,14 @@ export class HybridMarkdownEditor {
         });
     }
 
-    generateToC() {
-        const seen = new Map();
-        this.headingLineBySlug = new Map();
-        this.headingIds = [];
-        const toc = this.getValue()
-            .split('\n')
-            .map((line, index) => {
-                const match = line.match(HEADING_RE);
-                if (!match) return null;
-                const text = match[2].replace(/[`*_~[\]()]/g, '').trim();
-                const id = slugify(text, seen);
-                this.headingLineBySlug.set(id, index);
-                this.headingIds[index] = id;
-                return {
-                    id,
-                    text,
-                    level: match[1].length,
-                    line: index
-                };
-            })
-            .filter(Boolean);
+    generateToC(markdown = undefined) {
+        const value = markdown === undefined
+            ? (this._lastValue || this.pendingValue || (this.ready ? this.getValue() : ''))
+            : markdown;
+        const index = buildMarkdownHeadingIndex(value);
+        this.headingLineBySlug = index.headingLineBySlug;
+        this.headingIds = index.headingIds;
+        const toc = index.toc;
         this.syncRenderedHeadingIds(toc);
         return toc;
     }
@@ -750,8 +810,14 @@ export class HybridMarkdownEditor {
         });
     }
 
-    buildHeadingIndex() {
-        this.generateToC();
+    buildHeadingIndex(markdown = undefined) {
+        const value = markdown === undefined
+            ? (this._lastValue || this.pendingValue || (this.ready ? this.getValue() : ''))
+            : markdown;
+        const index = buildMarkdownHeadingIndex(value);
+        this.headingLineBySlug = index.headingLineBySlug;
+        this.headingIds = index.headingIds;
+        return index.toc;
     }
 
     setReadingMode(enabled) {
@@ -837,6 +903,7 @@ export class HybridMarkdownEditor {
     }
 
     renderMermaidDiagrams() {
+        this.performanceMonitor?.count?.('render_mermaid', 1, this.getPerformanceToken());
         const root = this.container.querySelector('.vditor-wysiwyg .vditor-reset');
         if (!root || !window.Vditor?.mermaidRender) return;
         let hasMermaid = false;
@@ -868,16 +935,20 @@ export class HybridMarkdownEditor {
 
     handleWysiwygInput() {
         this.scheduleDecorateRenderedMarks();
-        requestAnimationFrame(() => this.decorateArticleImages({ decorateCode: false }));
+        const generation = this.decorationGeneration;
+        requestAnimationFrame(() => {
+            if (generation !== this.decorationGeneration) return;
+            this.decorateArticleImages({ decorateCode: false }, this.getPerformanceToken());
+        });
         clearTimeout(this.typingDecorateTimer);
-        this.typingDecorateTimer = setTimeout(() => this.decorateRenderedMarks(), 80);
+        this.typingDecorateTimer = this.scheduleMarkDecorationRetry(80);
         this.emitChange();
     }
 
     emitSourceInput() {
         this.sourceCaretOffset = this.sourceTextarea.selectionStart;
         this._lastValue = this.sourceTextarea.value;
-        this.buildHeadingIndex();
+        this.buildHeadingIndex(this._lastValue);
         this.onInput(this._lastValue);
         this.dispatch('input', { value: this._lastValue });
         this.dispatch('change', { value: this._lastValue });
@@ -984,12 +1055,17 @@ export class HybridMarkdownEditor {
         this.syncSourceTogglePlacement();
     }
 
-    scheduleDecorateRenderedMarks() {
+    scheduleDecorateRenderedMarks(performanceToken = this.getPerformanceToken(), generation = this.decorationGeneration) {
         cancelAnimationFrame(this.decorateFrame);
-        this.decorateFrame = requestAnimationFrame(() => this.decorateRenderedMarks());
+        this.decorateFrame = requestAnimationFrame(() => {
+            this.decorateFrame = 0;
+            if (generation !== this.decorationGeneration) return;
+            this.decorateRenderedMarks(true, performanceToken);
+        });
     }
 
-    decorateRenderedMarks(preserveCaret = true) {
+    decorateRenderedMarks(preserveCaret = true, performanceToken = this.getPerformanceToken()) {
+        this.performanceMonitor?.count?.('decorate_marks', 1, performanceToken);
         const root = this.container.querySelector('.vditor-wysiwyg .vditor-reset');
         if (!root || this.sourceMode || this.isComposing) return;
 
@@ -1883,7 +1959,7 @@ export class HybridMarkdownEditor {
         const text = String(value || '');
         const rangeStart = Math.max(0, Number(start) || 0);
         const rangeEnd = Math.max(rangeStart, Number(end) || rangeStart);
-        const fenceRe = /(^|\n)(`{3,}|~{3,})[^\n]*\n[\s\S]*?(?:\n\2[ \t]*(?=\n|$)|$)/g;
+        const fenceRe = /(^|\x0a)(`{3,}|~{3,})[^\x0a]*\x0a[\s\S]*?(?:\x0a\2[ \t]*(?=\x0a|$)|$)/g;
         let match;
         while ((match = fenceRe.exec(text)) !== null) {
             const blockStart = match.index + (match[1] ? 1 : 0);
@@ -2281,7 +2357,24 @@ export class HybridMarkdownEditor {
         if (!commandRange || files.length === 0) return;
 
         const tokens = files.map(() => this.createArticleUploadToken());
+        // Register upload states before inserting the placeholders: the value
+        // pipeline strips tokens that have no live upload state, so an
+        // unregistered token would be removed the moment it is inserted.
+        files.forEach((file, index) => {
+            const isImage = isImageFile(file);
+            this.articleUploadStates.set(tokens[index], {
+                token: tokens[index],
+                file,
+                isImage,
+                phase: 'uploading',
+                loaded: 0,
+                total: Number(file?.size || 0),
+                percent: 0,
+                error: ''
+            });
+        });
         if (!this.replaceArticleFileCommandWithPlaceholders(commandRange, tokens)) {
+            tokens.forEach(token => this.articleUploadStates.delete(token));
             this.editor?.tip?.('插入位置已变化，请重新输入 /file', 3500);
             return;
         }
@@ -2996,7 +3089,7 @@ export class HybridMarkdownEditor {
         this._lastValue = value;
         this.preferLastValueUntilInput = true;
         if (this.sourceTextarea) this.sourceTextarea.value = value;
-        this.buildHeadingIndex();
+        this.buildHeadingIndex(value);
 
         const range = document.createRange();
         range.selectNodeContents(sourceBlock);
@@ -3037,7 +3130,8 @@ export class HybridMarkdownEditor {
         return match ? Number(match[1]) : 0;
     }
 
-    decorateArticleImages({ decorateCode = true } = {}) {
+    decorateArticleImages({ decorateCode = true } = {}, performanceToken = this.getPerformanceToken()) {
+        this.performanceMonitor?.count?.('decorate_article', 1, performanceToken);
         const root = this.container.querySelector('.vditor-wysiwyg .vditor-reset');
         root?.querySelectorAll('img').forEach(image => {
             const id = this.getArticleAssetId(image);
@@ -3053,6 +3147,65 @@ export class HybridMarkdownEditor {
         this.decorateArticleFileLinks(root);
         this.decorateArticleUploadPlaceholders(root);
         if (decorateCode) this.decorateCodeBlockLineNumbers(root);
+    }
+
+    // Build the gutter text for a code block. Each logical line gets its
+    // number; when a long line soft-wraps (#37), blank gutter rows keep the
+    // following numbers aligned with their logical lines instead of drifting
+    // past the bottom of the block.
+    buildCodeBlockLineNumbers(code, lineCount) {
+        const rowCounts = this.measureCodeBlockRowCounts(code, lineCount);
+        if (!rowCounts) {
+            return Array.from({ length: lineCount }, (_item, index) => index + 1).join('\n');
+        }
+        const rows = [];
+        for (let index = 0; index < lineCount; index++) {
+            rows.push(String(index + 1));
+            for (let extra = 1; extra < rowCounts[index]; extra++) rows.push('');
+        }
+        return rows.join('\n');
+    }
+
+    // Measure how many visual rows each logical code line occupies once
+    // `white-space: pre-wrap` wrapping is applied. Returns null when the code
+    // element is not rendered (hidden edit surface, detached clone), in which
+    // case the gutter falls back to one row per logical line.
+    measureCodeBlockRowCounts(code, lineCount) {
+        if (!code.isConnected || !code.getClientRects().length) return null;
+        const lineHeight = parseFloat(window.getComputedStyle(code).lineHeight);
+        if (!Number.isFinite(lineHeight) || lineHeight <= 0) return null;
+        const walker = document.createTreeWalker(code, NodeFilter.SHOW_TEXT);
+        const textNodes = [];
+        let node;
+        while ((node = walker.nextNode())) textNodes.push(node);
+        if (!textNodes.length) return null;
+
+        const range = document.createRange();
+        const rowCounts = [];
+        let startNode = textNodes[0];
+        let startOffset = 0;
+        const measure = (endNode, endOffset) => {
+            range.setStart(startNode, startOffset);
+            range.setEnd(endNode, endOffset);
+            rowCounts.push(Math.max(1, Math.round(range.getBoundingClientRect().height / lineHeight)));
+        };
+        textNodes.forEach(textNode => {
+            const text = textNode.nodeValue || '';
+            let newlineIndex = text.indexOf('\n');
+            while (newlineIndex !== -1) {
+                measure(textNode, newlineIndex);
+                startNode = textNode;
+                startOffset = newlineIndex + 1;
+                newlineIndex = text.indexOf('\n', startOffset);
+            }
+        });
+        if (rowCounts.length < lineCount) {
+            const lastNode = textNodes[textNodes.length - 1];
+            measure(lastNode, (lastNode.nodeValue || '').length);
+        }
+        while (rowCounts.length < lineCount) rowCounts.push(1);
+        rowCounts.length = lineCount;
+        return rowCounts;
     }
 
     decorateCodeBlockLineNumbers(root = this.container.querySelector('.vditor-wysiwyg .vditor-reset'), codePres = null) {
@@ -3072,13 +3225,13 @@ export class HybridMarkdownEditor {
             if (!pre || pre.closest('.mermaid, .mermaid-block')) return;
             const normalized = String(code.textContent || '').replace(/\r\n?/g, '\n').replace(/\n$/, '');
             const lineCount = Math.max(1, normalized.split('\n').length);
-            const lineNumbers = Array.from({ length: lineCount }, (_item, index) => index + 1).join('\n');
             const language = this.getRenderedCodeBlockLanguage(code);
-            const signature = `${pre.classList.contains('vditor-wysiwyg__preview') ? 'preview' : 'edit'}:${language}:${normalized}`;
+            const signature = `${pre.classList.contains('vditor-wysiwyg__preview') ? 'preview' : 'edit'}:${language}:${code.clientWidth}:${normalized}`;
             const hasHeader = Boolean(pre.querySelector(':scope > .dumbpad-code-header'));
             if (pre.dataset.dumbpadCodeSignature === signature && hasHeader &&
-                pre.dataset.lineNumbers === lineNumbers) return;
+                pre.dataset.lineNumbers) return;
             pre.classList.add('dumbpad-code-lines');
+            const lineNumbers = this.buildCodeBlockLineNumbers(code, lineCount);
             if (pre.dataset.lineNumbers !== lineNumbers) pre.dataset.lineNumbers = lineNumbers;
 
             const displayLanguage = language || 'plaintext';
@@ -4635,7 +4788,7 @@ export class HybridMarkdownEditor {
             this.restoreRenderedTimeMarkers(clone);
             this.restoreAllRenderedMarks(clone);
             const markdown = this.restoreEditorDisplayLanguages(
-                this.stripDisplayGuards(this.editor.html2md(clone.innerHTML) || '')
+                this.stripDisplayGuards(this.wysiwygDom2Md(clone.innerHTML) || '')
             );
             const markdownOffset = markdown.indexOf(marker);
             return markdownOffset >= 0 ? markdownOffset : null;

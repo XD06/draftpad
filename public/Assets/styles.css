@@ -44,6 +44,7 @@
     content: attr(data-line-numbers);
     position: absolute;
     top: 29px;
+    bottom: 12px;
     left: 0;
     width: 40px;
     box-sizing: border-box;
@@ -53,6 +54,7 @@
     font: 400 13px/1.55 var(--font-code);
     text-align: right;
     white-space: pre;
+    overflow: hidden;
     pointer-events: none;
     user-select: none;
 }

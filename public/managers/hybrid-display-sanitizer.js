@@ -41,3 +41,57 @@ export function stripHybridDisplayArtifacts(value = '') {
 
     return output;
 }
+
+const ARTICLE_UPLOAD_TOKEN_PATTERN = /\[\[资源上传中 [^\[\]\n]*\]\]/g;
+
+// Remove "[[资源上传中 ...]]" placeholder tokens that have no live upload
+// state (stale tokens persisted by an autosave, seen after a refresh or on
+// another device). Active tokens are kept so the in-progress upload card
+// keeps working in the originating editor.
+export function stripInactiveArticleUploadTokens(value = '', isActiveToken = () => false) {
+    return String(value || '').replace(ARTICLE_UPLOAD_TOKEN_PATTERN, token => (
+        isActiveToken(token) ? token : ''
+    ));
+}
+
+function collapseEmphasisEscapesInSegment(segment = '') {
+    // Collapse runs of 2+ backslashes directly before `_` or `*` down to a
+    // single escape. Lute's WYSIWYG round-trip can re-escape an already
+    // escaped emphasis marker (\_ -> \\_ -> \\\_ ...); collapsing keeps the
+    // serialize/parse cycle idempotent so the escapes cannot grow unbounded.
+    return segment.replace(/\\{2,}([_*])/g, '\\$1');
+}
+
+function collapseEmphasisEscapesOutsideInlineCode(line = '') {
+    return line
+        .split(/(`+[^`]*`+)/)
+        .map(part => part.startsWith('`') ? part : collapseEmphasisEscapesInSegment(part))
+        .join('');
+}
+
+// Normalize over-escaped emphasis markers outside fenced code, math blocks
+// and inline code spans. Must stay idempotent: applying it twice yields the
+// same output as applying it once.
+export function collapseOverEscapedEmphasis(value = '') {
+    const lines = String(value || '').split('\n');
+    let fenceMarker = '';
+    let inMathBlock = false;
+    const out = lines.map(line => {
+        if (!fenceMarker && /^\s*\$\$/.test(line)) {
+            // `$$` both opens and closes a math block (possibly on one line).
+            const dollarPairs = (line.match(/\$\$/g) || []).length;
+            if (dollarPairs % 2 === 1) inMathBlock = !inMathBlock;
+            return line;
+        }
+        if (inMathBlock) return line;
+        const fenceMatch = line.match(/^\s*(`{3,}|~{3,})/);
+        if (fenceMatch) {
+            if (!fenceMarker) fenceMarker = fenceMatch[1][0];
+            else if (fenceMatch[1][0] === fenceMarker) fenceMarker = '';
+            return line;
+        }
+        if (fenceMarker) return line;
+        return collapseEmphasisEscapesOutsideInlineCode(line);
+    });
+    return out.join('\n');
+}
