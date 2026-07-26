@@ -74,16 +74,48 @@
                 if (error) error.textContent = message || '';
             }
 
+            const EYE_ICON = `<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.5-6.5 10-6.5S22 12 22 12s-3.5 6.5-10 6.5S2 12 2 12Z"/><circle cx="12" cy="12" r="2.7"/></svg>`;
+            const EYE_OFF_ICON = `<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3l18 18"/><path d="M10.6 5.2A11 11 0 0 1 12 5.1c6.5 0 10 6.9 10 6.9a17.9 17.9 0 0 1-3.3 4.2M6.5 6.6A16.6 16.6 0 0 0 2 12s3.5 6.9 10 6.9a10.9 10.9 0 0 0 4.3-.9"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>`;
+
+            // Mask secrets by default, add a reveal toggle to every password
+            // field, and replay the panel entrance animation on each step.
+            function refreshPanel() {
+                content.querySelectorAll('input[type="password"]').forEach(input => {
+                    const field = document.createElement('div');
+                    field.className = 'dumbpad-login-secret-field';
+                    input.parentNode.insertBefore(field, input);
+                    field.appendChild(input);
+                    const toggle = document.createElement('button');
+                    toggle.type = 'button';
+                    toggle.className = 'dumbpad-login-eye';
+                    toggle.setAttribute('aria-label', '显示密码');
+                    toggle.innerHTML = EYE_ICON;
+                    toggle.addEventListener('click', () => {
+                        const reveal = input.type === 'password';
+                        input.type = reveal ? 'text' : 'password';
+                        toggle.innerHTML = reveal ? EYE_OFF_ICON : EYE_ICON;
+                        toggle.setAttribute('aria-label', reveal ? '隐藏密码' : '显示密码');
+                        input.focus();
+                    });
+                    field.appendChild(toggle);
+                });
+                content.classList.remove('dumbpad-login-swap-run');
+                void content.offsetWidth;
+                content.classList.add('dumbpad-login-swap-run');
+                content.querySelector('[autofocus]')?.focus();
+            }
+
             function renderLegacy() {
                 content.innerHTML = `
                     <h2>输入 PIN</h2>
                     <p class="dumbpad-login-lead">继续进入草稿本。</p>
                     <form id="legacy-login-form" class="dumbpad-login-form">
                         <label for="legacy-pin">PIN</label>
-                        <input id="legacy-pin" name="pin" inputmode="numeric" autocomplete="current-password" pattern="[0-9]*" maxlength="10" required autofocus placeholder="输入 PIN">
+                        <input id="legacy-pin" name="pin" type="password" inputmode="numeric" autocomplete="current-password" pattern="[0-9]*" maxlength="10" required autofocus placeholder="输入 PIN">
                         <button type="submit">进入 ${escapeHtml(status.siteTitle || 'DumbPad')}</button>
                     </form>
                     <p class="dumbpad-login-error" data-login-error role="alert"></p>`;
+                refreshPanel();
                 content.querySelector('form').addEventListener('submit', async event => {
                     event.preventDefault();
                     renderError('');
@@ -116,6 +148,7 @@
                     <p class="dumbpad-login-trust"><span>✓</span>这台设备受信任后，日常使用不会被额外验证打断。</p>
                     <button id="start-recovery" type="button" class="dumbpad-login-secondary dumbpad-login-text-action">验证器不可用？</button>
                     <p class="dumbpad-login-error" data-login-error role="alert"></p>`;
+                refreshPanel();
                 document.getElementById('start-recovery').addEventListener('click', renderRecoveryStart);
                 content.querySelector('form').addEventListener('submit', async event => {
                     event.preventDefault();
@@ -149,6 +182,7 @@
                     </form>
                     <button id="back-to-login" type="button" class="dumbpad-login-secondary dumbpad-login-text-action">返回登录</button>
                     <p class="dumbpad-login-error" data-login-error role="alert"></p>`;
+                refreshPanel();
                 document.getElementById('back-to-login').addEventListener('click', () => renderV2Login());
                 content.querySelector('form').addEventListener('submit', async event => {
                     event.preventDefault();
@@ -181,6 +215,7 @@
                         <button type="submit">完成恢复</button>
                     </form>
                     <p class="dumbpad-login-error" data-login-error role="alert"></p>`;
+                refreshPanel();
                 document.getElementById('copy-recovery-secret').addEventListener('click', () => {
                     navigator.clipboard?.writeText(recovery.totpSecret).then(() => renderError('密钥已复制。')).catch(() => renderError('请手动复制显示的密钥。'));
                 });
@@ -206,12 +241,13 @@
                     <p class="dumbpad-login-lead">这只需要完成一次。之后日常打开不会增加步骤。</p>
                     <form id="setup-start-form" class="dumbpad-login-form">
                         <label for="setup-pin">原 PIN</label>
-                        <input id="setup-pin" name="legacyPin" inputmode="numeric" autocomplete="current-password" required placeholder="用于完成迁移">
+                        <input id="setup-pin" name="legacyPin" type="password" inputmode="numeric" autocomplete="current-password" required placeholder="用于完成迁移">
                         <label for="setup-password">新主密码</label>
                         <input id="setup-password" name="password" type="password" autocomplete="new-password" minlength="12" required placeholder="至少 12 个字符">
                         <button type="submit">继续设置</button>
                     </form>
                     <p class="dumbpad-login-error" data-login-error role="alert"></p>`;
+                refreshPanel();
                 content.querySelector('form').addEventListener('submit', async event => {
                     event.preventDefault();
                     renderError('');
@@ -247,6 +283,7 @@
                         <button type="submit">确认并继续</button>
                     </form>
                     <p class="dumbpad-login-error" data-login-error role="alert"></p>`;
+                refreshPanel();
                 document.getElementById('copy-secret').addEventListener('click', copySetupSecret);
                 content.querySelector('form').addEventListener('submit', async event => {
                     event.preventDefault();
@@ -271,6 +308,7 @@
                     <div class="dumbpad-login-recovery">${codes.map(code => `<code>${escapeHtml(code)}</code>`).join('')}</div>
                     <button id="download-recovery" type="button" class="dumbpad-login-secondary">下载恢复码</button>
                     <button id="finish-setup" type="button">我已安全保存，进入 DumbPad</button>`;
+                refreshPanel();
                 document.getElementById('download-recovery').addEventListener('click', () => {
                     const blob = new Blob([`DumbPad 恢复码\n\n${codes.join('\n')}\n`], { type: 'text/plain;charset=utf-8' });
                     const link = document.createElement('a');
