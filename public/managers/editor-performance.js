@@ -68,6 +68,8 @@ export function createEditorPerformanceMonitor({
             token: ++sequence,
             startedAt: now(),
             firstContentMs: null,
+            stableAfterRetryMs: null,
+            stableScheduled: false,
             durations: {},
             counts: {},
             longTasks: { count: 0, durationMs: 0 }
@@ -210,6 +212,11 @@ export function createEditorPerformanceMonitor({
         if (!isActiveToken(token)) return null;
         const finishedAt = now();
         active.finishedAt = finishedAt;
+        // A switch that reached its scheduled "stable" completion records how long
+        // it took to settle (start -> stable finish, including the retry delay).
+        if (active.stableScheduled) {
+            active.stableAfterRetryMs = Math.max(0, finishedAt - active.startedAt);
+        }
         traces.push(active);
         assignPendingLongTasks();
         const finished = {
@@ -229,6 +236,9 @@ export function createEditorPerformanceMonitor({
         if (!isActiveToken(token) || typeof setTimeoutFn !== 'function') return false;
         clearScheduledFinish();
         const safeDelay = Math.max(0, Number(delay) || 0);
+        // Record that this trace reached a scheduled stable completion so the
+        // finish path can emit switch_stable_after_retry_ms.
+        active.stableScheduled = true;
         finishTimer = setTimeoutFn(() => {
             finishTimer = null;
             finishSwitch(token);

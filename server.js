@@ -89,9 +89,16 @@ const PAGE_HISTORY_COOKIE_AGE = process.env.PAGE_HISTORY_COOKIE_AGE || 365; // d
 const pageHistoryCookieAge = PAGE_HISTORY_COOKIE_AGE * 24 * 60 * 60 * 1000;
 const MAX_FILENAME_COLLISION_ATTEMPTS = 100; // Maximum attempts to resolve filename collisions
 const DEBUG_WS = process.env.DEBUG_WS === 'true';
-const SHARE_SECRET = process.env.SHARE_SECRET || PIN || 'dumbpad_default_secret_9988';
+// Never fall back to a world-known constant: a hardcoded default lets anyone
+// who has read the source forge valid share tokens for any notepad id. When no
+// dedicated secret and no PIN are configured we generate a random per-boot
+// secret instead. Share links are only guaranteed stable when SHARE_SECRET is
+// set (see .env.example), so this is a strict security improvement.
+const SHARE_SECRET = process.env.SHARE_SECRET || PIN || crypto.randomBytes(32).toString('hex');
 if (!process.env.SHARE_SECRET) {
-    console.warn('SECURITY: SHARE_SECRET is not set — falling back to PIN or a hardcoded default. Set a dedicated high-entropy SHARE_SECRET env var in production so share tokens cannot be derived from the PIN.');
+    console.warn(PIN
+        ? 'SECURITY: SHARE_SECRET is not set — deriving share tokens from DUMBPAD_PIN. Set a dedicated high-entropy SHARE_SECRET so tokens cannot be derived from the PIN.'
+        : 'SECURITY: SHARE_SECRET is not set — using a random per-boot secret, so existing share links will break on restart. Set a stable SHARE_SECRET if you rely on shared links.');
 }
 
 function getShareToken(id) {

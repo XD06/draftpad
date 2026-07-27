@@ -24,11 +24,15 @@ function safeEqual(a, b) {
     }
 }
 
-function createWebSocketHub({ server, validateOrigin, pin, cookieName, authService = null, authSessionCookieName = '', debug = false, maxClients = 100 }) {
+function createWebSocketHub({ server, validateOrigin, pin, cookieName, authService = null, authSessionCookieName = '', debug = false, maxClients = 100, maxPayloadBytes = 50 * 1024 * 1024 }) {
     const clients = new Map();
 
     const wss = new WebSocket.Server({
         server,
+        // Bound each frame so a single connection cannot exhaust memory. The ws
+        // default is 100 MiB; cap it to the same 50 MiB ceiling as HTTP uploads
+        // (live-editing frames only carry markdown text, far below this).
+        maxPayload: Math.max(1024, Number(maxPayloadBytes) || 50 * 1024 * 1024),
         verifyClient: (info, done) => {
             const finishVerification = () => {
                 if (clients.size >= maxClients) {
