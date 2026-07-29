@@ -98,7 +98,102 @@ function createAssetStorage(storage) {
         };
     }
 
-    return { readAsset, writeAsset };
+    function byNewestFirst(a, b) {
+        return Number(b?.createdAt || 0) - Number(a?.createdAt || 0);
+    }
+
+    async function listAssets() {
+        if (storage.backend === 's3') {
+            const prefix = joinS3Key(storage.getS3Prefix(), 'assets');
+            const objects = await s3.listObjects(prefix);
+            const metaKeys = objects
+                .map(object => object.key)
+                .filter(key => /\/meta\.json$/.test(key));
+            const metadatas = await Promise.all(
+                metaKeys.map(key => s3.getJSONObject(key, null))
+            );
+            return metadatas.filter(Boolean).sort(byNewestFirst);
+        }
+
+        let entries;
+        try {
+            entries = await fs.readdir(localRoot, { withFileTypes: true });
+        } catch (error) {
+            if (error.code === 'ENOENT') return [];
+            throw error;
+        }
+        const metadatas = await Promise.all(
+            entries
+                .filter(entry => entry.isDirectory() && safeAssetId(entry.name))
+                .map(async entry => {
+                    try {
+                        return JSON.parse(await fs.readFile(path.join(localAssetDir(entry.name), 'meta.json'), 'utf8'));
+                    } catch (error) {
+                        // A single missing/corrupt meta.json must not break the
+                        // whole listing (the panel is a recovery tool for exactly
+                        // the kind of orphaned assets that may be malformed).
+                        if (error.code !== 'ENOENT') {
+                            console.warn(`asset-storage: skipping unreadable asset ${entry.name}:`, error.message);
+                        }
+                        return null;
+                    }
+                })
+        );
+        return metadatas.filter(Boolean).sort(byNewestFirst);
+    }
+
+    async function deleteAsset(id) {
+        const safeId = safeAssetId(id);
+        if (!safeId) return false;
+
+        if (storage.backend === 's3') {
+            const prefix = assetPrefix(safeId);
+            const metadata = await s3.getJSONObject(joinS3Key(prefix, 'meta.json'), null);
+            if (!metadata) return false;
+            await Promise.all([
+                s3.deleteObject(joinS3Key(prefix, 'original')),
+                s3.deleteObject(joinS3Key(prefix, 'preview')),
+                s3.deleteObject(joinS3Key(prefix, 'meta.json'))
+            ]);
+            return true;
+        }
+
+        const target = localAssetDir(safeId);
+        try {
+            await fs.access(path.join(target, 'meta.json'));
+        } catch (error) {
+            if (error.code === 'ENOENT') return false;
+            throw error;
+        }
+        await fs.rm(target, { recursive: true, force: true });
+        return true;
+    }
+
+    async function deleteAssets(ids) {
+        // Dedupe first so a caller passing the same id twice can never inflate
+        // the deleted count or double-hit the backend.
+        const unique = Array.from(new Set(
+            (Array.isArray(ids) ? ids : []).map(value => String(value || ''))
+        )).filter(Boolean);
+        const deleted = [];
+        const missing = [];
+        for (const rawId of unique) {
+            let removed = false;
+            try {
+                removed = await deleteAsset(rawId);
+            } catch (error) {
+                // One unreadable/locked asset must not abort the batch; report it
+                // as not-removed so the caller can surface a partial result.
+                console.warn(`asset-storage: failed to delete asset ${rawId}:`, error.message);
+                removed = false;
+            }
+            if (removed) deleted.push(safeAssetId(rawId));
+            else missing.push(rawId);
+        }
+        return { deleted, missing };
+    }
+
+    return { readAsset, writeAsset, listAssets, deleteAsset, deleteAssets };
 }
 
 module.exports = { createAssetStorage, safeAssetId };

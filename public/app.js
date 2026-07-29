@@ -5,6 +5,7 @@ import SettingsManager from './managers/settings.js'
 import ConfirmationManager from './managers/confirmation.js';
 import NoteSyncController from './managers/note-sync-controller.js';
 import SettingsDataPanel from './managers/settings-data-panel.js';
+import { AssetApiClient } from './managers/asset-api-client.js';
 import {
     createEditorPerformanceMonitor,
     isEditorPerformanceEnabled
@@ -165,6 +166,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     const settingsTrashRefresh = document.getElementById('settings-trash-refresh');
     const settingsTrashList = document.getElementById('settings-trash-list');
     const settingsTrashEmpty = document.getElementById('settings-trash-empty');
+    const settingsAssetsRefresh = document.getElementById('settings-assets-refresh');
+    const settingsAssetsList = document.getElementById('settings-assets-list');
+    const settingsAssetsToolbar = document.getElementById('settings-assets-toolbar');
+    const settingsAssetsSelectAll = document.getElementById('settings-assets-select-all');
+    const settingsAssetsSelectedCount = document.getElementById('settings-assets-selected-count');
+    const settingsAssetsDeleteSelected = document.getElementById('settings-assets-delete-selected');
+    const selectedAssetIds = new Set();
     const startupSyncStatus = document.getElementById('startup-sync-status');
 
     let saveTimeout;
@@ -269,6 +277,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const storageManager = new StorageManager();
     const noteSyncController = new NoteSyncController({ storageManager });
     let settingsDataPanel = null;
+    const settingsAssetApi = new AssetApiClient();
     let thoughtsManager = null;
     let thoughtsManagerLoader = null;
     let openCommandSearch = null;
@@ -871,6 +880,137 @@ document.addEventListener('DOMContentLoaded', async () => {
         await settingsDataPanel.emptyTrash();
         await refreshTrashList(false);
         toaster.show('垃圾桶已清空', 'success', false, 1600);
+    }
+
+    function formatAssetTimestamp(value) {
+        const time = Number(value);
+        if (!Number.isFinite(time) || time <= 0) return '未知时间';
+        try {
+            return new Date(time).toLocaleString();
+        } catch {
+            return '未知时间';
+        }
+    }
+
+    function updateAssetSelectionUi() {
+        if (!settingsAssetsToolbar) return;
+        const items = settingsAssetsList ? settingsAssetsList.querySelectorAll('.settings-asset-item') : [];
+        const total = items.length;
+        let selectedVisible = 0;
+        items.forEach(item => { if (selectedAssetIds.has(item.dataset.assetId)) selectedVisible += 1; });
+        settingsAssetsToolbar.hidden = total === 0;
+        if (settingsAssetsSelectedCount) settingsAssetsSelectedCount.textContent = `已选 ${selectedVisible} 项`;
+        if (settingsAssetsDeleteSelected) {
+            settingsAssetsDeleteSelected.disabled = selectedVisible === 0;
+            settingsAssetsDeleteSelected.textContent = selectedVisible > 0 ? `删除选中 (${selectedVisible})` : '删除选中';
+        }
+        if (settingsAssetsSelectAll) {
+            settingsAssetsSelectAll.checked = total > 0 && selectedVisible === total;
+            settingsAssetsSelectAll.indeterminate = selectedVisible > 0 && selectedVisible < total;
+        }
+    }
+
+    function renderAssetItems(items = []) {
+        if (!settingsAssetsList) return;
+        if (!Array.isArray(items) || items.length === 0) {
+            settingsAssetsList.innerHTML = '<div class="settings-assets-empty">暂无附件。</div>';
+            updateAssetSelectionUi();
+            return;
+        }
+        settingsAssetsList.innerHTML = items.map(item => {
+            const id = String(item.id || '');
+            const name = escapeHtml(item.name || '未命名附件');
+            const isImage = (item.kind || 'image') === 'image' && item.previewUrl;
+            const typeLabel = escapeHtml(item.type || (item.kind === 'file' ? '文件' : '图片'));
+            const meta = `${typeLabel} · ${escapeHtml(formatBytes(item.size))} · ${escapeHtml(formatAssetTimestamp(item.createdAt))}`;
+            const thumb = isImage
+                ? `<img class="settings-asset-thumb" src="${escapeHtml(item.previewUrl)}" alt="" loading="lazy" />`
+                : `<div class="settings-asset-thumb settings-asset-thumb-file" aria-hidden="true">📎</div>`;
+            const downloadUrl = escapeHtml(item.downloadUrl || item.originalUrl || '');
+            const checked = selectedAssetIds.has(id) ? ' checked' : '';
+            return `
+                <div class="settings-asset-item" data-asset-id="${escapeHtml(id)}">
+                    <label class="settings-asset-select-wrap">
+                        <input type="checkbox" class="settings-asset-select" data-asset-select aria-label="选择附件"${checked} />
+                    </label>
+                    ${thumb}
+                    <div class="settings-asset-info">
+                        <div class="settings-asset-name" title="${name}">${name}</div>
+                        <div class="settings-asset-meta">${meta}</div>
+                    </div>
+                    <div class="settings-asset-actions">
+                        <a class="settings-asset-download" href="${downloadUrl}" download data-asset-action="download">下载</a>
+                        <button type="button" class="danger" data-asset-action="delete">删除</button>
+                    </div>
+                </div>
+            `;
+        }).join('');
+        updateAssetSelectionUi();
+    }
+
+    async function refreshAssetsList(showToast = false) {
+        if (!settingsAssetsList) return;
+        settingsAssetsList.innerHTML = '<div class="settings-assets-empty">正在读取附件...</div>';
+        try {
+            const assets = await settingsAssetApi.listAssets();
+            const availableIds = new Set(assets.map(item => String(item.id || '')));
+            [...selectedAssetIds].forEach(id => { if (!availableIds.has(id)) selectedAssetIds.delete(id); });
+            renderAssetItems(assets);
+            if (showToast) toaster.show('附件列表已刷新', 'success', false, 1400);
+        } catch (error) {
+            selectedAssetIds.clear();
+            settingsAssetsList.innerHTML = `<div class="settings-assets-empty">读取失败：${escapeHtml(error.message || '未知错误')}</div>`;
+            updateAssetSelectionUi();
+            toaster.show(error.message || '附件读取失败', 'error', false, 2600);
+        }
+    }
+
+    async function deleteAssetPermanently(assetId) {
+        const confirmed = await confirmationManager.show({
+            title: '删除附件',
+            message: '删除后附件将无法恢复，正文中引用该附件的链接会失效。',
+            confirmText: '删除',
+            cancelText: '取消',
+            confirmType: 'danger'
+        });
+        if (!confirmed) return;
+        try {
+            await settingsAssetApi.deleteAsset(assetId);
+            selectedAssetIds.delete(String(assetId || ''));
+            await refreshAssetsList(false);
+            toaster.show('附件已删除', 'success', false, 1600);
+        } catch (error) {
+            toaster.show(error.message || '删除附件失败', 'error', false, 2600);
+        }
+    }
+
+    async function deleteSelectedAssets() {
+        const ids = [...selectedAssetIds];
+        if (ids.length === 0) return;
+        const confirmed = await confirmationManager.show({
+            title: '批量删除附件',
+            message: `将删除选中的 ${ids.length} 个附件，删除后无法恢复，正文中引用它们的链接会失效。`,
+            confirmText: `删除 ${ids.length} 项`,
+            cancelText: '取消',
+            confirmType: 'danger'
+        });
+        if (!confirmed) return;
+        if (settingsAssetsDeleteSelected) settingsAssetsDeleteSelected.disabled = true;
+        try {
+            const result = await settingsAssetApi.deleteAssets(ids);
+            selectedAssetIds.clear();
+            await refreshAssetsList(false);
+            const deletedCount = result.deleted.length;
+            const missingCount = result.missing.length;
+            if (missingCount > 0) {
+                toaster.show(`已删除 ${deletedCount} 项，${missingCount} 项未找到`, 'success', false, 2600);
+            } else {
+                toaster.show(`已删除 ${deletedCount} 个附件`, 'success', false, 1800);
+            }
+        } catch (error) {
+            toaster.show(error.message || '批量删除失败', 'error', false, 2600);
+            updateAssetSelectionUi();
+        }
     }
 
     async function copyCurrentNotepadLink() {
@@ -1817,6 +1957,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         updateSettingsConflictSection();
         refreshCloudStatus(false);
         refreshTrashList(false);
+        refreshAssetsList(false);
         const isMobile = window.matchMedia?.('(max-width: 720px)')?.matches;
         const focusTarget = options.focusSyncPanel
             ? settingsConflictSection
@@ -2472,6 +2613,44 @@ document.addEventListener('DOMContentLoaded', async () => {
                 }
             });
         }
+        if (settingsAssetsRefresh) settingsAssetsRefresh.addEventListener('click', () => refreshAssetsList(true));
+        if (settingsAssetsList) {
+            settingsAssetsList.addEventListener('click', (event) => {
+                const button = event.target.closest('[data-asset-action]');
+                const item = event.target.closest('[data-asset-id]');
+                if (!button || !item) return;
+                if (button.dataset.assetAction === 'delete') {
+                    event.preventDefault();
+                    deleteAssetPermanently(item.dataset.assetId);
+                }
+            });
+            settingsAssetsList.addEventListener('change', (event) => {
+                const checkbox = event.target.closest('[data-asset-select]');
+                const item = event.target.closest('[data-asset-id]');
+                if (!checkbox || !item) return;
+                if (checkbox.checked) selectedAssetIds.add(item.dataset.assetId);
+                else selectedAssetIds.delete(item.dataset.assetId);
+                updateAssetSelectionUi();
+            });
+        }
+        if (settingsAssetsSelectAll) {
+            settingsAssetsSelectAll.addEventListener('change', () => {
+                const items = settingsAssetsList ? settingsAssetsList.querySelectorAll('.settings-asset-item') : [];
+                const shouldSelectAll = settingsAssetsSelectAll.checked;
+                items.forEach(item => {
+                    const checkbox = item.querySelector('[data-asset-select]');
+                    if (shouldSelectAll) {
+                        selectedAssetIds.add(item.dataset.assetId);
+                        if (checkbox) checkbox.checked = true;
+                    } else {
+                        selectedAssetIds.delete(item.dataset.assetId);
+                        if (checkbox) checkbox.checked = false;
+                    }
+                });
+                updateAssetSelectionUi();
+            });
+        }
+        if (settingsAssetsDeleteSelected) settingsAssetsDeleteSelected.addEventListener('click', () => deleteSelectedAssets());
         
         const readModeBtn = document.getElementById('toggle-reading-mode');
         isReadingMode = localStorage.getItem('dumbpad_reading_mode') === 'true';

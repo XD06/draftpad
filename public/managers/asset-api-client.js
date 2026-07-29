@@ -118,4 +118,47 @@ export class AssetApiClient {
             onProgress
         });
     }
+
+    async listAssets() {
+        const response = await fetch('/api/assets', {
+            headers: { 'Accept': 'application/json' },
+            credentials: 'same-origin'
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data?.error || '无法加载附件列表');
+        return Array.isArray(data.assets) ? data.assets : [];
+    }
+
+    async deleteAsset(id) {
+        const assetId = String(id || '').trim();
+        if (!assetId) throw new TypeError('An asset id is required');
+        const response = await fetch(`/api/assets/${encodeURIComponent(assetId)}`, {
+            method: 'DELETE',
+            credentials: 'same-origin'
+        });
+        if (!response.ok) {
+            const data = await response.json().catch(() => ({}));
+            throw new Error(data?.error || '删除附件失败');
+        }
+        return true;
+    }
+
+    async deleteAssets(ids) {
+        const list = Array.from(new Set(
+            (Array.isArray(ids) ? ids : []).map(id => String(id || '').trim())
+        )).filter(Boolean);
+        if (list.length === 0) throw new TypeError('At least one asset id is required');
+        const response = await fetch('/api/assets/bulk-delete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'same-origin',
+            body: JSON.stringify({ ids: list })
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data?.error || '批量删除附件失败');
+        return {
+            deleted: Array.isArray(data.deleted) ? data.deleted : [],
+            missing: Array.isArray(data.missing) ? data.missing : []
+        };
+    }
 }

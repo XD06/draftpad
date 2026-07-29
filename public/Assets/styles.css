@@ -2666,6 +2666,211 @@ body.reading-mode-active .toc-container * {
     opacity: 0.45;
 }
 
+.settings-assets-section {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 12px;
+    border: 1px solid color-mix(in srgb, var(--border-color) 86%, var(--primary-color) 14%);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--modal-bg) 82%, transparent);
+}
+
+.settings-assets-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-height: 300px;
+    overflow: auto;
+}
+
+.settings-asset-item,
+.settings-assets-empty {
+    min-width: 0;
+    padding: 10px;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--modal-bg) 88%, transparent);
+}
+
+.settings-asset-item {
+    display: grid;
+    grid-template-columns: auto 44px minmax(0, 1fr) auto;
+    gap: 10px;
+    align-items: center;
+}
+
+.settings-assets-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 10px;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--modal-bg) 88%, transparent);
+}
+
+.settings-assets-toolbar[hidden] {
+    display: none;
+}
+
+.settings-assets-selectall {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--text-color);
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+    user-select: none;
+}
+
+.settings-assets-selected-count {
+    margin-right: auto;
+    color: var(--muted-text);
+    font-size: 12px;
+}
+
+.settings-assets-toolbar button.danger {
+    padding: 7px 12px;
+    border: 1px solid var(--border-color);
+    border-radius: 7px;
+    background: var(--button-bg);
+    color: var(--danger-color);
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.settings-assets-toolbar button.danger:disabled {
+    cursor: not-allowed;
+    opacity: 0.45;
+}
+
+.settings-asset-select-wrap {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+}
+
+/* The settings modal restyles every checkbox into a toggle switch
+   (`#settings-modal input[type="checkbox"]`). For the asset multi-select we want
+   a plain small checkbox with the theme accent fill and a crisp WHITE check.
+   `accent-color` lets the browser auto-pick a dark check on the light gold
+   accent, so we draw the box and paint the check as an inline SVG background.
+   The [type]/id qualifiers keep specificity above the global switch rule. */
+#settings-modal input.settings-asset-select[type="checkbox"],
+#settings-modal input#settings-assets-select-all[type="checkbox"] {
+    appearance: none;
+    -webkit-appearance: none;
+    position: relative;
+    width: 16px;
+    height: 16px;
+    margin: 0;
+    padding: 0;
+    flex: none;
+    border: 1.5px solid color-mix(in srgb, var(--primary-color) 50%, var(--border-color));
+    border-radius: 4px;
+    background-color: var(--textarea-bg);
+    background-repeat: no-repeat;
+    background-position: center;
+    background-size: 12px 12px;
+    cursor: pointer;
+    transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+/* Remove the inherited toggle knob (global `:after`). */
+#settings-modal input.settings-asset-select[type="checkbox"]::after,
+#settings-modal input#settings-assets-select-all[type="checkbox"]::after {
+    content: none;
+}
+
+#settings-modal input.settings-asset-select[type="checkbox"]:focus-visible,
+#settings-modal input#settings-assets-select-all[type="checkbox"]:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary-color) 35%, transparent);
+}
+
+/* Checked: theme accent fill + white check. */
+#settings-modal input.settings-asset-select[type="checkbox"]:checked,
+#settings-modal input#settings-assets-select-all[type="checkbox"]:checked {
+    background-color: var(--primary-color);
+    border-color: var(--primary-color);
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='none' stroke='%23ffffff' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round' d='M3.5 8.5 6.5 11.5 12.5 4.5'/%3E%3C/svg%3E");
+    transform: none;
+}
+
+/* Select-all partial state: theme accent fill + white dash. */
+#settings-modal input#settings-assets-select-all[type="checkbox"]:indeterminate {
+    background-color: var(--primary-color);
+    border-color: var(--primary-color);
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath stroke='%23ffffff' stroke-width='2.2' stroke-linecap='round' d='M4 8 12 8'/%3E%3C/svg%3E");
+    transform: none;
+}
+
+.settings-asset-thumb {
+    width: 44px;
+    height: 44px;
+    border-radius: 6px;
+    object-fit: cover;
+    background: color-mix(in srgb, var(--modal-bg) 70%, transparent);
+    border: 1px solid var(--border-color);
+}
+
+.settings-asset-thumb-file {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 20px;
+}
+
+.settings-asset-info {
+    min-width: 0;
+}
+
+.settings-asset-name {
+    overflow: hidden;
+    color: var(--text-color);
+    font-size: 13px;
+    font-weight: 800;
+    line-height: 1.35;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.settings-asset-meta {
+    overflow: hidden;
+    color: var(--muted-text);
+    font-size: 12px;
+    line-height: 1.4;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.settings-asset-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 6px;
+}
+
+.settings-asset-actions .settings-asset-download,
+.settings-asset-actions button {
+    padding: 7px 10px;
+    border: 1px solid var(--border-color);
+    border-radius: 7px;
+    background: var(--button-bg);
+    color: var(--text-color);
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 700;
+    text-decoration: none;
+}
+
+.settings-asset-actions button.danger {
+    color: var(--danger-color);
+}
+
 .settings-cloud-status {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));

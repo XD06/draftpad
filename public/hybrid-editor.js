@@ -92,6 +92,15 @@ export class HybridMarkdownEditor {
         this.articleDecorationTimers = new Set();
         this.markDecorationTimers = new Set();
         this.codeDecorationFrame = 0;
+        // Phase C caret-stability (feature flagged, default OFF — see
+        // isCaretStabilityEnabled).  When enabled, typing never rebuilds the
+        // block that currently holds the caret; decoration for that block is
+        // deferred until the caret leaves it.
+        this.caretStabilityOverride = null;
+        this.hasDeferredActiveBlockDecoration = false;
+        this.lastActiveCaretBlock = null;
+        this.deferredDecorationFrame = 0;
+        this.deferredDecorationBound = false;
 
         this.container.innerHTML = '';
         this.container.classList.add('typora-editor-shell');
@@ -934,6 +943,10 @@ export class HybridMarkdownEditor {
     }
 
     handleWysiwygInput() {
+        if (this.isCaretStabilityEnabled()) {
+            this.handleWysiwygInputStable();
+            return;
+        }
         this.scheduleDecorateRenderedMarks();
         const generation = this.decorationGeneration;
         requestAnimationFrame(() => {
@@ -942,6 +955,22 @@ export class HybridMarkdownEditor {
         });
         clearTimeout(this.typingDecorateTimer);
         this.typingDecorateTimer = this.scheduleMarkDecorationRetry(80);
+        this.emitChange();
+    }
+
+    // Phase C stable typing path: decorate once on the next frame while
+    // skipping the block that holds the caret, and rely on the marker
+    // MutationObserver (bindMarkerProtection) instead of the 80/240ms
+    // guess-based retries that used to move the caret mid-typing.
+    handleWysiwygInputStable() {
+        const generation = this.decorationGeneration;
+        this.scheduleDecorateRenderedMarks(this.getPerformanceToken(), generation, true);
+        requestAnimationFrame(() => {
+            if (generation !== this.decorationGeneration) return;
+            this.decorateArticleImages({ decorateCode: false }, this.getPerformanceToken());
+        });
+        clearTimeout(this.typingDecorateTimer);
+        this.typingDecorateTimer = null;
         this.emitChange();
     }
 
@@ -1055,21 +1084,102 @@ export class HybridMarkdownEditor {
         this.syncSourceTogglePlacement();
     }
 
-    scheduleDecorateRenderedMarks(performanceToken = this.getPerformanceToken(), generation = this.decorationGeneration) {
+    /**
+     * Phase C caret-stability feature flag.  Default OFF so the verified
+     * baseline typing/decoration path is preserved.  Can be toggled at
+     * runtime (no rebuild) for real-machine regression, so it can be turned
+     * off instantly if a regression appears:
+     *   - HybridMarkdownEditor instance override (caretStabilityOverride)
+     *   - window.__DUMBPAD_CARET_STABILITY (boolean)
+     *   - localStorage 'dumbpad:caret-stability' = 'on' | 'off'
+     */
+    isCaretStabilityEnabled() {
+        if (typeof this.caretStabilityOverride === 'boolean') return this.caretStabilityOverride;
+        try {
+            if (typeof window !== 'undefined') {
+                if (typeof window.__DUMBPAD_CARET_STABILITY === 'boolean') return window.__DUMBPAD_CARET_STABILITY;
+                const stored = window.localStorage?.getItem?.('dumbpad:caret-stability');
+                if (stored === 'on' || stored === 'true') return true;
+                if (stored === 'off' || stored === 'false') return false;
+            }
+        } catch (_e) {}
+        return false;
+    }
+
+    /**
+     * Return the top-level block element (direct child of root) that holds
+     * the collapsed caret, or null when the caret is absent/ranged/outside.
+     * Used to avoid rebuilding the block that is actively being edited.
+     */
+    getActiveCaretBlock(root) {
+        if (!root) return null;
+        const selection = window.getSelection();
+        if (!selection || selection.rangeCount === 0 || !selection.isCollapsed) return null;
+        const range = selection.getRangeAt(0);
+        if (!root.contains(range.startContainer)) return null;
+        let node = range.startContainer;
+        if (node.nodeType === Node.TEXT_NODE) node = node.parentElement;
+        if (!node || node === root) return null;
+        let block = node;
+        while (block && block.parentElement && block.parentElement !== root) {
+            block = block.parentElement;
+        }
+        return (block && block.parentElement === root) ? block : null;
+    }
+
+    /**
+     * When decoration was deferred because its markers live in the block the
+     * user is editing, re-run decoration once the caret leaves that block.
+     * Bound lazily and only acts while the flag is on and work is pending.
+     */
+    scheduleDeferredActiveBlockDecoration() {
+        this.hasDeferredActiveBlockDecoration = true;
+        if (this.deferredDecorationBound) return;
+        this.deferredDecorationBound = true;
+        this.deferredActiveBlockHandler = () => {
+            if (!this.hasDeferredActiveBlockDecoration || !this.isCaretStabilityEnabled()) return;
+            if (this.isComposing || this.sourceMode || this.isDecorating) return;
+            const root = this.container.querySelector('.vditor-wysiwyg .vditor-reset');
+            if (!root) return;
+            const activeBlock = this.getActiveCaretBlock(root);
+            // Only act once the caret has actually moved to a different block.
+            if (activeBlock && activeBlock === this.lastActiveCaretBlock) return;
+            cancelAnimationFrame(this.deferredDecorationFrame);
+            this.deferredDecorationFrame = requestAnimationFrame(() => {
+                this.deferredDecorationFrame = 0;
+                if (!this.hasDeferredActiveBlockDecoration || this.isComposing || this.sourceMode) return;
+                this.hasDeferredActiveBlockDecoration = false;
+                this.decorateRenderedMarks(true, this.getPerformanceToken(), true);
+            });
+        };
+        document.addEventListener('selectionchange', this.deferredActiveBlockHandler);
+    }
+
+    scheduleDecorateRenderedMarks(performanceToken = this.getPerformanceToken(), generation = this.decorationGeneration, skipActiveBlock = false) {
         cancelAnimationFrame(this.decorateFrame);
         this.decorateFrame = requestAnimationFrame(() => {
             this.decorateFrame = 0;
             if (generation !== this.decorationGeneration) return;
-            this.decorateRenderedMarks(true, performanceToken);
+            this.decorateRenderedMarks(true, performanceToken, skipActiveBlock);
         });
     }
 
-    decorateRenderedMarks(preserveCaret = true, performanceToken = this.getPerformanceToken()) {
+    decorateRenderedMarks(preserveCaret = true, performanceToken = this.getPerformanceToken(), skipActiveBlock = false) {
         this.performanceMonitor?.count?.('decorate_marks', 1, performanceToken);
         const root = this.container.querySelector('.vditor-wysiwyg .vditor-reset');
         if (!root || this.sourceMode || this.isComposing) return;
 
         this.isDecorating = true;
+
+        // --- Phase C: never rebuild the block the caret is editing ---
+        // When caret-stability is enabled and this pass was triggered by
+        // typing (skipActiveBlock), remember the active block so marker
+        // nodes inside it are left as raw source until the caret leaves.
+        const deferActiveBlock = skipActiveBlock && this.isCaretStabilityEnabled();
+        const activeBlock = deferActiveBlock ? this.getActiveCaretBlock(root) : null;
+        this.lastActiveCaretBlock = activeBlock;
+        const isInActiveBlock = (candidate) => Boolean(activeBlock && candidate && activeBlock.contains(candidate));
+        let caretInSkippedBlock = false;
 
         // --- Phase 1: Scan for raw marker source in text nodes ---
         // This is the cheapest check and determines whether we need
@@ -1081,6 +1191,13 @@ export class HybridMarkdownEditor {
             if (this.isMarkProtectedNode(node)) continue;
             const text = node.nodeValue || '';
             if (text.includes('==') || text.includes('[[time:') || text.includes('<mark') || text.includes('<span data-draw') || text.includes('<span data-note')) {
+                if (isInActiveBlock(node)) {
+                    // Defer decoration of the block being edited; re-run once
+                    // the caret leaves so the active node is never replaced.
+                    caretInSkippedBlock = true;
+                    this.scheduleDeferredActiveBlockDecoration();
+                    continue;
+                }
                 targets.push(node);
             }
         }
@@ -1113,6 +1230,7 @@ export class HybridMarkdownEditor {
         // --- Phase 4: Process code-wrapped marks if needed ---
         if (hasCodeWrappedMarks || targets.length > 0) {
             root.querySelectorAll('p, li').forEach(parent => {
+                if (isInActiveBlock(parent)) return;
                 if (!this.isMarkProtectedNode(parent)) this.decorateCodeTagMarks(parent);
             });
         }
@@ -1125,6 +1243,11 @@ export class HybridMarkdownEditor {
                 if (this.isMarkProtectedNode(node)) continue;
                 const text = node.nodeValue || '';
                 if (text.includes('==') || text.includes('[[time:') || text.includes('<mark') || text.includes('<span data-draw') || text.includes('<span data-note')) {
+                    if (isInActiveBlock(node)) {
+                        caretInSkippedBlock = true;
+                        this.scheduleDeferredActiveBlockDecoration();
+                        continue;
+                    }
                     targets.push(node);
                 }
             }
@@ -1154,9 +1277,9 @@ export class HybridMarkdownEditor {
         // text node — if the caret is elsewhere, replacing target nodes
         // doesn't affect it.
         const CARET_MARKER = '\uFEFF';
-        const caretSnapshot = preserveCaret ? this.saveCaretSnapshot(root) : null;
+        const caretSnapshot = (preserveCaret && !caretInSkippedBlock) ? this.saveCaretSnapshot(root) : null;
         let caretMarked = false;
-        if (preserveCaret) {
+        if (preserveCaret && !caretInSkippedBlock) {
             const selection = window.getSelection();
             if (selection && selection.rangeCount > 0 && selection.isCollapsed) {
                 const range = selection.getRangeAt(0);
@@ -1270,7 +1393,7 @@ export class HybridMarkdownEditor {
                     break;
                 }
             }
-            if (needsFix) this.scheduleDecorateRenderedMarks();
+            if (needsFix) this.scheduleDecorateRenderedMarks(this.getPerformanceToken(), this.decorationGeneration, this.isCaretStabilityEnabled());
         });
 
         // Attempt to connect immediately; if Vditor's DOM isn't ready
@@ -3639,8 +3762,12 @@ export class HybridMarkdownEditor {
         const upload = isImage ? this.assetApi.uploadImage(file, uploadOptions) : this.assetApi.uploadFile(file, uploadOptions);
         const task = upload
             .then(asset => {
-                this.articleUploadStates.delete(token);
+                // Replace the placeholder while the token is still "active":
+                // getValue()/stripInactiveArticleUploadTokens keys off the live
+                // upload state, so deleting first would strip the token before
+                // the replacement can find it, freezing the card at "服务器处理中…".
                 this.replaceArticleUploadPlaceholder(token, isImage ? this.buildArticleImageMarkdown(asset) : buildArticleFileMarkdown(asset));
+                this.articleUploadStates.delete(token);
             })
             .catch(error => {
                 console.error(`Failed to upload article ${isImage ? 'image' : 'file'}:`, error);
@@ -3698,8 +3825,11 @@ export class HybridMarkdownEditor {
 
     removeArticleUploadPlaceholder(token) {
         if (!token) return false;
-        this.articleUploadStates.delete(token);
+        // Replace before deleting: the value pipeline strips tokens without a
+        // live upload state, so removing the state first would stop
+        // replaceArticleUploadPlaceholder from finding the token to remove.
         this.replaceArticleUploadPlaceholder(token, '');
+        this.articleUploadStates.delete(token);
         return true;
     }
 

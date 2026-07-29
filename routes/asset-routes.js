@@ -38,6 +38,7 @@ function responseAsset(metadata) {
         type: metadata.type,
         size: metadata.size,
         kind: metadata.kind || 'image',
+        createdAt: Number(metadata.createdAt) || null,
         previewUrl: metadata.previewType ? `/api/assets/${id}/preview` : null,
         originalUrl: `/api/assets/${id}/original`,
         downloadUrl: `/api/assets/${id}/download`
@@ -138,6 +139,46 @@ function registerAssetRoutes(app, { storage, originValidationMiddleware, maxFile
             }
         }
     );
+
+    app.get('/api/assets', async (_req, res) => {
+        try {
+            const list = await assets.listAssets();
+            res.json({ assets: list.map(responseAsset) });
+        } catch (error) {
+            console.error('Failed to list assets:', error);
+            res.status(500).json({ error: 'Unable to list assets' });
+        }
+    });
+
+    app.post('/api/assets/bulk-delete', originValidationMiddleware, express.json({ limit: '256kb' }), async (req, res) => {
+        const rawIds = Array.isArray(req.body?.ids) ? req.body.ids : null;
+        if (!rawIds || rawIds.length === 0) {
+            return res.status(400).json({ error: 'An ids array is required' });
+        }
+        if (rawIds.length > 1000) {
+            return res.status(413).json({ error: 'Too many assets requested for deletion' });
+        }
+        try {
+            const result = await assets.deleteAssets(rawIds);
+            res.json({ success: true, deleted: result.deleted, missing: result.missing });
+        } catch (error) {
+            console.error('Failed to bulk delete assets:', error);
+            res.status(500).json({ error: 'Unable to delete assets' });
+        }
+    });
+
+    app.delete('/api/assets/:id', originValidationMiddleware, async (req, res) => {
+        const id = safeAssetId(req.params.id);
+        if (!id) return res.status(404).json({ error: 'Asset not found' });
+        try {
+            const deleted = await assets.deleteAsset(id);
+            if (!deleted) return res.status(404).json({ error: 'Asset not found' });
+            res.json({ success: true, id });
+        } catch (error) {
+            console.error('Failed to delete asset:', error);
+            res.status(500).json({ error: 'Unable to delete asset' });
+        }
+    });
 
     app.get('/api/assets/:id/:variant', async (req, res) => {
         const id = safeAssetId(req.params.id);

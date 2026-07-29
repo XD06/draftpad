@@ -380,6 +380,32 @@
                             <button id="settings-trash-empty" type="button" class="danger" disabled>清空垃圾桶</button>
                         </div>
                     </div>
+                    <div id="settings-assets-section" class="settings-assets-section">
+                        <div class="settings-panel-header">
+                            <div>
+                                <div class="settings-row-title">附件管理</div>
+                                <div class="settings-row-subtitle">查看、下载或删除已上传的图片与文件附件，便于确认上传是否成功。</div>
+                            </div>
+                            <button id="settings-assets-refresh" type="button" class="settings-icon-button" aria-label="刷新附件列表">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+                                    stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <path d="M20 11a8.1 8.1 0 0 0 -15.5 -2m-.5 -4v4h4" />
+                                    <path d="M4 13a8.1 8.1 0 0 0 15.5 2m.5 4v-4h-4" />
+                                </svg>
+                            </button>
+                        </div>
+                        <div id="settings-assets-toolbar" class="settings-assets-toolbar" hidden>
+                            <label class="settings-assets-selectall">
+                                <input type="checkbox" id="settings-assets-select-all" />
+                                <span>全选</span>
+                            </label>
+                            <span id="settings-assets-selected-count" class="settings-assets-selected-count">已选 0 项</span>
+                            <button id="settings-assets-delete-selected" type="button" class="danger" disabled>删除选中</button>
+                        </div>
+                        <div id="settings-assets-list" class="settings-assets-list">
+                            <div class="settings-assets-empty">正在读取附件...</div>
+                        </div>
+                    </div>
                     <div id="settings-data-cloud-section" class="settings-data-cloud-section">
                         <div class="settings-panel-header">
                             <div>

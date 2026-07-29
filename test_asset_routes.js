@@ -90,6 +90,84 @@ async function run() {
             body: Buffer.from('<script>alert(1)</script>')
         });
         assert.strictEqual(rejectedFile.status, 415, 'HTML uploads must be rejected');
+
+        const list = await fetch(`${baseUrl}/api/assets`);
+        assert.strictEqual(list.status, 200, 'GET /api/assets should list stored assets');
+        const listBody = await list.json();
+        assert(Array.isArray(listBody.assets), 'asset listing should return an assets array');
+        assert(listBody.assets.some(item => item.id === asset.id), 'the uploaded image should appear in the listing');
+        assert(listBody.assets.some(item => item.id === fileAsset.id), 'the uploaded file should appear in the listing');
+        const listedImage = listBody.assets.find(item => item.id === asset.id);
+        assert.strictEqual(listedImage.previewUrl, `/api/assets/${asset.id}/preview`, 'listed images should expose a preview URL');
+        assert(Number.isFinite(listedImage.createdAt) && listedImage.createdAt > 0, 'listed assets should expose a numeric createdAt for the panel timestamp');
+
+        const deleteMissing = await fetch(`${baseUrl}/api/assets/deadbeef`, { method: 'DELETE' });
+        assert.strictEqual(deleteMissing.status, 404, 'deleting an unsafe id should 404');
+
+        const deleted = await fetch(`${baseUrl}/api/assets/${fileAsset.id}`, { method: 'DELETE' });
+        assert.strictEqual(deleted.status, 200, 'deleting an existing asset should succeed');
+        const afterDelete = await fetch(`${baseUrl}${fileAsset.originalUrl}`);
+        assert.strictEqual(afterDelete.status, 404, 'a deleted asset original should no longer be served');
+        const listAfter = await fetch(`${baseUrl}/api/assets`);
+        const listAfterBody = await listAfter.json();
+        assert(!listAfterBody.assets.some(item => item.id === fileAsset.id), 'a deleted asset must disappear from the listing');
+        const deleteAgain = await fetch(`${baseUrl}/api/assets/${fileAsset.id}`, { method: 'DELETE' });
+        assert.strictEqual(deleteAgain.status, 404, 'deleting an already-removed asset should 404');
+
+        // Bulk delete: upload two fresh files and remove them (plus a duplicate and a
+        // non-existent id) in a single request to prove partial-result reporting.
+        const bulkOne = await fetch(`${baseUrl}/api/assets/files`, {
+            method: 'POST',
+            headers: {
+                'content-type': 'application/octet-stream',
+                'x-asset-name': encodeURIComponent('批量一.pdf'),
+                'x-asset-type': 'application/pdf'
+            },
+            body: Buffer.from('%PDF-1.4 bulk one')
+        });
+        const bulkTwo = await fetch(`${baseUrl}/api/assets/files`, {
+            method: 'POST',
+            headers: {
+                'content-type': 'application/octet-stream',
+                'x-asset-name': encodeURIComponent('批量二.pdf'),
+                'x-asset-type': 'application/pdf'
+            },
+            body: Buffer.from('%PDF-1.4 bulk two')
+        });
+        const bulkAssetOne = await bulkOne.json();
+        const bulkAssetTwo = await bulkTwo.json();
+
+        const emptyBulk = await fetch(`${baseUrl}/api/assets/bulk-delete`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ ids: [] })
+        });
+        assert.strictEqual(emptyBulk.status, 400, 'bulk delete without ids should be rejected');
+
+        const bogusId = 'a'.repeat(24);
+        const bulkResponse = await fetch(`${baseUrl}/api/assets/bulk-delete`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ ids: [bulkAssetOne.id, bulkAssetTwo.id, bulkAssetOne.id, bogusId] })
+        });
+        assert.strictEqual(bulkResponse.status, 200, 'bulk delete should succeed');
+        const bulkBody = await bulkResponse.json();
+        assert.deepStrictEqual(
+            [...bulkBody.deleted].sort(),
+            [bulkAssetOne.id, bulkAssetTwo.id].sort(),
+            'bulk delete should report each existing id exactly once even when duplicated'
+        );
+        assert.deepStrictEqual(bulkBody.missing, [bogusId], 'bulk delete should report ids it could not remove');
+
+        const afterBulkOne = await fetch(`${baseUrl}${bulkAssetOne.originalUrl}`);
+        assert.strictEqual(afterBulkOne.status, 404, 'a bulk-deleted asset original should no longer be served');
+        const listAfterBulk = await fetch(`${baseUrl}/api/assets`);
+        const listAfterBulkBody = await listAfterBulk.json();
+        assert(
+            !listAfterBulkBody.assets.some(item => item.id === bulkAssetOne.id || item.id === bulkAssetTwo.id),
+            'bulk-deleted assets must disappear from the listing'
+        );
+
         console.log('Asset route checks passed');
     } finally {
         await new Promise(resolve => server.close(resolve));

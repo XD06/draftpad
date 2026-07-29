@@ -38,6 +38,7 @@
     "test:thought-motion": "node test_thought_motion_policy.js",
     "test:time-command": "node test_time_command.js",
     "test:hybrid-editor-time-command": "node test_hybrid_editor_time_command.js",
+    "test:hybrid-editor-caret-stability": "node test_hybrid_editor_caret_stability.js",
     "test:scroll-helper": "node test_scroll_helper_regression.js",
     "test:search-indexing": "node test_search_indexing.js",
     "test:thought-modules": "npm run test:thought-ai-status && npm run test:thought-attachments && npm run test:thought-card-renderer && npm run test:thought-editor && npm run test:thought-quick-add && npm run test:thought-relations-panel && npm run test:thought-relations-state && npm run test:thought-swipe && npm run test:thought-motion && npm run test:thought-tags && npm run test:thought-text-formatting && npm run test:time-command && npm run test:hybrid-editor-time-command",

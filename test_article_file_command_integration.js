@@ -200,4 +200,39 @@ assert.strictEqual(moveArticleFileToTarget.call({
 }, { file: {} }, { block: fileTargetBlock, placement: 'before' }), true, 'attachment movement should commit the exact source-block reorder without serializing the decorated DOM');
 assert.strictEqual(fileMoveState.committed, 'after-with-exact-source', 'the exact source-block attachment move value should be committed');
 
+// Regression (#2 upload freeze): a resolved upload must replace the placeholder
+// BEFORE deleting its live state. getValue()/stripInactiveArticleUploadTokens
+// strips tokens whose state is gone, so deleting first makes the replacement's
+// indexOf(token) miss and the card freezes forever at "服务器处理中…".
+const uploadThenBlock = hybrid.match(/\.then\(asset => \{([\s\S]*?)\}\)\s*\r?\n\s*\.catch\(error =>/);
+assert(uploadThenBlock, 'the article upload success handler should remain a testable .then block');
+const uploadThenBody = uploadThenBlock[1];
+const replaceOrderIdx = uploadThenBody.indexOf('this.replaceArticleUploadPlaceholder(token');
+const deleteOrderIdx = uploadThenBody.indexOf('this.articleUploadStates.delete(token)');
+assert(
+    replaceOrderIdx >= 0 && deleteOrderIdx >= 0 && replaceOrderIdx < deleteOrderIdx,
+    'a resolved upload must call replaceArticleUploadPlaceholder before articleUploadStates.delete, or the token is stripped and the card freezes at "服务器处理中…"'
+);
+
+// Behavioral proof of the same ordering invariant on the ✕ remove path: the
+// replacement must observe the token as still-live, then the state is deleted.
+const removeArticleUploadPlaceholder = new Function(
+    `return function removeArticleUploadPlaceholder(token) {${getMethodBody('removeArticleUploadPlaceholder', 'decorateArticleUploadPlaceholders')}}`
+)();
+const removeStates = new Map();
+const removeToken = '[[资源上传中 123-abc]]';
+removeStates.set(removeToken, { token: removeToken, phase: 'uploading' });
+const removeObservation = { hadStateAtReplace: null, replacedWith: undefined };
+const removeResult = removeArticleUploadPlaceholder.call({
+    articleUploadStates: removeStates,
+    replaceArticleUploadPlaceholder(token, replacement) {
+        removeObservation.hadStateAtReplace = this.articleUploadStates.has(token);
+        removeObservation.replacedWith = replacement;
+    }
+}, removeToken);
+assert.strictEqual(removeResult, true, 'removing a known upload placeholder should report success');
+assert.strictEqual(removeObservation.hadStateAtReplace, true, 'removeArticleUploadPlaceholder must replace while the token state is still live so getValue() does not strip the token first');
+assert.strictEqual(removeObservation.replacedWith, '', 'removing an upload placeholder should replace the token with empty content');
+assert.strictEqual(removeStates.has(removeToken), false, 'removeArticleUploadPlaceholder should delete the live state only after replacing');
+
 console.log('Article file command integration checks passed');
