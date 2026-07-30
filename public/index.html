@@ -9,8 +9,17 @@
     <link rel="apple-touch-icon"  href="Assets/dumbpad-192.png">
     <link rel="stylesheet" href="Assets/styles.css">
     <link rel="stylesheet" href="Assets/preview-styles.css">
-    <link rel="stylesheet" href="Assets/thoughts.css">
+    <!-- Thoughts view styles aren't needed for the first editor paint; load them
+         without blocking render (the thoughts view and its JS are lazy-loaded). -->
+    <link rel="stylesheet" href="Assets/thoughts.css" media="print" onload="this.media='all'">
+    <noscript><link rel="stylesheet" href="Assets/thoughts.css"></noscript>
     <link rel="stylesheet" href="Assets/ios-theme.css">
+    <!-- Warm the editor engine in parallel with the CSS and app.js so the rich
+         editor is ready sooner; the app types into an instant boot editor first
+         and hands off seamlessly once this finishes loading. -->
+    <link rel="modulepreload" href="hybrid-editor.js">
+    <link rel="preload" href="/vendor/vditor/index.min.js" as="script">
+    <link rel="preload" href="/vendor/vditor/index.css" as="style">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="DumbPad">
@@ -178,6 +187,15 @@
                 </div>
                 <div id="hybrid-editor" class="hybrid-editor" role="textbox" aria-label="Markdown editor"
                     style="display:none"></div>
+                <!-- Instant boot editor: a plain textarea shown while the rich
+                     editor loads, so the user can read and type immediately.
+                     Defensive inline styles keep it borderless/seamless even if a
+                     stale service-worker cache serves an older styles.css that
+                     lacks the .boot-editor rule (otherwise the raw textarea would
+                     flash as an ugly bordered box). -->
+                <textarea id="boot-editor" class="boot-editor" hidden aria-label="快速输入"
+                    style="border:0;outline:none;background:transparent;resize:none;box-sizing:border-box;"
+                    placeholder="开始输入…" autocomplete="off" autocapitalize="sentences" spellcheck="false"></textarea>
                 <!-- Dynamic Table of Contents -->
                 <nav id="toc-container" class="toc-container">
                     <div class="toc-title">On This Page</div>

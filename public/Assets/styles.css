@@ -1,6 +1,9 @@
 @font-face {
     font-family: "DumbPad Reading";
-    src: url("/font/changerwencai.woff2") format("woff2");
+    /* ?v=2 busts the 30-day immutable HTTP cache and the service-worker cache-first
+       store after the font was re-compressed (the old build was a corrupt CFF that
+       Chrome refused to decode). Bump this token whenever the font file changes. */
+    src: url("/font/changerwencai.woff2?v=2") format("woff2");
     font-weight: 400;
     font-style: normal;
     font-display: swap;
@@ -421,6 +424,11 @@
     --input-element-transition: background-color 0.2s ease;
     --ease-out-expo: cubic-bezier(0.19, 1, 0.22, 1);
     --font-reading: "DumbPad Reading", "Source Han Sans SC", "Noto Serif SC", "Microsoft YaHei", sans-serif;
+    /* System-only reading stack (no custom webfont) so the first-paint boot editor
+       can render instantly without pulling the 1.9MB reading webfont into the
+       first-paint critical window. The custom font loads later, triggered by the
+       real editor (.vditor-reset), and swaps in seamlessly. */
+    --font-reading-system: "Source Han Sans SC", "Noto Serif SC", "Microsoft YaHei", sans-serif;
     --font-code: "DumbPad Code", "Fira Code", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
 }
 
@@ -825,6 +833,7 @@ main {
 }
 
 .editor-main {
+    position: relative;
     padding: 0;
     flex: 1;
     background-color: transparent;
@@ -1664,6 +1673,51 @@ main {
     color: var(--text-color);
     overflow: hidden;
     border-radius: 8px;
+}
+
+/* Instant boot editor: a plain textarea shown over the editor slot while the
+   rich editor engine downloads and initializes, so the user can read and type
+   immediately. It is removed the moment the rich editor is ready and takes over
+   (see the boot handoff in ensureEditor). Padding mirrors .hybrid-editor-scroller
+   so the swap does not shift the text. */
+.boot-editor {
+    position: absolute;
+    inset: 0;
+    z-index: 3;
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    border: 0;
+    outline: none;
+    resize: none;
+    box-sizing: border-box;
+    background: var(--textarea-bg);
+    color: var(--text-color);
+    border-radius: 8px;
+    /* System stack only: keep the 1.9MB reading webfont out of first paint.
+       The real editor triggers the webfont download after it hydrates. */
+    font-family: var(--font-reading-system);
+    font-size: 16px;
+    line-height: 1.7;
+    padding: 30px 40px 100px;
+    overflow: auto;
+    -webkit-appearance: none;
+    appearance: none;
+}
+
+.boot-editor[hidden] {
+    display: none;
+}
+
+.boot-editor::placeholder {
+    color: var(--muted-text);
+    opacity: 0.7;
+}
+
+@media (max-width: 720px) {
+    .boot-editor {
+        padding: 16px 14px 48px;
+    }
 }
 
 .hybrid-editor-scroller {

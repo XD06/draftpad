@@ -80,21 +80,84 @@ document.addEventListener('DOMContentLoaded', async () => {
     let pendingEditorValue = '';
     let runtimeConfig = {};
 
+    // Instant boot editor — a plain <textarea> the user can type into while the
+    // heavy rich editor engine downloads and initializes. The `editor` proxy
+    // transparently reads/writes it when the rich editor isn't ready yet, so the
+    // rest of the app keeps using `editor.value` / `editor.focus()` unchanged.
+    const bootEditor = document.getElementById('boot-editor');
+    let bootEditorActive = false;
+    let bootEditorWired = false;
+
     const editor = {
-        get value() { return editorInstance ? editorInstance.getValue() : pendingEditorValue; },
+        get value() {
+            if (editorInstance) return editorInstance.getValue();
+            if (bootEditorActive && bootEditor) return bootEditor.value;
+            return pendingEditorValue;
+        },
         set value(val) {
             pendingEditorValue = val || '';
             if (editorInstance) editorInstance.setValue(pendingEditorValue, false);
+            else if (bootEditorActive && bootEditor) bootEditor.value = pendingEditorValue;
         },
-        focus: () => editorInstance?.focus(),
-        get selectionStart() { return editorInstance?.selectionStart || 0; },
-        get selectionEnd() { return editorInstance?.selectionEnd || 0; },
-        setSelectionRange: (start, end) => editorInstance?.setSelectionRange(start, end),
+        focus: () => (editorInstance ? editorInstance.focus() : (bootEditorActive ? bootEditor?.focus() : undefined)),
+        get selectionStart() {
+            if (editorInstance) return editorInstance.selectionStart || 0;
+            return bootEditorActive && bootEditor ? bootEditor.selectionStart : 0;
+        },
+        get selectionEnd() {
+            if (editorInstance) return editorInstance.selectionEnd || 0;
+            return bootEditorActive && bootEditor ? bootEditor.selectionEnd : 0;
+        },
+        setSelectionRange: (start, end) => (editorInstance ? editorInstance.setSelectionRange(start, end) : (bootEditorActive ? bootEditor?.setSelectionRange(start, end) : undefined)),
         addEventListener: (...args) => editorInstance?.addEventListener(...args),
         removeEventListener: (...args) => editorInstance?.removeEventListener(...args),
         setReadingMode: (enabled) => editorInstance?.setReadingMode(enabled),
         get isReadingMode() { return editorInstance?.isReadingMode || false; }
     };
+
+    function wireBootEditor() {
+        if (bootEditorWired || !bootEditor) return;
+        bootEditorWired = true;
+        // Mirror the rich editor's input handler so typing is saved identically.
+        bootEditor.addEventListener('input', () => {
+            const value = bootEditor.value;
+            pendingEditorValue = value || '';
+            if (isApplyingRemoteUpdate) return;
+            hasUnsavedChanges = true;
+            editorRevision += 1;
+            debouncedSave(value);
+            debouncedUpdateToC();
+        });
+    }
+
+    function activateBootEditor() {
+        // Only bridge plain editing: skip when the rich editor already exists, or
+        // when reading mode needs rendered Markdown (read localStorage directly so
+        // this stays correct even before the reading-mode toggle is initialized).
+        if (!bootEditor || editorInstance) return false;
+        if (isReadingMode || localStorage.getItem('dumbpad_reading_mode') === 'true') return false;
+        wireBootEditor();
+        bootEditorActive = true;
+        if (bootEditor.value !== (pendingEditorValue || '')) bootEditor.value = pendingEditorValue || '';
+        bootEditor.hidden = false;
+        return true;
+    }
+
+    function deactivateBootEditor() {
+        bootEditorActive = false;
+        if (bootEditor) bootEditor.hidden = true;
+    }
+
+    // Reveal the editing area, choosing the instant boot editor while the rich
+    // editor is still loading and the rich editor once it is ready.
+    function showEditingSurface() {
+        const emptyState = document.getElementById('empty-state');
+        const hybridEditor = document.getElementById('hybrid-editor');
+        if (emptyState) emptyState.style.display = 'none';
+        if (hybridEditor) hybridEditor.style.display = 'block';
+        if (editorInstance) deactivateBootEditor();
+        else activateBootEditor();
+    }
 
     const themeToggle = document.getElementById('theme-toggle');
     const copyAllBtn = document.getElementById('copy-all');
@@ -1139,10 +1202,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
         setStartupSyncStatus('cached', noteIsDirty ? '本地未同步' : '本地快照');
 
-        const emptyState = document.getElementById('empty-state');
-        const hybridEditor = document.getElementById('hybrid-editor');
-        if (emptyState) emptyState.style.display = 'none';
-        if (hybridEditor) hybridEditor.style.display = 'block';
+        showEditingSurface();
 
         const currentNotepad = currentNotepads.find(note => note.id === notepadId);
         if (currentNotepad) trackRecentFile(currentNotepad);
@@ -1311,12 +1371,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     const dirtyConflictNotepadIds = new Set();
     async function loadNotes(notepadId, { deferRemote = false } = {}) {
         if (!findNotepadByIdOrName(currentNotepads, notepadId)) return;
-        await ensureEditor();
         const cachedBeforeFetch = getCachedNote(notepadId);
         const renderedFromCache = Boolean(cachedBeforeFetch);
         if (renderedFromCache) {
+            // Show cached content instantly (through the boot editor when the rich
+            // editor isn't ready yet) instead of blocking on the editor engine.
             renderCachedNotepad(notepadId, cachedBeforeFetch.content || '', { updateLocation: false });
         }
+        await ensureEditor();
         if (!navigator.onLine) {
             setStartupSyncStatus('error', '服务器不可用，本地可读');
             return;
@@ -1431,7 +1493,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     function loadStylesheetOnce(id, href) {
-        const existing = document.getElementById(id) || document.querySelector(`link[href="${href}"]`);
+        // Only treat an *applied* stylesheet as "already loaded". We must NOT match a
+        // `<link rel="preload">` here: index.html preloads /vendor/vditor/index.css to warm
+        // the cache, and matching that preload would make us skip creating the real
+        // stylesheet — leaving vditor's base CSS unapplied (and tripping Chrome's
+        // "preloaded but not used" warning). Requiring rel="stylesheet" lets the preload
+        // simply feed the cache while this creates the actual applied stylesheet.
+        const existing = document.getElementById(id) || document.querySelector(`link[rel="stylesheet"][href="${href}"]`);
         if (existing) return Promise.resolve(existing);
 
         return new Promise((resolve, reject) => {
@@ -1497,8 +1565,25 @@ document.addEventListener('DOMContentLoaded', async () => {
                     }
                 });
                 editorInstance.setAssetMaxFileBytes(runtimeConfig.assetMaxFileBytes);
+                // Seamless handoff from the instant boot editor: capture the latest
+                // keystrokes and caret before swapping so nothing typed is lost.
+                const bootWasActive = bootEditorActive;
+                const bootHadFocus = bootWasActive && bootEditor && document.activeElement === bootEditor;
+                const bootCaret = bootHadFocus ? bootEditor.selectionStart : null;
+                if (bootWasActive && bootEditor && bootEditor.value !== pendingEditorValue) {
+                    pendingEditorValue = bootEditor.value;
+                }
                 if (pendingEditorValue) editorInstance.setValue(pendingEditorValue, false);
                 editorInstance.setReadingMode(isReadingMode);
+                if (bootWasActive) {
+                    deactivateBootEditor();
+                    if (bootHadFocus) {
+                        editorInstance.focus();
+                        if (bootCaret != null) {
+                            try { editorInstance.setSelectionRange(bootCaret, bootCaret); } catch (_) {}
+                        }
+                    }
+                }
                 return editorInstance;
             })().catch(error => {
                 editorLoader = null;
@@ -2206,14 +2291,14 @@ document.addEventListener('DOMContentLoaded', async () => {
         applyCurrentNotepadTitle();
         
         // --- UI Visibility ---
-        const emptyState = document.getElementById('empty-state');
-        const hybridEditor = document.getElementById('hybrid-editor');
         if (currentNotepadId) {
-            emptyState.style.display = 'none';
-            hybridEditor.style.display = 'block';
+            showEditingSurface();
         } else {
+            const emptyState = document.getElementById('empty-state');
+            const hybridEditor = document.getElementById('hybrid-editor');
             emptyState.style.display = 'flex';
             hybridEditor.style.display = 'none';
+            deactivateBootEditor();
             // No valid notepad selected — avoid any further loading/rendering
             return;
         }
@@ -3039,8 +3124,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (startsInThoughts) {
             await ensureThoughtsManager();
         } else {
-            await ensureEditor();
+            // Paint cached content into the instant boot editor first so the user
+            // can read and type right away, then load the rich editor in the
+            // background (it hands off seamlessly once ready). Not awaiting the
+            // 500KB+ editor engine here is the core first-paint win.
             hydrateStartupCache();
+            ensureEditor().catch(() => {});
             scheduleIdleTask(() => {
                 ensureThoughtsManager().catch(() => {});
             });

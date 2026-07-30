@@ -16,8 +16,8 @@ const codeBlockSurfaceRule = styles.match(
 assert(fs.existsSync(fontPath), 'the approved Chinese webfont should be bundled locally');
 assert(fs.existsSync(languageIconPath), 'common language badges should use bundled offline icons');
 assert(fs.existsSync(languageIconLicensePath), 'bundled language icons should retain their license and trademark notice');
-assert(styles.includes('url("/font/changerwencai.woff2") format("woff2")'), 'the main interface should use the compressed approved Chinese webfont');
-assert(loginStyles.includes('url("/font/changerwencai.woff2") format("woff2")'), 'the login interface should use the same compressed Chinese webfont');
+assert(styles.includes('url("/font/changerwencai.woff2?v=2") format("woff2")'), 'the main interface should use the compressed approved Chinese webfont (with the cache-busting version token)');
+assert(loginStyles.includes('url("/font/changerwencai.woff2?v=2") format("woff2")'), 'the login interface should use the same compressed Chinese webfont (with the cache-busting version token)');
 assert(styles.includes('--code-bg: #fafaf8;'), 'light code blocks should use the approved warm white background');
 assert(styles.includes('background-image: none !important;'), 'code blocks should explicitly remove Vditor background artwork');
 assert(styles.includes('.dumbpad-code-lines::before') && styles.includes('content: attr(data-line-numbers);'), 'code line numbers should be a CSS-only visual gutter');

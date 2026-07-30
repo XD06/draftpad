@@ -54,6 +54,8 @@ const CORE_ASSETS = [
 
 // Fonts and the editor runtime are cached by the normal fetch handler after
 // first use. Do not force every PWA installation to download optional assets.
+// (First-paint parallelism is handled by <link rel=preload> in index.html,
+// which is per-navigation and does not bloat install-time caching.)
 const WARM_ASSETS = [];
 
 const NETWORK_FIRST_STATIC_EXTENSIONS = [".js", ".css", ".json"];

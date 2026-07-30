@@ -1,6 +1,8 @@
 @font-face {
     font-family: "DumbPad Reading";
-    src: url("/font/changerwencai.woff2") format("woff2");
+    /* ?v=2 busts the immutable HTTP cache and the service-worker store after the
+       font was re-compressed. Keep this token in sync with styles.css. */
+    src: url("/font/changerwencai.woff2?v=2") format("woff2");
     font-weight: 400;
     font-style: normal;
     font-display: swap;
