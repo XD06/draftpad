@@ -20,6 +20,11 @@
     <link rel="modulepreload" href="hybrid-editor.js">
     <link rel="preload" href="/vendor/vditor/index.min.js" as="script">
     <link rel="preload" href="/vendor/vditor/index.css" as="style">
+    <!-- Preload the reading webfont so the instant boot editor and the vditor
+         surface both paint in "DumbPad Reading" from the very first frame. Without
+         this the boot textarea flashes its system fallback (which renders ~5.5%
+         wider) for ~200ms before the font swaps in, causing a visible reflow. -->
+    <link rel="preload" href="/font/changerwencai.woff2?v=2" as="font" type="font/woff2" crossorigin>
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="DumbPad">
@@ -188,13 +193,16 @@
                 <div id="hybrid-editor" class="hybrid-editor" role="textbox" aria-label="Markdown editor"
                     style="display:none"></div>
                 <!-- Instant boot editor: a plain textarea shown while the rich
-                     editor loads, so the user can read and type immediately.
-                     Defensive inline styles keep it borderless/seamless even if a
-                     stale service-worker cache serves an older styles.css that
-                     lacks the .boot-editor rule (otherwise the raw textarea would
-                     flash as an ugly bordered box). -->
+                     editor loads, so the user can read and type immediately. The
+                     .boot-editor rule styles it as the SAME centred white card
+                     (background/border/shadow/760px) as the live vditor surface,
+                     so the boot->vditor handoff does not change the visible
+                     article region. Inline styles are kept minimal and must NOT
+                     set background or border (an earlier background:transparent
+                     hid the card, so the 760px card appeared out of nowhere at
+                     handoff -- the "region swelling" the user reported). -->
                 <textarea id="boot-editor" class="boot-editor" hidden aria-label="快速输入"
-                    style="border:0;outline:none;background:transparent;resize:none;box-sizing:border-box;"
+                    style="outline:none;resize:none;box-sizing:border-box;"
                     placeholder="开始输入…" autocomplete="off" autocapitalize="sentences" spellcheck="false"></textarea>
                 <!-- Dynamic Table of Contents -->
                 <nav id="toc-container" class="toc-container">

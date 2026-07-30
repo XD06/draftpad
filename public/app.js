@@ -1573,16 +1573,43 @@ document.addEventListener('DOMContentLoaded', async () => {
                 if (bootWasActive && bootEditor && bootEditor.value !== pendingEditorValue) {
                     pendingEditorValue = bootEditor.value;
                 }
+                const handedOffValue = pendingEditorValue;
                 if (pendingEditorValue) editorInstance.setValue(pendingEditorValue, false);
                 editorInstance.setReadingMode(isReadingMode);
                 if (bootWasActive) {
-                    deactivateBootEditor();
-                    if (bootHadFocus) {
-                        editorInstance.focus();
-                        if (bootCaret != null) {
-                            try { editorInstance.setSelectionRange(bootCaret, bootCaret); } catch (_) {}
+                    // The opaque boot textarea covers the rich editor while it mounts.
+                    // Vditor renders its content asynchronously (in its `after` hook), so
+                    // hiding the cover synchronously would expose the empty->content
+                    // reflow the user sees as a brief horizontal expansion. Keep the
+                    // cover until the editor is ready and its content is in the DOM,
+                    // then reveal it in a single layout pass so the swap shows no resize.
+                    let bootSwapped = false;
+                    const finishBootHandoff = () => {
+                        if (bootSwapped) return;
+                        bootSwapped = true;
+                        // Re-sync any keystrokes typed during the ready gap; this render
+                        // stays hidden behind the still-visible boot cover.
+                        if (bootEditor && bootEditor.value !== handedOffValue) {
+                            editorInstance.setValue(bootEditor.value, false);
                         }
-                    }
+                        const caret = (bootHadFocus && bootEditor) ? bootEditor.selectionStart : bootCaret;
+                        deactivateBootEditor();
+                        if (bootHadFocus) {
+                            editorInstance.focus();
+                            if (caret != null) {
+                                try { editorInstance.setSelectionRange(caret, caret); } catch (_) {}
+                            }
+                        }
+                    };
+                    // Call directly, NOT via requestAnimationFrame: rAF is paused while
+                    // the tab is hidden, which would strand the opaque cover if the editor
+                    // loads in a background tab. The content is already in the DOM once
+                    // whenReady resolves, so revealing it runs one layout pass with no
+                    // intermediate paint.
+                    if (editorInstance.ready) finishBootHandoff();
+                    else editorInstance.whenReady().then(finishBootHandoff, finishBootHandoff);
+                    // Safety net: never leave the opaque cover stuck if `after` never fires.
+                    setTimeout(finishBootHandoff, 3000);
                 }
                 return editorInstance;
             })().catch(error => {

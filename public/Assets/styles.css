@@ -1669,7 +1669,14 @@ main {
 .hybrid-editor {
     height: 100%;
     width: 100%;
-    background: var(--textarea-bg);
+    /* Transparent, NOT white. This is the full-width (852px) editor container, which is
+       wider than the 760px article card. The only white surface must be the centred card
+       (.boot-editor / pre.vditor-reset). If this container is painted white, then during
+       the boot gap -- before vditor adds .typora-editor-shell.vditor and the transparent
+       rule further below takes over -- a full-width white block extends past the card's
+       right edge and shows THROUGH the frosted-glass .floating-actions toolbar, which the
+       user perceives as a white background that appears then disappears on refresh. */
+    background: transparent;
     color: var(--text-color);
     overflow: hidden;
     border-radius: 8px;
@@ -1678,28 +1685,46 @@ main {
 /* Instant boot editor: a plain textarea shown over the editor slot while the
    rich editor engine downloads and initializes, so the user can read and type
    immediately. It is removed the moment the rich editor is ready and takes over
-   (see the boot handoff in ensureEditor). Padding mirrors .hybrid-editor-scroller
-   so the swap does not shift the text. */
+   (see the boot handoff in ensureEditor). Both its geometry AND its chrome
+   (background/border/shadow) mirror the live editor's .vditor-reset card measured
+   from the RUNNING vditor (see the notes below), so the swap to the rich editor
+   neither shifts nor resizes the text nor changes the visible article region. */
 .boot-editor {
+    /* Render the boot textarea as the SAME centred white card as the live vditor
+       surface (pre.vditor-reset), so the boot->vditor handoff never changes the
+       visible article region. Earlier this element was full-bleed + transparent,
+       so at handoff a 760px white card (bg+border+shadow) appeared out of nowhere
+       over the grey background -- the "article region swelling" the user saw, even
+       though the 690px text column never moved. Measured in a real 1440px viewport,
+       vditor's card sits 64px below the editor top (its margin-top), is a 760px
+       max-width box centred in the 852px column (46px side gutters), and holds a
+       690px text column via 35px side padding + 24px top padding. Reproduce that
+       card exactly: */
     position: absolute;
-    inset: 0;
+    top: 64px;
+    bottom: 0;
+    left: 50%;
+    transform: translateX(-50%);
     z-index: 3;
     width: 100%;
-    height: 100%;
+    max-width: 760px;
     margin: 0;
-    border: 0;
     outline: none;
     resize: none;
     box-sizing: border-box;
     background: var(--textarea-bg);
-    color: var(--text-color);
+    border: 1px solid var(--border-color);
     border-radius: 8px;
-    /* System stack only: keep the 1.9MB reading webfont out of first paint.
-       The real editor triggers the webfont download after it hydrates. */
-    font-family: var(--font-reading-system);
-    font-size: 16px;
-    line-height: 1.7;
-    padding: 30px 40px 100px;
+    box-shadow: 0 10px 30px rgba(15, 23, 42, 0.05);
+    color: var(--text-color);
+    /* Same font stack + line-height as vditor so glyph widths match and the text
+       does not re-wrap at handoff ("DumbPad Reading" first; 1.72 == 28.38px/16.5). */
+    font-family: var(--font-reading);
+    font-size: 16.5px;
+    line-height: 1.72;
+    /* 24px top + 35px side padding == vditor's runtime inline padding, giving the
+       identical 690px text column inside the 760px card. */
+    padding: 24px 35px 64px;
     overflow: auto;
     -webkit-appearance: none;
     appearance: none;
@@ -1714,11 +1739,10 @@ main {
     opacity: 0.7;
 }
 
-@media (max-width: 720px) {
-    .boot-editor {
-        padding: 16px 14px 48px;
-    }
-}
+/* No mobile padding override: the card is width:100% capped at max-width:760px
+   with a fixed 35px side padding, so once the container drops under 760px it
+   becomes a full-width card with a 35px gutter -- exactly like vditor's own
+   .vditor-reset at the same width, so the boot textarea stays aligned. */
 
 .hybrid-editor-scroller {
     height: 100%;

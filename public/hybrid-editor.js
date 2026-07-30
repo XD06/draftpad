@@ -73,6 +73,10 @@ export class HybridMarkdownEditor {
         this.headingIds = [];
         this._lastValue = '';
         this.ready = false;
+        // Resolves once Vditor's async `after` hook has run and the initial
+        // content is rendered/laid out. The boot handoff awaits this so the
+        // opaque boot cover is only removed after the editor has settled.
+        this.readyPromise = new Promise((resolve) => { this._resolveReady = resolve; });
         this.pendingValue = '';
         this.sourceMode = false;
         this.currentSelectionData = null;
@@ -153,6 +157,10 @@ export class HybridMarkdownEditor {
                 this.scheduleMarkDecorationRetry(80, performanceToken, generation);
                 this.scheduleMarkDecorationRetry(240, performanceToken, generation);
                 this.scheduleArticleDecorationPass(120, performanceToken);
+                // Signal the boot handoff that the editor is mounted and its
+                // initial content is rendered, so the boot cover can be removed
+                // without exposing an empty->content reflow.
+                if (this._resolveReady) { this._resolveReady(); this._resolveReady = null; }
             }
         });
 
@@ -183,6 +191,14 @@ export class HybridMarkdownEditor {
         this.bindMarkerProtection();
         this.bindCodeLineNumberRealignment();
         this.buildHeadingIndex(this._lastValue || this.pendingValue);
+    }
+
+    // Promise that resolves once the editor is mounted and its initial content
+    // has been rendered (see the Vditor `after` hook). The boot handoff awaits
+    // this so the opaque boot cover is removed only after the editor settles,
+    // never exposing the empty->content reflow.
+    whenReady() {
+        return this.ready ? Promise.resolve() : this.readyPromise;
     }
 
     // Soft-wrap gutter padding depends on the rendered code width, so keep the
@@ -4942,7 +4958,19 @@ export class HybridMarkdownEditor {
                 ? this.getMarkdownOffsetForDomPoint(root, range.startContainer, range.startOffset)
                 : Math.min(this.sourceCaretOffset || 0, (this._lastValue || '').length);
             this.markerObserver?.disconnect();
-            const value = this.readWysiwygMarkdownValue(this._lastValue || this.pendingValue || '');
+            // Show the canonical markdown that produced the current WYSIWYG DOM,
+            // NOT a fresh re-serialization of it. Re-serializing via
+            // readWysiwygMarkdownValue() -> Lute wysiwygDom2Md reformats content
+            // that was never edited: it pads every GFM table cell to the column
+            // width, expands "| --- |" separators to full-width dashes, and drops
+            // the blank line after a YAML front-matter "---" fence (which then
+            // degrades into setext dashes on the next round-trip). Running that on
+            // every source toggle silently rewrote untouched documents and the
+            // damage compounded on each toggle. _lastValue already tracks every
+            // WYSIWYG edit (see emitChange / notifyEditorValueChanged) and equals
+            // the pristine markdown when nothing was edited, so it is the correct,
+            // loss-free value to display in source mode.
+            const value = this._lastValue || this.pendingValue || '';
             this._lastValue = value;
             this.sourceTextarea.value = value;
             this.sourceCaretOffset = Math.min(Math.max(0, sourceOffset ?? 0), value.length);
