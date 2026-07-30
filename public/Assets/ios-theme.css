@@ -1931,7 +1931,11 @@ main {
    keep the editor scrollbar legible without turning it into a divider. */
 @media (min-width: 981px) {
     body:not(.thoughts-mode) .floating-actions {
-        right: 304px;
+        /* Sits in the gutter just left of the 270px right sidebar (whose left edge
+           is at right:282px = 270 + 12px container padding). 290px leaves an ~8px
+           gap to the sidebar while clearing the editor text column, instead of the
+           old 304px which pushed the rail back over the editor content. */
+        right: 290px;
         top: 55%;
         width: 42px;
         padding: 4px;
