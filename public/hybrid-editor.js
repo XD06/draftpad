@@ -165,9 +165,23 @@ export class HybridMarkdownEditor {
         });
 
         this.emitChange = debounce(() => {
-            const value = this.sourceMode && this.sourceTextarea
+            const fromSource = this.sourceMode && this.sourceTextarea;
+            const value = fromSource
                 ? this.sourceTextarea.value
                 : this.readWysiwygMarkdownValue(this._lastValue || '');
+            // Source-mode text is the user's literal Markdown, so it is always
+            // adopted. A WYSIWYG re-serialization, by contrast, is machine
+            // generated and lossy: Lute re-escapes emphasis markers
+            // (foo_bar -> foo\_bar -> foo\\_bar ...), pads GFM table cells,
+            // rewrites "| --- |" separators, and drops the blank line after a
+            // YAML front-matter fence. A spurious input (a decoration pass, a
+            // caret move, a mark re-render) would otherwise persist that
+            // reformatting and the drift compounds on every refresh. Only
+            // adopt/save the re-serialized value when it is *semantically*
+            // different from the canonical value -- identical rendered HTML
+            // means it was pure formatting noise, so drop it and keep
+            // _lastValue pristine.
+            if (!fromSource && !this.isMeaningfulMarkdownChange(value, this._lastValue)) return;
             this._lastValue = value;
             this.buildHeadingIndex(value);
             this.onInput(value);
@@ -267,7 +281,17 @@ export class HybridMarkdownEditor {
         if (this.sourceMode && this.sourceTextarea) return this.sourceTextarea.value;
         if (this.preferLastValueUntilInput) return this.stripDisplayGuards(this._lastValue || this.pendingValue || '');
         if (!this.ready || !this.editor?.getValue) return this.stripDisplayGuards(this.pendingValue || this._lastValue || '');
-        return this.readWysiwygMarkdownValue(this._lastValue || this.pendingValue || '');
+        const serialized = this.readWysiwygMarkdownValue(this._lastValue || this.pendingValue || '');
+        // Defence in depth for every persistence path (autosave, blur, sync,
+        // source toggle): never surface a re-serialization that only reformats
+        // untouched content. If it renders identically to the canonical value,
+        // return _lastValue so callers store the pristine markdown, not a
+        // Lute-reformatted copy. The byte check keeps the common case cheap.
+        if (this._lastValue && serialized !== this._lastValue
+            && !this.isMeaningfulMarkdownChange(serialized, this._lastValue)) {
+            return this._lastValue;
+        }
+        return serialized;
     }
 
     setValue(value = '', emit = true) {
@@ -488,6 +512,31 @@ export class HybridMarkdownEditor {
         // (stale tokens must never survive a refresh or reach other devices).
         const cleaned = collapseOverEscapedEmphasis(stripHybridDisplayArtifacts(value));
         return stripInactiveArticleUploadTokens(cleaned, token => this.articleUploadStates.has(token));
+    }
+
+    // Semantic-equality oracle for the WYSIWYG->Markdown round-trip. Two
+    // Markdown strings that render to identical HTML differ only in
+    // serialization noise -- re-escaped `_`, padded table cells, rewritten
+    // "| --- |" separators, front-matter whitespace -- which must never be
+    // persisted (that noise is exactly what accumulates on every refresh).
+    // Rendering is the config-independent, future-proof test: it needs no
+    // per-symptom rule (unlike collapseOverEscapedEmphasis and the other
+    // strip* helpers), so a brand-new Lute reformatting is neutralised
+    // automatically. Returns true only when the change is genuinely
+    // meaningful and therefore worth adopting/saving; on any uncertainty
+    // (no renderer, render error) it returns true so an edit is never
+    // silently dropped.
+    isMeaningfulMarkdownChange(candidate, base) {
+        const a = candidate == null ? '' : String(candidate);
+        const b = base == null ? '' : String(base);
+        if (a === b) return false;
+        const lute = this.editor?.vditor?.lute;
+        if (!lute || typeof lute.Md2HTML !== 'function') return true;
+        try {
+            return lute.Md2HTML(a) !== lute.Md2HTML(b);
+        } catch (_error) {
+            return true;
+        }
     }
 
     readWysiwygMarkdownValue(fallback = '') {
