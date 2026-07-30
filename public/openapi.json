@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "DumbPad API",
-    "version": "1.0.8",
+    "version": "1.0.9",
     "description": "DumbPad content-management API. Legacy deployments authenticate with a PIN; AUTH_V2_ENABLED deployments use an opaque browser session or a scoped API token. API tokens cannot access authentication or data-management routes."
   },
   "servers": [{ "url": "/" }],
@@ -51,13 +51,21 @@
     },
     "/api/notepads/{id}": {
       "parameters": [{ "$ref": "#/components/parameters/NotepadId" }],
-      "patch": { "summary": "Update a notepad pin state", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/NotepadPinUpdate" } } } }, "responses": { "200": { "description": "Updated notepad", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Notepad" } } } }, "400": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" } } }
+      "put": { "summary": "Rename a notepad with optimistic concurrency", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/NotepadRename" } } } }, "responses": { "200": { "description": "Renamed notepad", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Notepad" } } } }, "404": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" } } },
+      "patch": { "summary": "Update a notepad pin state", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/NotepadPinUpdate" } } } }, "responses": { "200": { "description": "Updated notepad", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Notepad" } } } }, "400": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" } } },
+      "delete": { "summary": "Move a notepad to trash; the default notepad cannot be deleted", "responses": { "200": { "description": "Trashed" }, "400": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" } } }
     },
     "/api/notes/{id}": {
       "parameters": [{ "$ref": "#/components/parameters/NotepadId" }],
       "get": { "summary": "Read a note", "responses": { "200": { "description": "Note content", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Note" } } } }, "404": { "$ref": "#/components/responses/Error" } } },
       "post": { "summary": "Overwrite a note with optimistic concurrency", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/NoteSave" } } } }, "responses": { "200": { "description": "Saved" }, "409": { "$ref": "#/components/responses/Error" } } },
       "patch": { "summary": "Patch note content", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/NotePatch" } } } }, "responses": { "200": { "description": "Updated" }, "409": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/assets": {
+      "get": { "summary": "List image and file assets, newest first", "responses": { "200": { "description": "Asset metadata list", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AssetList" } } } } } }
+    },
+    "/api/assets/bulk-delete": {
+      "post": { "summary": "Delete multiple assets by id (max 1000)", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AssetBulkDelete" } } } }, "responses": { "200": { "description": "Deleted and missing id lists", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AssetBulkDeleteResult" } } } }, "400": { "$ref": "#/components/responses/Error" }, "413": { "$ref": "#/components/responses/Error" } } }
     },
     "/api/assets/images": {
       "post": {
@@ -77,6 +85,9 @@
         "requestBody": { "required": true, "content": { "application/octet-stream": { "schema": { "type": "string", "format": "binary" } } } },
         "responses": { "201": { "description": "Created ordinary file asset", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/FileAsset" } } } }, "413": { "$ref": "#/components/responses/Error" }, "415": { "$ref": "#/components/responses/Error" } }
       }
+    },
+    "/api/assets/{id}": {
+      "delete": { "summary": "Delete a single asset", "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "description": "Deleted" }, "404": { "$ref": "#/components/responses/Error" } } }
     },
     "/api/assets/{id}/{variant}": {
       "parameters": [
@@ -159,6 +170,11 @@
       "NotePatch": { "allOf": [{ "$ref": "#/components/schemas/NoteSave" }, { "type": "object", "required": ["action"], "properties": { "action": { "type": "string", "enum": ["append", "prepend", "replace", "replace_first", "overwrite"] }, "text": { "type": "string" }, "target": { "type": "string" }, "replacement": { "type": "string" } } }] },
       "ImageAsset": { "type": "object", "required": ["id", "assetId", "name", "type", "size", "kind", "previewUrl", "originalUrl", "downloadUrl"], "properties": { "id": { "type": "string" }, "assetId": { "type": "string" }, "name": { "type": "string" }, "type": { "type": "string", "pattern": "^image/" }, "kind": { "const": "image" }, "size": { "type": "integer", "format": "int64" }, "previewUrl": { "type": "string" }, "originalUrl": { "type": "string" }, "downloadUrl": { "type": "string" } } },
       "FileAsset": { "type": "object", "required": ["id", "assetId", "name", "type", "size", "kind", "previewUrl", "originalUrl", "downloadUrl"], "properties": { "id": { "type": "string" }, "assetId": { "type": "string" }, "name": { "type": "string" }, "type": { "type": "string" }, "kind": { "const": "file" }, "size": { "type": "integer", "format": "int64", "maximum": 104857600 }, "previewUrl": { "type": "null" }, "originalUrl": { "type": "string" }, "downloadUrl": { "type": "string" } } },
+      "AssetSummary": { "type": "object", "required": ["id", "assetId", "name", "type", "size", "kind", "originalUrl", "downloadUrl"], "properties": { "id": { "type": "string" }, "assetId": { "type": "string" }, "name": { "type": "string" }, "type": { "type": "string" }, "kind": { "type": "string", "enum": ["image", "file"] }, "size": { "type": "integer", "format": "int64" }, "createdAt": { "type": ["integer", "null"], "format": "int64" }, "previewUrl": { "type": ["string", "null"] }, "originalUrl": { "type": "string" }, "downloadUrl": { "type": "string" } } },
+      "AssetList": { "type": "object", "required": ["assets"], "properties": { "assets": { "type": "array", "items": { "$ref": "#/components/schemas/AssetSummary" } } } },
+      "AssetBulkDelete": { "type": "object", "required": ["ids"], "properties": { "ids": { "type": "array", "items": { "type": "string" }, "minItems": 1, "maxItems": 1000 } } },
+      "AssetBulkDeleteResult": { "type": "object", "required": ["success", "deleted", "missing"], "properties": { "success": { "type": "boolean" }, "deleted": { "type": "array", "items": { "type": "string" } }, "missing": { "type": "array", "items": { "type": "string" } } } },
+      "NotepadRename": { "type": "object", "required": ["name"], "properties": { "name": { "type": "string" }, "baseVersion": { "type": "integer" } } },
       "SubItem": { "type": "object", "required": ["id", "text", "completed"], "properties": { "id": { "type": "string" }, "text": { "type": "string" }, "completed": { "type": "boolean" } } },
       "Thought": { "type": "object", "required": ["id", "text", "version", "createdAt", "updatedAt"], "properties": { "id": { "type": "string" }, "text": { "type": "string" }, "subItems": { "type": "array", "items": { "$ref": "#/components/schemas/SubItem" } }, "tags": { "type": "array", "items": { "type": "string" } }, "completed": { "type": "boolean" }, "pinned": { "type": "boolean" }, "version": { "type": "integer" }, "createdAt": { "type": "integer" }, "updatedAt": { "type": "integer" } } },
       "ThoughtCreate": { "type": "object", "required": ["text"], "properties": { "text": { "type": "string" }, "subItems": { "type": "array", "items": { "$ref": "#/components/schemas/SubItem" } }, "tags": { "type": "array", "items": { "type": "string" } }, "completed": { "type": "boolean" } } },

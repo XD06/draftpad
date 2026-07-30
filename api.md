@@ -430,6 +430,55 @@ curl -X POST http://localhost:3000/api/assets/files \
 
 不存在或非法 id 返回 `404`；`preview`、`original`、`download` 之外的 variant 同样返回 `404`。
 
+### GET /api/assets
+
+列出全部图片与普通附件资源，按最新在前返回元数据，供附件管理界面做多选与清理。
+
+**响应：**
+
+```json
+{
+  "assets": [
+    {
+      "id": "f2f621c1-5d64-462f-8e3a-5bc1dd4c16a7",
+      "assetId": "f2f621c1-5d64-462f-8e3a-5bc1dd4c16a7",
+      "name": "architecture-4k.png",
+      "type": "image/png",
+      "kind": "image",
+      "size": 8240551,
+      "createdAt": 1737000000000,
+      "previewUrl": "/api/assets/f2f621c1-5d64-462f-8e3a-5bc1dd4c16a7/preview",
+      "originalUrl": "/api/assets/f2f621c1-5d64-462f-8e3a-5bc1dd4c16a7/original",
+      "downloadUrl": "/api/assets/f2f621c1-5d64-462f-8e3a-5bc1dd4c16a7/download"
+    }
+  ]
+}
+```
+
+普通附件的 `kind` 为 `file`、`previewUrl` 为 `null`。
+
+### POST /api/assets/bulk-delete
+
+一次删除多个资源，请求体为 JSON，`ids` 是资源 id 数组（最多 1000 个），供附件管理界面的多选删除使用。
+
+**请求体：**
+
+```json
+{ "ids": ["<asset-id-1>", "<asset-id-2>"] }
+```
+
+**响应：** `deleted` 为成功删除的 id 列表，`missing` 为未找到的 id 列表。
+
+```json
+{ "success": true, "deleted": ["<asset-id-1>"], "missing": ["<asset-id-2>"] }
+```
+
+`ids` 缺失或为空返回 `400`；超过 1000 个返回 `413`。属破坏性操作，需用户确认后再调用。
+
+### DELETE /api/assets/:id
+
+删除单个资源。成功返回 `{ "success": true, "id": "<asset-id>" }`；不存在或非法 id 返回 `404`。属破坏性操作，需用户确认后再调用。
+
 ---
 
 ## Quick Thoughts API

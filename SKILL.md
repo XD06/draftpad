@@ -27,6 +27,13 @@ curl -fsS "$DUMBPAD_BASE_URL/api/notepads" \
 
 `/health` does not require authentication. Except for `/api/verify-pin`, `/api/pin-required`, and `/api/config`, API routes require the `dumbpad_auth` cookie or `Authorization: Bearer <PIN>`.
 
+### Legacy PIN Or Hardened Token
+
+`Authorization: Bearer` carries a different credential depending on how the deployment is secured. Probe `GET /api/auth/status` first: `mode: "legacy"` is the default PIN deployment, and any other mode (`login` or `setup`) is a hardened Auth V2 deployment.
+
+- **Legacy PIN** (default): send the user's PIN as `Authorization: Bearer $DUMBPAD_PIN`, as shown above.
+- **Hardened Auth V2** (`AUTH_V2_ENABLED`): PIN login is disabled and `/api/verify-pin` returns `410`. Ask the user for a scoped API token (minted from an elevated session through `POST /api/auth/api-tokens`) and send it the same way: `Authorization: Bearer <api-token>`. A token needs a `content:read`/`thoughts:read` scope for `GET` and a `content:write`/`thoughts:write` scope for mutations, otherwise the request is rejected with `403`. Browser clients rely on the `dumbpad_auth` session cookie instead.
+
 ## Operating Rules
 
 1. Read an item's current version before changing it. Send that value as `baseVersion` on every Notepad, Note, and Thought mutation.
