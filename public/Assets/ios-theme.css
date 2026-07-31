@@ -1512,6 +1512,11 @@ main {
     body:not(.thoughts-mode) .typora-editor-shell .vditor-wysiwyg pre.vditor-reset {
         margin: 64px auto 0 !important;
         padding-top: 24px !important;
+        /* Issue #6: on desktop the WYSIWYG body sat flush against the bottom of
+           the editor viewport, so the last lines were cramped and awkward to
+           edit. Give the end of the note real breathing room (source mode
+           already carries its own bottom padding). */
+        padding-bottom: 160px !important;
     }
 
     body:not(.thoughts-mode) .typora-source-editor {
