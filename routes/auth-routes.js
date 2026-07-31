@@ -439,8 +439,16 @@ function registerAuthRoutes(app, context) {
                 if (PIN && isValidPin(PIN)) {
                     const authorization = String(req.headers.authorization || '');
                     const bearer = authorization.startsWith('Bearer ') ? authorization.slice(7) : '';
-                    if (!secureCompare(bearer, PIN) && !secureCompare(req.cookies?.[COOKIE_NAME], PIN)) {
+                    const bearerOk = secureCompare(bearer, PIN);
+                    const cookieOk = secureCompare(req.cookies?.[COOKIE_NAME], PIN);
+                    if (!bearerOk && !cookieOk) {
                         return res.status(401).json({ error: 'Unauthorized' });
+                    }
+                    // Sliding renewal: refresh the browser cookie on authenticated
+                    // activity so an active session never expires mid-use. Bearer/API
+                    // token clients are stateless and intentionally excluded.
+                    if (cookieOk) {
+                        res.cookie(COOKIE_NAME, PIN, cookieOptions(cookieMaxAge));
                     }
                 }
                 req.auth = { kind: 'legacy' };

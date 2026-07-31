@@ -77,8 +77,8 @@ const PIN = process.env.DUMBPAD_PIN;
 const ASSET_MAX_FILE_BYTES = getMaxFileBytes();
 
 const COOKIE_NAME = 'dumbpad_auth';
-const COOKIE_MAX_AGE = process.env.COOKIE_MAX_AGE || 24; // default 24 in hours
-const cookieMaxAge = COOKIE_MAX_AGE * 60 * 60 * 1000; // in hours
+const COOKIE_MAX_AGE = process.env.COOKIE_MAX_AGE || 720; // default 720 hours (30 days); the legacy PIN cookie is sliding-renewed on activity
+const cookieMaxAge = COOKIE_MAX_AGE * 60 * 60 * 1000; // hours -> ms
 const authService = createAuthServiceFromEnv();
 const auditLogger = authService
     ? new AuditLogger({ directory: process.env.AUTH_AUDIT_DIR || path.join(process.env.AUTH_STATE_DIR, 'audit'), key: authService.masterKey })
