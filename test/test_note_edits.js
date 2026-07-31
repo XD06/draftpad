@@ -4,7 +4,7 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
-const { applyNoteEdit, countOccurrences, buildOutline, VALID_ACTIONS } = require('../scripts/note-edits');
+const { applyNoteEdit, applyNoteEdits, countOccurrences, buildOutline, VALID_ACTIONS } = require('../scripts/note-edits');
 
 // Load the browser-side heading parser the same way test_heading_index.js does
 // so we can assert the server outline matches the editor's table of contents.
@@ -159,5 +159,34 @@ assert(!r.ok && r.errorCode === 'invalid_action', 'missing action is rejected');
 ['append', 'prepend', 'overwrite', 'replace', 'replace_first', 'insert_before', 'insert_after', 'replace_section', 'append_to_section'].forEach(action => {
     assert(VALID_ACTIONS.has(action), `${action} should be a recognized note edit action`);
 });
+
+// --- batch edits (#1 phase 3) -----------------------------------------------
+// A batch applies edits in order, feeds each edit the running result, and is
+// atomic: if any edit fails the caller writes nothing.
+let batch = applyNoteEdits('a foo b', [
+    { action: 'replace', target: 'foo', replacement: 'bar', expectedCount: 1 },
+    { action: 'append', text: ' end' }
+]);
+assert(batch.ok && batch.content === 'a bar b end', 'a batch applies edits in order');
+assert(batch.modified === true && batch.results.length === 2, 'a batch reports per-edit results');
+assert(batch.results[0].action === 'replace' && batch.results[0].replaced === 1, 'a batch result carries per-edit metadata');
+
+batch = applyNoteEdits('x', [
+    { action: 'append', text: 'y' },
+    { action: 'replace', target: 'xy', replacement: 'Z' }
+]);
+assert(batch.ok && batch.content === 'Z', 'a later edit operates on the running result of an earlier one');
+
+batch = applyNoteEdits('a foo b', [
+    { action: 'append', text: ' ok' },
+    { action: 'replace', target: 'missing', replacement: 'x' }
+]);
+assert(!batch.ok && batch.index === 1 && batch.errorCode === 'target_not_found', 'a failed edit reports its index and stops the batch');
+
+batch = applyNoteEdits('a', []);
+assert(!batch.ok && batch.errorCode === 'no_edits', 'an empty batch is rejected');
+
+batch = applyNoteEdits('a', 'not-an-array');
+assert(!batch.ok && batch.errorCode === 'no_edits', 'a non-array batch is rejected');
 
 console.log('Note fine-grained edit primitive checks passed');

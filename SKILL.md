@@ -88,7 +88,36 @@ Use `PATCH /api/notes/:id` for narrow edits:
 | `prepend` | `text` | Prepend Markdown |
 | `replace` | `target`, `replacement` | Replace every occurrence |
 | `replace_first` | `target`, `replacement` | Replace the first occurrence only |
+| `insert_before` | `target`, `text` | Insert `text` before the first `target` |
+| `insert_after` | `target`, `text` | Insert `text` after the first `target` |
+| `replace_section` | `section`, `text` | Replace the body under a heading |
+| `append_to_section` | `section`, `text` | Append to the end of a heading's body |
 | `overwrite` | `text` | Replace the entire body |
+
+Add `expectedCount` to any `target`/anchor edit to assert how many times the text occurs; if the document does not match, the edit fails with `400` and a `matchCount` instead of touching the wrong copy.
+
+Target a section by the `id` slug from the heading outline (unique heading text also works):
+
+```bash
+# List headings so you can target one by slug
+curl -fsS "$DUMBPAD_BASE_URL/api/notes/agent-release-notes/outline" \
+  -H "Authorization: Bearer $DUMBPAD_PIN"
+
+# Replace just the body under the "Usage" heading
+curl -fsS -X PATCH "$DUMBPAD_BASE_URL/api/notes/agent-release-notes" \
+  -H "Authorization: Bearer $DUMBPAD_PIN" \
+  -H "Content-Type: application/json" \
+  -d '{"action":"replace_section","section":"usage","text":"Run npm start.\n","baseVersion":2,"userId":"agent"}'
+```
+
+To apply several edits as a single atomic version bump, post them to `POST /api/notes/:id/edits`. Each edit sees the result of the previous one, and if any edit fails the whole batch is rejected (reporting the failing `index`) so the note is never left half-changed:
+
+```bash
+curl -fsS -X POST "$DUMBPAD_BASE_URL/api/notes/agent-release-notes/edits" \
+  -H "Authorization: Bearer $DUMBPAD_PIN" \
+  -H "Content-Type: application/json" \
+  -d '{"baseVersion":2,"userId":"agent","edits":[{"action":"replace","target":"v1","replacement":"v2","expectedCount":1},{"action":"append","text":"\ndone"}]}'
+```
 
 Always include `baseVersion` and a stable `userId`. A successful save returns the next `version`; use it for the next mutation.
 

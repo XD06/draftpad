@@ -242,10 +242,50 @@ function statusForEditError(errorCode) {
     return 400;
 }
 
+// Apply a list of edits in order, feeding each edit the result of the previous
+// one. The batch is atomic for the caller: on the first failure it returns the
+// failing edit's index and error and stops, so the caller can reject the whole
+// request without writing anything. On success it returns the final content
+// plus a per-edit result log.
+function applyNoteEdits(content, edits) {
+    if (!Array.isArray(edits) || edits.length === 0) {
+        return fail('no_edits', 'edits must be a non-empty array');
+    }
+    let current = typeof content === 'string' ? content : '';
+    let modified = false;
+    const results = [];
+    for (let i = 0; i < edits.length; i += 1) {
+        const edit = applyNoteEdit(current, edits[i]);
+        if (!edit.ok) {
+            return {
+                ok: false,
+                index: i,
+                errorCode: edit.errorCode,
+                error: edit.error,
+                target: edit.target,
+                section: edit.section,
+                matchCount: edit.matchCount
+            };
+        }
+        current = edit.content;
+        if (edit.modified) modified = true;
+        results.push({
+            index: i,
+            action: edits[i] && edits[i].action,
+            modified: !!edit.modified,
+            matchCount: edit.matchCount,
+            replaced: edit.replaced,
+            section: edit.section
+        });
+    }
+    return { ok: true, content: current, modified, results };
+}
+
 module.exports = {
     VALID_ACTIONS,
     countOccurrences,
     buildOutline,
     applyNoteEdit,
+    applyNoteEdits,
     statusForEditError
 };

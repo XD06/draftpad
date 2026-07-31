@@ -286,6 +286,28 @@ Note 是某个 Notepad 的正文内容。保存接口使用 `baseVersion` 做乐
 }
 ```
 
+### GET /api/notes/:id/outline
+
+读取正文的 Markdown 标题大纲，便于按小节定位编辑（配合 `replace_section` / `append_to_section`），无需下载并自行解析全文。
+
+**响应：**
+
+```json
+{
+  "version": 1,
+  "outline": [
+    { "id": "intro", "text": "Intro", "level": 1, "line": 0 },
+    { "id": "usage", "text": "Usage", "level": 2, "line": 3 }
+  ]
+}
+```
+
+`id` 是标题 slug（与编辑器目录一致），`line` 为 0 基行号。
+
+**错误：**
+
+- `404` — Notepad 不存在。
+
 ### POST /api/notes/:id
 
 覆盖保存正文。
@@ -331,13 +353,21 @@ Note 是某个 Notepad 的正文内容。保存接口使用 `baseVersion` 做乐
 
 支持的 `action`：
 
-| action | 说明 |
-|---|---|
-| `append` | 在末尾追加 `text` |
-| `prepend` | 在开头插入 `text` |
-| `replace` | 替换所有 `target` |
-| `replace_first` | 只替换第一个 `target` |
-| `overwrite` | 用 `text` 覆盖全文 |
+| action | 必填字段 | 说明 |
+|---|---|---|
+| `append` | `text` | 在末尾追加 `text` |
+| `prepend` | `text` | 在开头插入 `text` |
+| `replace` | `target`、`replacement` | 替换所有 `target` |
+| `replace_first` | `target`、`replacement` | 只替换第一个 `target` |
+| `insert_before` | `target`、`text` | 在第一个 `target` 前插入 `text` |
+| `insert_after` | `target`、`text` | 在第一个 `target` 后插入 `text` |
+| `replace_section` | `section`、`text` | 替换某个标题下的正文 |
+| `append_to_section` | `section`、`text` | 在某个标题正文末尾追加 |
+| `overwrite` | `text` | 用 `text` 覆盖全文 |
+
+对任意基于 `target`/锚点的 action，可附加 `expectedCount`（正整数）断言匹配次数：实际匹配数不符时返回 `400` 并带上 `matchCount`，避免改错副本或误伤多处。
+
+`section` 取标题 slug（见 `GET /api/notes/:id/outline`）；标题文本唯一时也可直接用文本。多个同名标题会返回 `400`（`ambiguous_section`），此时改用 slug。
 
 **响应：**
 
@@ -346,9 +376,59 @@ Note 是某个 Notepad 的正文内容。保存接口使用 `baseVersion` 做乐
   "success": true,
   "content": "# Updated",
   "modified": true,
-  "version": 2
+  "version": 2,
+  "matchCount": 1,
+  "replaced": 1
 }
 ```
+
+`matchCount`/`replaced` 仅在按 `target` 匹配的 action 出现；`section` 类 action 会回显命中的 `section` slug。
+
+**错误：**
+
+- `400` — action 非法、`target`/`section` 未找到、`expectedCount` 不符（带 `matchCount`）等。
+- `404` — Notepad 不存在。
+- `409` — 服务端版本比 `baseVersion` 新。
+
+### POST /api/notes/:id/edits
+
+按顺序原子地应用一批局部编辑。整批共享一次写锁与一次版本递增：每个 edit 都作用在上一个 edit 的结果上，任一 edit 失败则整批拒绝（返回失败的 `index`），正文不会被写入一半。
+
+**请求体：**
+
+```json
+{
+  "baseVersion": 1,
+  "userId": "api",
+  "edits": [
+    { "action": "replace", "target": "v1", "replacement": "v2", "expectedCount": 1 },
+    { "action": "append", "text": "\ndone" }
+  ]
+}
+```
+
+`edits` 中每一项的字段与 `PATCH /api/notes/:id` 完全一致。
+
+**响应：**
+
+```json
+{
+  "success": true,
+  "content": "v2\ndone",
+  "modified": true,
+  "version": 2,
+  "results": [
+    { "index": 0, "action": "replace", "modified": true, "matchCount": 1, "replaced": 1 },
+    { "index": 1, "action": "append", "modified": true }
+  ]
+}
+```
+
+**错误：**
+
+- `400` — `edits` 为空/非数组，或某个 edit 无效（返回 `index` 与该 edit 的错误信息）。
+- `404` — Notepad 不存在。
+- `409` — 服务端版本比 `baseVersion` 新。
 
 ---
 

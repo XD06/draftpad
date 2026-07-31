@@ -847,6 +847,45 @@ async function run() {
         assert(result.response.status === 400, 'replace_section with an unknown section should be rejected');
         assert(result.body.section === 'does-not-exist', 'a missing section error should echo the requested section');
 
+        // Batch atomic editing (#1 phase 3): several edits apply under one lock
+        // and a single version bump, or none of them do.
+        result = await request('/api/notepads', {
+            method: 'POST',
+            body: JSON.stringify({ id: 'api-note-batch', name: 'API Note Batch', content: 'v1 draft\n\ntodo' })
+        });
+        assert(result.response.ok && result.body.id === 'api-note-batch', 'POST /api/notepads should create the batch fixture');
+
+        result = await request('/api/notes/api-note-batch/edits', {
+            method: 'POST',
+            body: JSON.stringify({ edits: [
+                { action: 'replace', target: 'v1', replacement: 'v2', expectedCount: 1 },
+                { action: 'append', text: '\ndone' }
+            ] })
+        });
+        assert(result.response.ok, 'POST /api/notes/:id/edits should apply a batch');
+        assert(result.body.content === 'v2 draft\n\ntodo\ndone', 'a batch should apply its edits in order');
+        assert(Array.isArray(result.body.results) && result.body.results.length === 2, 'a batch should report per-edit results');
+        assert(result.body.version === 2, 'a batch should bump the note version once');
+
+        result = await request('/api/notes/api-note-batch/edits', {
+            method: 'POST',
+            body: JSON.stringify({ edits: [
+                { action: 'append', text: ' more' },
+                { action: 'replace', target: 'does-not-exist', replacement: 'x' }
+            ] })
+        });
+        assert(result.response.status === 400, 'a batch with any failing edit should be rejected');
+        assert(result.body.index === 1, 'a batch failure should report the failing edit index');
+
+        result = await request('/api/notes/api-note-batch');
+        assert(result.body.content === 'v2 draft\n\ntodo\ndone' && result.body.version === 2, 'a rejected batch should leave the note untouched');
+
+        result = await request('/api/notes/api-note-batch/edits', {
+            method: 'POST',
+            body: JSON.stringify({ edits: [] })
+        });
+        assert(result.response.status === 400, 'an empty batch should be rejected');
+
         result = await request(`/api/notepads/${notepadId}`, {
             method: 'PUT',
             body: JSON.stringify({ name: 'API Regression Note Renamed' })

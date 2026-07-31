@@ -2,7 +2,7 @@ const fs = require('fs').promises;
 const path = require('path');
 const crypto = require('crypto');
 const { sanitizeFilename } = require('../scripts/notepad-migration');
-const { applyNoteEdit, statusForEditError, buildOutline } = require('../scripts/note-edits');
+const { applyNoteEdit, applyNoteEdits, statusForEditError, buildOutline } = require('../scripts/note-edits');
 
 function hashContent(content) {
     return crypto.createHash('sha256').update(String(content || '')).digest('hex');
@@ -214,6 +214,78 @@ function registerNoteRoutes(app, context) {
         } catch (err) {
             console.error('Error patching notes:', err);
             res.status(500).json({ error: 'Error patching notes' });
+        }
+    });
+
+    // Batch atomic editing: apply an ordered list of edits under a single write
+    // lock and a single version bump. Each edit sees the result of the previous
+    // one, and if any edit fails the whole request is rejected without writing,
+    // so an agent never leaves the note half-edited.
+    app.post('/api/notes/:id/edits', async (req, res) => {
+        try {
+            const { id } = req.params;
+            const { userId, baseVersion, edits } = req.body;
+            const senderId = userId || 'api';
+
+            const result = await storage.withNotepadWriteLock(async () => {
+                const { notepad } = await findNotepadById(id);
+                if (!notepad) {
+                    return { errorStatus: 404, error: 'Notepad not found' };
+                }
+
+                const clientVersion = Number(baseVersion);
+                if (Number.isFinite(clientVersion) && (notepad.version || 1) > clientVersion) {
+                    return {
+                        errorStatus: 409,
+                        error: 'Notepad has been updated on another device',
+                        currentVersion: notepad.version || 1
+                    };
+                }
+
+                const currentContent = await storage.readNoteContent(notepad);
+                const batch = applyNoteEdits(currentContent, edits);
+                if (!batch.ok) {
+                    const errorBody = { success: false, error: batch.error };
+                    if (batch.index !== undefined) errorBody.index = batch.index;
+                    if (batch.target !== undefined) errorBody.target = batch.target;
+                    if (batch.section !== undefined) errorBody.section = batch.section;
+                    if (batch.matchCount !== undefined) errorBody.matchCount = batch.matchCount;
+                    return { errorStatus: 400, errorBody };
+                }
+
+                if (!batch.modified) {
+                    return { content: batch.content, modified: false, version: notepad.version || 1, results: batch.results };
+                }
+
+                await storage.writeNoteContent(notepad, batch.content);
+
+                const data = await storage.readNotepadsMeta();
+                const targetNotepad = data.notepads.find(n => n.id === id);
+                let savedVersion = notepad.version || 1;
+                if (targetNotepad) {
+                    targetNotepad.updatedAt = Date.now();
+                    targetNotepad.version = (targetNotepad.version || 1) + 1;
+                    savedVersion = targetNotepad.version;
+                    await storage.saveNotepadsMeta(data);
+                }
+                return { content: batch.content, modified: true, version: savedVersion, results: batch.results };
+            });
+
+            if (result.errorStatus) {
+                if (result.errorStatus === 400) return res.status(400).json(result.errorBody);
+                if (result.errorStatus === 404) return res.status(404).json({ error: result.error });
+                return res.status(409).json({ error: result.error, currentVersion: result.currentVersion });
+            }
+
+            if (result.modified) {
+                broadcastUpdate(id, result.content, senderId, result.version, { contentHash: hashContent(result.content) });
+                scheduleIndexNotepads();
+                return res.json({ success: true, content: result.content, modified: true, version: result.version, results: result.results });
+            }
+            res.json({ success: true, content: result.content, modified: false, version: result.version, results: result.results });
+        } catch (err) {
+            console.error('Error applying note edits:', err);
+            res.status(500).json({ error: 'Error applying note edits' });
         }
     });
 }
