@@ -142,6 +142,20 @@ function createAssetStorage(storage) {
         return metadatas.filter(Boolean).sort(byNewestFirst);
     }
 
+    // Content-hash lookup so uploads can dedupe against an existing asset
+    // instead of storing a byte-for-byte duplicate. Reuses the same metadata
+    // scan as listAssets(); assets stored before hashing was added simply have
+    // no `hash` field and are skipped (a fresh upload of them stores one copy
+    // that later uploads then dedupe against).
+    async function findByHash(hash, kind = null) {
+        const wanted = String(hash || '');
+        if (!wanted) return null;
+        const list = await listAssets();
+        return list.find(meta => meta
+            && meta.hash === wanted
+            && (!kind || (meta.kind || 'image') === kind)) || null;
+    }
+
     async function deleteAsset(id) {
         const safeId = safeAssetId(id);
         if (!safeId) return false;
@@ -193,7 +207,7 @@ function createAssetStorage(storage) {
         return { deleted, missing };
     }
 
-    return { readAsset, writeAsset, listAssets, deleteAsset, deleteAssets };
+    return { readAsset, writeAsset, listAssets, findByHash, deleteAsset, deleteAssets };
 }
 
 module.exports = { createAssetStorage, safeAssetId };

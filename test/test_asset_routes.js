@@ -53,6 +53,26 @@ async function run() {
         const download = await fetch(`${baseUrl}${asset.downloadUrl}`);
         assert.match(download.headers.get('content-disposition') || '', /attachment/i, 'download should force attachment behavior');
 
+        // Re-uploading identical image bytes (even under a different name) must
+        // dedupe to the existing asset instead of storing a second copy.
+        const duplicateUpload = await fetch(`${baseUrl}/api/assets/images`, {
+            method: 'POST',
+            headers: {
+                'content-type': 'image/png',
+                'x-asset-name': encodeURIComponent('重复上传.png')
+            },
+            body: original
+        });
+        assert.strictEqual(duplicateUpload.status, 200, 'a duplicate image upload should report reuse (200), not creation (201)');
+        const duplicateAsset = await duplicateUpload.json();
+        assert.strictEqual(duplicateAsset.id, asset.id, 'a duplicate image upload should return the existing asset id');
+        const afterDuplicateList = await (await fetch(`${baseUrl}/api/assets`)).json();
+        assert.strictEqual(
+            afterDuplicateList.assets.filter(item => item.id === asset.id).length,
+            1,
+            'a deduped image must appear exactly once in the listing'
+        );
+
         const invalid = await fetch(`${baseUrl}/api/assets/images`, {
             method: 'POST',
             headers: { 'content-type': 'image/png' },
@@ -79,6 +99,20 @@ async function run() {
         assert.strictEqual(fileOriginal.status, 200);
         assert.match(fileOriginal.headers.get('content-disposition') || '', /attachment/i, 'ordinary file originals must force download');
         assert.deepStrictEqual(Buffer.from(await fileOriginal.arrayBuffer()), fileBytes, 'ordinary file bytes must round-trip unchanged');
+
+        // Re-uploading identical file bytes must dedupe to the existing asset.
+        const duplicateFileUpload = await fetch(`${baseUrl}/api/assets/files`, {
+            method: 'POST',
+            headers: {
+                'content-type': 'application/octet-stream',
+                'x-asset-name': encodeURIComponent('重复计划.pdf'),
+                'x-asset-type': 'application/pdf'
+            },
+            body: fileBytes
+        });
+        assert.strictEqual(duplicateFileUpload.status, 200, 'a duplicate file upload should report reuse (200), not creation (201)');
+        const duplicateFileAsset = await duplicateFileUpload.json();
+        assert.strictEqual(duplicateFileAsset.id, fileAsset.id, 'a duplicate file upload should return the existing asset id');
 
         const rejectedFile = await fetch(`${baseUrl}/api/assets/files`, {
             method: 'POST',

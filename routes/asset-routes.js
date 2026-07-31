@@ -29,6 +29,10 @@ function createAssetId() {
         : crypto.randomBytes(20).toString('hex');
 }
 
+function sha256(buffer) {
+    return crypto.createHash('sha256').update(buffer).digest('hex');
+}
+
 function responseAsset(metadata) {
     const id = metadata.id;
     return {
@@ -58,6 +62,13 @@ function registerAssetRoutes(app, { storage, originValidationMiddleware, maxFile
             if (!input?.length) return res.status(400).json({ error: 'Image body is required' });
 
             try {
+                // Dedupe identical bytes against an already-stored image so a
+                // re-upload from the UI/API reuses the existing asset instead of
+                // creating a second copy (and skips the expensive re-encode).
+                const hash = sha256(input);
+                const duplicate = await assets.findByHash(hash, 'image');
+                if (duplicate) return res.status(200).json(responseAsset(duplicate));
+
                 const image = sharp(input, { animated: false, limitInputPixels: MAX_IMAGE_PIXELS });
                 const info = await image.metadata();
                 const type = MIME_BY_FORMAT[info.format];
@@ -77,6 +88,7 @@ function registerAssetRoutes(app, { storage, originValidationMiddleware, maxFile
                     name: requestedName || `image.${ext}`,
                     type,
                     size: input.length,
+                    hash,
                     previewType: 'image/webp',
                     previewSize: previewBuffer.length,
                     width: Number(info.width || 0),
@@ -117,6 +129,12 @@ function registerAssetRoutes(app, { storage, originValidationMiddleware, maxFile
             if (!validation.ok) return res.status(validation.status || 415).json({ error: validation.error });
 
             try {
+                // Dedupe identical bytes against an already-stored file so a
+                // re-upload reuses the existing asset instead of duplicating it.
+                const hash = sha256(input);
+                const duplicate = await assets.findByHash(hash, 'file');
+                if (duplicate) return res.status(200).json(responseAsset(duplicate));
+
                 const id = createAssetId();
                 const metadata = {
                     version: 1,
@@ -125,6 +143,7 @@ function registerAssetRoutes(app, { storage, originValidationMiddleware, maxFile
                     name: requestedName,
                     type: validation.type,
                     size: input.length,
+                    hash,
                     createdAt: Date.now()
                 };
                 await assets.writeAsset({
