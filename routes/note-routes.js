@@ -2,6 +2,7 @@ const fs = require('fs').promises;
 const path = require('path');
 const crypto = require('crypto');
 const { sanitizeFilename } = require('../scripts/notepad-migration');
+const { applyNoteEdit, statusForEditError } = require('../scripts/note-edits');
 
 function hashContent(content) {
     return crypto.createHash('sha256').update(String(content || '')).digest('hex');
@@ -120,7 +121,7 @@ function registerNoteRoutes(app, context) {
     app.patch('/api/notes/:id', async (req, res) => {
         try {
             const { id } = req.params;
-            const { action, text, target, replacement, userId, baseVersion } = req.body;
+            const { userId, baseVersion } = req.body;
             const senderId = userId || 'api';
 
             const result = await storage.withNotepadWriteLock(async () => {
@@ -138,61 +139,24 @@ function registerNoteRoutes(app, context) {
                     };
                 }
 
-                let content = await storage.readNoteContent(notepad);
-                let modified = false;
-                let badRequest = null;
+                const currentContent = await storage.readNoteContent(notepad);
+                const edit = applyNoteEdit(currentContent, req.body);
 
-                switch (action) {
-                    case 'append':
-                        if (text !== undefined) {
-                            content += text;
-                            modified = true;
-                        }
-                        break;
-                    case 'prepend':
-                        if (text !== undefined) {
-                            content = text + content;
-                            modified = true;
-                        }
-                        break;
-                    case 'replace':
-                        if (target) {
-                            if (content.includes(target)) {
-                                content = content.split(target).join(replacement || '');
-                                modified = true;
-                            } else {
-                                badRequest = { success: false, error: 'Target text not found in document', target };
-                            }
-                        } else {
-                            badRequest = { success: false, error: 'Replace action requires a non-empty target' };
-                        }
-                        break;
-                    case 'replace_first':
-                        if (target) {
-                            if (content.includes(target)) {
-                                content = content.replace(target, replacement || '');
-                                modified = true;
-                            } else {
-                                badRequest = { success: false, error: 'Target text not found' };
-                            }
-                        }
-                        break;
-                    case 'overwrite':
-                        content = text || '';
-                        modified = true;
-                        break;
-                    default:
-                        badRequest = { error: 'Invalid action' };
-                }
-                if (badRequest) {
-                    return { errorStatus: 400, errorBody: badRequest };
+                if (!edit.ok) {
+                    const errorBody = { error: edit.error };
+                    // Preserve the historical { success: false, ... } shape for
+                    // content-matching failures; a bare invalid action stays { error }.
+                    if (edit.errorCode !== 'invalid_action') errorBody.success = false;
+                    if (edit.target !== undefined) errorBody.target = edit.target;
+                    if (edit.matchCount !== undefined) errorBody.matchCount = edit.matchCount;
+                    return { errorStatus: statusForEditError(edit.errorCode), errorBody };
                 }
 
-                if (!modified) {
-                    return { content, modified: false, version: notepad.version || 1 };
+                if (!edit.modified) {
+                    return { content: edit.content, modified: false, version: notepad.version || 1 };
                 }
 
-                await storage.writeNoteContent(notepad, content);
+                await storage.writeNoteContent(notepad, edit.content);
 
                 const data = await storage.readNotepadsMeta();
                 const targetNotepad = data.notepads.find(n => n.id === id);
@@ -203,7 +167,13 @@ function registerNoteRoutes(app, context) {
                     savedVersion = targetNotepad.version;
                     await storage.saveNotepadsMeta(data);
                 }
-                return { content, modified: true, version: savedVersion };
+                return {
+                    content: edit.content,
+                    modified: true,
+                    version: savedVersion,
+                    matchCount: edit.matchCount,
+                    replaced: edit.replaced
+                };
             });
 
             if (result.errorStatus) {
@@ -215,7 +185,10 @@ function registerNoteRoutes(app, context) {
             if (result.modified) {
                 broadcastUpdate(id, result.content, senderId, result.version, { contentHash: hashContent(result.content) });
                 scheduleIndexNotepads();
-                return res.json({ success: true, content: result.content, modified: true, version: result.version });
+                const body = { success: true, content: result.content, modified: true, version: result.version };
+                if (result.matchCount !== undefined) body.matchCount = result.matchCount;
+                if (result.replaced !== undefined) body.replaced = result.replaced;
+                return res.json(body);
             }
             res.json({ success: true, content: result.content, modified: false, version: result.version });
         } catch (err) {

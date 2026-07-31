@@ -762,6 +762,49 @@ async function run() {
         assert(result.body.version === 3, 'same-content stale note save should not increment version');
         assert(result.body.unchanged === true, 'same-content stale note save should report unchanged');
 
+        // Fine-grained note editing (#1 phase 1): an agent can make a targeted
+        // change with an occurrence guard instead of rewriting the whole note.
+        result = await request('/api/notepads', {
+            method: 'POST',
+            body: JSON.stringify({ id: 'api-fine-grained-note', name: 'API Fine Grained Note', content: '# Draft\n\nalpha beta alpha\n\ndone' })
+        });
+        assert(result.response.ok && result.body.id === 'api-fine-grained-note', 'POST /api/notepads should create the fine-grained edit fixture');
+
+        result = await request('/api/notes/api-fine-grained-note', {
+            method: 'PATCH',
+            body: JSON.stringify({ action: 'replace', target: 'alpha', replacement: 'ALPHA', expectedCount: 1 })
+        });
+        assert(result.response.status === 400, 'replace with a mismatched expectedCount should be rejected');
+        assert(result.body.matchCount === 2, 'a mismatched replace should report the actual match count');
+
+        result = await request('/api/notes/api-fine-grained-note', {
+            method: 'PATCH',
+            body: JSON.stringify({ action: 'replace', target: 'alpha', replacement: 'ALPHA', expectedCount: 2 })
+        });
+        assert(result.response.ok, 'replace with a matching expectedCount should succeed');
+        assert(result.body.content === '# Draft\n\nALPHA beta ALPHA\n\ndone', 'replace should swap every occurrence');
+        assert(result.body.matchCount === 2 && result.body.replaced === 2, 'replace should report match and replaced counts');
+
+        result = await request('/api/notes/api-fine-grained-note', {
+            method: 'PATCH',
+            body: JSON.stringify({ action: 'replace_first', target: 'ALPHA', replacement: 'A1' })
+        });
+        assert(result.response.ok, 'replace_first should succeed');
+        assert(result.body.content === '# Draft\n\nA1 beta ALPHA\n\ndone', 'replace_first should change only the first occurrence');
+        assert(result.body.replaced === 1 && result.body.matchCount === 2, 'replace_first should report only one replacement out of two matches');
+
+        result = await request('/api/notes/api-fine-grained-note', {
+            method: 'PATCH',
+            body: JSON.stringify({ action: 'insert_after', target: 'done', text: ' now' })
+        });
+        assert(result.response.ok && result.body.content === '# Draft\n\nA1 beta ALPHA\n\ndone now', 'insert_after should place text right after the anchor');
+
+        result = await request('/api/notes/api-fine-grained-note', {
+            method: 'PATCH',
+            body: JSON.stringify({ action: 'insert_before', target: 'zzz-missing', text: 'x' })
+        });
+        assert(result.response.status === 400, 'insert with a missing anchor should be rejected');
+
         result = await request(`/api/notepads/${notepadId}`, {
             method: 'PUT',
             body: JSON.stringify({ name: 'API Regression Note Renamed' })
