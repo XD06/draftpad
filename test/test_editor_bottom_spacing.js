@@ -9,7 +9,9 @@ const path = require('path');
 // (.vditor-wysiwyg): a short note leaves a clean gap below the card and a long
 // note never scrolls its last line flush against the bottom edge, while the
 // card itself only carries a small, balanced internal bottom padding. Mobile
-// keeps its own safe-area based bottom padding.
+// keeps its own safe-area based bottom padding. This test also pins that source
+// mode mirrors the WYSIWYG card's TOP alignment so both modes start their text
+// in the same place.
 const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'Assets', 'ios-theme.css'), 'utf8');
 
 // --- the desktop scroll container carries the bottom breathing room ---------
@@ -21,8 +23,8 @@ const scrollerBlock = css.slice(scrollerIdx, css.indexOf('}', scrollerIdx));
 const scrollerPad = scrollerBlock.match(/padding-bottom:\s*(\d+)px/);
 assert(scrollerPad, 'the desktop scroll container must set an explicit padding-bottom for bottom breathing room');
 assert(
-    Number(scrollerPad[1]) >= 120,
-    `desktop scroll-container bottom padding should give real breathing room (got ${scrollerPad[1]}px, expected >= 120px)`
+    Number(scrollerPad[1]) >= 64,
+    `desktop scroll-container bottom padding should give real (but not excessive) breathing room (got ${scrollerPad[1]}px, expected >= 64px)`
 );
 
 // That breathing room must apply on desktop only (min-width: 981px); mobile
@@ -46,10 +48,45 @@ assert(
     `the article card must hug its content -- internal bottom padding should stay small (got ${cardPad ? cardPad[1] + 'px' : 'none'}, expected <= 48px), otherwise the empty area inside the card returns`
 );
 
+// --- source mode must mirror the WYSIWYG card's TOP alignment ---------------
+// Source mode used to sit at top:0 with a huge internal top padding, so its
+// text floated far below the card's own top edge and never matched WYSIWYG. It
+// must now start its card at the same top offset as the WYSIWYG card margin-top
+// and use the same internal top padding, so the first line lands in the same
+// place in both modes.
+const cardMarginTop = cardBlock.match(/margin:\s*(\d+)px/);
+const cardPadTop = cardBlock.match(/[\s;{]padding-top:\s*(\d+)px/);
+assert(cardMarginTop && cardPadTop, 'the WYSIWYG card must declare an explicit top margin and top padding');
+
+const sourceSelector = 'body:not(.thoughts-mode) .typora-source-editor {';
+const sourceIdx = css.indexOf(sourceSelector);
+assert(sourceIdx !== -1, 'the desktop source-mode rule (.typora-source-editor) must exist');
+const sourceBlock = css.slice(sourceIdx, css.indexOf('}', sourceIdx));
+const sourceTop = sourceBlock.match(/[\s;{]top:\s*(\d+)px/);
+const sourcePadTop = sourceBlock.match(/[\s;{]padding-top:\s*(\d+)px/);
+assert(sourceTop, 'desktop source mode must set an explicit top offset so its card mirrors the WYSIWYG card');
+assert(sourcePadTop, 'desktop source mode must set an explicit top padding');
+assert(
+    Number(sourceTop[1]) === Number(cardMarginTop[1]),
+    `source-mode card top offset (${sourceTop[1]}px) must match the WYSIWYG card margin-top (${cardMarginTop[1]}px) so both modes start at the same place`
+);
+assert(
+    Number(sourcePadTop[1]) === Number(cardPadTop[1]),
+    `source-mode internal top padding (${sourcePadTop[1]}px) must match the WYSIWYG card top padding (${cardPadTop[1]}px)`
+);
+
+// The source-mode alignment must apply on desktop only (min-width: 981px).
+const sourceMedia = css.slice(0, sourceIdx).lastIndexOf('@media');
+assert(sourceMedia !== -1, 'the desktop source-mode rule must sit inside a media query');
+assert(
+    /min-width:\s*981px/.test(css.slice(sourceMedia, css.indexOf('{', sourceMedia))),
+    'the source-mode top alignment must apply on desktop (min-width: 981px)'
+);
+
 // Mobile must keep its existing safe-area based bottom padding untouched.
 assert(
     css.includes('padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 64px)'),
     'mobile safe-area bottom padding must remain in place'
 );
 
-console.log('Editor bottom spacing regression checks passed');
+console.log('Editor bottom spacing + source/WYSIWYG top alignment regression checks passed');

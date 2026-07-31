@@ -1513,7 +1513,7 @@ main {
            on the scroll container means a short note leaves a clean gap below
            the card, and a long note never scrolls its last line flush against
            the bottom edge. */
-        padding-bottom: 160px;
+        padding-bottom: 80px;
     }
 
     body:not(.thoughts-mode) .typora-editor-shell .vditor-wysiwyg pre.vditor-reset {
@@ -1526,7 +1526,17 @@ main {
     }
 
     body:not(.thoughts-mode) .typora-source-editor {
-        padding-top: 102px !important;
+        /* Source mode used to look inconsistent with WYSIWYG: the textarea sat
+           at top:0 with a large 102px INTERNAL top padding, so the article text
+           floated far below the card's own top edge and never lined up with the
+           WYSIWYG card. Mirror the WYSIWYG card instead -- start the card 64px
+           down (leaving the same grey strip above as the card's margin-top) and
+           use the same 24px internal top padding, so the first line lands in the
+           same place in both modes. (Base rule has higher specificity, so top,
+           height and padding-top need !important to win here.) */
+        top: 64px !important;
+        height: calc(100% - 64px) !important;
+        padding-top: 24px !important;
         scroll-padding-top: 78px;
     }
 }
