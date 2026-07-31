@@ -2295,6 +2295,23 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     }
 
+    // Fully tear down the mobile sidebar overlay. Every path that closes the
+    // sidebar must also clear body.mobile-sidebar-open (and restore the thoughts
+    // sidebar host), otherwise the CSS that hides the floating actions while the
+    // sidebar is open leaves the FAB permanently hidden -- e.g. after tapping a
+    // notepad on mobile, which previously only removed the `visible` classes.
+    function closeMobileSidebar() {
+        document.getElementById('sidebar-left')?.classList.remove('visible');
+        document.getElementById('sidebar-overlay')?.classList.remove('visible');
+        document.body.classList.remove('mobile-sidebar-open');
+        const host = document.querySelector('main.three-column-layout');
+        if (host && host.classList.contains('mobile-sidebar-host')) {
+            host.style.display = host.dataset.sidebarRestoreDisplay || '';
+            delete host.dataset.sidebarRestoreDisplay;
+            host.classList.remove('mobile-sidebar-host');
+        }
+    }
+
     async function selectNotepad(id, query = "") {
         const selectedNotepad = findNotepadByIdOrName(currentNotepads, id);
         if (!selectedNotepad) return;
@@ -2330,9 +2347,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             return;
         }
 
-        // Hide mobile sidebar on selection
-        document.getElementById('sidebar-left')?.classList.remove('visible');
-        document.getElementById('sidebar-overlay')?.classList.remove('visible');
+        // Hide mobile sidebar on selection (full teardown so the FAB reappears)
+        closeMobileSidebar();
 
         await loadNotes(currentNotepadId, { deferRemote: true });
         if (token !== selectionToken) return;
