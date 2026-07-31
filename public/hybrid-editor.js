@@ -4033,16 +4033,36 @@ export class HybridMarkdownEditor {
     }
 
     insertArticleUploadPlaceholder(token) {
+        this.insertArticleMarkdownAtCaret(token);
+    }
+
+    // Insert markdown at the current caret, transparently handling both editor
+    // modes (source textarea vs. WYSIWYG). Returns true when the insertion was
+    // dispatched so callers can surface UI feedback.
+    insertArticleMarkdownAtCaret(markdown) {
+        const text = String(markdown || '');
+        if (!text) return false;
         if (this.sourceMode && this.sourceTextarea) {
             const start = this.sourceTextarea.selectionStart || 0;
             const end = this.sourceTextarea.selectionEnd || start;
-            this.sourceTextarea.setRangeText(token, start, end, 'end');
+            this.sourceTextarea.setRangeText(text, start, end, 'end');
             this.emitSourceInput();
-            return;
+            return true;
         }
+        const canInsert = typeof this.editor?.insertMD === 'function';
         this.editor?.focus?.();
-        this.editor?.insertMD?.(token);
+        this.editor?.insertMD?.(text);
         this.handleWysiwygInput();
+        return canInsert;
+    }
+
+    // Reference an already-stored asset (from the settings asset manager) at the
+    // caret instead of re-uploading a duplicate copy.
+    insertArticleAssetReference(asset) {
+        if (!asset) return false;
+        const isImage = (asset.kind || 'image') === 'image' && Boolean(asset.previewUrl);
+        const markdown = isImage ? this.buildArticleImageMarkdown(asset) : buildArticleFileMarkdown(asset);
+        return this.insertArticleMarkdownAtCaret(markdown);
     }
 
     buildArticleImageMarkdown(asset) {

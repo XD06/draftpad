@@ -236,6 +236,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     const settingsAssetsSelectedCount = document.getElementById('settings-assets-selected-count');
     const settingsAssetsDeleteSelected = document.getElementById('settings-assets-delete-selected');
     const selectedAssetIds = new Set();
+    // Cache the latest asset metadata by id so the "插入" action can reference an
+    // existing asset (no re-upload, no duplicate copy) without another request.
+    const assetItemsById = new Map();
     const startupSyncStatus = document.getElementById('startup-sync-status');
 
     let saveTimeout;
@@ -975,6 +978,11 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     function renderAssetItems(items = []) {
         if (!settingsAssetsList) return;
+        assetItemsById.clear();
+        (Array.isArray(items) ? items : []).forEach(item => {
+            const id = String(item?.id || '');
+            if (id) assetItemsById.set(id, item);
+        });
         if (!Array.isArray(items) || items.length === 0) {
             settingsAssetsList.innerHTML = '<div class="settings-assets-empty">暂无附件。</div>';
             updateAssetSelectionUi();
@@ -1002,6 +1010,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                         <div class="settings-asset-meta">${meta}</div>
                     </div>
                     <div class="settings-asset-actions">
+                        <button type="button" class="settings-asset-insert" data-asset-action="insert">插入</button>
                         <a class="settings-asset-download" href="${downloadUrl}" download data-asset-action="download">下载</a>
                         <button type="button" class="danger" data-asset-action="delete">删除</button>
                     </div>
@@ -1026,6 +1035,29 @@ document.addEventListener('DOMContentLoaded', async () => {
             updateAssetSelectionUi();
             toaster.show(error.message || '附件读取失败', 'error', false, 2600);
         }
+    }
+
+    // Reference an existing (already-uploaded) asset in the current article,
+    // the read side of #3: the settings asset manager shows every stored asset,
+    // and "插入" drops a markdown reference at the caret instead of forcing a
+    // duplicate re-upload through the normal image/file picker.
+    function insertAssetIntoArticle(assetId) {
+        const asset = assetItemsById.get(String(assetId || ''));
+        if (!asset) {
+            toaster.show('未找到附件，请刷新后重试', 'error', false, 2200);
+            return;
+        }
+        if (!editorInstance || typeof editorInstance.insertArticleAssetReference !== 'function') {
+            toaster.show('请先打开一篇文章再插入附件', 'error', false, 2600);
+            return;
+        }
+        const inserted = editorInstance.insertArticleAssetReference(asset);
+        if (!inserted) {
+            toaster.show('当前编辑器暂时无法插入附件', 'error', false, 2600);
+            return;
+        }
+        hideModal(settingsModal);
+        toaster.show('已插入到当前文章', 'success', false, 1600);
     }
 
     async function deleteAssetPermanently(assetId) {
@@ -2750,6 +2782,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                 if (button.dataset.assetAction === 'delete') {
                     event.preventDefault();
                     deleteAssetPermanently(item.dataset.assetId);
+                } else if (button.dataset.assetAction === 'insert') {
+                    event.preventDefault();
+                    insertAssetIntoArticle(item.dataset.assetId);
                 }
             });
             settingsAssetsList.addEventListener('change', (event) => {

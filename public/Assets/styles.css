@@ -2949,6 +2949,11 @@ body.reading-mode-active .toc-container * {
     color: var(--danger-color);
 }
 
+.settings-asset-actions .settings-asset-insert {
+    color: var(--primary-color);
+    border-color: color-mix(in srgb, var(--primary-color) 45%, var(--border-color));
+}
+
 .settings-cloud-status {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
