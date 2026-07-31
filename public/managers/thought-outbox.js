@@ -154,6 +154,42 @@ export default class ThoughtOutbox {
         return next.find(item => item.kind === 'patch' && item.thoughtId === thoughtId) || null;
     }
 
+    // Give a conflicted patch an exit so the queue never dead-locks.
+    // "Keep local": rebase the pending overwrite onto the current remote version
+    // and clear the conflict/attempts so the next retry resends and wins.
+    rebaseConflict(thoughtId, currentVersion) {
+        const items = this.load();
+        let updated = null;
+        const next = items.map(item => {
+            if (item.kind !== 'patch' || item.thoughtId !== thoughtId || item.state !== 'conflict') return item;
+            const remoteVersion = Number(currentVersion);
+            const fallbackVersion = Number(item.conflict?.currentVersion);
+            const nextBaseVersion = Number.isFinite(remoteVersion)
+                ? remoteVersion
+                : (Number.isFinite(fallbackVersion) ? fallbackVersion : item.body?.baseVersion);
+            updated = {
+                ...item,
+                state: undefined,
+                attempts: 0,
+                lastError: undefined,
+                conflict: undefined,
+                body: { ...item.body, baseVersion: nextBaseVersion }
+            };
+            return updated;
+        });
+        if (updated) this.save(next);
+        return updated;
+    }
+
+    // "Discard local": drop the conflicted patch entirely so the remote version wins.
+    discardConflict(thoughtId) {
+        const items = this.load();
+        const next = items.filter(item => !(item.kind === 'patch' && item.thoughtId === thoughtId && item.state === 'conflict'));
+        const removed = next.length !== items.length;
+        if (removed) this.save(next);
+        return removed;
+    }
+
     enqueueCreate({ text, tags = [], subItems = [], completed = false, tempThought }) {
         return this.enqueue({
             kind: 'create',

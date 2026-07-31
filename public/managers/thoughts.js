@@ -383,7 +383,7 @@ export class ThoughtsManager {
         if (this.outboxStatus) {
             this.outboxStatus.addEventListener('click', () => {
                 if (this.outboxStatus.dataset.syncState === 'conflict') {
-                    this.refreshOutboxConflicts();
+                    this.resolveOutboxConflicts();
                     return;
                 }
                 this.retryOutbox({ silent: false });
@@ -584,6 +584,70 @@ export class ThoughtsManager {
         if (conflicts.length) {
             this.app.toaster?.show('已刷新远端版本，本地修改仍被保留，需合并后再保存', 'info', false, 3600);
         }
+    }
+
+    // Recoverable conflict resolution: for each conflicted Thought let the user
+    // either keep local (overwrite remote) or discard local (use remote), so the
+    // outbox can never get stuck permanently showing "同步冲突".
+    async resolveOutboxConflicts() {
+        const conflicts = this.loadOutbox().filter(item => item.state === 'conflict');
+        if (!conflicts.length) {
+            this.retryOutbox({ silent: false });
+            return;
+        }
+        for (const item of conflicts) {
+            await this.resolveSingleConflict(item.thoughtId);
+        }
+    }
+
+    async resolveSingleConflict(thoughtId) {
+        if (!thoughtId) return;
+        // Pull the latest remote so we rebase onto the true current version and
+        // can show the user what they are comparing against.
+        let remote = null;
+        try {
+            remote = await this.apiClient.get(thoughtId);
+        } catch (err) {
+            console.warn('Failed to fetch remote Thought during conflict resolution:', err);
+        }
+        const local = this.thoughts.find(thought => thought.id === thoughtId);
+        const snippet = (local?.text || remote?.text || '').replace(/\s+/g, ' ').trim().slice(0, 40);
+        const keepLocal = await this.app.confirmationManager?.show({
+            title: '同步冲突',
+            message: `“${snippet || '这条想法'}” 在其他设备也被修改过，无法自动合并。\n\n选择“保留本地”用你的本地内容覆盖云端；选择“放弃本地”丢弃本地修改、改用云端版本。`,
+            confirmText: '保留本地',
+            cancelText: '放弃本地',
+            confirmType: 'primary'
+        });
+        if (keepLocal) {
+            const remoteVersion = Number(remote?.version);
+            this.outbox.rebaseConflict(thoughtId, Number.isFinite(remoteVersion) ? remoteVersion : undefined);
+            if (local) {
+                delete local.syncConflict;
+                delete local.remoteConflict;
+            }
+            this.updateOutboxStatus();
+            await this.retryOutbox({ silent: false });
+            return;
+        }
+        // Discarding local edits is destructive, so require an explicit second confirm.
+        const discard = await this.app.confirmationManager?.show({
+            title: '放弃本地修改？',
+            message: '将丢弃这条想法的本地修改，改用云端最新版本，此操作无法撤销。',
+            confirmText: '放弃本地',
+            cancelText: '取消',
+            confirmType: 'danger'
+        });
+        if (!discard) return; // Conflict is left intact and can be resolved later.
+        this.outbox.discardConflict(thoughtId);
+        if (local) {
+            delete local.localPending;
+            delete local.syncConflict;
+            delete local.remoteConflict;
+        }
+        this.updateOutboxStatus();
+        await this.fetchThoughts();
+        this.app.toaster?.show('已放弃本地修改，使用云端版本', 'info', false, 2200);
     }
 
     mergeOutboxThoughts(thoughts) {
