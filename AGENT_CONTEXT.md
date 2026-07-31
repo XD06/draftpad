@@ -36,11 +36,12 @@ The current branch is the refactored application line. Treat the codebase as the
 Root-level JavaScript files are intentionally limited:
 
 - `server.js` - application entrypoint.
-- `test_*.js` - current regression tests when referenced by `package.json` scripts.
+
+Regression tests live in `test/` (`test/test_*.js`), not the repo root. They are current when referenced by `package.json` scripts.
 
 Historical one-off patch scripts, old manual Thought API tests, and unused reference constants have been moved out of the root into local/scratch legacy folders. Do not treat those legacy files as current workflows.
 
-Current test scripts are declared in `package.json`. Prefer running tests through npm scripts instead of invoking root test files by memory.
+Current test scripts are declared in `package.json`. Run the full suite with `npm test`, an individual test with its `npm run test:*` script, or directly via `node test/test_<name>.js`. Prefer npm scripts instead of invoking test files by memory.
 
 ## Important Constraints
 

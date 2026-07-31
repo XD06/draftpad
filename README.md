@@ -241,8 +241,16 @@ npm run seed:demo
 
 ## ✅ 验证命令
 
+所有测试文件位于 `test/` 目录（`test/test_*.js`），不再散落在项目根目录。一次性运行语法检查与完整测试套件：
+
 ```bash
-npm run check
+npm run check   # 语法检查 + 服务器启动冒烟
+npm test        # 运行 test/ 下的完整测试套件（排除需要真实 S3 的 smoke）
+```
+
+也可以单独运行某个测试（脚本定义见 `package.json`，或直接 `node test/test_<name>.js`）：
+
+```bash
 npm run test:hybrid-editor-time-command
 npm run test:api
 npm run test:ai-provider

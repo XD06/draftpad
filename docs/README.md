@@ -18,17 +18,29 @@ This index separates current project documentation from historical development n
 ## Archived Docs
 
 - `archive/api-report-legacy-v1.3.md` - older API automation report. Keep for historical reference only; use `../api.md` for current API behavior.
+- `archive/audit-2026-07-06.md` - point-in-time safety/security audit. Historical.
+- `archive/audit-sync-performance.md` - point-in-time sync/performance audit. Historical.
+- `archive/FIX-SUMMARY-2026-07-06.md` - fix summary for the 2026-07-06 audit. Historical.
+- `archive/FIX-SUMMARY-2026-07-27.md` - fix summary for the follow-up hardening round. Historical.
 
 ## Local Ignored Notes
 
 The old `todo*.md`, `thought.md`, and private AI/provider notes were moved out of the root into ignored `.local/` folders. They were useful during development, but they are not current requirements and should not guide new implementation work.
+
+## Tests
+
+All regression tests live in `../test/` (`test/test_*.js`), not the repo root. Run them with:
+
+- `npm test` - the full suite (excludes `test_s3_real_smoke.js`, which needs a live S3 endpoint).
+- `npm run test:<name>` - an individual test; scripts are declared in `../package.json`.
+- `node test/test_<name>.js` - run a single file directly.
 
 ## Root JS Hygiene
 
 The root should stay small:
 
 - `server.js` is the application entrypoint.
-- `test_*.js` files are current only when they are referenced by `package.json` scripts.
+- Regression tests live in `../test/`, not the root. They are current only when referenced by `package.json` scripts.
 - Old one-off patch scripts and manual tests should stay out of the root and should not be treated as current workflows.
 
 ## Maintenance Rules
