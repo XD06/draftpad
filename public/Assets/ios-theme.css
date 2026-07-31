@@ -1507,16 +1507,22 @@ main {
 
     body:not(.thoughts-mode) .typora-editor-shell .vditor-wysiwyg {
         scroll-padding-top: 78px;
+        /* Issue #6 (revised): keep the article region (pre.vditor-reset card) a
+           real distance ABOVE the bottom of the editor viewport, instead of
+           padding empty space INSIDE the white card. Putting the breathing room
+           on the scroll container means a short note leaves a clean gap below
+           the card, and a long note never scrolls its last line flush against
+           the bottom edge. */
+        padding-bottom: 160px;
     }
 
     body:not(.thoughts-mode) .typora-editor-shell .vditor-wysiwyg pre.vditor-reset {
         margin: 64px auto 0 !important;
         padding-top: 24px !important;
-        /* Issue #6: on desktop the WYSIWYG body sat flush against the bottom of
-           the editor viewport, so the last lines were cramped and awkward to
-           edit. Give the end of the note real breathing room (source mode
-           already carries its own bottom padding). */
-        padding-bottom: 160px !important;
+        /* Balance the card internally against its 24px top padding; the bottom
+           breathing room now lives on the scroll container above, not inside
+           the card, so the card hugs its own content. */
+        padding-bottom: 24px !important;
     }
 
     body:not(.thoughts-mode) .typora-source-editor {
