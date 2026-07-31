@@ -805,6 +805,48 @@ async function run() {
         });
         assert(result.response.status === 400, 'insert with a missing anchor should be rejected');
 
+        // Structure-aware editing (#1 phase 2): an agent reads the heading
+        // outline, then rewrites a single section by slug without touching the rest.
+        result = await request('/api/notepads', {
+            method: 'POST',
+            body: JSON.stringify({ id: 'api-note-outline', name: 'API Note Outline', content: '# Intro\nwelcome\n## Install\nrun npm i\n## Usage\nuse it' })
+        });
+        assert(result.response.ok && result.body.id === 'api-note-outline', 'POST /api/notepads should create the outline fixture');
+
+        result = await request('/api/notes/api-note-outline/outline');
+        assert(result.response.ok, 'GET /api/notes/:id/outline should succeed');
+        assert(typeof result.body.version === 'number', 'outline response should include the note version');
+        assert(
+            JSON.stringify(result.body.outline) === JSON.stringify([
+                { id: 'intro', text: 'Intro', level: 1, line: 0 },
+                { id: 'install', text: 'Install', level: 2, line: 2 },
+                { id: 'usage', text: 'Usage', level: 2, line: 4 }
+            ]),
+            'outline should expose the heading tree with slugs and line numbers'
+        );
+
+        result = await request('/api/notes/api-note-outline', {
+            method: 'PATCH',
+            body: JSON.stringify({ action: 'replace_section', section: 'install', text: 'run pnpm i' })
+        });
+        assert(result.response.ok, 'replace_section should succeed');
+        assert(result.body.section === 'install', 'replace_section should echo the resolved section slug');
+        assert(result.body.content === '# Intro\nwelcome\n## Install\nrun pnpm i\n## Usage\nuse it', 'replace_section should swap only the targeted section body');
+
+        result = await request('/api/notes/api-note-outline', {
+            method: 'PATCH',
+            body: JSON.stringify({ action: 'append_to_section', section: 'usage', text: '- step 1' })
+        });
+        assert(result.response.ok, 'append_to_section should succeed');
+        assert(result.body.content === '# Intro\nwelcome\n## Install\nrun pnpm i\n## Usage\nuse it\n- step 1', 'append_to_section should add to the end of the section body');
+
+        result = await request('/api/notes/api-note-outline', {
+            method: 'PATCH',
+            body: JSON.stringify({ action: 'replace_section', section: 'does-not-exist', text: 'x' })
+        });
+        assert(result.response.status === 400, 'replace_section with an unknown section should be rejected');
+        assert(result.body.section === 'does-not-exist', 'a missing section error should echo the requested section');
+
         result = await request(`/api/notepads/${notepadId}`, {
             method: 'PUT',
             body: JSON.stringify({ name: 'API Regression Note Renamed' })

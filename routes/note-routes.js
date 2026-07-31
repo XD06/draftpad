@@ -2,7 +2,7 @@ const fs = require('fs').promises;
 const path = require('path');
 const crypto = require('crypto');
 const { sanitizeFilename } = require('../scripts/notepad-migration');
-const { applyNoteEdit, statusForEditError } = require('../scripts/note-edits');
+const { applyNoteEdit, statusForEditError, buildOutline } = require('../scripts/note-edits');
 
 function hashContent(content) {
     return crypto.createHash('sha256').update(String(content || '')).digest('hex');
@@ -46,6 +46,23 @@ function registerNoteRoutes(app, context) {
             res.json({ content: notes, version: notepad?.version || 1 });
         } catch (err) {
             res.status(500).json({ error: 'Error reading notes' });
+        }
+    });
+
+    // Structure-aware read: return the Markdown heading outline so an agent can
+    // target a section by slug (see replace_section / append_to_section) without
+    // downloading and parsing the whole document itself.
+    app.get('/api/notes/:id/outline', async (req, res) => {
+        try {
+            const { id } = req.params;
+            const { notepad } = await findNotepadById(id);
+            if (!notepad) {
+                return res.status(404).json({ error: 'Notepad not found' });
+            }
+            const content = await storage.readNoteContent(notepad);
+            res.json({ version: notepad.version || 1, outline: buildOutline(content) });
+        } catch (err) {
+            res.status(500).json({ error: 'Error reading outline' });
         }
     });
 
@@ -148,6 +165,7 @@ function registerNoteRoutes(app, context) {
                     // content-matching failures; a bare invalid action stays { error }.
                     if (edit.errorCode !== 'invalid_action') errorBody.success = false;
                     if (edit.target !== undefined) errorBody.target = edit.target;
+                    if (edit.section !== undefined) errorBody.section = edit.section;
                     if (edit.matchCount !== undefined) errorBody.matchCount = edit.matchCount;
                     return { errorStatus: statusForEditError(edit.errorCode), errorBody };
                 }
@@ -172,7 +190,8 @@ function registerNoteRoutes(app, context) {
                     modified: true,
                     version: savedVersion,
                     matchCount: edit.matchCount,
-                    replaced: edit.replaced
+                    replaced: edit.replaced,
+                    section: edit.section
                 };
             });
 
@@ -188,6 +207,7 @@ function registerNoteRoutes(app, context) {
                 const body = { success: true, content: result.content, modified: true, version: result.version };
                 if (result.matchCount !== undefined) body.matchCount = result.matchCount;
                 if (result.replaced !== undefined) body.replaced = result.replaced;
+                if (result.section !== undefined) body.section = result.section;
                 return res.json(body);
             }
             res.json({ success: true, content: result.content, modified: false, version: result.version });

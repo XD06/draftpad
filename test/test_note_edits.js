@@ -1,7 +1,19 @@
 'use strict';
 
 const assert = require('assert');
-const { applyNoteEdit, countOccurrences, VALID_ACTIONS } = require('../scripts/note-edits');
+const fs = require('fs');
+const path = require('path');
+const vm = require('vm');
+const { applyNoteEdit, countOccurrences, buildOutline, VALID_ACTIONS } = require('../scripts/note-edits');
+
+// Load the browser-side heading parser the same way test_heading_index.js does
+// so we can assert the server outline matches the editor's table of contents.
+const headingSource = fs.readFileSync(path.join(__dirname, '..', 'public', 'managers', 'heading-index.js'), 'utf8')
+    .replace(/export function /g, 'function ')
+    + '\nmodule.exports = { buildMarkdownHeadingIndex };\n';
+const headingCtx = { module: { exports: {} }, exports: {}, Map, String, Array };
+vm.runInNewContext(headingSource, headingCtx, { filename: 'heading-index.js' });
+const { buildMarkdownHeadingIndex } = headingCtx.module.exports;
 
 // Phase 1 of the fine-grained note editing work (#1). These primitives let an
 // AI agent make small, targeted edits to a Markdown note instead of rewriting
@@ -84,6 +96,58 @@ assert(!r.ok && r.errorCode === 'target_not_found', 'anchor insert reports a mis
 r = applyNoteEdit('a x b', { action: 'insert_after', target: 'x' });
 assert(!r.ok && r.errorCode === 'missing_text', 'anchor insert requires text to insert');
 
+// --- structure-aware outline (#1 phase 2) -----------------------------------
+// The server outline must stay identical to the editor's table of contents,
+// otherwise an agent's section slug would not line up with what a human sees.
+[
+    '',
+    'intro\n# Title\nbody\n### Deep',
+    '## **Hello** `World` ~~Now~~ ###',
+    '# API 设计\n# API 设计\n# API-设计',
+    '# !!!\n# ???\n# 中文 标题！',
+    '# Alpha #\r\n###### Zeta ######\r\n'
+].forEach(doc => {
+    assert.deepStrictEqual(
+        JSON.parse(JSON.stringify(buildOutline(doc))),
+        JSON.parse(JSON.stringify(buildMarkdownHeadingIndex(doc).toc)),
+        `server outline should match the editor TOC for: ${JSON.stringify(doc)}`
+    );
+});
+
+// --- section edits (#1 phase 2) ---------------------------------------------
+const doc = '# A\naaa\n# B\nbbb\n# C\nccc';
+
+r = applyNoteEdit(doc, { action: 'replace_section', section: 'b', text: 'BBB' });
+assert(r.ok && r.content === '# A\naaa\n# B\nBBB\n# C\nccc', 'replace_section swaps only the body under a heading');
+assert(r.section === 'b', 'replace_section reports the resolved section slug');
+
+r = applyNoteEdit(doc, { action: 'replace_section', section: 'c', text: 'CCC' });
+assert(r.ok && r.content === '# A\naaa\n# B\nbbb\n# C\nCCC', 'replace_section handles the final section');
+
+r = applyNoteEdit(doc, { action: 'replace_section', section: 'b', text: '' });
+assert(r.ok && r.content === '# A\naaa\n# B\n# C\nccc', 'replace_section with empty text clears the body but keeps the heading');
+
+r = applyNoteEdit(doc, { action: 'append_to_section', section: 'b', text: 'extra' });
+assert(r.ok && r.content === '# A\naaa\n# B\nbbb\nextra\n# C\nccc', 'append_to_section adds to the end of the section body');
+
+r = applyNoteEdit(doc, { action: 'append_to_section', section: 'B', text: 'z' });
+assert(r.ok && r.section === 'b', 'a section can be resolved by exact heading text but is reported by slug');
+
+r = applyNoteEdit(doc, { action: 'replace_section', section: 'nope', text: 'x' });
+assert(!r.ok && r.errorCode === 'section_not_found' && r.section === 'nope', 'a missing section is reported');
+
+r = applyNoteEdit(doc, { action: 'replace_section', text: 'x' });
+assert(!r.ok && r.errorCode === 'missing_section', 'a section edit requires a section identifier');
+
+r = applyNoteEdit(doc, { action: 'append_to_section', section: 'a' });
+assert(!r.ok && r.errorCode === 'missing_text', 'a section edit requires text');
+
+r = applyNoteEdit('# Dup\naaa\n# Dup\nbbb', { action: 'replace_section', section: 'Dup', text: 'x' });
+assert(!r.ok && r.errorCode === 'ambiguous_section' && r.matchCount === 2, 'an ambiguous heading text is rejected in favor of a slug');
+
+r = applyNoteEdit('# Dup\naaa\n# Dup\nbbb', { action: 'replace_section', section: 'dup-1', text: 'x' });
+assert(r.ok && r.content === '# Dup\naaa\n# Dup\nx', 'a duplicated heading is addressable by its unique slug');
+
 // --- invalid action ----------------------------------------------------------
 r = applyNoteEdit('hello', { action: 'nope' });
 assert(!r.ok && r.errorCode === 'invalid_action', 'unknown action is rejected');
@@ -92,7 +156,7 @@ r = applyNoteEdit('hello', {});
 assert(!r.ok && r.errorCode === 'invalid_action', 'missing action is rejected');
 
 // --- action catalog ----------------------------------------------------------
-['append', 'prepend', 'overwrite', 'replace', 'replace_first', 'insert_before', 'insert_after'].forEach(action => {
+['append', 'prepend', 'overwrite', 'replace', 'replace_first', 'insert_before', 'insert_after', 'replace_section', 'append_to_section'].forEach(action => {
     assert(VALID_ACTIONS.has(action), `${action} should be a recognized note edit action`);
 });
 
