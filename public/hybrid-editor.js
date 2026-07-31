@@ -375,6 +375,44 @@ export class HybridMarkdownEditor {
         }
     }
 
+    // True when the user's caret is currently inside this editor. Used to decide
+    // whether a programmatic content replacement should preserve the caret
+    // (issue #5) or can safely reset it (e.g. switching notepads / first load).
+    editorHasFocus() {
+        if (this.isReadingMode) return false;
+        if (this.sourceMode && this.sourceTextarea) {
+            return document.activeElement === this.sourceTextarea;
+        }
+        const root = this.container.querySelector('.vditor-wysiwyg .vditor-reset');
+        if (!root) return false;
+        const active = document.activeElement;
+        if (active && root.contains(active)) return true;
+        const selection = window.getSelection();
+        const node = selection?.rangeCount ? selection.getRangeAt(0).startContainer : null;
+        return Boolean(node && root.contains(node));
+    }
+
+    // Replace the whole document while keeping the caret roughly where the user
+    // left it. When a background/remote sync update lands mid-edit, a plain
+    // setValue() collapses the caret to the top, which reads as "the cursor just
+    // vanished" (issue #5). Only preserve when the editor is actually focused, so
+    // notepad switches and initial loads still reset the caret as before.
+    setValuePreservingCaret(value, emit = false) {
+        if (!this.editorHasFocus()) {
+            this.setValue(value, emit);
+            return;
+        }
+        if (this.sourceMode && this.sourceTextarea) {
+            const caret = this.sourceTextarea.selectionStart || 0;
+            this.setValue(value, emit);
+            const clamped = Math.min(caret, this.sourceTextarea.value.length);
+            this.sourceTextarea.setSelectionRange(clamped, clamped);
+            return;
+        }
+        const caretOffset = this.getCurrentWysiwygMarkdownOffset();
+        this.setWysiwygValueAtMarkdownOffset(value, caretOffset, emit);
+    }
+
     restoreWysiwygCaretFromMarker() {
         const pending = this.wysiwygCaretRestore;
         const root = this.container.querySelector('.vditor-wysiwyg .vditor-reset');

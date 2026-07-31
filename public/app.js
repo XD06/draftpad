@@ -99,6 +99,24 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (editorInstance) editorInstance.setValue(pendingEditorValue, false);
             else if (bootEditorActive && bootEditor) bootEditor.value = pendingEditorValue;
         },
+        // Like `value = ...`, but keeps the caret where the user is typing when the
+        // new content arrives from a background sync/merge (issue #5). Falls back
+        // to a plain assignment when the editor isn't focused.
+        applyRemoteValue(val) {
+            pendingEditorValue = val || '';
+            if (editorInstance) {
+                editorInstance.setValuePreservingCaret(pendingEditorValue, false);
+            } else if (bootEditorActive && bootEditor) {
+                const focused = document.activeElement === bootEditor;
+                const start = bootEditor.selectionStart;
+                const end = bootEditor.selectionEnd;
+                bootEditor.value = pendingEditorValue;
+                if (focused) {
+                    const max = bootEditor.value.length;
+                    bootEditor.setSelectionRange(Math.min(start, max), Math.min(end, max));
+                }
+            }
+        },
         focus: () => (editorInstance ? editorInstance.focus() : (bootEditorActive ? bootEditor?.focus() : undefined)),
         get selectionStart() {
             if (editorInstance) return editorInstance.selectionStart || 0;
@@ -497,7 +515,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 hideNoteConflictToast();
                 if (merge.content === remoteContent) {
                     isApplyingRemoteUpdate = true;
-                    editor.value = merge.content;
+                    editor.applyRemoteValue(merge.content);
                     isApplyingRemoteUpdate = false;
                     hasUnsavedChanges = false;
                     cacheSyncedNote(currentNotepadId, merge.content, { version: remoteVersion });
@@ -509,7 +527,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 const mergedRevision = editorRevision;
                 const mergedNotepadId = currentNotepadId;
                 isApplyingRemoteUpdate = true;
-                editor.value = merge.content;
+                editor.applyRemoteValue(merge.content);
                 isApplyingRemoteUpdate = false;
                 hasUnsavedChanges = true;
                 cacheDirtyNote(mergedNotepadId, merge.content, {
@@ -529,7 +547,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
 
         isApplyingRemoteUpdate = true;
-        editor.value = detail.content || '';
+        editor.applyRemoteValue(detail.content || '');
         isApplyingRemoteUpdate = false;
         setCurrentNoteVersion(currentNotepadId, remoteVersion);
         cacheSyncedNote(currentNotepadId, detail.content || '', { version: remoteVersion });
@@ -1922,7 +1940,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
                         if (merge.content === (remoteNote.content || '')) {
                             isApplyingRemoteUpdate = true;
-                            editor.value = merge.content;
+                            editor.applyRemoteValue(merge.content);
                             isApplyingRemoteUpdate = false;
                             hasUnsavedChanges = false;
                             cacheSyncedNote(targetNotepadId, merge.content, { version: nextVersion });
@@ -1933,7 +1951,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                         editorRevision += 1;
                         const mergedRevision = editorRevision;
                         isApplyingRemoteUpdate = true;
-                        editor.value = merge.content;
+                        editor.applyRemoteValue(merge.content);
                         isApplyingRemoteUpdate = false;
                         hasUnsavedChanges = true;
                         cacheDirtyNote(targetNotepadId, merge.content, {
