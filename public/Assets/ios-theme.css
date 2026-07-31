@@ -2120,3 +2120,38 @@ main {
         transition-duration: 0.01ms !important;
     }
 }
+
+/* ──────────────────────────────────────
+   表格 — 主题化 vditor 硬编码浅色行背景/边框；
+   移动端列内允许换行，避免长文本把表格撑出视口
+   （选择器需高于 .vditor-reset 前缀，因为 vditor/index.css
+    在 ios-theme.css 之后加载，平级规则会被其覆盖）
+   ────────────────────────────────────── */
+.vditor-wysiwyg .vditor-reset table tbody tr {
+    background-color: transparent;
+}
+
+.vditor-wysiwyg .vditor-reset table tbody tr:nth-child(2n) {
+    background-color: var(--surface-subtle);
+}
+
+.vditor-wysiwyg .vditor-reset table th,
+.vditor-wysiwyg .vditor-reset table td {
+    /* 用 --separator-color（ios-theme 专有）：--border-color 在 .vditor 类上被
+       vditor 重新定义，对表格元素会解析到 #d1d5da 而非主题值 */
+    border-color: var(--separator-color);
+}
+
+@media (max-width: 980px) {
+    .vditor-wysiwyg .vditor-reset table {
+        word-break: break-word;
+        overflow-wrap: break-word;
+    }
+
+    .vditor-wysiwyg .vditor-reset table th,
+    .vditor-wysiwyg .vditor-reset table td {
+        white-space: normal;
+        word-break: break-word;
+        overflow-wrap: break-word;
+    }
+}
