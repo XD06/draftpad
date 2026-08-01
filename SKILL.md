@@ -48,7 +48,7 @@ Notepad is metadata; Note is its Markdown body.
 
 ### List And Create
 
-Use `GET /api/notepads` to list metadata. Use `POST /api/notepads` to create a Notepad and its initial Markdown body.
+Use `GET /api/notepads` to list metadata and `GET /api/notepads/:id` to refresh one article's current metadata/version. Use `POST /api/notepads` to create a Notepad and its initial Markdown body.
 
 ```bash
 # List newest articles
@@ -192,7 +192,9 @@ Supported Thought mutation actions:
 | `append` | `text` |
 | `replace` | `target`, `replacement` |
 
-Every Thought `PATCH` should contain the current `baseVersion`. Read a single item with `GET /api/thoughts/:id` before a mutation when the current version is not already known.
+Every Thought `PATCH` should contain the current `baseVersion`. A successful PATCH returns `{ success: true, thought }` with the new version, so use that returned object for the next mutation; read a single item with `GET /api/thoughts/:id` only when the current version is not already known.
+
+For a stored asset attachment, send the full object returned by `POST /api/assets/images` or `POST /api/assets/files`, not only `assetId`. That preserves its filename, MIME type, size, and preview/download URLs; legacy `dataUrl` attachments remain supported.
 
 ## Search, Relations, And AI
 

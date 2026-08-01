@@ -116,7 +116,9 @@ Personal security V1 的初次设置用旧 PIN 或一次性 `AUTH_BOOTSTRAP_TOKE
   "siteTitle": "DumbPad",
   "baseUrl": "http://localhost:3000",
   "version": "1.0.8-abcd1234",
-  "highlightLanguages": ["javascript", "python"]
+  "highlightLanguages": ["javascript", "python"],
+  "assetMaxFileBytes": 20971520,
+  "authMode": "legacy"
 }
 ```
 
@@ -169,6 +171,12 @@ Notepad 是文章元数据；正文内容通过 Note API 读写。
 ```
 
 **响应：** 新 Notepad 元数据。
+
+### GET /api/notepads/:id
+
+读取单篇文章的当前元数据（名称、置顶状态与 `version`），不返回正文。自动化在重命名、置顶或正文编辑后需要读取最新版本时，应使用此端点，避免拉取完整文章列表后再过滤。
+
+**响应：** `Notepad` 元数据；不存在时返回 `404`。
 
 ### PUT /api/notepads/:id
 
@@ -367,7 +375,7 @@ Note 是某个 Notepad 的正文内容。保存接口使用 `baseVersion` 做乐
 
 对任意基于 `target`/锚点的 action，可附加 `expectedCount`（正整数）断言匹配次数：实际匹配数不符时返回 `400` 并带上 `matchCount`，避免改错副本或误伤多处。
 
-`section` 取标题 slug（见 `GET /api/notes/:id/outline`）；标题文本唯一时也可直接用文本。多个同名标题会返回 `400`（`ambiguous_section`），此时改用 slug。
+`section` 取标题 slug（见 `GET /api/notes/:id/outline`）；唯一标题的原始文本（包括中文）也可直接使用。多个同名标题会返回 `400`（`ambiguous_section`），此时改用 slug。
 
 **响应：**
 
@@ -465,6 +473,8 @@ Note 是某个 Notepad 的正文内容。保存接口使用 `baseVersion` 做乐
 
 `previewUrl` 返回经缩放的 WebP，可直接放在 `<img>` 中；`originalUrl` 以原始 MIME 返回完整原图；`downloadUrl` 添加附件下载响应头。所有资源 URL 以不可变 id 为键，可按长期缓存处理。
 
+相同字节的图片重复上传会返回 `200` 和已有资源对象；新文件返回 `201`。调用方应按 `id` 识别是否复用，不能把 `201` 视为唯一的成功状态。
+
 ```bash
 curl -X POST http://localhost:3000/api/assets/images \
   -H "Authorization: Bearer $DUMBPAD_API_TOKEN" \
@@ -488,6 +498,8 @@ curl -X POST http://localhost:3000/api/assets/images \
 | `X-Asset-Type` | 否 | 浏览器报告的原始 MIME，用于与扩展名交叉校验 |
 
 **响应：** 与图片资源相同，但 `kind` 为 `file`，`previewUrl` 为 `null`。
+
+相同字节的普通附件同样会复用已有资源并返回 `200`；新文件返回 `201`。
 
 ```bash
 curl -X POST http://localhost:3000/api/assets/files \
@@ -595,6 +607,10 @@ Thought 是一个**主任务 + 子任务（最多二层）**的待办结构。
 | `createdAt` | number | 创建时间戳 |
 | `updatedAt` | number | 更新时间戳 |
 
+### Thought 附件
+
+对资源库中的图片或普通文件，先上传到 Assets API，再把**完整上传响应对象**放进 Thought 的 `attachments` 数组（`id`、`assetId`、`name`、`type`、`size`、`previewUrl`、`originalUrl`、`downloadUrl`）。服务端不会仅凭 `assetId` 自动补全显示元数据；只传 `{ "assetId": "..." }` 会保留一个缺少文件名和 URL 的不完整附件。旧版 `dataUrl` 附件仍兼容。
+
 ---
 
 ### GET /api/thoughts
@@ -689,7 +705,7 @@ curl http://localhost:3000/api/thoughts/1778966668430
 | `text` | 是 | 主任务内容（不可为空） |
 | `subItems` | 否 | 子任务列表，默认 `[]` |
 
-**响应：** `201` 返回创建的 Thought
+**响应：** `200` 返回创建的 Thought
 
 **错误：** `400` — `text` 为空或缺失
 
@@ -706,6 +722,19 @@ curl -X POST http://localhost:3000/api/thoughts \
 更新 Thought。通过 `action` 字段区分操作类型。
 
 所有会写入的 PATCH 请求都应带上当前 Thought 的 `baseVersion`。服务端版本更高时返回 `409` 和 `{ "error": "...", "currentVersion": 5 }`；客户端应先读取远端状态并合并，不应使用旧内容覆盖重试。
+
+成功响应始终返回完整更新对象，无需为了取得新 `version` 额外再读一次：
+
+```json
+{
+  "success": true,
+  "thought": {
+    "id": "1778966668430",
+    "version": 5,
+    "updatedAt": 1778966669500
+  }
+}
+```
 
 #### action: `toggle_complete`
 

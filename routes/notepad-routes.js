@@ -146,6 +146,19 @@ function registerNotepadRoutes(app, context) {
         }
     });
 
+    // A direct metadata read lets API clients refresh one Notepad's current
+    // version/pin state without fetching and filtering the whole collection.
+    app.get('/api/notepads/:id', async (req, res) => {
+        try {
+            const { notepad } = await findNotepadById(req.params.id);
+            if (!notepad) return res.status(404).json({ error: 'Notepad not found' });
+            res.json(notepad);
+        } catch (err) {
+            console.error('Error reading notepad metadata:', err);
+            res.status(500).json({ error: 'Error reading notepad metadata' });
+        }
+    });
+
     app.put('/api/notepads/:id', async (req, res) => {
         try {
             const { id } = req.params;

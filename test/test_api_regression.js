@@ -238,9 +238,18 @@ function assertThoughtsFrontendRegressions() {
         openApi.paths?.['/api/thoughts'] &&
         openApi.paths?.['/api/notes/{id}'] &&
         openApi.paths?.['/api/assets/files'] &&
+        openApi.paths?.['/api/verify-pin'] &&
+        openApi.paths?.['/api/pin-required'] &&
+        openApi.paths?.['/api/config'] &&
+        openApi.paths?.['/api/trash'] &&
+        openApi.paths?.['/api/thoughts/{id}/relations'] &&
+        openApi.paths?.['/api/thoughts/{id}/ai-status'] &&
+        openApi.paths?.['/api/notepads/{id}']?.get &&
+        openApi.components?.schemas?.ThoughtAttachment &&
+        openApi.components?.schemas?.ThoughtMutationResult &&
         openApi.components?.schemas?.FileAsset &&
         openApi.components?.securitySchemes?.pinBearer,
-        'developer API contract should expose a valid OpenAPI document for note and Thought management'
+        'developer API contract should expose the public authentication, trash, Notepad, Thought, and attachment APIs'
     );
     assert(
         thoughtsSource.includes('queueManualRelationSearch') &&
@@ -710,7 +719,13 @@ async function run() {
     try {
         await waitForServer(child);
 
-        let result = await request('/openapi.json');
+        let result = await request('/health');
+        assert(result.response.ok && result.body.status === 'ok', 'GET /health should work for the default non-browser test client');
+
+        result = await request('/api/auth/status');
+        assert(result.response.ok && result.body.mode === 'legacy', 'GET /api/auth/status should expose legacy mode without prior API authentication');
+
+        result = await request('/openapi.json');
         assert(result.response.ok && result.body.openapi === '3.1.0', 'GET /openapi.json should expose the machine-readable API contract');
 
         result = await request('/api/notepads');
@@ -724,6 +739,14 @@ async function run() {
         assert(result.response.ok, 'POST /api/notepads should succeed');
         const notepadId = result.body.id;
         assert(notepadId === 'api-regression-note-id', 'created notepad should honor a safe client-provided id');
+
+        result = await request(`/api/notepads/${notepadId}`);
+        assert(result.response.ok, 'GET /api/notepads/:id should return one Notepad metadata record');
+        assert(result.body.id === notepadId && result.body.name === 'API Regression Note', 'single Notepad metadata should match the created record');
+        assert(result.body.version === 1, 'single Notepad metadata should expose the current optimistic-concurrency version');
+
+        result = await request('/api/notepads/__missing_notepad__');
+        assert(result.response.status === 404, 'GET /api/notepads/:id should return 404 for a missing Notepad');
 
         result = await request(`/api/notes/${notepadId}`);
         assert(result.response.ok, 'GET /api/notes/:id should succeed');
@@ -846,6 +869,23 @@ async function run() {
         });
         assert(result.response.status === 400, 'replace_section with an unknown section should be rejected');
         assert(result.body.section === 'does-not-exist', 'a missing section error should echo the requested section');
+
+        result = await request('/api/notepads', {
+            method: 'POST',
+            body: JSON.stringify({ id: 'api-note-outline-chinese', name: 'API Chinese Outline', content: '# 今日速览\n旧内容\n## 下一步\n保留内容' })
+        });
+        assert(result.response.ok, 'POST /api/notepads should create the Chinese outline fixture');
+
+        result = await request('/api/notes/api-note-outline-chinese/outline');
+        assert(result.response.ok, 'GET Chinese note outline should succeed');
+        assert(result.body.outline[0]?.id === '今日速览', 'Chinese headings should retain a stable outline slug');
+
+        result = await request('/api/notes/api-note-outline-chinese', {
+            method: 'PATCH',
+            body: JSON.stringify({ action: 'replace_section', section: '今日速览', text: '新内容' })
+        });
+        assert(result.response.ok, 'replace_section should accept an exact unique Chinese heading');
+        assert(result.body.content === '# 今日速览\n新内容\n## 下一步\n保留内容', 'Chinese heading replacement should only modify the targeted section body');
 
         // Batch atomic editing (#1 phase 3): several edits apply under one lock
         // and a single version bump, or none of them do.

@@ -9,10 +9,12 @@ const skill = fs.readFileSync(skillPath, 'utf8');
 [
     'Authorization: Bearer $DUMBPAD_PIN',
     'GET /api/notepads',
+    'GET /api/notepads/:id',
     'POST /api/notes/:id',
     'PATCH /api/notepads/:id',
     'GET /api/thoughts',
     'PATCH /api/thoughts/:id',
+    'full object returned by `POST /api/assets/images`',
     'GET /api/search',
     '409',
     'data/',

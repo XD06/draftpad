@@ -108,7 +108,7 @@ function run() {
         'Deferred decoration must run once the caret leaves the edited block (selectionchange)'
     );
     assert(
-        source.includes('if (needsFix) this.scheduleDecorateRenderedMarks(this.getPerformanceToken(), this.decorationGeneration, this.isCaretStabilityEnabled());'),
+        /if \(needsFix \|\| needsListAnnotationRestore\) \{\s*this\.scheduleDecorateRenderedMarks\(this\.getPerformanceToken\(\), this\.decorationGeneration, this\.isCaretStabilityEnabled\(\)\);/.test(source),
         'The marker MutationObserver must also skip the active block when the flag is enabled'
     );
 
