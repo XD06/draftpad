@@ -82,6 +82,18 @@ function run() {
         'Only time markers should stay atomic; highlight, draw-line and annotation text must remain editable'
     );
     assert(
+        source.includes('restoreListAnnotationsFromSource(root);') &&
+            source.includes("source.split('\\n')") &&
+            source.includes('item.replaceChildren(template.content);') &&
+            source.includes("sourceTemplate.content.querySelector('span[data-note]')") &&
+            source.includes('this.annotationHtml(this.escapeHtml(visibleText), comment)') &&
+            source.includes("candidate.querySelector(':scope > .vditor-wysiwyg__block[data-type=\"html-block\"]") &&
+            source.includes("[data-note]") &&
+            source.includes('li > .vditor-wysiwyg__block[data-type="html-block"]') &&
+            source.includes('needsListAnnotationRestore'),
+        'A list annotation lost by Vditor must be restored from the canonical Markdown only when its visible list text matches exactly'
+    );
+    assert(
         source.includes('getMarkdownOffsetForDomPoint(root, node, offset)') &&
             source.includes('this.getMarkdownOffsetForDomPoint(root, range.startContainer, range.startOffset)') &&
             source.includes('this.sourceTextarea.setSelectionRange(this.sourceCaretOffset, this.sourceCaretOffset);') &&
@@ -96,6 +108,18 @@ function run() {
             source.includes('this.isComposing = false;') &&
             source.includes('this.isReadingMode || !this.sourceMode || this.isComposing'),
         'Composition input should defer marker decoration until the IME commits text'
+    );
+    assert(
+        source.includes('this.compositionEndFrame') &&
+            source.includes('cancelAnimationFrame(this.compositionEndFrame)') &&
+            /compositionend[\s\S]*?requestAnimationFrame\(\(\) => \{[\s\S]*?this\.isComposing = false;[\s\S]*?this\.handleWysiwygInput\(\)/.test(source),
+        'Composition lock must remain active through Vditor\'s composition-end DOM commit, then release on the next frame'
+    );
+    const articleDecorationStart = source.indexOf('decorateArticleImages({ decorateCode = true } = {}, performanceToken = this.getPerformanceToken())');
+    const articleDecorationBody = source.slice(articleDecorationStart, articleDecorationStart + 500);
+    assert(
+        articleDecorationBody.includes('if (this.isComposing) return;'),
+        'Article decorations must not mutate attachment DOM during an active IME composition'
     );
     assert(
         !source.includes('this.decorateRenderedMarks(true);'),
@@ -126,7 +150,7 @@ function run() {
         'Leaving Markdown source mode should restore focus to the visible editor at the preserved caret position'
     );
     assert(
-        source.includes('setWysiwygValueAtMarkdownOffset(value = \'\', markdownOffset = 0, emit = true)') &&
+        source.includes('setWysiwygValueAtMarkdownOffset(value = \'\', markdownOffset = 0, emit = true, preserveScroll = false)') &&
             source.includes('restoreWysiwygCaretFromMarker()') &&
             source.includes('getMovedTimeMarkerCaretOffset(drag, dropOffset, next.length)') &&
             source.includes('this.setWysiwygValueAtMarkdownOffset(sourceValue, this.sourceCaretOffset, false);'),

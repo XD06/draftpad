@@ -82,6 +82,7 @@ export class HybridMarkdownEditor {
         this.currentSelectionData = null;
         this.suppressInput = false;
         this.isComposing = false;
+        this.compositionEndFrame = 0;
         this.assetApi = new AssetApiClient();
         this.assetUploadTasks = new Set();
         this.articleUploadStates = new Map();
@@ -1116,15 +1117,21 @@ export class HybridMarkdownEditor {
     bindCompositionEvents() {
         this.container.addEventListener('compositionstart', (event) => {
             if (!this.isEditorInputTarget(event.target)) return;
+            cancelAnimationFrame(this.compositionEndFrame);
+            this.compositionEndFrame = 0;
             this.isComposing = true;
             clearTimeout(this.typingDecorateTimer);
         }, true);
 
         this.container.addEventListener('compositionend', (event) => {
             if (!this.isEditorInputTarget(event.target)) return;
-            this.isComposing = false;
-
-            requestAnimationFrame(() => {
+            cancelAnimationFrame(this.compositionEndFrame);
+            // This listener runs during capture, before Vditor's own
+            // compositionend handler commits the candidate text and rebuilds
+            // affected nodes. Keep decorations locked through that work.
+            this.compositionEndFrame = requestAnimationFrame(() => {
+                this.compositionEndFrame = 0;
+                this.isComposing = false;
                 if (this.sourceMode && event.target === this.sourceTextarea) {
                     this.emitSourceInput();
                     return;
@@ -1296,6 +1303,7 @@ export class HybridMarkdownEditor {
         if (!root || this.sourceMode || this.isComposing) return;
 
         this.isDecorating = true;
+        this.restoreListAnnotationsFromSource(root);
 
         // --- Phase C: never rebuild the block the caret is editing ---
         // When caret-stability is enabled and this pass was triggered by
@@ -1468,6 +1476,34 @@ export class HybridMarkdownEditor {
         this.isDecorating = false;
     }
 
+    // Vditor drops custom attributes from annotation HTML inside list items.
+    // Rebuild only when the current visible item text matches the canonical
+    // source line, so edited list content is never overwritten.
+    restoreListAnnotationsFromSource(root) {
+        const source = this.sourceTextarea?.value || this._lastValue || this.pendingValue || '';
+        if (!source) return;
+        const annotationLine = /^\s*((?:[-+*]|\d+[.)])\s+)(<span\b[^>]*\bdata-note=(?:"[^"]*"|'[^']*')[^>]*>[\s\S]*?<\/span>\s*<sub\b[^>]*\bdata-note-label\b[^>]*>[\s\S]*?<\/sub>)\s*$/i;
+        source.split('\n').forEach(line => {
+            const match = line.match(annotationLine);
+            if (!match) return;
+            const sourceTemplate = document.createElement('template');
+            sourceTemplate.innerHTML = match[2];
+            const sourceAnnotation = sourceTemplate.content.querySelector('span[data-note]');
+            const visibleText = sourceAnnotation?.textContent?.trim() || '';
+            const comment = sourceAnnotation?.dataset.note || '';
+            if (!visibleText) return;
+            const rendered = this.annotationHtml(this.escapeHtml(visibleText), comment);
+            const template = document.createElement('template');
+            template.innerHTML = rendered;
+            const item = Array.from(root.querySelectorAll('li')).find(candidate =>
+                !candidate.querySelector('.has-annotation') &&
+                candidate.querySelector(':scope > .vditor-wysiwyg__block[data-type="html-block"] [data-note]')?.textContent?.trim() === visibleText.trim()
+            );
+            if (!item) return;
+            item.replaceChildren(template.content);
+        });
+    }
+
     /**
      * MutationObserver that watches for Vditor breaking rendered inline
      * marks (time markers, highlights, etc.) back into raw source text.
@@ -1482,6 +1518,7 @@ export class HybridMarkdownEditor {
 
             const changedCode = new Set();
             let inspectMarks = false;
+            let needsListAnnotationRestore = false;
             records.forEach(record => {
                 const origin = record.target?.nodeType === Node.ELEMENT_NODE
                     ? record.target
@@ -1493,6 +1530,13 @@ export class HybridMarkdownEditor {
                 record.addedNodes?.forEach(node => {
                     if (node.nodeType !== Node.ELEMENT_NODE) return;
                     node.querySelectorAll?.('pre > code').forEach(item => changedCode.add(item));
+                    if (node.matches?.('.vditor-wysiwyg__block[data-type="html-block"]') &&
+                        node.parentElement?.matches?.('li')) {
+                        needsListAnnotationRestore = true;
+                    }
+                    if (node.querySelector?.('li > .vditor-wysiwyg__block[data-type="html-block"]')) {
+                        needsListAnnotationRestore = true;
+                    }
                     if (!node.closest?.('pre, code, .dumbpad-code-header')) inspectMarks = true;
                 });
             });
@@ -1519,7 +1563,9 @@ export class HybridMarkdownEditor {
                     break;
                 }
             }
-            if (needsFix) this.scheduleDecorateRenderedMarks(this.getPerformanceToken(), this.decorationGeneration, this.isCaretStabilityEnabled());
+            if (needsFix || needsListAnnotationRestore) {
+                this.scheduleDecorateRenderedMarks(this.getPerformanceToken(), this.decorationGeneration, this.isCaretStabilityEnabled());
+            }
         });
 
         // Attempt to connect immediately; if Vditor's DOM isn't ready
@@ -3380,6 +3426,7 @@ export class HybridMarkdownEditor {
     }
 
     decorateArticleImages({ decorateCode = true } = {}, performanceToken = this.getPerformanceToken()) {
+        if (this.isComposing) return;
         this.performanceMonitor?.count?.('decorate_article', 1, performanceToken);
         const root = this.container.querySelector('.vditor-wysiwyg .vditor-reset');
         root?.querySelectorAll('img').forEach(image => {
