@@ -212,14 +212,14 @@
 .thought-tags {
     display: flex;
     flex-wrap: wrap;
-    gap: 6px;
-    margin: 10px 0 2px 0px;
+    gap: 4px;
+    margin: 8px 0 2px;
 }
 
 .thought-tag-wrap {
     display: inline-flex;
     align-items: center;
-    gap: 2px;
+    position: relative;
 }
 
 .thought-tag {
@@ -243,6 +243,10 @@
 }
 
 .thought-tag-remove {
+    position: absolute;
+    top: -5px;
+    right: -5px;
+    z-index: 1;
     width: 17px;
     height: 17px;
     border: 1px solid rgba(120, 128, 140, 0.12);
@@ -255,6 +259,7 @@
     line-height: 15px;
     cursor: pointer;
     opacity: 0;
+    pointer-events: none;
     transform: scale(0.82);
     transition: all 0.2s var(--ease-out-expo);
 }
@@ -262,6 +267,7 @@
 .thought-tag-wrap:hover .thought-tag-remove,
 .thought-tag-wrap:focus-within .thought-tag-remove {
     opacity: 1;
+    pointer-events: auto;
     transform: scale(1);
 }
 
@@ -2883,7 +2889,7 @@ body.quick-add-open {
     display: none !important;
 }
 
-/* When not expanded, hide the inline add subtask button if there are > 3 subtasks to keep it clean */
+/* When not expanded, hide the inline add subtask button if there are > 2 subtasks to keep it clean */
 .thought-card.can-expand:not(.expanded) .subtask-list .subtask-add-inline {
     display: none !important;
 }
@@ -3181,6 +3187,13 @@ body.quick-add-open {
     margin-top: 10px;
 }
 
+.thought-attachments.has-files {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 6px;
+    margin-top: 8px;
+}
+
 .thought-attachment {
     position: relative;
     border-radius: 10px;
@@ -3231,6 +3244,16 @@ body.quick-add-open {
     transition: background 0.2s ease, border-color 0.2s ease;
 }
 
+.thought-attachments.has-files .thought-attachment-file {
+    box-sizing: border-box;
+    gap: 6px;
+    width: 100%;
+    min-width: 0;
+    min-height: 44px;
+    max-width: none;
+    padding: 6px 8px;
+}
+
 .thought-attachment-file:hover {
     border-color: rgba(var(--primary-rgb), 0.28);
     background: rgba(var(--primary-rgb), 0.06);
@@ -3250,6 +3273,10 @@ body.quick-add-open {
     flex-direction: column;
     gap: 1px;
     min-width: 0;
+}
+
+.thought-attachments.has-files .thought-attachment-info {
+    flex: 1;
 }
 
 .thought-attachment-name {

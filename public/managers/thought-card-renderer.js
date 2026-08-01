@@ -81,7 +81,7 @@ export function renderThoughtCard({
         linkify,
         highlightSearch
     });
-    const isLong = bodyText.split('\n').length > 6 || bodyText.length > 200 || subItems.length > 3;
+    const isLong = bodyText.split('\n').length > 6 || bodyText.length > 200 || subItems.length > 2;
     const isPinned = thought.pinned === true;
     const isCompleted = thought.completed === true;
     const completionLabel = isCompleted ? '恢复为待办' : '标记为已完成';
@@ -129,6 +129,7 @@ export function renderThoughtCard({
 
 function renderAttachments(attachments) {
     if (!attachments.length) return '';
+    const hasFiles = attachments.some(att => !(att.type || '').startsWith('image/'));
     const items = attachments.map(att => {
         const isImage = att.type && att.type.startsWith('image/');
         const name = escapeAttText(att.name || '文件');
@@ -139,7 +140,7 @@ function renderAttachments(attachments) {
         }
         const sizeText = formatAttSize(att.size);
         const icon = getFileIcon(att.type);
-        return `<a class="thought-attachment thought-attachment-file" href="${escapeAttText(getAttachmentDownloadUrl(att))}" download="${name}" data-att-id="${escapeAttText(att.id || '')}">
+        return `<a class="thought-attachment thought-attachment-file" href="${escapeAttText(getAttachmentDownloadUrl(att))}" download="${name}" title="${name}" data-att-id="${escapeAttText(att.id || '')}">
                     <span class="thought-attachment-icon">${icon}</span>
                     <span class="thought-attachment-info">
                         <span class="thought-attachment-name">${name}</span>
@@ -147,7 +148,7 @@ function renderAttachments(attachments) {
                     </span>
                 </a>`;
     }).join('');
-    return `<div class="thought-attachments">${items}</div>`;
+    return `<div class="thought-attachments${hasFiles ? ' has-files' : ''}">${items}</div>`;
 }
 
 function escapeAttText(text) {
@@ -191,7 +192,7 @@ function renderSubtasks({ sortedSubItems, query, linkify, highlightSearch }) {
         if (query) {
             label = highlightSearch(label, query);
         }
-        const isExtra = sortedSubItems.length > 3 && index >= 3;
+        const isExtra = sortedSubItems.length > 2 && index >= 2;
         const extraClass = isExtra ? 'subtask-extra' : '';
         subtasksHtml += `<div class="subtask ${item.completed ? 'completed' : ''} ${extraClass}" data-subid="${item.id}">
                         <input type="checkbox" class="subtask-check" ${item.completed ? 'checked' : ''}>
@@ -202,8 +203,8 @@ function renderSubtasks({ sortedSubItems, query, linkify, highlightSearch }) {
                     </div>`;
     });
 
-    if (sortedSubItems.length > 3) {
-        const remainingCount = sortedSubItems.length - 3;
+    if (sortedSubItems.length > 2) {
+        const remainingCount = sortedSubItems.length - 2;
         const completedCount = sortedSubItems.filter(item => item.completed).length;
         const totalCount = sortedSubItems.length;
         const radius = 7;

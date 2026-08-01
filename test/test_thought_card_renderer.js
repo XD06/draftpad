@@ -81,7 +81,7 @@ function run() {
     });
 
     assert(rendered.bodyText === 'Alpha body', 'legacy checkbox text should be separated from body text');
-    assert(rendered.isLong === true, 'cards with more than three subtasks should be expandable');
+    assert(rendered.isLong === true, 'cards with more than two subtasks should be expandable');
     assert(rendered.html.includes('thought-card-header'), 'card render should include header');
     assert(rendered.html.includes('thought-tag-wrap'), 'card render should include user tags');
     assert(rendered.html.includes('thought-ai-tag-suggestion'), 'card render should include AI tag suggestions');
@@ -93,6 +93,42 @@ function run() {
     assert(rendered.html.includes('<button type="button" class="thought-dot"'), 'completion control should be a native button so it does not compete with card gestures');
     assert(rendered.html.includes('aria-pressed="false"'), 'incomplete thoughts should expose their completion state to assistive technology');
     assert(!rendered.html.includes('thought-agent-recall-btn'), 'agent recall should not occupy the compact card footer');
+
+    const twoSubtasks = renderThoughtCard({
+        thought: {
+            id: 'thought-two-subtasks',
+            text: 'Short body',
+            subItems: [
+                { id: 'subtask-1', text: 'first', completed: false },
+                { id: 'subtask-2', text: 'second', completed: false }
+            ],
+            createdAt: 1700000000000
+        },
+        query: '',
+        ...helpers()
+    });
+    assert(twoSubtasks.isLong === false, 'two subtasks should remain expanded');
+    assert(!twoSubtasks.html.includes('subtasks-summary-row'), 'two subtasks should not render a collapsed summary');
+    assert(!twoSubtasks.html.includes('subtask-extra'), 'two subtasks should not hide either item');
+
+    const threeSubtasks = renderThoughtCard({
+        thought: {
+            id: 'thought-three-subtasks',
+            text: 'Short body',
+            subItems: [
+                { id: 'subtask-1', text: 'first', completed: false },
+                { id: 'subtask-2', text: 'second', completed: false },
+                { id: 'subtask-3', text: 'third', completed: false }
+            ],
+            createdAt: 1700000000000
+        },
+        query: '',
+        ...helpers()
+    });
+    assert(threeSubtasks.isLong === true, 'three subtasks should be expandable');
+    assert(threeSubtasks.html.includes('subtasks-summary-row'), 'three subtasks should render a collapsed summary');
+    assert(threeSubtasks.html.includes('subtask-extra'), 'the third subtask should be hidden while collapsed');
+    assert(threeSubtasks.html.includes('summary-more-num">+1</span>'), 'three subtasks should report one hidden item');
 
     const empty = renderThoughtCard({
         thought: {
@@ -138,6 +174,8 @@ function run() {
         ...helpers()
     });
     assert(withAttachments.html.includes('thought-attachments'), 'card should render attachment collection');
+    assert(withAttachments.html.includes('thought-attachments has-files'), 'file attachments should opt into the compact file grid');
+    assert(withAttachments.html.includes('title="notes.pdf"'), 'file attachments should preserve the full filename in a tooltip');
     assert(withAttachments.html.includes('thought-attachment-preview'), 'images should render as preview buttons');
     assert(withAttachments.html.includes('data-preview-att="image-1"'), 'preview buttons should expose attachment ids');
     assert(!withAttachments.html.includes('thought-attachment-add-inline'), 'attachment collections should not duplicate the footer append control');
