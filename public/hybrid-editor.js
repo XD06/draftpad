@@ -332,7 +332,7 @@ export class HybridMarkdownEditor {
         }
     }
 
-    setWysiwygValueAtMarkdownOffset(value = '', markdownOffset = 0, emit = true) {
+    setWysiwygValueAtMarkdownOffset(value = '', markdownOffset = 0, emit = true, preserveScroll = false) {
         const normalized = this.stripDisplayGuards(value);
         this.cancelPendingArticleDecorations();
         const performanceToken = this.getPerformanceToken();
@@ -345,7 +345,10 @@ export class HybridMarkdownEditor {
 
         if (this.ready && this.editor?.setValue) {
             this.suppressProgrammaticInput();
-            this.wysiwygCaretRestore = { marker, markdownOffset: safeOffset };
+            const scrollTop = preserveScroll
+                ? this.container.querySelector('.vditor-wysiwyg')?.scrollTop
+                : null;
+            this.wysiwygCaretRestore = { marker, markdownOffset: safeOffset, scrollTop };
             const applyValue = () => this.editor.setValue(this.prepareDisplayValue(valueWithCaretMarker));
             if (this.performanceMonitor?.enabled) this.performanceMonitor.measure('editor_set_value_ms', applyValue, performanceToken);
             else applyValue();
@@ -404,13 +407,17 @@ export class HybridMarkdownEditor {
         }
         if (this.sourceMode && this.sourceTextarea) {
             const caret = this.sourceTextarea.selectionStart || 0;
+            const scrollTop = this.sourceTextarea.scrollTop;
             this.setValue(value, emit);
             const clamped = Math.min(caret, this.sourceTextarea.value.length);
             this.sourceTextarea.setSelectionRange(clamped, clamped);
+            requestAnimationFrame(() => {
+                if (this.sourceTextarea) this.sourceTextarea.scrollTop = scrollTop;
+            });
             return;
         }
         const caretOffset = this.getCurrentWysiwygMarkdownOffset();
-        this.setWysiwygValueAtMarkdownOffset(value, caretOffset, emit);
+        this.setWysiwygValueAtMarkdownOffset(value, caretOffset, emit, true);
     }
 
     restoreWysiwygCaretFromMarker() {
@@ -432,7 +439,14 @@ export class HybridMarkdownEditor {
             selection?.removeAllRanges();
             selection?.addRange(range);
             this.wysiwygCaretRestore = null;
-            requestAnimationFrame(() => this.scrollRangeIntoView(range));
+            requestAnimationFrame(() => {
+                const scroller = this.container.querySelector('.vditor-wysiwyg');
+                if (Number.isFinite(pending.scrollTop) && scroller) {
+                    scroller.scrollTop = pending.scrollTop;
+                } else {
+                    this.scrollRangeIntoView(range);
+                }
+            });
             return true;
         }
         return false;
@@ -447,46 +461,17 @@ export class HybridMarkdownEditor {
         this.wysiwygCaretRestore = null;
         const selection = window.getSelection();
         const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
-        if (range) requestAnimationFrame(() => this.scrollRangeIntoView(range));
+        if (range) {
+            requestAnimationFrame(() => {
+                const scroller = this.container.querySelector('.vditor-wysiwyg');
+                if (Number.isFinite(pending.scrollTop) && scroller) {
+                    scroller.scrollTop = pending.scrollTop;
+                } else {
+                    this.scrollRangeIntoView(range);
+                }
+            });
+        }
         return Boolean(range);
-    }
-
-    // Chromium snaps the caret into view natively when an IME composition
-    // starts, jumping straight to the nearest viewport edge if the caret is
-    // off-screen. Pre-empt that jump: smoothly scroll the caret to a
-    // comfortable upper-middle viewport position, so the browser sees it
-    // already visible and leaves it alone (mobile keyboards make the
-    // composition candidate bar eat further space below the caret).
-    scrollCaretIntoComfortableView() {
-        const selection = window.getSelection();
-        if (!selection || selection.rangeCount === 0 || !selection.isCollapsed) return;
-        const root = this.container.querySelector('.vditor-wysiwyg .vditor-reset');
-        const range = selection.getRangeAt(0);
-        if (!root || !root.contains(range.startContainer)) return;
-        const rect = range.getBoundingClientRect();
-        if (!rect.height) return;
-
-        const visualViewport = window.visualViewport;
-        const viewportTop = visualViewport ? visualViewport.offsetTop : 0;
-        const viewportBottom = visualViewport
-            ? visualViewport.offsetTop + visualViewport.height
-            : window.innerHeight;
-        const EDGE_MARGIN = 48;
-        if (rect.top >= viewportTop + EDGE_MARGIN && rect.bottom <= viewportBottom - EDGE_MARGIN) {
-            return; // already comfortably visible, nothing to fix
-        }
-
-        const targetTop = viewportTop + (viewportBottom - viewportTop) * 0.4;
-        const delta = rect.top - targetTop;
-        if (Math.abs(delta) < 4) return;
-
-        // Desktop scrolls inside .vditor-wysiwyg; mobile scrolls the page.
-        const scroller = this.container.querySelector('.vditor-wysiwyg');
-        if (scroller && scroller.scrollHeight > scroller.clientHeight + 1) {
-            scroller.scrollBy({ top: delta, behavior: 'smooth' });
-        } else {
-            window.scrollBy({ top: delta, behavior: 'smooth' });
-        }
     }
 
     scrollRangeIntoView(range) {
@@ -1133,11 +1118,6 @@ export class HybridMarkdownEditor {
             if (!this.isEditorInputTarget(event.target)) return;
             this.isComposing = true;
             clearTimeout(this.typingDecorateTimer);
-            // Pre-empt Chromium's native caret-snap scroll on IME start
-            // (source textarea keeps its own native behaviour).
-            if (!this.sourceMode && event.target !== this.sourceTextarea) {
-                this.scrollCaretIntoComfortableView();
-            }
         }, true);
 
         this.container.addEventListener('compositionend', (event) => {

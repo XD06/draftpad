@@ -45,8 +45,21 @@ assert(
 );
 assert(
     preserveBody.includes('this.getCurrentWysiwygMarkdownOffset()') &&
-        preserveBody.includes('this.setWysiwygValueAtMarkdownOffset(value, caretOffset, emit)'),
-    'setValuePreservingCaret must restore the WYSIWYG caret via the markdown offset'
+        preserveBody.includes('this.setWysiwygValueAtMarkdownOffset(value, caretOffset, emit, true)'),
+    'remote WYSIWYG applies must preserve both the caret offset and the existing scroll position'
+);
+assert(
+    preserveBody.includes('const scrollTop = this.sourceTextarea.scrollTop') &&
+        preserveBody.includes('this.sourceTextarea.scrollTop = scrollTop'),
+    'remote source-mode applies must retain the existing textarea scroll position'
+);
+
+// The editor must never scroll solely because an IME composition starts. Each
+// Chinese character starts a composition, so proactive smooth scrolling makes
+// the reading position drift even though the caret is already visible.
+assert(
+    !editorSource.includes('scrollCaretIntoComfortableView'),
+    'composition events must not proactively reposition the editor viewport'
 );
 
 // --- App: proxy exposes applyRemoteValue delegating to the editor ------------
