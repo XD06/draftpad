@@ -1,4 +1,5 @@
 const { createAnalysisSourceSignature } = require('../scripts/thought-ai-source');
+const { createAssetStorage, safeAssetId } = require('../scripts/asset-storage');
 
 function registerThoughtRoutes(app, context) {
     const {
@@ -7,6 +8,44 @@ function registerThoughtRoutes(app, context) {
         scheduleIndexNotepads,
         broadcastWebSocketMessage
     } = context;
+    const assets = createAssetStorage(storage);
+
+    async function hydrateAttachments(input) {
+        if (input === undefined) return { attachments: [] };
+        if (!Array.isArray(input)) return { error: 'attachments must be an array', code: 'INVALID_THOUGHT_ATTACHMENT' };
+        const attachments = [];
+        for (const item of input) {
+            if (!item || typeof item !== 'object') {
+                return { error: 'attachments must contain objects', code: 'INVALID_THOUGHT_ATTACHMENT' };
+            }
+            const assetId = item.assetId === undefined ? '' : String(item.assetId);
+            if (!assetId) {
+                attachments.push({ ...item });
+                continue;
+            }
+            if (!safeAssetId(assetId)) {
+                return { error: 'attachment assetId is invalid', code: 'INVALID_ASSET_ID', assetId };
+            }
+            const metadata = await assets.readMetadata(assetId);
+            if (!metadata) {
+                return { error: 'attachment asset was not found', code: 'ASSET_NOT_FOUND', assetId };
+            }
+            const hydrated = {
+                ...item,
+                assetId: metadata.id,
+                name: metadata.name,
+                type: metadata.type,
+                size: metadata.size,
+                kind: metadata.kind || 'image',
+                previewUrl: metadata.previewType ? `/api/assets/${metadata.id}/preview` : null,
+                originalUrl: `/api/assets/${metadata.id}/original`,
+                downloadUrl: `/api/assets/${metadata.id}/download`
+            };
+            if (!hydrated.id) hydrated.id = metadata.id;
+            attachments.push(hydrated);
+        }
+        return { attachments };
+    }
 
     async function readThoughts() {
         return storage.readThoughts();
@@ -604,6 +643,14 @@ function registerThoughtRoutes(app, context) {
         try {
             const { text, subItems, tags, completed } = req.body;
             if (!text) return res.status(400).json({ error: 'Text is required' });
+            const attachmentResult = await hydrateAttachments(req.body.attachments);
+            if (attachmentResult.error) {
+                return res.status(400).json({
+                    error: attachmentResult.error,
+                    code: attachmentResult.code,
+                    details: { assetId: attachmentResult.assetId }
+                });
+            }
 
             const newThought = await withThoughtWriteLock(async () => {
                 const now = Date.now();
@@ -614,7 +661,7 @@ function registerThoughtRoutes(app, context) {
                     tags: tags || [],
                     completed: completed === true,
                     pinned: false,
-                    attachments: Array.isArray(req.body.attachments) ? req.body.attachments : [],
+                    attachments: attachmentResult.attachments,
                     relationCount: 0,
                     aiStatus: 'pending',
                     version: 1,
@@ -680,6 +727,16 @@ function registerThoughtRoutes(app, context) {
         try {
             const { id } = req.params;
             const { action, text, target, replacement, baseVersion } = req.body;
+            const attachmentResult = req.body.attachments === undefined
+                ? null
+                : await hydrateAttachments(req.body.attachments);
+            if (attachmentResult?.error) {
+                return res.status(400).json({
+                    error: attachmentResult.error,
+                    code: attachmentResult.code,
+                    details: { assetId: attachmentResult.assetId }
+                });
+            }
 
             const result = await withThoughtWriteLock(async () => {
                 const thought = await storage.readThought(id);
@@ -731,7 +788,7 @@ function registerThoughtRoutes(app, context) {
                         if (req.body.tags !== undefined) { thought.tags = req.body.tags; modified = true; }
                         if (req.body.completed !== undefined) { thought.completed = req.body.completed === true; modified = true; }
                         if (req.body.pinned !== undefined) { thought.pinned = req.body.pinned === true; modified = true; }
-                        if (req.body.attachments !== undefined) { thought.attachments = req.body.attachments; modified = true; }
+                        if (attachmentResult) { thought.attachments = attachmentResult.attachments; modified = true; }
                         break;
                     case 'add_subitem':
                         if (!text) return { status: 400, body: { error: 'Subitem text is required' } };

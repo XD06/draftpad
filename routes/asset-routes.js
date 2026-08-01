@@ -7,6 +7,8 @@ const { getMaxFileBytes, validateFileAssetUpload } = require('../scripts/file-as
 const MAX_IMAGE_BYTES = 50 * 1024 * 1024;
 const MAX_IMAGE_PIXELS = 100 * 1000 * 1000;
 const PREVIEW_EDGE = 2560;
+const DEFAULT_ASSET_PAGE_SIZE = 50;
+const MAX_ASSET_PAGE_SIZE = 100;
 const MIME_BY_FORMAT = {
     jpeg: 'image/jpeg',
     png: 'image/png',
@@ -47,6 +49,28 @@ function responseAsset(metadata) {
         originalUrl: `/api/assets/${id}/original`,
         downloadUrl: `/api/assets/${id}/download`
     };
+}
+
+function compareAssets(left, right) {
+    return Number(right?.createdAt || 0) - Number(left?.createdAt || 0)
+        || String(right?.id || '').localeCompare(String(left?.id || ''));
+}
+
+function encodeAssetCursor(asset) {
+    return Buffer.from(JSON.stringify({
+        createdAt: Number(asset?.createdAt || 0),
+        id: String(asset?.id || '')
+    })).toString('base64url');
+}
+
+function decodeAssetCursor(value) {
+    try {
+        const decoded = JSON.parse(Buffer.from(String(value || ''), 'base64url').toString('utf8'));
+        if (!Number.isFinite(Number(decoded?.createdAt)) || !safeAssetId(decoded?.id)) return null;
+        return { createdAt: Number(decoded.createdAt), id: String(decoded.id) };
+    } catch {
+        return null;
+    }
 }
 
 function registerAssetRoutes(app, { storage, originValidationMiddleware, maxFileBytes }) {
@@ -159,10 +183,39 @@ function registerAssetRoutes(app, { storage, originValidationMiddleware, maxFile
         }
     );
 
-    app.get('/api/assets', async (_req, res) => {
+    app.get('/api/assets', async (req, res) => {
+        const kind = req.query.kind === undefined ? '' : String(req.query.kind).toLowerCase();
+        if (kind && !['image', 'file'].includes(kind)) {
+            return res.status(400).json({ error: 'kind must be image or file', code: 'INVALID_ASSET_KIND' });
+        }
+        const hasPageRequest = req.query.limit !== undefined || req.query.cursor !== undefined;
+        const rawLimit = req.query.limit === undefined ? DEFAULT_ASSET_PAGE_SIZE : Number.parseInt(req.query.limit, 10);
+        if (hasPageRequest && (!Number.isFinite(rawLimit) || rawLimit < 1)) {
+            return res.status(400).json({ error: 'limit must be a positive integer', code: 'INVALID_ASSET_LIMIT' });
+        }
+        const cursor = req.query.cursor === undefined ? null : decodeAssetCursor(req.query.cursor);
+        if (req.query.cursor !== undefined && !cursor) {
+            return res.status(400).json({ error: 'cursor is invalid', code: 'INVALID_ASSET_CURSOR' });
+        }
         try {
-            const list = await assets.listAssets();
-            res.json({ assets: list.map(responseAsset) });
+            let list = await assets.listAssets();
+            list = list
+                .filter(asset => !kind || String(asset?.kind || 'image') === kind)
+                .sort(compareAssets);
+            if (cursor) {
+                list = list.filter(asset => Number(asset?.createdAt || 0) < cursor.createdAt
+                    || (Number(asset?.createdAt || 0) === cursor.createdAt && String(asset?.id || '').localeCompare(cursor.id) < 0));
+            }
+            if (!hasPageRequest) return res.json({ assets: list.map(responseAsset) });
+
+            const limit = Math.min(rawLimit, MAX_ASSET_PAGE_SIZE);
+            const hasMore = list.length > limit;
+            const page = list.slice(0, limit);
+            res.json({
+                assets: page.map(responseAsset),
+                hasMore,
+                nextCursor: hasMore && page.length ? encodeAssetCursor(page[page.length - 1]) : null
+            });
         } catch (error) {
             console.error('Failed to list assets:', error);
             res.status(500).json({ error: 'Unable to list assets' });
@@ -225,4 +278,4 @@ function registerAssetRoutes(app, { storage, originValidationMiddleware, maxFile
     });
 }
 
-module.exports = { MAX_IMAGE_BYTES, registerAssetRoutes, responseAsset };
+module.exports = { MAX_IMAGE_BYTES, MAX_ASSET_PAGE_SIZE, registerAssetRoutes, responseAsset };

@@ -241,6 +241,7 @@ function assertThoughtsFrontendRegressions() {
         openApi.paths?.['/api/verify-pin'] &&
         openApi.paths?.['/api/pin-required'] &&
         openApi.paths?.['/api/config'] &&
+        openApi.paths?.['/api/meta'] &&
         openApi.paths?.['/api/trash'] &&
         openApi.paths?.['/api/thoughts/{id}/relations'] &&
         openApi.paths?.['/api/thoughts/{id}/ai-status'] &&
@@ -725,6 +726,12 @@ async function run() {
         result = await request('/api/auth/status');
         assert(result.response.ok && result.body.mode === 'legacy', 'GET /api/auth/status should expose legacy mode without prior API authentication');
 
+        result = await request('/api/meta');
+        assert(result.response.ok, 'GET /api/meta should expose public API capabilities without prior authentication');
+        assert(result.body.auth?.mode === 'legacy', 'API meta should expose the active authentication mode');
+        assert(result.body.storage?.backend === 'local', 'API meta should expose the active storage backend');
+        assert(typeof result.body.capabilities?.agent?.ready === 'boolean', 'API meta should expose agent readiness without provider secrets');
+
         result = await request('/openapi.json');
         assert(result.response.ok && result.body.openapi === '3.1.0', 'GET /openapi.json should expose the machine-readable API contract');
 
@@ -978,6 +985,48 @@ async function run() {
         const thoughtId = result.body.id;
         assert(thoughtId, 'created thought should have an id');
         assert(result.body.version === 1, 'created thought should expose version 1');
+
+        result = await request('/api/search?q=API%20regression&scope=thoughts');
+        assert(result.response.ok, 'Thought-scoped global search should succeed');
+        assert(result.body.results.some(item => item.id === thoughtId && item.type === 'thought'), 'Thought-scoped global search should return typed Thought results');
+
+        result = await request('/api/search?q=API%20regression&scope=all');
+        assert(result.response.ok, 'All-scope global search should succeed');
+        assert(result.body.results.some(item => item.id === thoughtId && item.type === 'thought'), 'All-scope global search should include Thought results');
+
+        result = await request('/api/assets/files', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/octet-stream',
+                'x-asset-name': encodeURIComponent('thought-attachment.pdf'),
+                'x-asset-type': 'application/pdf'
+            },
+            body: Buffer.from('%PDF-1.4 thought attachment')
+        });
+        assert(result.response.ok, 'asset fixture upload for Thought attachment hydration should succeed');
+        const attachmentAsset = result.body;
+
+        result = await request('/api/thoughts', {
+            method: 'POST',
+            body: JSON.stringify({ text: 'Thought with hydrated asset', attachments: [{ assetId: attachmentAsset.id }] })
+        });
+        assert(result.response.ok, 'Thought creation with an assetId-only attachment should succeed');
+        assert(result.body.attachments?.[0]?.name === attachmentAsset.name, 'assetId-only Thought attachments should be hydrated with the asset name');
+        assert(result.body.attachments?.[0]?.downloadUrl === attachmentAsset.downloadUrl, 'assetId-only Thought attachments should be hydrated with the download URL');
+        const attachmentThoughtId = result.body.id;
+
+        result = await request(`/api/thoughts/${attachmentThoughtId}`, {
+            method: 'PATCH',
+            body: JSON.stringify({ action: 'overwrite', attachments: [{ assetId: attachmentAsset.id }] })
+        });
+        assert(result.response.ok, 'Thought overwrite with an assetId-only attachment should succeed');
+        assert(result.body.thought.attachments?.[0]?.type === attachmentAsset.type, 'Thought attachment overwrites should also hydrate asset metadata');
+
+        result = await request('/api/thoughts', {
+            method: 'POST',
+            body: JSON.stringify({ text: 'Invalid asset reference', attachments: [{ assetId: 'a'.repeat(24) }] })
+        });
+        assert(result.response.status === 400 && result.body.code === 'ASSET_NOT_FOUND', 'missing asset references should return a structured client error');
 
         result = await request('/api/thoughts', {
             method: 'POST',

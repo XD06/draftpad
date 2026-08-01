@@ -194,15 +194,17 @@ Supported Thought mutation actions:
 
 Every Thought `PATCH` should contain the current `baseVersion`. A successful PATCH returns `{ success: true, thought }` with the new version, so use that returned object for the next mutation; read a single item with `GET /api/thoughts/:id` only when the current version is not already known.
 
-For a stored asset attachment, send the full object returned by `POST /api/assets/images` or `POST /api/assets/files`, not only `assetId`. That preserves its filename, MIME type, size, and preview/download URLs; legacy `dataUrl` attachments remain supported.
+For a stored asset attachment, sending `{ "assetId": "..." }` is sufficient: the server validates the asset and hydrates its filename, MIME type, size, and preview/download URLs. Sending the full upload object remains supported; legacy `dataUrl` attachments remain supported.
 
 ## Search, Relations, And AI
 
-Use `GET /api/search` for full-text Notepad search.
+Start an automation session with `GET /api/meta` to discover public limits and enabled capabilities without reading secrets. Use `GET /api/search` for full-text search; omit `scope` for the legacy Notepad-only behavior or send `scope=thoughts` / `scope=all` for typed cross-content results.
+
+Use `GET /api/assets?kind=image|file&limit=<1-100>` for filtered asset pages. The response includes `nextCursor` and `hasMore` when a `limit` or `cursor` is supplied; without either it remains the complete legacy list.
 
 ```bash
-# Full-text Notepad search
-curl -fsS "$DUMBPAD_BASE_URL/api/search?q=release&page=1&pageSize=20" \
+# Full-text search across Notepads and Thoughts
+curl -fsS "$DUMBPAD_BASE_URL/api/search?q=release&scope=all&page=1&pageSize=20" \
   -H "Authorization: Bearer $DUMBPAD_PIN"
 
 # Add a user-approved manual Thought relation

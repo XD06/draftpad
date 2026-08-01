@@ -33,6 +33,7 @@ const { registerAgentRoutes } = require('./routes/agent-routes');
 const { registerDataManagementRoutes } = require('./routes/data-management-routes');
 const { registerNoteRoutes } = require('./routes/note-routes');
 const { registerNotepadRoutes } = require('./routes/notepad-routes');
+const { registerMetaRoutes } = require('./routes/meta-routes');
 const { registerSearchRoutes } = require('./routes/search-routes');
 const { registerShareRoutes } = require('./routes/share-routes');
 const { registerStaticRoutes } = require('./routes/static-routes');
@@ -667,7 +668,17 @@ registerNotepadRoutes(app, {
 });
 
 registerSearchRoutes(app, {
-    searchNotepads
+    searchNotepads,
+    storage
+});
+
+registerMetaRoutes(app, {
+    storage,
+    authService,
+    aiQueue,
+    agentModelClient,
+    buildVersion: BUILD_VERSION,
+    assetMaxFileBytes: ASSET_MAX_FILE_BYTES
 });
 
 // Helper function to find a notepad by ID

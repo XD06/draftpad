@@ -66,6 +66,8 @@ async function run() {
     assert.deepStrictEqual(restored.buffer, original, 'S3 ordinary file bytes must round-trip unchanged');
     assert.strictEqual(restored.contentType, 'application/pdf');
     assert.strictEqual(await assets.readAsset('11111111-1111-4111-8111-111111111111', 'preview'), null, 'ordinary files must not expose a preview variant');
+    const restoredMetadata = await assets.readMetadata('11111111-1111-4111-8111-111111111111');
+    assert.strictEqual(restoredMetadata?.name, 'report.pdf', 'S3 asset metadata should be readable without downloading asset bytes');
 
     const imageId = '22222222-2222-4222-8222-222222222222';
     await assets.writeAsset({

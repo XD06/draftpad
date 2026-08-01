@@ -433,7 +433,7 @@ function registerAuthRoutes(app, context) {
     });
 
     app.use('/api', async (req, res, next) => {
-        if (req.path === '/verify-pin' || req.path === '/pin-required' || req.path === '/config' || req.path.startsWith('/auth/')) return next();
+        if (req.path === '/verify-pin' || req.path === '/pin-required' || req.path === '/config' || req.path === '/meta' || req.path.startsWith('/auth/')) return next();
         try {
             if (!v2Enabled) {
                 if (PIN && isValidPin(PIN)) {

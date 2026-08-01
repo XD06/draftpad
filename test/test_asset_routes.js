@@ -135,6 +135,20 @@ async function run() {
         assert.strictEqual(listedImage.previewUrl, `/api/assets/${asset.id}/preview`, 'listed images should expose a preview URL');
         assert(Number.isFinite(listedImage.createdAt) && listedImage.createdAt > 0, 'listed assets should expose a numeric createdAt for the panel timestamp');
 
+        const filesOnly = await fetch(`${baseUrl}/api/assets?kind=file&limit=1`);
+        assert.strictEqual(filesOnly.status, 200, 'GET /api/assets should accept a file-kind filter and page limit');
+        const filesOnlyBody = await filesOnly.json();
+        assert(filesOnlyBody.assets.length === 1 && filesOnlyBody.assets[0].kind === 'file', 'asset filtering should return only requested asset kinds');
+        assert(typeof filesOnlyBody.hasMore === 'boolean', 'a limited asset listing should report pagination state');
+        assert(Object.prototype.hasOwnProperty.call(filesOnlyBody, 'nextCursor'), 'a limited asset listing should return a nextCursor field');
+
+        const firstPage = await fetch(`${baseUrl}/api/assets?limit=1`);
+        const firstPageBody = await firstPage.json();
+        assert(firstPageBody.hasMore === true && firstPageBody.nextCursor, 'a bounded multi-asset listing should expose the next cursor');
+        const secondPage = await fetch(`${baseUrl}/api/assets?limit=1&cursor=${encodeURIComponent(firstPageBody.nextCursor)}`);
+        const secondPageBody = await secondPage.json();
+        assert(secondPageBody.assets[0]?.id && secondPageBody.assets[0].id !== firstPageBody.assets[0].id, 'an asset cursor page must not repeat its predecessor');
+
         const deleteMissing = await fetch(`${baseUrl}/api/assets/deadbeef`, { method: 'DELETE' });
         assert.strictEqual(deleteMissing.status, 404, 'deleting an unsafe id should 404');
 

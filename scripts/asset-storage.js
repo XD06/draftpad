@@ -98,6 +98,22 @@ function createAssetStorage(storage) {
         };
     }
 
+    async function readMetadata(id) {
+        const safeId = safeAssetId(id);
+        if (!safeId) return null;
+
+        if (storage.backend === 's3') {
+            return s3.getJSONObject(joinS3Key(assetPrefix(safeId), 'meta.json'), null);
+        }
+
+        try {
+            return JSON.parse(await fs.readFile(path.join(localAssetDir(safeId), 'meta.json'), 'utf8'));
+        } catch (error) {
+            if (error.code === 'ENOENT') return null;
+            throw error;
+        }
+    }
+
     function byNewestFirst(a, b) {
         return Number(b?.createdAt || 0) - Number(a?.createdAt || 0);
     }
@@ -207,7 +223,7 @@ function createAssetStorage(storage) {
         return { deleted, missing };
     }
 
-    return { readAsset, writeAsset, listAssets, findByHash, deleteAsset, deleteAssets };
+    return { readAsset, readMetadata, writeAsset, listAssets, findByHash, deleteAsset, deleteAssets };
 }
 
 module.exports = { createAssetStorage, safeAssetId };

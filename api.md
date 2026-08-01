@@ -526,6 +526,16 @@ curl -X POST http://localhost:3000/api/assets/files \
 
 列出全部图片与普通附件资源，按最新在前返回元数据，供附件管理界面做多选与清理。
 
+**Query 参数：**
+
+| 参数 | 类型 | 说明 |
+|---|---|---|
+| `kind` | `image` / `file` | 可选，仅返回一种资源类型 |
+| `limit` | number | 可选，`1` 到 `100`；传入后启用游标分页 |
+| `cursor` | string | 上一页返回的 `nextCursor` |
+
+不传 `limit` 和 `cursor` 时保持原有完整 `{ "assets": [...] }` 响应。分页请求额外返回 `hasMore` 与 `nextCursor`。
+
 **响应：**
 
 ```json
@@ -609,7 +619,7 @@ Thought 是一个**主任务 + 子任务（最多二层）**的待办结构。
 
 ### Thought 附件
 
-对资源库中的图片或普通文件，先上传到 Assets API，再把**完整上传响应对象**放进 Thought 的 `attachments` 数组（`id`、`assetId`、`name`、`type`、`size`、`previewUrl`、`originalUrl`、`downloadUrl`）。服务端不会仅凭 `assetId` 自动补全显示元数据；只传 `{ "assetId": "..." }` 会保留一个缺少文件名和 URL 的不完整附件。旧版 `dataUrl` 附件仍兼容。
+对资源库中的图片或普通文件，先上传到 Assets API，再把 `{ "assetId": "..." }` 放进 Thought 的 `attachments` 数组即可。服务端会验证资源存在，并补全文件名、MIME、大小和预览/下载 URL；完整上传响应对象仍可直接提交。不存在或非法 `assetId` 返回 `400`，并提供稳定的错误 `code`。旧版 `dataUrl` 附件仍兼容。
 
 ---
 
@@ -733,6 +743,26 @@ curl -X POST http://localhost:3000/api/thoughts \
     "version": 5,
     "updatedAt": 1778966669500
   }
+}
+```
+
+### GET /api/meta
+
+读取不含密钥的 API 能力与限制，供 Agent 在调用前探测认证模式、存储后端、Agent/AI 可用状态以及分页限制。
+
+**响应：**
+
+```json
+{
+  "version": "1.0.9-abcd1234",
+  "auth": { "mode": "legacy" },
+  "storage": { "backend": "local" },
+  "capabilities": {
+    "agent": { "enabled": false, "ready": false },
+    "ai": { "insightReady": false, "queueAvailable": true },
+    "s3": { "enabled": false }
+  },
+  "limits": { "assetMaxFileBytes": 20971520, "assetPageMax": 100, "thoughtPageMax": 50 }
 }
 ```
 
@@ -1458,13 +1488,14 @@ loosely_related
 
 ### GET /api/search
 
-全文搜索 Notepad。
+全文搜索 Notepad、Thought 或两者。省略 `scope` 保持兼容，仅搜索 Notepad。
 
 **Query 参数：**
 
 | 参数 | 类型 | 说明 |
 |---|---|---|
 | `q` / `query` | string | 搜索关键词 |
+| `scope` | `notepads` / `thoughts` / `all` | 搜索范围，默认 `notepads` |
 | `page` | number | 页码，默认 `1` |
 | `pageSize` | number | 每页数量，默认返回全部 |
 
@@ -1476,7 +1507,7 @@ loosely_related
     {
       "id": "default",
       "title": "Default",
-      "content": "...",
+      "type": "notepad",
       "matches": []
     }
   ],
@@ -1484,6 +1515,8 @@ loosely_related
   "currentPage": 1
 }
 ```
+
+Thought 结果同样带 `type: "thought"`，并提供 `title`、`snippet`、`matchType` 与 `matches`，调用方可按 `type` 分流展示或处理。
 
 ### GET /api/share/:id
 
