@@ -6,6 +6,9 @@ import ConfirmationManager from './managers/confirmation.js';
 import NoteSyncController from './managers/note-sync-controller.js';
 import SettingsDataPanel from './managers/settings-data-panel.js';
 import { AssetApiClient } from './managers/asset-api-client.js';
+import { WorkspaceRouter } from './managers/workspace-router.js';
+import { ImportTargetRegistry } from './managers/import-target-registry.js';
+import { ClipboardImportCoordinator } from './managers/clipboard-import-coordinator.js';
 import {
     createEditorPerformanceMonitor,
     isEditorPerformanceEnabled
@@ -205,7 +208,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     const downloadModal = document.getElementById('download-modal');
     const downloadTxt = document.getElementById('download-txt');
     const downloadMd = document.getElementById('download-md');
+    const downloadZip = document.getElementById('download-zip');
     const downloadCancel = document.getElementById('download-cancel');
+    const downloadClose = document.getElementById('download-close');
     const settingsButton = document.getElementById('settings-button');
     const settingsModal = document.getElementById('settings-modal');
     const settingsCancel = document.getElementById('settings-cancel');
@@ -273,6 +278,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     let currentNotepadId = 'default';
     let currentNoteVersion = null;
     let currentNotepads = []; 
+    const CARET_POSITIONS_KEY = 'dumbpad_caret_positions_v1';
+    let pendingCaretRestoreNotepadId = null;
     let directorySearchQuery = '';
     let isInitialLoad = true;
     let notepadIdToDelete = null;
@@ -284,6 +291,44 @@ document.addEventListener('DOMContentLoaded', async () => {
         label: '同步状态',
         kind: 'idle'
     };
+
+    function loadCaretPositions() {
+        try {
+            const value = JSON.parse(localStorage.getItem(CARET_POSITIONS_KEY) || '{}');
+            return value && typeof value === 'object' ? value : {};
+        } catch (_error) {
+            return {};
+        }
+    }
+
+    function saveEditorCaretForNotepad(notepadId, snapshot = null) {
+        if (!notepadId || !snapshot) return;
+        try {
+            const positions = loadCaretPositions();
+            positions[notepadId] = {
+                mode: snapshot.mode === 'source' ? 'source' : 'wysiwyg',
+                offset: Math.max(0, Number(snapshot.offset) || 0),
+                visibleOffset: Math.max(0, Number(snapshot.visibleOffset) || 0),
+                scrollTop: Math.max(0, Number(snapshot.scrollTop) || 0),
+                updatedAt: Date.now()
+            };
+            localStorage.setItem(CARET_POSITIONS_KEY, JSON.stringify(positions));
+        } catch (_error) {
+            // Caret recovery is best effort and must never interrupt editing.
+        }
+    }
+
+    function restoreEditorCaretForNotepad(notepadId) {
+        if (!notepadId) return false;
+        const snapshot = loadCaretPositions()[notepadId];
+        if (!snapshot) return false;
+        if (!editorInstance) {
+            pendingCaretRestoreNotepadId = notepadId;
+            return false;
+        }
+        pendingCaretRestoreNotepadId = null;
+        return editorInstance.restorePersistentCaret(snapshot);
+    }
 
     function createSaveId() {
         const randomPart = window.crypto?.randomUUID?.() || Math.random().toString(36).slice(2);
@@ -364,6 +409,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     const settingsAssetApi = new AssetApiClient();
     let thoughtsManager = null;
     let thoughtsManagerLoader = null;
+    let todayDraftsManager = null;
+    let todayDraftsManagerLoader = null;
+    let workspaceRouter = null;
+    let clipboardImportCoordinator = null;
     let openCommandSearch = null;
     let markedLoader = null;
     let currentTheme = storageManager.load(THEME_KEY);
@@ -385,7 +434,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     thoughtsManager = new ThoughtsManager({
                         toaster,
                         confirmationManager,
-                        openEditorView: () => openEditorView(),
+                        navigateWorkspace: workspace => workspaceRouter?.navigate(workspace),
                         openNotepadCitation: async ({ source } = {}) => {
                             const notepadId = String(source?.id || '').trim();
                             if (!notepadId) return false;
@@ -393,13 +442,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                                 await loadNotepads({ loadCurrentNote: false });
                             }
                             if (!findNotepadByIdOrName(currentNotepads, notepadId)) return false;
-                            if (thoughtsManager?.isActive) {
-                                // Switch through the existing view method so
-                                // editor/cache lifecycle stays unchanged, then
-                                // replace the hash without a second toggle.
-                                await thoughtsManager.updateViewState(false);
-                                window.history.replaceState({}, '', `${window.location.pathname}${window.location.search}`);
-                            }
+                            await workspaceRouter?.navigate('editor');
                             await selectNotepad(notepadId);
                             return true;
                         }
@@ -415,6 +458,31 @@ document.addEventListener('DOMContentLoaded', async () => {
                 });
         }
         return thoughtsManagerLoader;
+    }
+
+    function ensureTodayDraftsManager() {
+        if (!todayDraftsManagerLoader) {
+            todayDraftsManagerLoader = import('./managers/today-drafts/today-drafts-manager.js')
+                .then(({ TodayDraftsManager }) => {
+                    todayDraftsManager = new TodayDraftsManager({
+                        onMoveToThought: async draft => {
+                            const manager = await ensureThoughtsManager();
+                            const moved = manager.createTodayDraftThought(draft.text);
+                            if (!moved) return false;
+                            await workspaceRouter?.navigate('thoughts');
+                            return true;
+                        }
+                    });
+                    return todayDraftsManager;
+                })
+                .catch(error => {
+                    todayDraftsManagerLoader = null;
+                    console.warn('Failed to load today drafts:', error);
+                    toaster.show('今日草稿加载失败', 'error', true);
+                    throw error;
+                });
+        }
+        return todayDraftsManagerLoader;
     }
 
     function renderMarkdown(markdown) {
@@ -1253,6 +1321,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         setStartupSyncStatus('cached', noteIsDirty ? '本地未同步' : '本地快照');
 
         showEditingSurface();
+        restoreEditorCaretForNotepad(notepadId);
 
         const currentNotepad = currentNotepads.find(note => note.id === notepadId);
         if (currentNotepad) trackRecentFile(currentNotepad);
@@ -1386,6 +1455,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             toaster.show(`Notepad '${id}' not found`, 'error');
         }
 
+        const cachedCurrent = findNotepadByIdOrName(notepadsList, loadStartupCache()?.currentNotepadId);
+        if (cachedCurrent) return cachedCurrent.id;
+
         return getStartupNotepadId(notepadsList) || getFallbackNotepadId(notepadsList);
     }
 
@@ -1468,6 +1540,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 }
 
                 if (editor.value !== (data.content || '')) editor.value = data.content || '';
+                restoreEditorCaretForNotepad(notepadId);
                 markEditorPerformanceContent(editorPerformanceSwitchToken);
                 hasUnsavedChanges = false;
                 dirtyConflictNotepadIds.delete(notepadId);
@@ -1602,6 +1675,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                 ]);
                 editorInstance = new HybridMarkdownEditor(document.getElementById('hybrid-editor'), {
                     performanceMonitor: editorPerformanceMonitor.enabled ? editorPerformanceMonitor : null,
+                    onCaretChange: snapshot => {
+                        if (activeNotepadLoaded) saveEditorCaretForNotepad(currentNotepadId, snapshot);
+                    },
                     input: (value) => {
                         pendingEditorValue = value || '';
                         if (isApplyingRemoteUpdate) return;
@@ -1626,6 +1702,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 const handedOffValue = pendingEditorValue;
                 if (pendingEditorValue) editorInstance.setValue(pendingEditorValue, false);
                 editorInstance.setReadingMode(isReadingMode);
+                if (pendingCaretRestoreNotepadId) restoreEditorCaretForNotepad(pendingCaretRestoreNotepadId);
                 if (bootWasActive) {
                     // The opaque boot textarea covers the rich editor while it mounts.
                     // Vditor renders its content asynchronously (in its `after` hook), so
@@ -1673,9 +1750,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     async function createNotepad() {
+        const { content = '', throwOnError = false } = arguments[0] || {};
         const previousNotepads = [...currentNotepads];
         const previousNotepadId = currentNotepadId;
         const now = Date.now();
+        const initialContent = String(content || '');
         const optimisticNotepad = {
             id: createClientNotepadId(),
             name: `Notepad ${currentNotepads.length + 1}`,
@@ -1690,15 +1769,15 @@ document.addEventListener('DOMContentLoaded', async () => {
         ];
         currentNotepadId = optimisticNotepad.id;
         currentNoteVersion = 1;
-        cacheSyncedNote(optimisticNotepad.id, '', { version: 1 });
+        cacheSyncedNote(optimisticNotepad.id, initialContent, { version: 1 });
         renderNotepadLists(optimisticNotepad.id);
-        renderCachedNotepad(optimisticNotepad.id, '');
+        renderCachedNotepad(optimisticNotepad.id, initialContent);
 
         try {
             const response = await fetchWithPin('/api/notepads', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ id: optimisticNotepad.id, name: optimisticNotepad.name, content: '' })
+                body: JSON.stringify({ id: optimisticNotepad.id, name: optimisticNotepad.name, content: initialContent })
             });
             if (!response) throw new Error('Network error');
             const payload = await response.json().catch(() => ({}));
@@ -1714,13 +1793,14 @@ document.addEventListener('DOMContentLoaded', async () => {
                 { ...optimisticNotepad, ...newNotepad },
                 ...currentNotepads.filter(note => note.id !== optimisticNotepad.id && note.id !== newNotepad.id)
             ];
-            cacheSyncedNote(newNotepad.id, '', { version: newNotepad.version || 1 });
+            cacheSyncedNote(newNotepad.id, initialContent, { version: newNotepad.version || 1 });
             renderNotepadLists(newNotepad.id);
             if (currentNotepadId === optimisticNotepad.id || currentNotepadId === newNotepad.id) {
-                renderCachedNotepad(newNotepad.id, editor.value || '');
+                renderCachedNotepad(newNotepad.id, initialContent);
                 setCurrentNoteVersion(newNotepad.id, newNotepad.version || 1);
             }
             toaster.show(`New notepad: ${newNotepad.name}`, 'success');
+            return newNotepad;
         } catch (err) {
             console.error('Error creating notepad:', err);
             currentNotepads = previousNotepads;
@@ -1729,6 +1809,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                 await selectNotepad(previousNotepadId);
             }
             toaster.show(err?.message || 'Error creating notepad', 'error', true);
+            if (throwOnError) throw err;
+            return null;
         }
     }
 
@@ -2345,6 +2427,55 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     }
 
+    function initializeWorkspaceRouter() {
+        workspaceRouter = new WorkspaceRouter({
+            editorView: document.querySelector('main.three-column-layout'),
+            thoughtsView: document.getElementById('thoughts-view'),
+            todayView: document.getElementById('today-drafts-view'),
+            floatingActions,
+            ensureThoughts: ensureThoughtsManager,
+            ensureToday: ensureTodayDraftsManager,
+            openEditorView
+        });
+        document.querySelector('#header-title h1')?.addEventListener('click', () => {
+            if (workspaceRouter.activeWorkspace !== 'editor') workspaceRouter.navigate('editor');
+        });
+        return workspaceRouter;
+    }
+
+    function initializeClipboardImport() {
+        const registry = new ImportTargetRegistry();
+        registry.register({
+            id: 'article',
+            confirmLabel: '创建文章',
+            importText: async text => {
+                await workspaceRouter?.navigate('editor');
+                return createNotepad({ content: text, throwOnError: true });
+            }
+        });
+        registry.register({
+            id: 'today',
+            confirmLabel: '保存到今日草稿',
+            importText: async text => {
+                await workspaceRouter?.navigate('today');
+                const manager = await ensureTodayDraftsManager();
+                return manager.addImportedText(text);
+            }
+        });
+        registry.register({
+            id: 'thoughts',
+            confirmLabel: '保存为 Thought',
+            importText: async text => {
+                await workspaceRouter?.navigate('thoughts');
+                const manager = await ensureThoughtsManager();
+                manager.openQuickAdd({ initialText: text });
+                return true;
+            }
+        });
+        clipboardImportCoordinator = new ClipboardImportCoordinator({ registry, toaster });
+        return clipboardImportCoordinator;
+    }
+
     // Fully tear down the mobile sidebar overlay. Every path that closes the
     // sidebar must also clear body.mobile-sidebar-open (and restore the thoughts
     // sidebar host), otherwise the CSS that hides the floating actions while the
@@ -2380,7 +2511,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                 saveNotes(pendingContent, true, false).catch(() => {});
             }
         }
+        saveEditorCaretForNotepad(currentNotepadId, editorInstance?.getPersistentCaretSnapshot?.());
         currentNotepadId = selectedNotepad.id;
+        cacheNotepads(null, currentNotepadId);
         activeNotepadLoaded = false;
         applyCurrentNotepadTitle();
         
@@ -2403,6 +2536,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         await loadNotes(currentNotepadId, { deferRemote: true });
         if (token !== selectionToken) return;
         activeNotepadLoaded = true;
+        restoreEditorCaretForNotepad(currentNotepadId);
 
         requestAnimationFrame(() => {
             if (token === selectionToken && currentNotepadId === selectedNotepad.id) updateToC();
@@ -2721,11 +2855,37 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
         deleteConfirm.addEventListener('click', doDeleteNotepad);
         deleteCancel.addEventListener('click', () => hideModal(deleteModal));
-        if (downloadNotepadBtn) downloadNotepadBtn.addEventListener('click', () => showModal(downloadModal, downloadCancel));
+        if (downloadNotepadBtn) downloadNotepadBtn.addEventListener('click', () => showModal(downloadModal, downloadClose));
         downloadTxt.addEventListener('click', () => { downloadNotepad('txt'); hideModal(downloadModal); });
         downloadMd.addEventListener('click', () => { downloadNotepad('md'); hideModal(downloadModal); });
-        document.getElementById('download-zip').addEventListener('click', () => { exportAllAsZip(); hideModal(downloadModal); });
+        downloadZip.addEventListener('click', () => { exportAllAsZip(); hideModal(downloadModal); });
         downloadCancel.addEventListener('click', () => hideModal(downloadModal));
+        downloadClose.addEventListener('click', () => hideModal(downloadModal));
+        downloadModal.addEventListener('click', event => {
+            if (event.target === downloadModal) hideModal(downloadModal);
+        });
+        downloadModal.addEventListener('keydown', event => {
+            if (event.key === 'Escape') {
+                event.preventDefault();
+                event.stopPropagation();
+                hideModal(downloadModal);
+                return;
+            }
+            if (event.key !== 'Tab') return;
+            const focusable = [...downloadModal.querySelectorAll(
+                'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+            )];
+            const first = focusable[0];
+            const last = focusable.at(-1);
+            if (!first || !last) return;
+            if (event.shiftKey && document.activeElement === first) {
+                event.preventDefault();
+                last.focus();
+            } else if (!event.shiftKey && document.activeElement === last) {
+                event.preventDefault();
+                first.focus();
+            }
+        });
         if (printNotepadBtn) printNotepadBtn.addEventListener('click', printNotepad);
         if (settingsButton) {
             settingsButton.addEventListener('click', () => {
@@ -2878,6 +3038,11 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         document.addEventListener('keydown', (e) => {
             if (e.key === 'Escape') closeAllModals();
+            if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.code === 'Space') {
+                e.preventDefault();
+                clipboardImportCoordinator?.open({ readClipboard: true });
+                return;
+            }
             if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); saveNotes(editor.value); }
             if ((e.ctrlKey || e.metaKey) && e.altKey && e.key === 'ArrowDown') { e.preventDefault(); selectNextNotepad(true); }
             if ((e.ctrlKey || e.metaKey) && e.altKey && e.key === 'ArrowUp') { e.preventDefault(); selectNextNotepad(false); }
@@ -2886,6 +3051,10 @@ document.addEventListener('DOMContentLoaded', async () => {
                 isReadingMode = !isReadingMode;
                 updateReadingMode(true);
             }
+        });
+
+        window.addEventListener('pagehide', () => {
+            saveEditorCaretForNotepad(currentNotepadId, editorInstance?.getPersistentCaretSnapshot?.());
         });
 
         window.addEventListener('popstate', (e) => {
@@ -3214,12 +3383,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     const initializeApp = async () => {
-        const startsInThoughts = window.location.hash === '#thoughts';
+        const router = initializeWorkspaceRouter();
+        initializeClipboardImport();
+        const initialWorkspace = router.getWorkspaceFromLocation();
+        const startsInEditor = initialWorkspace === 'editor';
         addEventListeners();
         appSettings = settingsManager.loadSettings();
-        if (startsInThoughts) {
+        if (initialWorkspace === 'thoughts') {
             await ensureThoughtsManager();
-        } else {
+        } else if (startsInEditor) {
             // Paint cached content into the instant boot editor first so the user
             // can read and type right away, then load the rich editor in the
             // background (it hands off seamlessly once ready). Not awaiting the
@@ -3231,10 +3403,11 @@ document.addEventListener('DOMContentLoaded', async () => {
             });
         }
         loadAppConfig();
-        await loadNotepads({ loadCurrentNote: !startsInThoughts });
-        if (!startsInThoughts) await syncCurrentDirtyNote();
+        await loadNotepads({ loadCurrentNote: startsInEditor });
+        if (startsInEditor) await syncCurrentDirtyNote();
         applySettings(appSettings);
         await registerServiceWorker();
+        await router.init();
         isInitialLoad = false;
     };
 

@@ -45,7 +45,13 @@ DumbPad 是一款专注于速度、美感与跨端体验的极简 Markdown 编�
 - **置顶功能**：卡片右上角置顶按钮，置顶内容优先排序并显示金色边框
 - **附件支持**：支持插入图片和文件（Base64 存储，单文件最大 4MB），编辑模式下可管理附件
 
-### 6. AI Relations
+### 6. 今日草稿
+
+- **用完即走**：独立于文章和 Thought 的当日单行清单，次日自动清空，不会积累为长期待办。
+- **单条同步**：每条记录拥有版本号，支持跨端实时更新与离线重试。
+- **快捷整理**：横向手势可删除当前条目或转成可长期保留的 Thought。
+
+### 7. AI Relations
 
 - **AI 元数据**：创建 Thought 后异步生成摘要、实体、主题、意图、关键词、标签和 embedding；语义编辑后会标记为“AI 待更新”，由用户在 AI 面板手动重新运行。
 - **准确优先关联**：本地召回候选后，可选用专用 reranker 排序，再由 LLM 判断 `relationType`、置信度和原因。
@@ -55,7 +61,7 @@ DumbPad 是一款专注于速度、美感与跨端体验的极简 Markdown 编�
 - **找回相关内容（可选）**：用户可在 Thought 的 AI 分析折叠区主动启动只读 `recall_context` 工作流，在有限候选中找回旧想法和文章片段，并查看可点击的结构化引用；不改写用户内容。
 - **降级可用**：没有 AI Key 或 AI 服务失败时，核心保存流程不受影响。
 
-### 7. 安全、同步与存储
+### 8. 安全、同步与存储
 - **PIN 码保护**：支持访问权限校验，保护私密草稿。
 - **多端同步**：基于轻量 WebSocket 事件同步 `notes_update`、`thoughts_update`、`relations_update`、`notepad_change`。
 - **多后端存储**：支持本地文件存储和 S3 兼容对象存储，前端 API 保持不变。
@@ -67,8 +73,9 @@ DumbPad 是一款专注于速度、美感与跨端体验的极简 Markdown 编�
 
 DumbPad 当前保持无构建工具的 Vanilla JS 前端和 Express 后端。重构原则是小步提取高内聚模块，不改变 API、数据结构和用户可见行为。
 
-- `server.js` 仍是后端入口，负责静态资源、鉴权、WebSocket、Notepad/Thought API、搜索和数据管理。
+- `server.js` 仍是后端入口，负责静态资源、鉴权、WebSocket、Notepad/Thought/Today Draft API、搜索和数据管理。
 - `scripts/storage.js` 是本地/S3、legacy/split layout 的统一存储边界；split 模式的 Thought 分页复用索引，只读取当前页对象，关键词搜索和 legacy 模式保留完整读取回退。
+- `routes/today-drafts-routes.js` 和 `public/managers/today-drafts/` 组成独立的日期草稿模块：服务端按日清理并发出单条同步事件，前端负责本地缓存、离线 outbox 与手势交互。
 - `scripts/ai-queue.js` 和 `scripts/ai-provider.js` 负责后端 AI pipeline；AI、S3、WebSocket 都不能阻塞 Thought 快速写入。
 - `scripts/agent/` 是交互 Agent 的独立运行线：工作流、只读上下文工具、运行状态、SSE 和模型适配各自隔离，不复用后台队列。
 - `public/managers/thought-api-client.js` 封装 Thought HTTP 细节，统一 URL 编码和非 `ok` 错误。
@@ -282,7 +289,7 @@ npm run test:s3-real
 ## 📚 文档
 
 - [Agent Context](AGENT_CONTEXT.md) — 新开 AI 会话时优先阅读的项目入口
-- [DumbPad API Agent Skill](SKILL.md) — 供 AI Agent 通过认证 HTTP API 管理文章与 Thoughts
+- [DumbPad API Agent Skill](SKILL.md) — 供 AI Agent 选择文章、Thought 或今日草稿并执行高频 API 操作
 - [文档索引](docs/README.md) — 当前文档、归档文档和维护规则
 - [API 文档](api.md) — 完整的 REST API 参考
 - [项目技术介绍](docs/technical-overview.md) — 当前模块边界、数据流和后续重构顺序

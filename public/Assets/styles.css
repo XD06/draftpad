@@ -1218,6 +1218,175 @@ main {
     line-height: 1.5;
 }
 
+/* Download keeps format choices prominent without changing the shared modal pattern. */
+#download-modal .download-modal-content {
+    width: min(560px, calc(100vw - 32px));
+    max-width: 560px;
+    padding: 28px;
+}
+
+#download-modal .download-modal-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+}
+
+#download-modal .download-modal-header h2 {
+    margin: 0;
+    font-size: 1.5rem;
+    line-height: 1.25;
+}
+
+#download-modal .download-modal-header .modal-message {
+    margin: 6px 0 0;
+    color: var(--muted-text);
+    font-size: 0.9375rem;
+}
+
+#download-modal .download-modal-close {
+    display: inline-flex;
+    flex: 0 0 36px;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    background: transparent;
+    color: var(--muted-text);
+    cursor: pointer;
+    transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease;
+}
+
+#download-modal .download-format-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+    margin-top: 24px;
+}
+
+#download-modal .download-format-option {
+    display: flex;
+    min-width: 0;
+    min-height: 126px;
+    padding: 16px;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    background: var(--textarea-bg);
+    color: var(--text-color);
+    cursor: pointer;
+    text-align: left;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: flex-start;
+    gap: 8px;
+    transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease;
+}
+
+#download-modal .download-format-icon {
+    color: var(--primary-color);
+}
+
+#download-modal .download-format-name {
+    font-size: 0.9375rem;
+    font-weight: 600;
+    line-height: 1.3;
+}
+
+#download-modal .download-format-detail {
+    margin-top: auto;
+    color: var(--muted-text);
+    font-size: 0.75rem;
+    line-height: 1.35;
+    white-space: nowrap;
+}
+
+#download-modal .download-modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 16px;
+}
+
+#download-modal .download-modal-cancel {
+    min-height: 36px;
+    padding: 8px 12px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--muted-text);
+    cursor: pointer;
+    font-size: 0.875rem;
+    transition: background-color 160ms ease, color 160ms ease;
+}
+
+@media (hover: hover) {
+    #download-modal .download-modal-close:hover,
+    #download-modal .download-modal-cancel:hover {
+        background: var(--button-hover);
+        color: var(--text-color);
+    }
+
+    #download-modal .download-format-option:hover {
+        border-color: var(--primary-color);
+        background: rgba(var(--primary-rgb), 0.06);
+    }
+}
+
+#download-modal button:focus-visible {
+    outline: 2px solid var(--primary-color);
+    outline-offset: 2px;
+}
+
+#download-modal .download-format-option:active {
+    background: rgba(var(--primary-rgb), 0.12);
+}
+
+@media (max-width: 560px) {
+    #download-modal .download-modal-content {
+        padding: 22px;
+    }
+
+    #download-modal .download-format-grid {
+        grid-template-columns: 1fr;
+        gap: 8px;
+        margin-top: 20px;
+    }
+
+    #download-modal .download-format-option {
+        display: grid;
+        grid-template-columns: 28px minmax(0, 1fr);
+        grid-template-rows: auto auto;
+        min-height: 0;
+        padding: 13px 14px;
+        column-gap: 12px;
+        row-gap: 2px;
+    }
+
+    #download-modal .download-format-icon {
+        grid-row: span 2;
+        align-self: center;
+    }
+
+    #download-modal .download-format-detail {
+        margin-top: 0;
+    }
+
+    #download-modal .download-modal-cancel {
+        min-height: 44px;
+        padding-inline: 14px;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    #download-modal .download-modal-close,
+    #download-modal .download-format-option,
+    #download-modal .download-modal-cancel {
+        transition: none;
+    }
+}
+
 /* Command Palette Styles */
 .command-palette-overlay {
     position: fixed;
@@ -1669,8 +1838,8 @@ main {
 .hybrid-editor {
     height: 100%;
     width: 100%;
-    /* Transparent, NOT white. This is the full-width (852px) editor container, which is
-       wider than the 760px article card. The only white surface must be the centred card
+    /* Transparent, NOT white. This is the full-width editor container, which is
+       wider than the 800px article card. The only white surface must be the centred card
        (.boot-editor / pre.vditor-reset). If this container is painted white, then during
        the boot gap -- before vditor adds .typora-editor-shell.vditor and the transparent
        rule further below takes over -- a full-width white block extends past the card's
@@ -1693,12 +1862,11 @@ main {
     /* Render the boot textarea as the SAME centred white card as the live vditor
        surface (pre.vditor-reset), so the boot->vditor handoff never changes the
        visible article region. Earlier this element was full-bleed + transparent,
-       so at handoff a 760px white card (bg+border+shadow) appeared out of nowhere
+       so at handoff a white card (bg+border+shadow) appeared out of nowhere
        over the grey background -- the "article region swelling" the user saw, even
-       though the 690px text column never moved. Measured in a real 1440px viewport,
-       vditor's card sits 64px below the editor top (its margin-top), is a 760px
-       max-width box centred in the 852px column (46px side gutters), and holds a
-       690px text column via 35px side padding + 24px top padding. Reproduce that
+       though the text column never moved. The card sits 64px below the editor top,
+       is capped at 800px, and uses the same 35px side padding + 24px top padding.
+       Reproduce that
        card exactly: */
     position: absolute;
     top: 64px;
@@ -1707,7 +1875,7 @@ main {
     transform: translateX(-50%);
     z-index: 3;
     width: 100%;
-    max-width: 760px;
+    max-width: 800px;
     margin: 0;
     outline: none;
     resize: none;
@@ -1723,7 +1891,7 @@ main {
     font-size: 16.5px;
     line-height: 1.72;
     /* 24px top + 35px side padding == vditor's runtime inline padding, giving the
-       identical 690px text column inside the 760px card. */
+       aligned text column inside the 800px card. */
     padding: 24px 35px 64px;
     overflow: auto;
     -webkit-appearance: none;
@@ -1969,7 +2137,7 @@ main {
 }
 
 .typora-editor-shell .vditor-reset {
-    max-width: 760px;
+    max-width: 800px;
     margin: 0 auto;
     padding: 38px 40px 110px;
     background: transparent;
@@ -1981,7 +2149,7 @@ main {
 
 .typora-editor-shell .vditor-wysiwyg pre.vditor-reset {
     width: 100%;
-    max-width: 760px;
+    max-width: 800px;
     min-height: 100%;
     height: auto;
     margin: 0 auto;
@@ -2001,7 +2169,7 @@ main {
     border: 0;
     outline: 0;
     resize: none;
-    padding: 38px max(40px, calc((100% - 760px) / 2)) 110px;
+    padding: 38px 40px 110px;
     background: var(--textarea-bg);
     color: var(--text-color);
     font: 14px/1.7 var(--font-code);

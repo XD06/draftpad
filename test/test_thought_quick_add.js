@@ -4,6 +4,8 @@ const path = require('path');
 const vm = require('vm');
 
 const ROOT = path.resolve(__dirname, '..');
+const thoughtsManagerSource = fs.readFileSync(path.join(ROOT, 'public', 'managers', 'thoughts.js'), 'utf8');
+const appSource = fs.readFileSync(path.join(ROOT, 'public', 'app.js'), 'utf8');
 
 function loadQuickAdd() {
     const sourcePath = path.join(ROOT, 'public', 'managers', 'thought-quick-add.js');
@@ -59,6 +61,11 @@ function run() {
     assert(Array.isArray(outbox.subItems) && outbox.subItems.length === 0, 'outbox create payload should preserve empty subItems');
     assert(outbox.completed === false, 'outbox create payload should preserve incomplete default');
     assert(outbox.tempThought === local, 'outbox create payload should keep temp thought reference');
+
+    assert(thoughtsManagerSource.includes("openQuickAdd({ readClipboard = false, initialText = '' } = {})"), 'quick add should accept imported text from another capture surface');
+    assert(thoughtsManagerSource.includes('navigator.clipboard.readText'), 'quick add should read clipboard text after an explicit user gesture');
+    assert(thoughtsManagerSource.includes('queueQuickAddPastedFiles'), 'quick add paste handling should accept ordinary files as well as images');
+    assert(appSource.includes("e.code === 'Space'") && appSource.includes("clipboardImportCoordinator?.open({ readClipboard: true })"), 'the global shortcut should open the reusable clipboard import flow');
 
     console.log('Thought quick add checks passed');
 }

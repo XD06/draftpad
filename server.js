@@ -38,6 +38,7 @@ const { registerSearchRoutes } = require('./routes/search-routes');
 const { registerShareRoutes } = require('./routes/share-routes');
 const { registerStaticRoutes } = require('./routes/static-routes');
 const { registerThoughtRoutes } = require('./routes/thought-routes');
+const { registerTodayDraftRoutes } = require('./routes/today-drafts-routes');
 const { registerTrashRoutes } = require('./routes/trash-routes');
 const { createAgentContextService } = require('./scripts/agent/agent-context-service');
 const { createAgentModelClient } = require('./scripts/agent/agent-model-client');
@@ -629,6 +630,11 @@ registerThoughtRoutes(app, {
     storage,
     aiQueue,
     scheduleIndexNotepads,
+    broadcastWebSocketMessage
+});
+
+registerTodayDraftRoutes(app, {
+    storage,
     broadcastWebSocketMessage
 });
 

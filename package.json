@@ -32,6 +32,7 @@
     "test:thought-card-renderer": "node test/test_thought_card_renderer.js",
     "test:thought-editor": "node test/test_thought_editor.js",
     "test:thought-quick-add": "node test/test_thought_quick_add.js",
+    "test:today-drafts": "node test/test_today_drafts_workspace.js && node test/test_today_drafts_api.js && node test/test_today_drafts_outbox.js",
     "test:thought-relations-panel": "node test/test_thought_relations_panel.js",
     "test:thought-relations-state": "node test/test_thought_relations_state.js",
     "test:thought-tags": "node test/test_thought_tags.js",

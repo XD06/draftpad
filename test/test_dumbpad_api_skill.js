@@ -7,19 +7,24 @@ const skillPath = path.join(root, 'SKILL.md');
 const skill = fs.readFileSync(skillPath, 'utf8');
 
 [
-    'Authorization: Bearer $DUMBPAD_PIN',
-    'GET /api/notepads',
-    'GET /api/notepads/:id',
-    'POST /api/notes/:id',
-    'PATCH /api/notepads/:id',
-    'GET /api/thoughts',
-    'PATCH /api/thoughts/:id',
-    'sending `{ "assetId": "..." }` is sufficient',
-    'GET /api/meta',
-    'GET /api/search',
+    'Choose The Right Area First',
+    'normally no more than 50 Chinese characters',
+    'Today Draft',
+    '/api/notepads?title=release',
+    '/api/notes/<article-id>',
+    '/api/thoughts?q=release',
+    '/api/thoughts/<thought-id>',
+    '/api/assets/images',
+    '/api/assets/files',
+    'Preserve its existing `attachments`',
+    '"assetId":"<new-asset-id>"',
+    '/api/today-drafts',
+    '/api/today-drafts/today-standup-01',
+    '/api/meta',
+    '/api/search?q=release&scope=all',
     '409',
     'data/',
-    'public/openapi.json'
+    'GET /openapi.json'
 ].forEach(fragment => {
     assert(skill.includes(fragment), `SKILL.md should document ${fragment}`);
 });

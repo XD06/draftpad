@@ -13,6 +13,7 @@
          without blocking render (the thoughts view and its JS are lazy-loaded). -->
     <link rel="stylesheet" href="Assets/thoughts.css" media="print" onload="this.media='all'">
     <noscript><link rel="stylesheet" href="Assets/thoughts.css"></noscript>
+    <link rel="stylesheet" href="Assets/today-drafts.css">
     <link rel="stylesheet" href="Assets/ios-theme.css">
     <!-- Warm the editor engine in parallel with the CSS and app.js so the rich
          editor is ready sooner; the app types into an instant boot editor first
@@ -195,11 +196,11 @@
                 <!-- Instant boot editor: a plain textarea shown while the rich
                      editor loads, so the user can read and type immediately. The
                      .boot-editor rule styles it as the SAME centred white card
-                     (background/border/shadow/760px) as the live vditor surface,
+                     (background/border/shadow/800px) as the live vditor surface,
                      so the boot->vditor handoff does not change the visible
                      article region. Inline styles are kept minimal and must NOT
                      set background or border (an earlier background:transparent
-                     hid the card, so the 760px card appeared out of nowhere at
+                       hid the card, so the 800px card appeared out of nowhere at
                      handoff -- the "region swelling" the user reported). -->
                 <textarea id="boot-editor" class="boot-editor" hidden aria-label="快速输入"
                     style="outline:none;resize:none;box-sizing:border-box;"
@@ -292,6 +293,57 @@
             </div>
         </div>
 
+        <section id="today-drafts-view" class="today-drafts-view" style="display: none;" aria-label="今日草稿">
+            <div class="today-drafts-sheet">
+                <div class="today-drafts-header">
+                    <div>
+                        <p class="today-drafts-eyebrow">TODAY</p>
+                        <h2>今日草稿</h2>
+                    </div>
+                    <div class="today-drafts-status">
+                        <span id="today-drafts-count" aria-live="polite">用完即走</span>
+                    </div>
+                </div>
+                <div id="today-drafts-writing-area" class="today-drafts-writing-area">
+                    <ol id="today-drafts-list" class="today-drafts-list"></ol>
+                    <form id="today-drafts-form" class="today-drafts-input-row">
+                        <span class="today-drafts-input-marker" aria-hidden="true">+</span>
+                        <input id="today-drafts-input" type="text" placeholder="写下一件现在要做的事" aria-label="新增今日草稿" autocomplete="off">
+                    </form>
+                </div>
+                <footer class="today-drafts-footer">只留在今天，明天会自动清空。</footer>
+            </div>
+        </section>
+
+        <div id="clipboard-import-dialog" class="clipboard-import-dialog" role="presentation" hidden>
+            <section class="clipboard-import-panel" role="dialog" aria-modal="true" aria-labelledby="clipboard-import-title">
+                <div class="clipboard-import-header">
+                    <div>
+                        <p>CLIPBOARD</p>
+                        <h2 id="clipboard-import-title">剪贴板记录</h2>
+                        <span>编辑内容后，选择保存位置。</span>
+                    </div>
+                    <button class="clipboard-import-icon-button" type="button" data-clipboard-import-close aria-label="关闭快速记录" title="关闭">
+                        <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path></svg>
+                    </button>
+                </div>
+                <textarea id="clipboard-import-text" placeholder="剪贴板内容会显示在这里，也可以直接输入或粘贴。" aria-label="快速记录内容"></textarea>
+                <div class="clipboard-import-status-row">
+                    <span id="clipboard-import-status" aria-live="polite"></span>
+                    <button class="clipboard-import-retry" type="button" data-clipboard-import-retry>重新读取</button>
+                </div>
+                <div class="clipboard-import-destinations" role="group" aria-label="保存位置">
+                    <button type="button" data-import-target="article" aria-pressed="true">新文章</button>
+                    <button type="button" data-import-target="today" aria-pressed="false">今日草稿</button>
+                    <button type="button" data-import-target="thoughts" aria-pressed="false">Thought</button>
+                </div>
+                <footer class="clipboard-import-footer">
+                    <button class="clipboard-import-cancel" type="button" data-clipboard-import-cancel>取消</button>
+                    <button id="clipboard-import-confirm" class="clipboard-import-confirm" type="button">创建文章</button>
+                </footer>
+            </section>
+        </div>
+
         <div id="toast-container" class="toast-container"></div>
         <div id="rename-modal" class="modal">
             <div class="modal-content">
@@ -313,15 +365,50 @@
                 </div>
             </div>
         </div>
-        <div id="download-modal" class="modal">
-            <div class="modal-content">
-                <h2>Download Format</h2>
-                <p class="modal-message">Choose a format to download your notepad.</p>
-                <div class="modal-buttons">
-                    <button id="download-cancel">Cancel</button>
-                    <button id="download-md">Markdown (.md)</button>
-                    <button id="download-txt">Text (.txt)</button>
-                    <button id="download-zip">All as ZIP (.zip)</button>
+        <div id="download-modal" class="modal" role="dialog" aria-modal="true"
+            aria-labelledby="download-modal-title" aria-describedby="download-modal-description">
+            <div class="modal-content download-modal-content">
+                <div class="download-modal-header">
+                    <div>
+                        <h2 id="download-modal-title">Download</h2>
+                        <p id="download-modal-description" class="modal-message">Choose how to save this note.</p>
+                    </div>
+                    <button id="download-close" class="download-modal-close" type="button" aria-label="Close download dialog"
+                        title="Close">
+                        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+                            <path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="2"
+                                stroke-linecap="round" />
+                        </svg>
+                    </button>
+                </div>
+                <div class="download-format-grid" role="group" aria-label="Download format">
+                    <button id="download-md" class="download-format-option" type="button">
+                        <svg class="download-format-icon" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+                            <path d="M6 3h8l4 4v14H6zM14 3v5h5M9 13h6M9 17h6" fill="none" stroke="currentColor"
+                                stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+                        </svg>
+                        <span class="download-format-name">Markdown</span>
+                        <span class="download-format-detail">.md · Current note</span>
+                    </button>
+                    <button id="download-txt" class="download-format-option" type="button">
+                        <svg class="download-format-icon" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+                            <path d="M6 3h8l4 4v14H6zM14 3v5h5M9 13h6M9 17h6" fill="none" stroke="currentColor"
+                                stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+                        </svg>
+                        <span class="download-format-name">Plain text</span>
+                        <span class="download-format-detail">.txt · Current note</span>
+                    </button>
+                    <button id="download-zip" class="download-format-option" type="button">
+                        <svg class="download-format-icon" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+                            <path d="M5 5h5l2 2h7v12H5zM9 12h6M9 16h4" fill="none" stroke="currentColor"
+                                stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+                        </svg>
+                        <span class="download-format-name">Archive</span>
+                        <span class="download-format-detail">.zip · All notes</span>
+                    </button>
+                </div>
+                <div class="download-modal-footer">
+                    <button id="download-cancel" class="download-modal-cancel" type="button">Cancel</button>
                 </div>
             </div>
         </div>
@@ -524,6 +611,22 @@
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
                 <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+            </svg>
+        </button>
+        <button id="toggle-today-drafts" class="floating-btn" aria-label="打开今日草稿" data-tooltip="今日草稿">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M6 3h10l2 2v16H6z"></path>
+                <path d="M16 3v4h4"></path>
+                <path d="M9 11h6M9 15h5"></path>
+                <path d="M4 6v12"></path>
+            </svg>
+        </button>
+        <button id="clipboard-import-trigger" class="floating-btn" aria-label="从剪贴板快速记录" data-tooltip="快速记录">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="6" y="5" width="12" height="16" rx="2"></rect>
+                <path d="M10 5V3h4v2"></path>
+                <path d="M12 9v7"></path>
+                <path d="m9 13 3 3 3-3"></path>
             </svg>
         </button>
         <button id="toggle-thoughts" class="floating-btn" aria-label="Open today's thoughts" data-tooltip="Thoughts">

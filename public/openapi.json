@@ -130,6 +130,15 @@
       ],
       "get": { "summary": "Read an image preview, original, or ordinary-file download", "responses": { "200": { "description": "Binary asset response" }, "404": { "$ref": "#/components/responses/Error" } } }
     },
+    "/api/today-drafts": {
+      "get": { "summary": "List Today Drafts for the server's current local day", "responses": { "200": { "description": "Current day and its disposable single-line drafts", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TodayDraftList" } } } }, "500": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/today-drafts/{id}": {
+      "parameters": [{ "$ref": "#/components/parameters/TodayDraftId" }],
+      "get": { "summary": "Read one Today Draft from the current server day", "responses": { "200": { "description": "Today Draft", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TodayDraft" } } } }, "400": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" } } },
+      "put": { "summary": "Create or update one Today Draft with optimistic concurrency", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TodayDraftUpsert" } } } }, "responses": { "200": { "description": "Updated Today Draft", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TodayDraftMutationResult" } } } }, "201": { "description": "Created Today Draft", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TodayDraftMutationResult" } } } }, "400": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" } } },
+      "delete": { "summary": "Delete one Today Draft from the current server day", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TodayDraftDelete" } } } }, "responses": { "200": { "description": "Deleted Today Draft", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TodayDraftDeleteResult" } } } }, "400": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" } } }
+    },
     "/api/thoughts": {
       "get": {
         "summary": "List Thoughts",
@@ -221,6 +230,7 @@
     },
     "parameters": {
       "NotepadId": { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
+      "TodayDraftId": { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{2,95}$" } },
       "ThoughtId": { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
       "TargetThoughtId": { "name": "targetId", "in": "path", "required": true, "schema": { "type": "string" } },
       "TrashId": { "name": "trashId", "in": "path", "required": true, "schema": { "type": "string" } }
@@ -252,6 +262,12 @@
       "AssetBulkDelete": { "type": "object", "required": ["ids"], "properties": { "ids": { "type": "array", "items": { "type": "string" }, "minItems": 1, "maxItems": 1000 } } },
       "AssetBulkDeleteResult": { "type": "object", "required": ["success", "deleted", "missing"], "properties": { "success": { "type": "boolean" }, "deleted": { "type": "array", "items": { "type": "string" } }, "missing": { "type": "array", "items": { "type": "string" } } } },
       "NotepadRename": { "type": "object", "required": ["name"], "properties": { "name": { "type": "string" }, "baseVersion": { "type": "integer" } } },
+      "TodayDraft": { "type": "object", "required": ["id", "text", "completed", "day", "version", "createdAt", "updatedAt"], "properties": { "id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{2,95}$" }, "text": { "type": "string", "minLength": 1 }, "completed": { "type": "boolean" }, "day": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$" }, "version": { "type": "integer", "minimum": 1 }, "createdAt": { "type": "integer", "format": "int64" }, "updatedAt": { "type": "integer", "format": "int64" } } },
+      "TodayDraftList": { "type": "object", "required": ["day", "items"], "properties": { "day": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$" }, "items": { "type": "array", "items": { "$ref": "#/components/schemas/TodayDraft" } } } },
+      "TodayDraftUpsert": { "type": "object", "required": ["text"], "properties": { "text": { "type": "string", "minLength": 1 }, "completed": { "type": "boolean" }, "baseVersion": { "type": "integer", "minimum": 1, "description": "Required when the id already exists; omit only for a new id." } } },
+      "TodayDraftDelete": { "type": "object", "required": ["baseVersion"], "properties": { "baseVersion": { "type": "integer", "minimum": 1 } } },
+      "TodayDraftMutationResult": { "type": "object", "required": ["success", "created", "draft"], "properties": { "success": { "const": true }, "created": { "type": "boolean" }, "draft": { "$ref": "#/components/schemas/TodayDraft" } } },
+      "TodayDraftDeleteResult": { "type": "object", "required": ["success", "deleted", "draft"], "properties": { "success": { "const": true }, "deleted": { "const": true }, "draft": { "$ref": "#/components/schemas/TodayDraft" } } },
       "SubItem": { "type": "object", "required": ["id", "text", "completed"], "properties": { "id": { "type": "string" }, "text": { "type": "string" }, "completed": { "type": "boolean" } } },
       "ThoughtAttachment": { "type": "object", "description": "A stored asset may be attached with assetId alone; the server hydrates its current metadata and URLs. Legacy data-url attachments remain supported.", "properties": { "id": { "type": "string" }, "assetId": { "type": "string" }, "name": { "type": "string" }, "type": { "type": "string" }, "size": { "type": "integer", "format": "int64" }, "previewUrl": { "type": ["string", "null"] }, "originalUrl": { "type": "string" }, "downloadUrl": { "type": "string" }, "dataUrl": { "type": "string" } } },
       "Thought": { "type": "object", "required": ["id", "text", "version", "createdAt", "updatedAt"], "properties": { "id": { "type": "string" }, "text": { "type": "string" }, "subItems": { "type": "array", "items": { "$ref": "#/components/schemas/SubItem" } }, "tags": { "type": "array", "items": { "type": "string" } }, "attachments": { "type": "array", "items": { "$ref": "#/components/schemas/ThoughtAttachment" } }, "completed": { "type": "boolean" }, "pinned": { "type": "boolean" }, "pinnedAt": { "type": "integer", "format": "int64" }, "relationCount": { "type": "integer", "minimum": 0 }, "aiStatus": { "type": "string" }, "aiError": { "type": ["string", "null"] }, "aiProcessedAt": { "type": "integer", "format": "int64" }, "aiTags": { "type": "array", "items": { "type": "string" } }, "version": { "type": "integer" }, "createdAt": { "type": "integer" }, "updatedAt": { "type": "integer" } } },

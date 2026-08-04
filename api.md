@@ -583,6 +583,69 @@ curl -X POST http://localhost:3000/api/assets/files \
 
 ---
 
+## 今日草稿 API
+
+今日草稿（Today Draft）是“用完即走”的单行记录，不是永久笔记或待办历史。服务端按自己的本地日历分区；读取或写入时会永久清除过期日期的记录，因此客户端不得依赖昨天的草稿还存在。需要长期保留的内容应先转成 Thought 或文章。
+
+### 数据模型
+
+```json
+{
+  "id": "today-standup-01",
+  "text": "回复团队消息",
+  "completed": false,
+  "day": "2026-08-05",
+  "version": 1,
+  "createdAt": 1785888000000,
+  "updatedAt": 1785888000000
+}
+```
+
+`id` 由客户端提供，必须匹配 `[A-Za-z0-9][A-Za-z0-9_-]{2,95}`，便于离线重试幂等化。`text` 不能为空；产品约定是一句简短、当日要处理的事项，不在 API 层截断内容。`version` 用于同一条记录的乐观并发控制。
+
+### GET /api/today-drafts
+
+读取服务端当前日期的草稿。
+
+**响应：**
+
+```json
+{
+  "day": "2026-08-05",
+  "items": [{ "id": "today-standup-01", "text": "回复团队消息", "completed": false, "version": 1 }]
+}
+```
+
+### GET /api/today-drafts/:id
+
+读取当前日期的一条草稿。不存在、已过期或已删除时返回 `404`；非法 id 返回 `400` 与 `code: "INVALID_TODAY_DRAFT_ID"`。
+
+### PUT /api/today-drafts/:id
+
+创建或更新一条草稿。新 id 不传 `baseVersion`，返回 `201`；已有 id 必须传当前 `baseVersion`，成功返回 `200`。版本过期返回 `409` 与 `currentVersion`，未传已有记录的版本返回 `400` 与 `code: "BASE_VERSION_REQUIRED"`。
+
+**请求体：**
+
+```json
+{ "text": "回复团队消息", "completed": false, "baseVersion": 1 }
+```
+
+**响应：**
+
+```json
+{ "success": true, "created": false, "draft": { "id": "today-standup-01", "version": 2 } }
+```
+
+### DELETE /api/today-drafts/:id
+
+删除当前日期的一条草稿。请求体必须包含当前 `baseVersion`；成功返回 `{ "success": true, "deleted": true, "draft": { ... } }`。这是破坏性操作，自动化执行前应获得用户确认。
+
+实时客户端还会收到 WebSocket `today_drafts_update` 事件，`action` 为 `create`、`update` 或 `delete`，`payload` 是受影响的草稿对象。
+
+完整机器可读契约可通过 `GET /openapi.json` 查询；其中的 `paths` 与 `components.schemas` 可用于查找不常用端点和字段。
+
+---
+
 ## Quick Thoughts API
 
 Thought 是一个**主任务 + 子任务（最多二层）**的待办结构。
@@ -1572,5 +1635,15 @@ Relations 更新事件：
   "type": "relations_update",
   "thoughtId": "1778966668430",
   "relationsCount": 3
+}
+```
+
+今日草稿更新事件：
+
+```json
+{
+  "type": "today_drafts_update",
+  "action": "create | update | delete",
+  "payload": { "id": "today-standup-01", "version": 2 }
 }
 ```

@@ -1,0 +1,551 @@
+/* Today drafts deliberately use a continuous writing surface rather than cards. */
+.today-drafts-view {
+    width: min(100%, 820px);
+    min-height: calc(100vh - 98px);
+    margin: 0 auto;
+    padding: 6px 0 24px;
+    box-sizing: border-box;
+}
+
+.today-drafts-sheet {
+    min-height: min(620px, calc(100vh - 122px));
+    padding: 26px 36px 20px;
+    border: 1px solid color-mix(in srgb, var(--border-color) 88%, transparent);
+    border-radius: 1rem;
+    background-color: color-mix(in srgb, var(--header-bg) 84%, var(--bg-color));
+    box-shadow: 0 10px 30px rgba(15, 23, 42, 0.045);
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+}
+
+.today-drafts-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 20px;
+    margin: 0 0 12px;
+    padding: 0 0 16px;
+    border-bottom: 0;
+    background: transparent;
+    box-shadow: none;
+}
+
+.today-drafts-eyebrow {
+    margin: 0 0 5px;
+    color: var(--primary-color);
+    font-size: 10px;
+    font-weight: 750;
+    letter-spacing: 0.08em;
+    line-height: 1;
+}
+
+.today-drafts-header h2 {
+    margin: 0;
+    color: var(--text-color);
+    font-family: "DumbPad Reading", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-size: 22px;
+    font-weight: 600;
+    letter-spacing: 0;
+    line-height: 1.2;
+}
+
+.today-drafts-status {
+    display: inline-flex;
+    min-height: 36px;
+    align-items: center;
+    gap: 7px;
+    color: var(--muted-text);
+    font-size: 12px;
+    white-space: nowrap;
+}
+
+.today-draft-row:focus-within,
+.today-drafts-input-row:focus-within {
+    background: color-mix(in srgb, var(--primary-color) 2.5%, transparent);
+}
+
+.today-draft-check input:focus-visible + span {
+    outline: 2px solid color-mix(in srgb, var(--primary-color) 62%, transparent);
+    outline-offset: 2px;
+}
+
+.today-drafts-input-row {
+    display: grid;
+    order: 2;
+    grid-template-columns: 36px minmax(0, 1fr);
+    min-height: 44px;
+    align-items: end;
+    margin: 0;
+    padding-bottom: 3px;
+    border-bottom: 1px solid color-mix(in srgb, var(--border-color) 74%, transparent);
+    box-sizing: border-box;
+}
+
+.today-drafts-input-marker {
+    color: var(--primary-color);
+    font-size: 20px;
+    font-weight: 400;
+    line-height: 1;
+    text-align: center;
+}
+
+.today-drafts-input-row input,
+.today-draft-text {
+    min-width: 0;
+    border: 0;
+    outline: 0;
+    background: transparent;
+    color: var(--text-color);
+    font-family: "DumbPad Reading", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-size: 16px;
+    line-height: 1.4;
+}
+
+.today-drafts-input-row input::placeholder {
+    color: color-mix(in srgb, var(--muted-text) 76%, transparent);
+}
+
+.today-drafts-writing-area {
+    display: flex;
+    min-height: 250px;
+    flex: 1 0 250px;
+    flex-direction: column;
+    overflow: hidden;
+    border-bottom: 1px solid color-mix(in srgb, var(--muted-text) 28%, transparent);
+    background-image:
+        repeating-linear-gradient(
+            to bottom,
+            transparent 0,
+            transparent 43px,
+            color-mix(in srgb, var(--muted-text) 28%, transparent) 43px,
+            color-mix(in srgb, var(--muted-text) 28%, transparent) 44px
+        ),
+        radial-gradient(circle at 1px 1px, color-mix(in srgb, var(--muted-text) 8%, transparent) 0.5px, transparent 0.8px),
+        radial-gradient(circle at 6px 5px, color-mix(in srgb, var(--muted-text) 4%, transparent) 0.45px, transparent 0.7px);
+    background-size: 100% 44px, 9px 9px, 13px 13px;
+}
+
+.today-drafts-list {
+    order: 1;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.today-drafts-writing-area.is-empty .today-drafts-input-row {
+    order: 1;
+}
+
+.today-drafts-writing-area.is-empty .today-drafts-list {
+    order: 2;
+    flex: 1 1 auto;
+}
+
+.today-draft-row {
+    position: relative;
+    display: grid;
+    grid-template-columns: 36px minmax(0, 1fr) auto;
+    min-height: 44px;
+    align-items: end;
+    padding-bottom: 3px;
+    border-bottom: 1px solid color-mix(in srgb, var(--border-color) 66%, transparent);
+    box-sizing: border-box;
+    touch-action: pan-y;
+    transform: translate3d(var(--today-draft-swipe-x, 0), 0, 0);
+    transition: transform 160ms ease, opacity 160ms ease;
+}
+
+.today-draft-row.is-swiping {
+    transition: none;
+    will-change: transform;
+}
+
+.today-draft-row.is-swipe-thought {
+    border-color: color-mix(in srgb, var(--primary-color) 44%, var(--border-color));
+}
+
+.today-draft-row.is-swipe-delete {
+    border-color: color-mix(in srgb, #d94743 48%, var(--border-color));
+}
+
+.today-draft-row.is-swipe-departing {
+    opacity: 0;
+    transform: translate3d(45%, 0, 0);
+}
+
+.today-draft-swipe-action {
+    position: absolute;
+    top: 50%;
+    z-index: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    color: var(--primary-color);
+    font-size: 11px;
+    font-weight: 650;
+    line-height: 1;
+    opacity: var(--today-draft-swipe-opacity, 0);
+    pointer-events: none;
+    transform: translate3d(calc(-1 * var(--today-draft-swipe-x, 0px)), -50%, 0);
+}
+
+.today-draft-swipe-action--thought {
+    right: 12px;
+}
+
+.today-draft-swipe-action--delete {
+    left: 12px;
+    color: #d94743;
+}
+
+.today-draft-row.is-swipe-thought .today-draft-swipe-action--delete,
+.today-draft-row.is-swipe-delete .today-draft-swipe-action--thought {
+    opacity: 0;
+}
+
+.today-draft-check {
+    position: relative;
+    display: inline-flex;
+    width: 36px;
+    height: 30px;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+}
+
+.today-draft-check input {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    opacity: 0;
+}
+
+.today-draft-check span {
+    display: block;
+    width: 16px;
+    height: 16px;
+    box-sizing: border-box;
+    border: 1.5px solid color-mix(in srgb, var(--muted-text) 66%, transparent);
+    border-radius: 2px;
+}
+
+.today-draft-check input:checked + span {
+    position: relative;
+    border-color: var(--primary-color);
+    background: var(--primary-color);
+}
+
+.today-draft-check input:checked + span::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 8px;
+    height: 4px;
+    border: solid white;
+    border-width: 0 0 2px 2px;
+    transform: translate(-50%, -65%) rotate(-45deg);
+}
+
+.today-draft-row.is-completed .today-draft-text {
+    color: var(--muted-text);
+    text-decoration: line-through;
+    text-decoration-thickness: 1px;
+}
+
+.today-draft-text {
+    width: 100%;
+    height: 32px;
+    padding: 7px 6px 0;
+    box-sizing: border-box;
+}
+
+.today-draft-time {
+    min-width: 3.2em;
+    padding: 0 6px;
+    color: color-mix(in srgb, var(--muted-text) 82%, transparent);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+    text-align: right;
+    white-space: nowrap;
+}
+
+.today-drafts-footer {
+    padding: 20px 0 0;
+    color: var(--muted-text);
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+#toggle-today-drafts.active {
+    background: rgba(var(--primary-rgb), 0.15);
+    color: var(--primary-color);
+}
+
+body.today-drafts-mode #header-title {
+    cursor: pointer;
+}
+
+body.today-drafts-mode #header-title:hover {
+    opacity: 0.72;
+}
+
+.clipboard-import-dialog {
+    position: fixed;
+    z-index: 3100;
+    inset: 0;
+    display: grid;
+    padding: 20px;
+    place-items: center;
+    background: rgba(15, 23, 42, 0.38);
+    backdrop-filter: blur(5px);
+    -webkit-backdrop-filter: blur(5px);
+}
+
+.clipboard-import-dialog[hidden] {
+    display: none;
+}
+
+.clipboard-import-panel {
+    width: min(100%, 580px);
+    padding: 20px 22px 18px;
+    border: 1px solid color-mix(in srgb, var(--border-color) 82%, transparent);
+    border-radius: 8px;
+    background: var(--modal-bg, var(--header-bg));
+    box-shadow: 0 24px 60px rgba(15, 23, 42, 0.22);
+    box-sizing: border-box;
+}
+
+.clipboard-import-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    margin: 0 0 14px;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+}
+
+.clipboard-import-header p {
+    margin: 0 0 5px;
+    color: var(--primary-color);
+    font-size: 10px;
+    font-weight: 750;
+    letter-spacing: 0.08em;
+    line-height: 1;
+}
+
+.clipboard-import-header h2 {
+    margin: 0;
+    color: var(--text-color);
+    font-size: 19px;
+    font-weight: 650;
+    letter-spacing: 0;
+    line-height: 1.2;
+}
+
+.clipboard-import-header span {
+    display: block;
+    margin-top: 5px;
+    color: var(--muted-text);
+    font-size: 12px;
+    line-height: 1.45;
+}
+
+.clipboard-import-icon-button {
+    display: inline-flex;
+    width: 36px;
+    height: 36px;
+    align-items: center;
+    justify-content: center;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--muted-text);
+    cursor: pointer;
+}
+
+.clipboard-import-icon-button:hover,
+.clipboard-import-icon-button:focus-visible {
+    background: color-mix(in srgb, var(--primary-color) 9%, transparent);
+    color: var(--primary-color);
+}
+
+#clipboard-import-text {
+    display: block;
+    width: 100%;
+    min-height: 136px;
+    padding: 12px;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    outline: none;
+    resize: vertical;
+    background: color-mix(in srgb, var(--bg-color) 72%, transparent);
+    color: var(--text-color);
+    font: 400 15px/1.55 "DumbPad Reading", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    box-sizing: border-box;
+}
+
+#clipboard-import-text:focus {
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 3px rgba(var(--primary-rgb), 0.1);
+}
+
+.clipboard-import-status-row {
+    display: flex;
+    min-height: 32px;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    color: var(--muted-text);
+    font-size: 12px;
+}
+
+#clipboard-import-status.is-error {
+    color: var(--danger-color, #b42318);
+}
+
+.clipboard-import-retry,
+.clipboard-import-cancel,
+.clipboard-import-confirm {
+    min-height: 36px;
+    padding: 0 12px;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-color);
+    font: inherit;
+    font-size: 13px;
+    cursor: pointer;
+}
+
+.clipboard-import-retry {
+    flex: 0 0 auto;
+    color: var(--primary-color);
+    border-color: transparent;
+}
+
+.clipboard-import-destinations {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 6px;
+    padding: 4px;
+    border: 1px solid var(--border-color);
+    border-radius: 7px;
+    background: color-mix(in srgb, var(--bg-color) 58%, transparent);
+}
+
+.clipboard-import-destinations button {
+    min-width: 0;
+    min-height: 38px;
+    padding: 0 8px;
+    border: 0;
+    border-radius: 4px;
+    background: transparent;
+    color: color-mix(in srgb, var(--text-color) 72%, var(--muted-text));
+    font: inherit;
+    font-size: 13px;
+    cursor: pointer;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.clipboard-import-destinations button.active {
+    background: color-mix(in srgb, var(--primary-color) 10%, var(--header-bg));
+    color: var(--primary-color);
+    font-weight: 650;
+    box-shadow: inset 0 0 0 1px rgba(var(--primary-rgb), 0.14);
+}
+
+.clipboard-import-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 18px;
+}
+
+.clipboard-import-confirm {
+    border-color: var(--primary-color);
+    background: var(--primary-color);
+    color: white;
+}
+
+.clipboard-import-confirm:disabled {
+    cursor: wait;
+    opacity: 0.65;
+}
+
+.clipboard-import-retry:hover,
+.clipboard-import-retry:focus-visible,
+.clipboard-import-cancel:hover,
+.clipboard-import-cancel:focus-visible {
+    border-color: color-mix(in srgb, var(--primary-color) 30%, var(--border-color));
+    background: color-mix(in srgb, var(--primary-color) 7%, transparent);
+    color: var(--primary-color);
+}
+
+body.clipboard-import-open {
+    overflow: hidden;
+}
+
+/* The desktop editor deliberately extends beneath the fixed app header. This
+   standalone view needs its own inset because it does not use that layout. */
+@media (min-width: 981px) {
+    .today-drafts-view {
+        width: min(100%, 820px);
+        height: calc(100dvh - 24px);
+        min-height: 0;
+        margin: 0 auto;
+        padding: 65px 0 0;
+        display: flex;
+    }
+
+    .today-drafts-sheet {
+        width: 100%;
+        min-height: 0;
+        flex: 1 1 auto;
+        padding: 26px 48px 28px;
+    }
+}
+
+@media (max-width: 980px) {
+    .today-drafts-view {
+        width: 100%;
+        min-height: calc(100dvh - 68px);
+        padding: 0;
+    }
+
+    .today-drafts-sheet {
+        min-height: calc(100dvh - 80px);
+        padding: 20px 18px calc(22px + env(safe-area-inset-bottom));
+        border-radius: 1rem;
+        border-right: 0;
+        border-left: 0;
+        box-shadow: none;
+    }
+
+    .today-drafts-header h2 {
+        font-size: 20px;
+    }
+
+    .today-drafts-writing-area {
+        min-height: 250px;
+    }
+
+    .clipboard-import-dialog {
+        padding: 12px;
+        place-items: end center;
+    }
+
+    .clipboard-import-panel {
+        max-height: min(720px, calc(100dvh - 24px));
+        padding: 18px;
+        overflow: auto;
+    }
+}

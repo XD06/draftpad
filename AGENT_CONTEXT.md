@@ -4,7 +4,7 @@ This is the first file to read when starting a new AI coding session for this re
 
 ## Current Project State
 
-DumbPad is a local-first Markdown draft app with Quick Thoughts, AI-assisted Thought relations, S3-compatible storage, WebSocket sync, and PWA/mobile support.
+DumbPad is a local-first Markdown draft app with Articles, Quick Thoughts, disposable Today Drafts, AI-assisted Thought relations, S3-compatible storage, WebSocket sync, and PWA/mobile support.
 
 The current branch is the refactored application line. Treat the codebase as the source of truth and treat archived development notes as historical context only.
 
@@ -22,10 +22,11 @@ The current branch is the refactored application line. Treat the codebase as the
 ## Current Architecture
 
 - `server.js` is the Node/Express entrypoint and route registration hub.
-- `routes/*.js` contains HTTP route modules for auth, notes, notepads, search, sharing, static assets, thoughts, and data management.
+- `routes/*.js` contains HTTP route modules for auth, notes, notepads, search, sharing, static assets, thoughts, today drafts, and data management.
 - `server/websocket.js` owns WebSocket connection handling and sync broadcasts.
 - `server/indexing.js` owns shared search/indexing helpers.
 - `scripts/storage.js` is the user-data storage boundary for local JSON/txt and S3-compatible storage.
+- `routes/today-drafts-routes.js` and `public/managers/today-drafts/` are the isolated Today Draft API and client boundary: date-scoped single-row data, per-record versions, outbox retry, and `today_drafts_update` notifications. Do not route its data through Thought AI, relations, search, or trash.
 - `scripts/ai-provider.js` encapsulates AI provider calls and falls back to noop behavior when AI config is absent.
 - `scripts/ai-queue.js` owns background Thought AI analysis, relation generation, and status broadcasts.
 - `scripts/agent/` owns the separate interactive Agent line: `recall_context` runs, constrained read-only tools, AgentRun persistence, model adapter, and SSE. Do not route it through `ai-queue`, WebSocket, or Thought/Notepad writes.
@@ -74,6 +75,7 @@ npm run test:note-sync
 npm run test:pwa-cache
 npm run test:ai-queue
 npm run test:agent
+npm run test:today-drafts
 npm run test:s3-storage
 npm run test:s3-prefix
 ```
@@ -97,6 +99,7 @@ Useful test mapping:
 - `npm run test:ai-queue` - AI queue and relation generation behavior.
 - `npm run test:agent` - AgentRun contract/storage, constrained context tools, model protocol, SSE, Thought panel state, and HTTP route integration with a fake provider.
 - `npm run test:relations` - relation scoring/calculation helpers.
+- `npm run test:today-drafts` - Today Draft workspace, per-record HTTP API/WebSocket, and offline outbox coverage.
 - `npm run test:s3-storage` and `npm run test:s3-prefix` - mocked/local S3 boundary checks.
 
 ## Documentation Hygiene

@@ -91,4 +91,9 @@ assert(
     `every remote/merge apply site should use applyRemoteValue (found ${remoteApplies}, expected >= 5)`
 );
 
+assert(editorSource.includes('restorePersistentCaret(snapshot'), 'editor should expose a persisted caret restore path');
+assert(appSource.includes('dumbpad_caret_positions_v1'), 'app should persist caret positions separately from note content');
+assert(appSource.includes('saveEditorCaretForNotepad'), 'app should save the active article caret before switching notes');
+assert(appSource.includes('restoreEditorCaretForNotepad'), 'app should restore the last caret for the selected article');
+
 console.log('Editor caret preservation regression checks passed');

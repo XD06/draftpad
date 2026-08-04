@@ -5,7 +5,8 @@ This index separates current project documentation from historical development n
 ## Current Docs
 
 - `../README.md` - product overview, setup, environment variables, and common commands.
-- `../api.md` - current REST API reference.
+- `../api.md` - current REST API reference, including Today Draft lifecycle and WebSocket events; `GET /openapi.json` is the complete machine-readable contract.
+- `../SKILL.md` - concise Agent guidance for choosing Articles, Thoughts, or Today Drafts and using their frequent operations.
 - `technical-overview.md` - current architecture boundaries and module responsibilities.
 - `sync-boundaries.md` - sync ownership for Notepad, Thought, AI, S3, WebSocket, and conflicts.
 - `storage-interface.md` - storage boundary for local files and S3-compatible backends.

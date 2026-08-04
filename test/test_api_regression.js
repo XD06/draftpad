@@ -464,12 +464,12 @@ function assertThoughtsFrontendRegressions() {
         thoughtsSource.includes("const THOUGHTS_CACHE_KEY = 'dumbpad_thoughts_cache_v1'") &&
         thoughtsSource.includes('loadThoughtsCache()') &&
         thoughtsSource.includes('saveThoughtsCache(thoughts)') &&
-        initializeSource.includes("const startsInThoughts = window.location.hash === '#thoughts'") &&
-        initializeSource.includes('if (startsInThoughts)') &&
+        initializeSource.includes('const initialWorkspace = router.getWorkspaceFromLocation()') &&
+        initializeSource.includes("if (initialWorkspace === 'thoughts')") &&
         initializeSource.includes('await ensureThoughtsManager()') &&
-        initializeSource.includes('await loadNotepads({ loadCurrentNote: !startsInThoughts })') &&
+        initializeSource.includes('await loadNotepads({ loadCurrentNote: startsInEditor })') &&
         initializeSource.includes('scheduleIdleTask(() =>') &&
-        initializeSource.indexOf('await ensureThoughtsManager()') < initializeSource.indexOf('await loadNotepads({ loadCurrentNote: !startsInThoughts })'),
+        initializeSource.indexOf('await ensureThoughtsManager()') < initializeSource.indexOf('await loadNotepads({ loadCurrentNote: startsInEditor })'),
         'Thoughts view should load its module immediately on #thoughts and render cached thoughts before the network refresh'
     );
 }

@@ -3190,6 +3190,8 @@ body.quick-add-open {
 .thought-attachments.has-files {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-auto-rows: minmax(80px, auto);
+    align-items: stretch;
     gap: 6px;
     margin-top: 8px;
 }
@@ -3252,6 +3254,16 @@ body.quick-add-open {
     min-height: 44px;
     max-width: none;
     padding: 6px 8px;
+}
+
+/* Mixed image/file attachments share the same grid cells. Fixed image dimensions
+   left empty tracks beside full-width file cards and made alternating items look
+   out of order. */
+.thought-attachments.has-files .thought-attachment-image {
+    width: 100%;
+    height: auto;
+    min-height: 80px;
+    aspect-ratio: 1;
 }
 
 .thought-attachment-file:hover {

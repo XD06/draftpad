@@ -133,12 +133,10 @@ export class ThoughtsManager {
         this.addThoughtBtn.addEventListener('click', () => this.openQuickAdd());
         this.initQuickAddEvents();
         this.initQuickAddAttachEvents();
-        this.initThoughtsToggleEvents();
         this.initSearchAndFilterEvents();
         this.initOutboxEvents();
         this.initSocketEvents();
 
-        this.handleHashChange();
     }
 
     initQuickAddEvents() {
@@ -161,7 +159,7 @@ export class ThoughtsManager {
                 this.quickAddInput.style.height = 'auto';
                 this.quickAddInput.style.height = Math.min(this.quickAddInput.scrollHeight, 160) + 'px';
             });
-            this.quickAddInput.addEventListener('paste', event => this.queueQuickAddPastedImages(event));
+            this.quickAddInput.addEventListener('paste', event => this.queueQuickAddPastedFiles(event));
             this.initQuickAddTagEvents();
         }
     }
@@ -239,15 +237,23 @@ export class ThoughtsManager {
         }).join('');
     }
 
-    getPastedImageFiles(event) {
-        return Array.from(event?.clipboardData?.files || []).filter(isImageFile);
+    getPastedFiles(event) {
+        return Array.from(event?.clipboardData?.files || []);
     }
 
-    queueQuickAddPastedImages(event) {
-        const files = this.getPastedImageFiles(event);
+    getPastedImageFiles(event) {
+        return this.getPastedFiles(event).filter(isImageFile);
+    }
+
+    queueQuickAddPastedFiles(event) {
+        const files = this.getPastedFiles(event);
         if (!files.length) return;
         event.preventDefault();
         this.trackQuickAddAttachmentUpload(this.handleQuickAddFileSelect(files, this.quickAddSession));
+    }
+
+    queueQuickAddPastedImages(event) {
+        return this.queueQuickAddPastedFiles(event);
     }
 
     trackQuickAddAttachmentUpload(task) {
@@ -266,24 +272,6 @@ export class ThoughtsManager {
             const attId = btn.dataset.removeAtt;
             this.quickAddAttachments = this.quickAddAttachments.filter(a => a.id !== attId);
             this.renderQuickAddAttachments();
-        });
-    }
-
-    initThoughtsToggleEvents() {
-        this.toggleBtn.addEventListener('click', () => {
-            if (this.isActive) {
-                window.location.hash = '';
-            } else {
-                window.location.hash = 'thoughts';
-            }
-        });
-
-        window.addEventListener('hashchange', () => this.handleHashChange());
-
-        document.querySelector('#header-title h1')?.addEventListener('click', () => {
-            if (this.isActive) {
-                window.location.hash = '';
-            }
         });
     }
 
@@ -413,37 +401,28 @@ export class ThoughtsManager {
         });
     }
 
-    handleHashChange() {
-        const isThoughts = window.location.hash === '#thoughts';
-        if (isThoughts !== this.isActive) {
-            this.updateViewState(isThoughts);
-        }
+    activate() {
+        return this.updateViewState(true);
+    }
+
+    deactivate() {
+        return this.updateViewState(false);
     }
 
     async updateViewState(active) {
         this.isActive = active;
-        const floatingActions = document.querySelector('.floating-actions');
 
         if (this.isActive) {
-            document.body.classList.add('thoughts-mode');
             this.view.style.display = 'flex';
-            this.editorContainer.style.display = 'none';
             this.toggleBtn.classList.add('active');
-            if (floatingActions) floatingActions.style.display = 'none';
             if (this.thoughts.length > 0) {
                 this.syncTagsFromThoughts(this.thoughts);
                 this.render();
             }
             await this.fetchThoughts();
         } else {
-            document.body.classList.remove('thoughts-mode');
             this.view.style.display = 'none';
-            this.editorContainer.style.display = 'flex';
             this.toggleBtn.classList.remove('active');
-            if (floatingActions) floatingActions.style.display = 'flex';
-            this.app.openEditorView?.().catch(error => {
-                console.warn('Failed to restore editor view:', error);
-            });
         }
     }
 
@@ -811,7 +790,7 @@ export class ThoughtsManager {
         });
     }
 
-    openQuickAdd() {
+    openQuickAdd({ readClipboard = false, initialText = '' } = {}) {
         if (!this.quickAddBar) return;
         this.quickAddSession = (this.quickAddSession || 0) + 1;
         this.quickAddBar.style.display = 'flex';
@@ -819,7 +798,12 @@ export class ThoughtsManager {
         this.quickAddInput.value = '';
         this.quickAddTags = [];
         this.quickAddAttachments = [];
+        this.quickAddInput.value = String(initialText || '');
         this.quickAddInput.style.height = '52px';
+        if (this.quickAddInput.value) {
+            this.quickAddInput.style.height = 'auto';
+            this.quickAddInput.style.height = Math.min(this.quickAddInput.scrollHeight, 160) + 'px';
+        }
         this.quickAddSubmit.disabled = false;
         this.renderQuickAddTags();
         this.renderQuickAddAttachments();
@@ -827,7 +811,48 @@ export class ThoughtsManager {
         this.initQuickAddAttachmentRemoveEvents();
 
         // Auto-focus to trigger mobile keyboard
-        setTimeout(() => this.quickAddInput.focus(), 80);
+        setTimeout(() => {
+            this.quickAddInput.focus();
+            if (readClipboard) this.captureClipboardIntoQuickAdd();
+        }, 80);
+    }
+
+    async captureClipboardIntoQuickAdd() {
+        if (!navigator.clipboard) return;
+        const session = this.quickAddSession;
+        try {
+            if (!this.quickAddInput.value.trim() && typeof navigator.clipboard.readText === 'function') {
+                const text = await navigator.clipboard.readText();
+                if (text && session === this.quickAddSession && this.quickAddBar?.style.display !== 'none') {
+                    this.quickAddInput.value = text;
+                    this.quickAddInput.style.height = 'auto';
+                    this.quickAddInput.style.height = Math.min(this.quickAddInput.scrollHeight, 160) + 'px';
+                }
+            }
+        } catch (error) {
+            console.info('Clipboard text capture unavailable:', error?.message || error);
+        }
+
+        if (typeof navigator.clipboard.read !== 'function') return;
+        try {
+            const items = await navigator.clipboard.read();
+            const files = [];
+            for (const item of items || []) {
+                for (const type of item.types || []) {
+                    if (type === 'text/plain' || type === 'text/html') continue;
+                    const blob = await item.getType(type);
+                    if (!blob || !blob.size) continue;
+                    const extension = type.split('/')[1]?.split(';')[0] || 'bin';
+                    files.push(new File([blob], `clipboard-${Date.now()}-${files.length}.${extension}`, { type }));
+                }
+            }
+            if (files.length && session === this.quickAddSession && this.quickAddBar?.style.display !== 'none') {
+                this.trackQuickAddAttachmentUpload(this.handleQuickAddFileSelect(files, session));
+            }
+        } catch (error) {
+            // Clipboard read permission is optional; the normal paste event still works.
+            console.info('Clipboard file capture unavailable:', error?.message || error);
+        }
     }
 
     closeQuickAdd() {
@@ -1599,6 +1624,55 @@ export class ThoughtsManager {
             event.target.closest('.thought-link') ||
             card.classList.contains('editing')
         );
+    }
+
+    createTodayDraftThought(text) {
+        const content = String(text || '').trim();
+        if (!content) return false;
+
+        const tags = [];
+        const attachments = [];
+        const tempThought = createLocalPendingThought({
+            text: content,
+            tags,
+            attachments,
+            now: Date.now()
+        });
+        this.thoughts.unshift(tempThought);
+        this.syncTagsFromThoughts([tempThought]);
+        this.render();
+
+        setTimeout(() => {
+            const card = document.querySelector(`.thought-card[data-id="${CSS.escape(tempThought.id)}"]`);
+            if (card) card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }, 50);
+
+        void this.persistTodayDraftThought({ tempThought, text: content, tags, attachments });
+        return true;
+    }
+
+    async persistTodayDraftThought({ tempThought, text, tags, attachments }) {
+        try {
+            const data = markCreatedThoughtPending(
+                await this.apiClient.create({ text, tags, attachments })
+            );
+            this.pendingCreateIds.add(data.id);
+            const tempIndex = this.thoughts.findIndex(thought => thought.id === tempThought.id);
+            this.thoughts = this.thoughts.filter(thought => thought.id !== tempThought.id && thought.id !== data.id);
+            this.thoughts.splice(tempIndex >= 0 ? tempIndex : 0, 0, data);
+            this.syncTagsFromThoughts([data]);
+            this.render();
+            setTimeout(() => this.pendingCreateIds.delete(data.id), 2000);
+        } catch (err) {
+            console.error('Failed to move today draft into Thought:', err);
+            this.handleOutboxResult(this.outbox.enqueueCreate(buildQuickAddCreateOutboxItem({
+                text,
+                tags,
+                attachments,
+                tempThought
+            })));
+            this.render();
+        }
     }
 
     handleThoughtAgentStateChange(thoughtId, state) {

@@ -4,6 +4,7 @@ const path = require('path');
 const vm = require('vm');
 
 const ROOT = path.resolve(__dirname, '..');
+const thoughtsCss = fs.readFileSync(path.join(ROOT, 'public', 'Assets', 'thoughts.css'), 'utf8');
 
 function loadCardRenderer() {
     const sourcePath = path.join(ROOT, 'public', 'managers', 'thought-card-renderer.js');
@@ -179,6 +180,10 @@ function run() {
     assert(withAttachments.html.includes('thought-attachment-preview'), 'images should render as preview buttons');
     assert(withAttachments.html.includes('data-preview-att="image-1"'), 'preview buttons should expose attachment ids');
     assert(!withAttachments.html.includes('thought-attachment-add-inline'), 'attachment collections should not duplicate the footer append control');
+
+    const mixedAttachmentCss = thoughtsCss.slice(thoughtsCss.indexOf('.thought-attachments.has-files'));
+    assert(mixedAttachmentCss.includes('.thought-attachments.has-files .thought-attachment-image'), 'mixed attachments should give image cells an explicit grid rule');
+    assert(/\.thought-attachments\.has-files\s+\.thought-attachment-image[\s\S]*?width:\s*100%/.test(mixedAttachmentCss), 'mixed attachment images should fill their stable grid cell');
 
     console.log('Thought card renderer checks passed');
 }

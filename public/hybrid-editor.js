@@ -58,7 +58,7 @@ function debounce(fn, wait = 80) {
 }
 
 export class HybridMarkdownEditor {
-    constructor(container, { input, performanceMonitor = null } = {}) {
+    constructor(container, { input, performanceMonitor = null, onCaretChange = null } = {}) {
         const Vditor = window.Vditor;
         if (!Vditor) {
             throw new Error('Vditor failed to load.');
@@ -66,6 +66,7 @@ export class HybridMarkdownEditor {
 
         this.container = container;
         this.onInput = input || (() => {});
+        this.onCaretChange = typeof onCaretChange === 'function' ? onCaretChange : (() => {});
         this.performanceMonitor = performanceMonitor;
         this.listeners = new Map();
         this.isReadingMode = false;
@@ -201,6 +202,7 @@ export class HybridMarkdownEditor {
         this.bindArticleUploadInteractions();
         this.createArticleFileInput();
         this.bindCompositionEvents();
+        this.bindCaretPersistence();
         this.bindTimeCommand();
         this.bindCodeBlockCaretPlacement();
         this.bindMarkerProtection();
@@ -214,6 +216,73 @@ export class HybridMarkdownEditor {
     // never exposing the empty->content reflow.
     whenReady() {
         return this.ready ? Promise.resolve() : this.readyPromise;
+    }
+
+    bindCaretPersistence() {
+        let timer = null;
+        const report = () => {
+            clearTimeout(timer);
+            timer = setTimeout(() => {
+                if (!this.editorHasFocus()) return;
+                const snapshot = this.getPersistentCaretSnapshot();
+                if (snapshot) this.onCaretChange(snapshot);
+            }, 220);
+        };
+        this.container.addEventListener('keyup', report, true);
+        this.container.addEventListener('click', report, true);
+        this.container.addEventListener('input', report, true);
+        this.container.addEventListener('blur', () => {
+            const snapshot = this.getPersistentCaretSnapshot();
+            if (snapshot) this.onCaretChange(snapshot);
+        }, true);
+        document.addEventListener('selectionchange', report);
+        this.caretPersistenceCleanup = () => {
+            clearTimeout(timer);
+            document.removeEventListener('selectionchange', report);
+        };
+    }
+
+    getPersistentCaretSnapshot() {
+        if (this.sourceMode && this.sourceTextarea) {
+            return {
+                mode: 'source',
+                offset: Number(this.sourceTextarea.selectionStart || 0),
+                scrollTop: Number(this.sourceTextarea.scrollTop || 0)
+            };
+        }
+        const root = this.container.querySelector('.vditor-wysiwyg .vditor-reset');
+        const selection = window.getSelection();
+        const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
+        if (!root || !range || !range.collapsed || !root.contains(range.startContainer)) return null;
+        return {
+            mode: 'wysiwyg',
+            offset: Number(this.getCurrentWysiwygMarkdownOffset() || 0),
+            visibleOffset: Number(this.saveCaretSnapshot(root)?.beforeText.length || 0),
+            scrollTop: Number(this.container.querySelector('.vditor-wysiwyg')?.scrollTop || 0)
+        };
+    }
+
+    restorePersistentCaret(snapshot = {}) {
+        if (!snapshot || this.isReadingMode) return false;
+        const offset = Math.max(0, Number(snapshot.offset) || 0);
+        if (snapshot.mode === 'source' && this.sourceMode && this.sourceTextarea) {
+            const apply = () => {
+                const max = this.sourceTextarea.value.length;
+                this.sourceTextarea.setSelectionRange(Math.min(offset, max), Math.min(offset, max));
+                this.sourceTextarea.scrollTop = Number(snapshot.scrollTop) || 0;
+            };
+            requestAnimationFrame(apply);
+            return true;
+        }
+        const apply = () => {
+            const root = this.container.querySelector('.vditor-wysiwyg .vditor-reset');
+            if (!root) return;
+            this.restoreSelectionOffset(root, Math.max(0, Number(snapshot.visibleOffset ?? offset) || 0));
+            const scroller = this.container.querySelector('.vditor-wysiwyg');
+            if (scroller && Number.isFinite(Number(snapshot.scrollTop))) scroller.scrollTop = Number(snapshot.scrollTop);
+        };
+        requestAnimationFrame(() => setTimeout(apply, 0));
+        return true;
     }
 
     // Soft-wrap gutter padding depends on the rendered code width, so keep the
