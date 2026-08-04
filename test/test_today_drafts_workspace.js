@@ -98,6 +98,7 @@ function run() {
 
     const appSource = fs.readFileSync(path.join(ROOT, 'public', 'app.js'), 'utf8');
     const indexSource = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
+    const styles = fs.readFileSync(path.join(ROOT, 'public', 'Assets', 'styles.css'), 'utf8');
     const swSource = fs.readFileSync(path.join(ROOT, 'public', 'service-worker.js'), 'utf8');
     const todayStyles = fs.readFileSync(path.join(ROOT, 'public', 'Assets', 'today-drafts.css'), 'utf8');
     const todayManagerSource = fs.readFileSync(path.join(ROOT, 'public', 'managers', 'today-drafts', 'today-drafts-manager.js'), 'utf8');
@@ -110,6 +111,16 @@ function run() {
     assert(!todayManagerSource.includes("this.toggleButton?.addEventListener('click'"), 'the today drafts manager must not own the global workspace entry listener');
     assert(appSource.includes('new ImportTargetRegistry'), 'clipboard destinations should use a registry');
     assert(indexSource.includes('id="today-drafts-view"'), 'the isolated today drafts view should be present in the app shell');
+    assert(indexSource.includes('dumbpad_last_workspace_v1'), 'the document should resolve the last workspace before the app bundle starts');
+    assert(indexSource.includes('id="thoughts-stylesheet"'), 'Thought styles should have a dedicated first-paint stylesheet handle');
+    assert(indexSource.indexOf('dumbpad_last_workspace_v1') < indexSource.indexOf('id="thoughts-stylesheet"'), 'the first-paint workspace must resolve before Thought stylesheet priority is selected');
+    assert(indexSource.includes("dataset.initialWorkspace === 'thoughts'"), 'Thought refreshes should promote their stylesheet before the view becomes visible');
+    assert(indexSource.includes("dataset.thoughtsStylesReady='true'"), 'Thought stylesheet completion should explicitly release the protected view');
+    assert(styles.includes('html[data-initial-workspace="today"] main.three-column-layout'), 'the first paint should hide the editor for the today workspace');
+    assert(styles.includes('html[data-initial-workspace="thoughts"] #thoughts-view'), 'the first paint should show the thoughts workspace');
+    assert(styles.includes('html:not([data-thoughts-styles-ready]) #thoughts-view'), 'unstyled Thought controls should stay hidden until their stylesheet is ready');
+    assert(appSource.includes('router.applyShellState(initialWorkspace)'), 'the app should apply the workspace shell before remote data loads');
+    assert(appSource.includes('registerServiceWorker().catch(() => {})'), 'service worker registration should not block workspace startup');
     assert(indexSource.includes('class="today-drafts-writing-area"'), 'today drafts should use a dedicated continuous writing surface');
     assert(!indexSource.includes('today-drafts-add'), 'today drafts should submit through Enter without a separate add button');
     assert(!indexSource.includes('today-drafts-clear-completed'), 'today drafts should not retain a global clear-completed action once rows support swipe actions');
@@ -123,7 +134,7 @@ function run() {
     assert(todayStyles.includes('@media (min-width: 981px)'), 'desktop today drafts must define their own safe inset below the fixed app header');
     assert(todayStyles.includes('height: calc(100dvh - 24px);'), 'desktop today drafts should fill the available application height');
     assert(todayStyles.includes('width: min(100%, 820px);'), 'desktop today drafts should retain a readable notebook width');
-    assert(todayStyles.includes('padding: 84px 0 0;'), 'desktop today drafts must clear the fixed app header');
+    assert(todayStyles.includes('padding: 65px 0 0;'), 'desktop today drafts must clear the fixed app header without reintroducing empty space');
     assert(todayStyles.includes('flex: 1 1 auto;'), 'desktop today draft paper should extend to the bottom of the workspace');
     assert(todayStyles.includes('padding: 26px 48px 28px;'), 'desktop today drafts should keep the footer close to the notebook edge');
     assert(todayStyles.includes('.today-drafts-writing-area'), 'the draft page should reserve a visible writing area when no items exist');

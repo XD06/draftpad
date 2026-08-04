@@ -274,7 +274,7 @@
 }
 
 .today-drafts-footer {
-    padding: 20px 0 0;
+   /* padding: 20px 0 0;*/
     color: var(--muted-text);
     font-size: 12px;
     line-height: 1.5;
@@ -536,6 +536,10 @@ body.clipboard-import-open {
 
     .today-drafts-writing-area {
         min-height: 250px;
+    }
+    .today-drafts-footer{
+        padding: 20px 0 0;
+
     }
 
     .clipboard-import-dialog {

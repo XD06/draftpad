@@ -140,6 +140,7 @@ export class WorkspaceRouter {
         // Let the responsive stylesheet choose block on mobile and flex on desktop.
         if (this.todayView) this.todayView.style.display = isToday ? '' : 'none';
         if (this.floatingActions) this.floatingActions.style.display = isEditor ? 'flex' : 'none';
+        document.documentElement.removeAttribute('data-initial-workspace');
     }
 }
 

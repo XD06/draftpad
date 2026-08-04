@@ -3189,9 +3189,11 @@ body.quick-add-open {
 
 .thought-attachments.has-files {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    grid-auto-rows: minmax(80px, auto);
+    grid-template-columns: repeat(3, 80px);
+    grid-auto-rows: 80px;
     align-items: stretch;
+    justify-content: start;
+    max-width: 252px;
     gap: 6px;
     margin-top: 8px;
 }
@@ -3248,22 +3250,27 @@ body.quick-add-open {
 
 .thought-attachments.has-files .thought-attachment-file {
     box-sizing: border-box;
-    gap: 6px;
-    width: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: center;
+    gap: 3px;
+    width: 80px;
     min-width: 0;
-    min-height: 44px;
-    max-width: none;
-    padding: 6px 8px;
+    min-height: 0;
+    height: 80px;
+    max-width: 80px;
+    padding: 7px;
+    font-size: 11px;
 }
 
-/* Mixed image/file attachments share the same grid cells. Fixed image dimensions
-   left empty tracks beside full-width file cards and made alternating items look
-   out of order. */
+/* Mixed collections retain the same compact image size as image-only cards. */
 .thought-attachments.has-files .thought-attachment-image {
-    width: 100%;
-    height: auto;
-    min-height: 80px;
-    aspect-ratio: 1;
+    width: 80px;
+    height: 80px;
+    min-height: 0;
+    aspect-ratio: auto;
+    justify-self: start;
 }
 
 .thought-attachment-file:hover {
@@ -3288,7 +3295,8 @@ body.quick-add-open {
 }
 
 .thought-attachments.has-files .thought-attachment-info {
-    flex: 1;
+    width: 100%;
+    flex: 0 0 auto;
 }
 
 .thought-attachment-name {
@@ -3765,6 +3773,26 @@ body.thought-lightbox-open { overflow: hidden; }
 }
 
 @media (max-width: 640px) {
+    .thought-attachments.has-files {
+        grid-template-columns: repeat(3, 80px);
+        grid-auto-rows: 80px;
+        max-width: 252px;
+    }
+
+    .thought-attachments.has-files .thought-attachment-file {
+        width: 80px;
+        min-height: 0;
+        height: 80px;
+        max-width: 80px;
+        padding: 7px;
+        font-size: 11px;
+    }
+
+    .thought-attachments.has-files .thought-attachment-icon svg {
+        width: 18px;
+        height: 18px;
+    }
+
     .thought-attachment-lightbox {
         grid-template-columns: 48px minmax(0, 1fr) 48px;
         gap: 7px;
@@ -3774,6 +3802,23 @@ body.thought-lightbox-open { overflow: hidden; }
     .thought-lightbox-download { width: 38px; padding: 0; }
     .thought-lightbox-image { max-height: calc(100dvh - 92px - env(safe-area-inset-top) - env(safe-area-inset-bottom)); }
     .thought-lightbox-nav { width: 40px; height: 48px; }
+}
+
+@media (min-width: 641px) {
+    .thought-attachments.has-files {
+        grid-template-columns: repeat(3, 80px);
+        grid-auto-rows: 80px;
+        max-width: 252px;
+    }
+
+    .thought-attachments.has-files .thought-attachment-file {
+        width: 80px;
+        min-height: 0;
+        height: 80px;
+        max-width: 80px;
+        padding: 7px;
+        font-size: 11px;
+    }
 }
 
 @media (hover: hover) and (pointer: fine) {

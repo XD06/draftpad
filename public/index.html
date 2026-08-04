@@ -9,9 +9,41 @@
     <link rel="apple-touch-icon"  href="Assets/dumbpad-192.png">
     <link rel="stylesheet" href="Assets/styles.css">
     <link rel="stylesheet" href="Assets/preview-styles.css">
-    <!-- Thoughts view styles aren't needed for the first editor paint; load them
-         without blocking render (the thoughts view and its JS are lazy-loaded). -->
-    <link rel="stylesheet" href="Assets/thoughts.css" media="print" onload="this.media='all'">
+    <script>
+        (function () { // Initialize theme immediately - Prevents theme flicker
+            let theme = JSON.parse(localStorage.getItem('dumbpad_theme'))
+            if (!theme) {
+                theme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+                localStorage.setItem('dumbpad_theme', JSON.stringify(theme));
+            }
+            document.documentElement.setAttribute('data-theme', theme);
+        })();
+    </script>
+    <script>
+        // Resolve the last workspace before the body can paint its editor fallback.
+        (function () {
+            const workspaceByHash = { '#editor': 'editor', '#thoughts': 'thoughts', '#today': 'today' };
+            const hashWorkspace = workspaceByHash[window.location.hash];
+            let workspace = hashWorkspace;
+            if (!workspace && !new URLSearchParams(window.location.search).has('id')) {
+                try {
+                    const saved = localStorage.getItem('dumbpad_last_workspace_v1');
+                    if (saved === 'editor' || saved === 'thoughts' || saved === 'today') workspace = saved;
+                } catch (_error) {
+                    // Private browsing or disabled storage falls back to the editor.
+                }
+            }
+            document.documentElement.dataset.initialWorkspace = workspace || 'editor';
+        })();
+    </script>
+    <!-- Keep editor boot lean, but Thought must have its stylesheet before its
+         first paint or native controls flash briefly during a refresh. -->
+    <link id="thoughts-stylesheet" rel="stylesheet" href="Assets/thoughts.css" media="print" onload="this.media='all';document.documentElement.dataset.thoughtsStylesReady='true'">
+    <script>
+        if (document.documentElement.dataset.initialWorkspace === 'thoughts') {
+            document.getElementById('thoughts-stylesheet').media = 'all';
+        }
+    </script>
     <noscript><link rel="stylesheet" href="Assets/thoughts.css"></noscript>
     <link rel="stylesheet" href="Assets/today-drafts.css">
     <link rel="stylesheet" href="Assets/ios-theme.css">
@@ -31,16 +63,6 @@
     <meta name="apple-mobile-web-app-title" content="DumbPad">
     <meta name="theme-color" content="#0f172a">
     <link rel="manifest" href="Assets/manifest.json">
-    <script>
-        (function () { // Initialize theme immediately - Prevents theme flicker
-            let theme = JSON.parse(localStorage.getItem('dumbpad_theme'))
-            if (!theme) {
-                theme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-                localStorage.setItem('dumbpad_theme', JSON.stringify(theme));
-            }
-            document.documentElement.setAttribute('data-theme', theme);
-        })();
-    </script>
 </head>
 
 <body>

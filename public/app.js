@@ -3388,9 +3388,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         const initialWorkspace = router.getWorkspaceFromLocation();
         const startsInEditor = initialWorkspace === 'editor';
         addEventListeners();
+        // Apply the shell synchronously; data and feature managers can load behind it.
+        router.applyShellState(initialWorkspace);
         appSettings = settingsManager.loadSettings();
         if (initialWorkspace === 'thoughts') {
             await ensureThoughtsManager();
+        } else if (initialWorkspace === 'today') {
+            await ensureTodayDraftsManager();
         } else if (startsInEditor) {
             // Paint cached content into the instant boot editor first so the user
             // can read and type right away, then load the rich editor in the
@@ -3406,7 +3410,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         await loadNotepads({ loadCurrentNote: startsInEditor });
         if (startsInEditor) await syncCurrentDirtyNote();
         applySettings(appSettings);
-        await registerServiceWorker();
+        registerServiceWorker().catch(() => {});
         await router.init();
         isInitialLoad = false;
     };

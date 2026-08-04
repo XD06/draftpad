@@ -111,6 +111,12 @@ function run() {
     assert(twoSubtasks.isLong === false, 'two subtasks should remain expanded');
     assert(!twoSubtasks.html.includes('subtasks-summary-row'), 'two subtasks should not render a collapsed summary');
     assert(!twoSubtasks.html.includes('subtask-extra'), 'two subtasks should not hide either item');
+    const twoSubtasksListHtml = twoSubtasks.html.slice(
+        twoSubtasks.html.indexOf('<div class="subtask-list">'),
+        twoSubtasks.html.indexOf('<div class="thought-card-footer">')
+    );
+    assert(!twoSubtasksListHtml.includes('subtask-add-inline'), 'subtask lists should not retain an invisible add control that creates blank space before the footer');
+    assert(twoSubtasks.html.includes('subtask-add-footer'), 'cards with subtasks should retain the footer add-subtask action');
 
     const threeSubtasks = renderThoughtCard({
         thought: {
@@ -182,8 +188,10 @@ function run() {
     assert(!withAttachments.html.includes('thought-attachment-add-inline'), 'attachment collections should not duplicate the footer append control');
 
     const mixedAttachmentCss = thoughtsCss.slice(thoughtsCss.indexOf('.thought-attachments.has-files'));
-    assert(mixedAttachmentCss.includes('.thought-attachments.has-files .thought-attachment-image'), 'mixed attachments should give image cells an explicit grid rule');
-    assert(/\.thought-attachments\.has-files\s+\.thought-attachment-image[\s\S]*?width:\s*100%/.test(mixedAttachmentCss), 'mixed attachment images should fill their stable grid cell');
+    assert(mixedAttachmentCss.includes('.thought-attachments.has-files .thought-attachment-image'), 'mixed attachments should give image cells an explicit compact layout rule');
+    assert(mixedAttachmentCss.includes('max-width: 252px;'), 'mixed attachments should stay within a compact three-tile strip');
+    assert(/\.thought-attachments\.has-files\s+\.thought-attachment-image[\s\S]*?width:\s*80px[\s\S]*?height:\s*80px/.test(mixedAttachmentCss), 'mixed attachment images should preserve the image-only card dimensions');
+    assert(mixedAttachmentCss.includes('grid-template-columns: repeat(3, 80px);'), 'both layouts should use three uniform compact attachment tiles');
 
     console.log('Thought card renderer checks passed');
 }

@@ -20,6 +20,39 @@
 .mobile-only {
     display: none !important;
 }
+
+/* Keep the first paint on the workspace requested by the URL or last session. */
+html[data-initial-workspace="thoughts"] main.three-column-layout,
+html[data-initial-workspace="today"] main.three-column-layout,
+html[data-initial-workspace="thoughts"] .floating-actions,
+html[data-initial-workspace="today"] .floating-actions {
+    display: none !important;
+}
+
+html[data-initial-workspace="thoughts"] #thoughts-view {
+    display: flex !important;
+}
+
+/* Do not expose unstyled Thought controls while its lazy stylesheet arrives. */
+html:not([data-thoughts-styles-ready]) #thoughts-view {
+    visibility: hidden !important;
+}
+
+html[data-initial-workspace="today"] #today-drafts-view {
+    display: block !important;
+}
+
+@media (min-width: 981px) {
+    html[data-initial-workspace="today"] #today-drafts-view {
+        display: flex !important;
+    }
+}
+
+html[data-initial-workspace="thoughts"] #header-title,
+html[data-initial-workspace="today"] #header-title {
+    visibility: hidden;
+}
+
 .vditor-reset pre > code{
     background: var(--code-bg);
     background-image: none !important;
