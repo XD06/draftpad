@@ -264,7 +264,7 @@
 
 .today-draft-time {
     min-width: 3.2em;
-    padding: 0 6px;
+    padding: 6px 6px;
     color: color-mix(in srgb, var(--muted-text) 82%, transparent);
     font-size: 11px;
     font-variant-numeric: tabular-nums;
@@ -522,7 +522,7 @@ body.clipboard-import-open {
     }
 
     .today-drafts-sheet {
-        min-height: calc(100dvh - 80px);
+        min-height: calc(100dvh - 65px);
         padding: 20px 18px calc(22px + env(safe-area-inset-bottom));
         border-radius: 1rem;
         border-right: 0;
@@ -538,7 +538,7 @@ body.clipboard-import-open {
         min-height: 250px;
     }
     .today-drafts-footer{
-        padding: 20px 0 0;
+       /* padding: 20px 0 0;*/
 
     }
 
