@@ -147,6 +147,7 @@ function run() {
     assert(todayStyles.includes('padding: 26px 48px 28px;'), 'desktop today drafts should keep the footer close to the notebook edge');
     assert(todayStyles.includes('.today-drafts-writing-area'), 'the draft page should reserve a visible writing area when no items exist');
     assert(todayStyles.includes('.today-drafts-subtitle'), 'the disposable lifetime hint should have a dedicated subtitle style');
+    assert(/\.today-draft-text-display\s*\{[^}]*overflow:\s*hidden;[^}]*text-overflow:\s*ellipsis;[^}]*white-space:\s*nowrap;/.test(todayStyles), 'displayed today drafts should remain a single line and truncate long links instead of wrapping');
     assert(/\.today-drafts-header\s*\{[\s\S]*?margin:\s*0;[\s\S]*?padding:\s*0 0 4px;/.test(todayStyles), 'the title group should connect to the writing paper without the former footer-sized gap');
     assert(todayStyles.includes('repeating-linear-gradient'), 'the empty writing area should retain subtle ruled-paper lines');
     assert(todayManagerSource.includes("this.writingArea?.classList.toggle('is-empty', this.items.length === 0);"), 'the composer should move between the first and next available line as items change');

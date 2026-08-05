@@ -272,9 +272,11 @@
     display: block;
     height: auto;
     min-height: 32px;
+    min-width: 0;
     cursor: text;
-    overflow-wrap: anywhere;
-    white-space: pre-wrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .today-draft-text-display:focus-visible {
