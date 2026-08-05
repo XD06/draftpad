@@ -40,6 +40,12 @@ export class TodayDraftsManager {
             event.preventDefault();
             this.add(this.input?.value || '');
         });
+        this.list?.addEventListener('click', event => {
+            if (event.target.closest('[data-today-draft-link]')) return;
+            const display = event.target.closest('[data-today-draft-text-display]');
+            const row = display?.closest('[data-today-draft-id]');
+            if (row) this.beginEditingDraft(row);
+        });
         this.list?.addEventListener('change', event => {
             const row = event.target.closest('[data-today-draft-id]');
             if (!row || !event.target.matches('[data-today-draft-complete]')) return;
@@ -60,6 +66,13 @@ export class TodayDraftsManager {
             if (this.pendingRender) this.render();
         });
         this.list?.addEventListener('keydown', event => {
+            if (event.target.closest('[data-today-draft-link]')) return;
+            const display = event.target.closest('[data-today-draft-text-display]');
+            if (display && (event.key === 'Enter' || event.key === ' ')) {
+                event.preventDefault();
+                this.beginEditingDraft(display.closest('[data-today-draft-id]'));
+                return;
+            }
             if (event.key !== 'Enter') return;
             const input = event.target.closest('[data-today-draft-text]');
             if (!input) return;
@@ -69,9 +82,14 @@ export class TodayDraftsManager {
         });
         this.list?.addEventListener('focusout', event => {
             const input = event.target.closest('[data-today-draft-text]');
-            if (!input || input.value.trim()) return;
+            if (!input) return;
             const row = input.closest('[data-today-draft-id]');
-            if (row) this.remove(row.dataset.todayDraftId);
+            if (!row) return;
+            if (!input.value.trim()) {
+                this.remove(row.dataset.todayDraftId);
+                return;
+            }
+            this.render();
         });
         this.bindDraftSwipeActions();
     }
@@ -105,8 +123,10 @@ export class TodayDraftsManager {
             if (!event.isPrimary || (event.pointerType === 'mouse' && event.button !== 0) || interaction) return;
             const row = event.target.closest('[data-today-draft-id]');
             if (!row || event.target.closest('[data-today-draft-complete], .today-draft-check')) return;
+            if (event.target.closest('[data-today-draft-link]')) return;
             const textInput = event.target.closest('[data-today-draft-text]');
             if (textInput && event.pointerType === 'mouse') return;
+            if (event.pointerType === 'mouse' && event.target.closest('[data-today-draft-text-display]')) return;
 
             interaction = {
                 row,
@@ -263,7 +283,7 @@ export class TodayDraftsManager {
         this.queueUpsert(draft, 0);
         if (this.input) this.input.value = '';
         if (focus) {
-            requestAnimationFrame(() => this.list?.querySelector(`[data-today-draft-id="${draft.id}"] [data-today-draft-text]`)?.focus());
+            requestAnimationFrame(() => this.beginEditingDraft(this.list?.querySelector(`[data-today-draft-id="${draft.id}"]`)));
         } else {
             this.input?.focus();
         }
@@ -401,7 +421,7 @@ export class TodayDraftsManager {
         if (!state || !this.list) return;
         const row = [...this.list.querySelectorAll('[data-today-draft-id]')]
             .find(candidate => candidate.dataset.todayDraftId === state.id);
-        const input = row?.querySelector('[data-today-draft-text]');
+        const input = this.beginEditingDraft(row, { focus: false });
         if (!input) return;
         input.value = state.value;
         try {
@@ -417,6 +437,31 @@ export class TodayDraftsManager {
         } catch {
             // Some browser input implementations do not accept a selection direction.
         }
+    }
+
+    beginEditingDraft(row, { focus = true } = {}) {
+        if (!row) return null;
+        const existingInput = row.querySelector('[data-today-draft-text]');
+        if (existingInput) return existingInput;
+        const display = row.querySelector('[data-today-draft-text-display]');
+        if (!display) return null;
+        const item = this.items.find(candidate => candidate.id === row.dataset.todayDraftId);
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.className = 'today-draft-text';
+        input.dataset.todayDraftText = '';
+        input.value = item?.text || '';
+        input.setAttribute('aria-label', '草稿内容');
+        input.autocomplete = 'off';
+        display.replaceWith(input);
+        if (!focus) return input;
+        try {
+            input.focus({ preventScroll: true });
+        } catch {
+            input.focus();
+        }
+        input.setSelectionRange(input.value.length, input.value.length);
+        return input;
     }
 
     render() {

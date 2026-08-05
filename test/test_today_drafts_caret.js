@@ -13,5 +13,7 @@ assert(source.includes('preventScroll: true'), 'restoring a draft caret should n
 assert(source.includes('compositionstart'), 'draft rendering should observe IME composition');
 assert(source.includes('compositionend'), 'draft rendering should resume after IME composition');
 assert(source.includes('this.pendingRender'), 'draft rendering should defer DOM replacement while composing');
+assert(source.includes('data-today-draft-text-display'), 'clicking ordinary draft text should enter editing without treating a link as text input');
+assert(source.includes('data-today-draft-link'), 'direct link clicks should remain separate from the edit interaction');
 
 console.log('Today drafts caret checks passed');

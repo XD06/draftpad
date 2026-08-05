@@ -268,6 +268,36 @@
     box-sizing: border-box;
 }
 
+.today-draft-text-display {
+    display: block;
+    height: auto;
+    min-height: 32px;
+    cursor: text;
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+}
+
+.today-draft-text-display:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--primary-color) 55%, transparent);
+    outline-offset: 1px;
+}
+
+.today-draft-link {
+    color: var(--primary-color);
+    cursor: pointer;
+    text-decoration: none;
+    text-decoration-line: underline;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 3px;
+    overflow-wrap: anywhere;
+}
+
+.today-draft-link:hover,
+.today-draft-link:focus-visible {
+    color: color-mix(in srgb, var(--primary-color) 76%, var(--text-color));
+    text-decoration-thickness: 2px;
+}
+
 .today-draft-time {
     min-width: 3.2em;
     padding: 6px 6px;

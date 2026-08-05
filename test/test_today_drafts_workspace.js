@@ -64,6 +64,12 @@ function run() {
     const rendered = renderTodayDrafts([{ id: 'draft-1', text: '<unsafe>', completed: true }]);
     assert(rendered.includes('&lt;unsafe&gt;'), 'today draft rendering should escape user text');
     assert(rendered.includes('checked'), 'completed today drafts should render a checked control');
+    const linkedDraft = renderTodayDraftItem({ id: 'draft-link', text: '打开 https://example.com/path?q=1, 或 www.example.org' });
+    assert(linkedDraft.includes('data-today-draft-text-display'), 'today drafts should render a non-editing display state');
+    assert(linkedDraft.includes('class="today-draft-link"'), 'today drafts should identify links independently from editable text');
+    assert(linkedDraft.includes('href="https://example.com/path?q=1"'), 'https links should preserve their destination');
+    assert(linkedDraft.includes('href="https://www.example.org"'), 'www links should receive an https scheme');
+    assert(linkedDraft.includes('target="_blank"') && linkedDraft.includes('rel="noopener noreferrer"'), 'today draft links should open safely in a new tab');
     assert(renderTodayDrafts([]) === '', 'an empty today draft page should leave the writing surface available instead of rendering an empty-state message');
     const morning = new Date(2026, 7, 3, 9, 5).getTime();
     assert(formatTodayDraftTime(morning) === '09:05', 'today draft timestamps should use a compact local HH:mm format');
