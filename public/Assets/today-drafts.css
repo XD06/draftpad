@@ -522,7 +522,7 @@ body.clipboard-import-open {
     }
 
     .today-drafts-sheet {
-        min-height: calc(100dvh - 70px);
+        min-height: calc(100dvh - 75px);
         padding: 20px 18px calc(22px + env(safe-area-inset-bottom));
         border-radius: 1rem;
         border-right: 0;
