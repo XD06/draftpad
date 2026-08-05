@@ -122,6 +122,8 @@ function run() {
     assert(appSource.includes('router.applyShellState(initialWorkspace)'), 'the app should apply the workspace shell before remote data loads');
     assert(appSource.includes('registerServiceWorker().catch(() => {})'), 'service worker registration should not block workspace startup');
     assert(indexSource.includes('class="today-drafts-writing-area"'), 'today drafts should use a dedicated continuous writing surface');
+    assert(indexSource.includes('<p class="today-drafts-subtitle">只留在今天，明天会自动清空。</p>'), 'today drafts should explain their disposable lifetime under the title');
+    assert(!indexSource.includes('<footer class="today-drafts-footer">'), 'today drafts should not repeat the lifetime hint at the bottom of the page');
     assert(!indexSource.includes('today-drafts-add'), 'today drafts should submit through Enter without a separate add button');
     assert(!indexSource.includes('today-drafts-clear-completed'), 'today drafts should not retain a global clear-completed action once rows support swipe actions');
     assert(indexSource.includes('id="clipboard-import-dialog"'), 'the clipboard import dialog should be present in the app shell');
@@ -138,6 +140,8 @@ function run() {
     assert(todayStyles.includes('flex: 1 1 auto;'), 'desktop today draft paper should extend to the bottom of the workspace');
     assert(todayStyles.includes('padding: 26px 48px 28px;'), 'desktop today drafts should keep the footer close to the notebook edge');
     assert(todayStyles.includes('.today-drafts-writing-area'), 'the draft page should reserve a visible writing area when no items exist');
+    assert(todayStyles.includes('.today-drafts-subtitle'), 'the disposable lifetime hint should have a dedicated subtitle style');
+    assert(/\.today-drafts-header\s*\{[\s\S]*?margin:\s*0;[\s\S]*?padding:\s*0 0 4px;/.test(todayStyles), 'the title group should connect to the writing paper without the former footer-sized gap');
     assert(todayStyles.includes('repeating-linear-gradient'), 'the empty writing area should retain subtle ruled-paper lines');
     assert(todayManagerSource.includes("this.writingArea?.classList.toggle('is-empty', this.items.length === 0);"), 'the composer should move between the first and next available line as items change');
     assert(todayManagerSource.includes("if (!input.value.trim()) return;"), 'Enter on an empty draft line should not create accidental blank records');
@@ -152,10 +156,11 @@ function run() {
     assert(todayStyles.includes('grid-template-columns: 36px minmax(0, 1fr) auto;'), 'today draft rows should end with a compact timestamp column');
     assert(todayStyles.includes('min-height: 44px;'), 'text rows should align with the notebook ruling');
     assert(todayStyles.includes('transparent 43px,'), 'the ruled-paper background must match the 44px draft row rhythm');
-    assert(todayStyles.includes('var(--muted-text) 28%'), 'empty notebook lines should be distinct enough to guide writing');
+    assert(todayStyles.includes('var(--muted-text) 38%'), 'empty notebook lines should remain clearly visible through the final paper line');
+    assert(!todayStyles.includes('var(--muted-text) 28%'), 'empty notebook lines should not use the former too-faint rule contrast');
     assert(todayStyles.includes('radial-gradient('), 'the writing surface should retain a subtle paper-grain texture');
     assert(todayStyles.includes('background-size: 100% 44px, 9px 9px, 13px 13px;'), 'paper grain should remain fine and independent from the writing-line rhythm');
-    assert(todayStyles.includes('border-bottom: 1px solid color-mix(in srgb, var(--muted-text) 28%, transparent);'), 'the writing surface should close with a full rule before the footer');
+    assert(!todayStyles.includes('border-bottom: 1px solid color-mix(in srgb, var(--muted-text) 28%, transparent);'), 'the writing surface should not add an off-rhythm closing rule now that the footer has moved into the title');
     assert(!todayStyles.includes('border-bottom: 1px solid color-mix(in srgb, var(--border-color) 72%, transparent);'), 'the title area must not stack a second divider above the ruled paper');
     assert(!todayStyles.includes('background-color: color-mix(in srgb, var(--header-bg) 94%, var(--bg-color));'), 'the writing texture should not create a second surface edge beneath the title');
     assert(!todayStyles.includes('left: 36px;'), 'the writing surface must not cut through content with a full-height margin line');

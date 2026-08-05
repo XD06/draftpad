@@ -24,8 +24,8 @@
     align-items: flex-start;
     justify-content: space-between;
     gap: 20px;
-    margin: 0 0 12px;
-    padding: 0 0 16px;
+    margin: 0;
+    padding: 0 0 4px;
     border-bottom: 0;
     background: transparent;
     box-shadow: none;
@@ -48,6 +48,13 @@
     font-weight: 600;
     letter-spacing: 0;
     line-height: 1.2;
+}
+
+.today-drafts-subtitle {
+    margin: 6px 0 0;
+    color: color-mix(in srgb, var(--muted-text) 82%, transparent);
+    font-size: 12px;
+    line-height: 1.45;
 }
 
 .today-drafts-status {
@@ -112,14 +119,13 @@
     flex: 1 0 250px;
     flex-direction: column;
     overflow: hidden;
-    border-bottom: 1px solid color-mix(in srgb, var(--muted-text) 28%, transparent);
     background-image:
         repeating-linear-gradient(
             to bottom,
             transparent 0,
             transparent 43px,
-            color-mix(in srgb, var(--muted-text) 28%, transparent) 43px,
-            color-mix(in srgb, var(--muted-text) 28%, transparent) 44px
+            color-mix(in srgb, var(--muted-text) 38%, transparent) 43px,
+            color-mix(in srgb, var(--muted-text) 38%, transparent) 44px
         ),
         radial-gradient(circle at 1px 1px, color-mix(in srgb, var(--muted-text) 8%, transparent) 0.5px, transparent 0.8px),
         radial-gradient(circle at 6px 5px, color-mix(in srgb, var(--muted-text) 4%, transparent) 0.45px, transparent 0.7px);
@@ -271,13 +277,6 @@
     line-height: 1;
     text-align: right;
     white-space: nowrap;
-}
-
-.today-drafts-footer {
-   /* padding: 20px 0 0;*/
-    color: var(--muted-text);
-    font-size: 12px;
-    line-height: 1.5;
 }
 
 #toggle-today-drafts.active {
@@ -537,12 +536,6 @@ body.clipboard-import-open {
     .today-drafts-writing-area {
         min-height: 250px;
     }
-    .today-drafts-footer{
-       /* padding: 20px 0 0;*/
-        margin-bottom: -14px;
-
-    }
-
     .clipboard-import-dialog {
         padding: 12px;
         place-items: end center;
