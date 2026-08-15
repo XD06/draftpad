@@ -202,6 +202,7 @@ export class HybridMarkdownEditor {
         this.bindArticleUploadInteractions();
         this.createArticleFileInput();
         this.bindCompositionEvents();
+        this.bindScrollStabilization();
         this.bindCaretPersistence();
         this.bindTimeCommand();
         this.bindCodeBlockCaretPlacement();
@@ -1208,6 +1209,166 @@ export class HybridMarkdownEditor {
                 this.handleWysiwygInput();
             });
         }, true);
+    }
+
+    // Vditor's input pipeline re-renders the edited block by replacing its
+    // outerHTML and, when the block is a list, first removes the adjacent
+    // previous list so both can be re-inserted merged. Removing a large list
+    // that sits above the viewport collapses the content above it, the
+    // browser immediately drops scrollTop to compensate, and the re-insert
+    // never restores it — so around each keystroke/IME commit the view lurches
+    // up and then back down while the caret itself never moves. Re-anchor the
+    // caret at its pre-event on-screen offset in a microtask, after Vditor's
+    // synchronous handlers have finished but before the frame is painted.
+    bindScrollStabilization() {
+        this.container.addEventListener('compositionstart', (event) => {
+            if (!this.isEditorInputTarget(event.target)) return;
+            this.scrollStabilizeState = this.readScrollStabilizeState();
+        }, true);
+
+        this.container.addEventListener('beforeinput', (event) => {
+            if (!this.isEditorInputTarget(event.target)) return;
+            if (this.isComposing && event.inputType !== 'insertFromComposition') return;
+            this.scrollStabilizeState = this.readScrollStabilizeState();
+        }, true);
+
+        this.container.addEventListener('input', (event) => {
+            if (!this.isEditorInputTarget(event.target)) return;
+            if (this.isComposing && event.inputType !== 'insertFromComposition') return;
+            this.stabilizeScroll(this.scrollStabilizeState);
+            this.scrollStabilizeState = null;
+        }, true);
+
+        // Enter/Backspace/Delete are handled synchronously in Vditor's keydown
+        // (and some of its IME commits run from compositionend) — DOM surgery
+        // there never dispatches an input event, so anchor around those too.
+        this.container.addEventListener('keydown', (event) => {
+            if (!this.isEditorInputTarget(event.target) || this.isComposing) return;
+            if (!['Enter', 'Backspace', 'Delete'].includes(event.key)) return;
+            this.stabilizeScroll(this.readScrollStabilizeState());
+        }, true);
+
+        this.container.addEventListener('compositionend', (event) => {
+            if (!this.isEditorInputTarget(event.target)) return;
+            const state = this.readScrollStabilizeState();
+            this.stabilizeScroll(state);
+            this.scrollStabilizeState = state;
+        }, true);
+
+        // Defence in depth: the event-based guards above cover the paths we can
+        // reproduce, but real IME drivers (especially Chinese pinyin commits)
+        // dispatch compositionend/input with field combinations synthetic
+        // events can't replicate, which can slip past the isComposing/inputType
+        // checks. A MutationObserver on the scroller subtree catches the actual
+        // childList surgery Vditor performs (removing+re-inserting the merged
+        // list) regardless of which event triggered it, and re-anchors the
+        // caret at its on-screen position. Only fires for structural removals —
+        // characterData edits never collapse content above the caret.
+        this.connectScrollStabilizerObserver();
+    }
+
+    readScrollStabilizeState() {
+        if (this.sourceMode || this.isReadingMode) return null;
+        const scroller = this.container.querySelector('.vditor-wysiwyg');
+        const root = scroller?.querySelector('.vditor-reset');
+        if (!scroller || !root) return null;
+        const selection = window.getSelection();
+        const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
+        if (!range || !root.contains(range.startContainer)) return null;
+        const scrollerRect = scroller.getBoundingClientRect();
+        const rect = range.getBoundingClientRect();
+        const measurable = rect.height > 0 || rect.top !== 0;
+        let elOffset = null;
+        const blockEl = (range.startContainer.nodeType === Node.ELEMENT_NODE
+            ? range.startContainer
+            : range.startContainer.parentElement)?.closest?.('li, p, blockquote, pre, [data-block="0"]') || range.startContainer.parentElement;
+        if (blockEl) {
+            const elRect = blockEl.getBoundingClientRect();
+            if (elRect.height > 0 || elRect.top !== 0) {
+                elOffset = elRect.top - scrollerRect.top;
+            }
+        }
+        return {
+            scroller,
+            root,
+            scrollTop: scroller.scrollTop,
+            caretOffset: measurable ? rect.top - scrollerRect.top : elOffset
+        };
+    }
+
+    // Re-anchor the caret at its pre-event on-screen offset in a microtask,
+    // after Vditor's synchronous handlers have finished but before the frame
+    // is painted. Compensates only for the upward collapse caused by removed
+    // content above the caret — never fights the browser's own caret-revealing
+    // scroll on the downward side.
+    stabilizeScroll(state) {
+        if (!state?.scroller?.isConnected) return;
+        queueMicrotask(() => {
+            if (this.sourceMode || this.isReadingMode) return;
+            if (this.isProgrammaticScroll) return;
+            const selection = window.getSelection();
+            const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
+            if (!range || !state.root.isConnected || !state.root.contains(range.startContainer)) {
+                if (state.scroller.scrollTop < state.scrollTop - 2) {
+                    state.scroller.scrollTop = state.scrollTop;
+                }
+                return;
+            }
+            const scrollerRect = state.scroller.getBoundingClientRect();
+            if (state.caretOffset !== null) {
+                const rect = range.getBoundingClientRect();
+                let currentOffset = null;
+                if (rect.height > 0 || rect.top !== 0) {
+                    currentOffset = rect.top - scrollerRect.top;
+                } else {
+                    const blockEl = (range.startContainer.nodeType === Node.ELEMENT_NODE
+                        ? range.startContainer
+                        : range.startContainer.parentElement)?.closest?.('li, p, blockquote, pre, [data-block="0"]') || range.startContainer.parentElement;
+                    if (blockEl) {
+                        const elRect = blockEl.getBoundingClientRect();
+                        if (elRect.height > 0 || elRect.top !== 0) {
+                            currentOffset = elRect.top - scrollerRect.top;
+                        }
+                    }
+                }
+                if (currentOffset !== null) {
+                    const delta = currentOffset - state.caretOffset;
+                    if (delta > 2) {
+                        state.scroller.scrollTop += delta;
+                        return;
+                    } else if (delta < -2 && state.scroller.scrollTop < state.scrollTop - 2) {
+                        state.scroller.scrollTop = state.scrollTop;
+                        return;
+                    }
+                }
+            }
+            if (state.scroller.scrollTop < state.scrollTop - 2) {
+                state.scroller.scrollTop = state.scrollTop;
+            }
+        });
+    }
+
+    connectScrollStabilizerObserver() {
+        const attach = () => {
+            const root = this.container.querySelector('.vditor-wysiwyg .vditor-reset');
+            if (!root) { setTimeout(attach, 120); return; }
+            if (this.scrollStabilizerObserver) this.scrollStabilizerObserver.disconnect();
+            this.scrollStabilizerObserver = new MutationObserver((records) => {
+                if (this.sourceMode || this.isReadingMode) return;
+                const removedStructural = records.some(r => r.removedNodes.length > 0);
+                if (!removedStructural) return;
+                if (this.isProgrammaticScroll) return;
+                const state = this.scrollStabilizeState;
+                this.scrollStabilizeState = null;
+                if (state?.scroller?.isConnected) this.stabilizeScroll(state);
+                else this.stabilizeScroll(this.readScrollStabilizeState());
+            });
+            this.scrollStabilizerObserver.observe(root, {
+                childList: true,
+                subtree: true
+            });
+        };
+        attach();
     }
 
     setEditable(enabled) {
