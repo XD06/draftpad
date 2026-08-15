@@ -1221,17 +1221,64 @@ export class HybridMarkdownEditor {
     // caret at its pre-event on-screen offset in a microtask, after Vditor's
     // synchronous handlers have finished but before the frame is painted.
     bindScrollStabilization() {
-        // Freeze mode: the instant the user starts editing, capture scrollTop.
-        // For the whole edit (composing, commit, Enter/Backspace) the viewport
-        // must not move — any drift, from Vditor removing+re-inserting a list
-        // above the caret or the browser re-anchoring, is written straight
-        // back to the frozen value on the same frame. No caret math, no delta:
-        // "started here, stay here."
+        // Freeze mode: bring the caret into view first (so the user can
+        // actually see what they're typing), then lock the viewport for the
+        // duration of the edit. Any drift during composing/commit — Vditor
+        // removing+re-inserting a list above the caret, the browser
+        // re-anchoring — is written straight back to the frozen value on the
+        // same frame. Outside of an active edit the viewport is free to move.
+        const bringCaretIntoView = () => {
+            const scroller = this.getScrollContainer();
+            const root = this.container.querySelector('.vditor-wysiwyg .vditor-reset');
+            if (!scroller || !root) return scroller?.scrollTop ?? 0;
+            const selection = window.getSelection();
+            const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
+            if (!range || !root.contains(range.startContainer)) return scroller.scrollTop;
+            // Suppress enforce while we deliberately move the viewport to
+            // reveal the caret, otherwise the scroll listener would clamp our
+            // own reveal scroll back.
+            this.isProgrammaticScroll = true;
+            // document.scrollingElement's rect spans the whole document, not
+            // the viewport — use window dimensions for the visible band there.
+            const isPageScroll = scroller === document.scrollingElement
+                || scroller === document.documentElement;
+            const viewTop = isPageScroll ? 0 : scroller.getBoundingClientRect().top;
+            const viewBottom = isPageScroll ? window.innerHeight : scroller.getBoundingClientRect().bottom;
+            const rect = range.getBoundingClientRect();
+            // Use the block element as fallback when the collapsed caret rect
+            // is zero-height (common at element boundaries / in list items).
+            let top = rect.top, bottom = rect.bottom;
+            if (rect.height === 0 && rect.top === 0) {
+                const blockEl = (range.startContainer.nodeType === Node.ELEMENT_NODE
+                    ? range.startContainer
+                    : range.startContainer.parentElement)?.closest?.('li, p, blockquote, pre, [data-block="0"]');
+                if (blockEl) {
+                    const br = blockEl.getBoundingClientRect();
+                    top = br.top; bottom = br.bottom;
+                }
+            }
+            // Minimal scroll: only move if the caret is outside the visible
+            // band. Never recenter — just enough to reveal it.
+            const topPad = 48;
+            const bottomPad = 80;
+            if (top < viewTop + topPad) {
+                scroller.scrollTop -= (viewTop + topPad) - top;
+            } else if (bottom > viewBottom - bottomPad) {
+                scroller.scrollTop += bottom - (viewBottom - bottomPad);
+            }
+            this.isProgrammaticScroll = false;
+            return scroller.scrollTop;
+        };
         const freeze = () => {
             if (this.sourceMode || this.isReadingMode) return;
             const scroller = this.getScrollContainer();
             if (!scroller) return;
-            this.scrollFreeze = { scroller, scrollTop: scroller.scrollTop, active: true };
+            // If the caret isn't visible, reveal it first (the viewport moves
+            // here — that's expected). Then freeze wherever it landed.
+            const scrollTop = this.scrollFreeze?.active
+                ? this.scrollFreeze.scrollTop
+                : bringCaretIntoView();
+            this.scrollFreeze = { scroller, scrollTop, active: true };
         };
         const release = () => {
             if (!this.scrollFreeze) return;
@@ -1244,6 +1291,7 @@ export class HybridMarkdownEditor {
         const enforce = () => {
             const f = this.scrollFreeze;
             if (!f?.active || !f.scroller.isConnected) return;
+            if (this.isProgrammaticScroll) return;
             if (Math.abs(f.scroller.scrollTop - f.scrollTop) > 1) {
                 f.scroller.scrollTop = f.scrollTop;
             }
