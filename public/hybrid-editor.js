@@ -1267,11 +1267,23 @@ export class HybridMarkdownEditor {
         this.connectScrollStabilizerObserver();
     }
 
+    // Desktop lays the editor out as a fixed-height `.vditor-wysiwyg` that
+    // scrolls internally. Mobile (ios-theme.css < 981px) lets the content
+    // expand the page and scrolls at the document root instead, leaving
+    // `.vditor-wysiwyg` with clientHeight === scrollHeight (not scrollable).
+    // Return whichever element actually carries the scroll so the stabilizer
+    // never writes to a non-scrolling container.
+    getScrollContainer() {
+        const wysiwyg = this.container.querySelector('.vditor-wysiwyg');
+        if (wysiwyg && wysiwyg.scrollHeight - wysiwyg.clientHeight > 1) return wysiwyg;
+        return document.scrollingElement || document.documentElement;
+    }
+
     readScrollStabilizeState() {
         if (this.sourceMode || this.isReadingMode) return null;
-        const scroller = this.container.querySelector('.vditor-wysiwyg');
-        const root = scroller?.querySelector('.vditor-reset');
-        if (!scroller || !root) return null;
+        const root = this.container.querySelector('.vditor-wysiwyg .vditor-reset');
+        if (!root) return null;
+        const scroller = this.getScrollContainer();
         const selection = window.getSelection();
         const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
         if (!range || !root.contains(range.startContainer)) return null;
