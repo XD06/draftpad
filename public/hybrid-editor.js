@@ -1221,49 +1221,82 @@ export class HybridMarkdownEditor {
     // caret at its pre-event on-screen offset in a microtask, after Vditor's
     // synchronous handlers have finished but before the frame is painted.
     bindScrollStabilization() {
+        // Freeze mode: the instant the user starts editing, capture scrollTop.
+        // For the whole edit (composing, commit, Enter/Backspace) the viewport
+        // must not move — any drift, from Vditor removing+re-inserting a list
+        // above the caret or the browser re-anchoring, is written straight
+        // back to the frozen value on the same frame. No caret math, no delta:
+        // "started here, stay here."
+        const freeze = () => {
+            if (this.sourceMode || this.isReadingMode) return;
+            const scroller = this.getScrollContainer();
+            if (!scroller) return;
+            this.scrollFreeze = { scroller, scrollTop: scroller.scrollTop, active: true };
+        };
+        const release = () => {
+            if (!this.scrollFreeze) return;
+            // Keep the freeze one more frame so any async re-render Vditor
+            // schedules (rAF decoration) is still covered.
+            requestAnimationFrame(() => {
+                if (this.scrollFreeze) this.scrollFreeze.active = false;
+            });
+        };
+        const enforce = () => {
+            const f = this.scrollFreeze;
+            if (!f?.active || !f.scroller.isConnected) return;
+            if (Math.abs(f.scroller.scrollTop - f.scrollTop) > 1) {
+                f.scroller.scrollTop = f.scrollTop;
+            }
+        };
+
+        this._releaseScrollFreeze = release;
+        this._enforceScrollFreeze = enforce;
+
+        // Same-frame interception: the browser adjusts scrollTop synchronously
+        // when content above collapses, so a scroll listener (capture, runs
+        // before app handlers) clamps it back before paint.
+        const scroller = this.getScrollContainer();
+        const scrollTarget = scroller || window;
+        scrollTarget.addEventListener('scroll', enforce, { passive: true, capture: true });
+        // On mobile the page scrolls at window level; cover that too.
+        if (scroller !== window) window.addEventListener('scroll', enforce, { passive: true, capture: true });
+
         this.container.addEventListener('compositionstart', (event) => {
             if (!this.isEditorInputTarget(event.target)) return;
-            this.scrollStabilizeState = this.readScrollStabilizeState();
+            freeze();
         }, true);
 
         this.container.addEventListener('beforeinput', (event) => {
             if (!this.isEditorInputTarget(event.target)) return;
             if (this.isComposing && event.inputType !== 'insertFromComposition') return;
-            this.scrollStabilizeState = this.readScrollStabilizeState();
+            freeze();
         }, true);
 
         this.container.addEventListener('input', (event) => {
             if (!this.isEditorInputTarget(event.target)) return;
             if (this.isComposing && event.inputType !== 'insertFromComposition') return;
-            this.stabilizeScroll(this.scrollStabilizeState);
-            this.scrollStabilizeState = null;
+            enforce();
+            release();
         }, true);
 
-        // Enter/Backspace/Delete are handled synchronously in Vditor's keydown
-        // (and some of its IME commits run from compositionend) — DOM surgery
-        // there never dispatches an input event, so anchor around those too.
         this.container.addEventListener('keydown', (event) => {
-            if (!this.isEditorInputTarget(event.target) || this.isComposing) return;
+            if (!this.isEditorInputTarget(event.target)) return;
             if (!['Enter', 'Backspace', 'Delete'].includes(event.key)) return;
-            this.stabilizeScroll(this.readScrollStabilizeState());
+            freeze();
+            // These mutate DOM synchronously in Vditor's keydown; clamp after.
+            requestAnimationFrame(enforce);
+            release();
         }, true);
 
         this.container.addEventListener('compositionend', (event) => {
             if (!this.isEditorInputTarget(event.target)) return;
-            const state = this.readScrollStabilizeState();
-            this.stabilizeScroll(state);
-            this.scrollStabilizeState = state;
+            enforce();
+            // Vditor's commit rebuilds the block synchronously here; clamp once
+            // more after and keep frozen through the next frame.
+            requestAnimationFrame(enforce);
+            release();
         }, true);
 
-        // Defence in depth: the event-based guards above cover the paths we can
-        // reproduce, but real IME drivers (especially Chinese pinyin commits)
-        // dispatch compositionend/input with field combinations synthetic
-        // events can't replicate, which can slip past the isComposing/inputType
-        // checks. A MutationObserver on the scroller subtree catches the actual
-        // childList surgery Vditor performs (removing+re-inserting the merged
-        // list) regardless of which event triggered it, and re-anchors the
-        // caret at its on-screen position. Only fires for structural removals —
-        // characterData edits never collapse content above the caret.
         this.connectScrollStabilizerObserver();
     }
 
@@ -1280,84 +1313,24 @@ export class HybridMarkdownEditor {
     }
 
     readScrollStabilizeState() {
+        // Retained for backward compat with any external callers; the freeze
+        // path no longer uses caret offsets, only the frozen scrollTop.
         if (this.sourceMode || this.isReadingMode) return null;
-        const root = this.container.querySelector('.vditor-wysiwyg .vditor-reset');
-        if (!root) return null;
         const scroller = this.getScrollContainer();
-        const selection = window.getSelection();
-        const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
-        if (!range || !root.contains(range.startContainer)) return null;
-        const scrollerRect = scroller.getBoundingClientRect();
-        const rect = range.getBoundingClientRect();
-        const measurable = rect.height > 0 || rect.top !== 0;
-        let elOffset = null;
-        const blockEl = (range.startContainer.nodeType === Node.ELEMENT_NODE
-            ? range.startContainer
-            : range.startContainer.parentElement)?.closest?.('li, p, blockquote, pre, [data-block="0"]') || range.startContainer.parentElement;
-        if (blockEl) {
-            const elRect = blockEl.getBoundingClientRect();
-            if (elRect.height > 0 || elRect.top !== 0) {
-                elOffset = elRect.top - scrollerRect.top;
-            }
-        }
-        return {
-            scroller,
-            root,
-            scrollTop: scroller.scrollTop,
-            caretOffset: measurable ? rect.top - scrollerRect.top : elOffset
-        };
+        if (!scroller) return null;
+        return { scroller, scrollTop: scroller.scrollTop };
     }
 
-    // Re-anchor the caret at its pre-event on-screen offset in a microtask,
-    // after Vditor's synchronous handlers have finished but before the frame
-    // is painted. Compensates only for the upward collapse caused by removed
-    // content above the caret — never fights the browser's own caret-revealing
-    // scroll on the downward side.
     stabilizeScroll(state) {
+        // Legacy entry point; redirect to the freeze enforcement so any
+        // caller still gets the viewport held still.
         if (!state?.scroller?.isConnected) return;
-        queueMicrotask(() => {
-            if (this.sourceMode || this.isReadingMode) return;
-            if (this.isProgrammaticScroll) return;
-            const selection = window.getSelection();
-            const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
-            if (!range || !state.root.isConnected || !state.root.contains(range.startContainer)) {
-                if (state.scroller.scrollTop < state.scrollTop - 2) {
-                    state.scroller.scrollTop = state.scrollTop;
-                }
-                return;
-            }
-            const scrollerRect = state.scroller.getBoundingClientRect();
-            if (state.caretOffset !== null) {
-                const rect = range.getBoundingClientRect();
-                let currentOffset = null;
-                if (rect.height > 0 || rect.top !== 0) {
-                    currentOffset = rect.top - scrollerRect.top;
-                } else {
-                    const blockEl = (range.startContainer.nodeType === Node.ELEMENT_NODE
-                        ? range.startContainer
-                        : range.startContainer.parentElement)?.closest?.('li, p, blockquote, pre, [data-block="0"]') || range.startContainer.parentElement;
-                    if (blockEl) {
-                        const elRect = blockEl.getBoundingClientRect();
-                        if (elRect.height > 0 || elRect.top !== 0) {
-                            currentOffset = elRect.top - scrollerRect.top;
-                        }
-                    }
-                }
-                if (currentOffset !== null) {
-                    const delta = currentOffset - state.caretOffset;
-                    if (delta > 2) {
-                        state.scroller.scrollTop += delta;
-                        return;
-                    } else if (delta < -2 && state.scroller.scrollTop < state.scrollTop - 2) {
-                        state.scroller.scrollTop = state.scrollTop;
-                        return;
-                    }
-                }
-            }
-            if (state.scroller.scrollTop < state.scrollTop - 2) {
-                state.scroller.scrollTop = state.scrollTop;
-            }
-        });
+        if (!this.scrollFreeze?.active) {
+            this.scrollFreeze = { scroller: state.scroller, scrollTop: state.scrollTop, active: true };
+        }
+        this._enforceScrollFreeze?.();
+        requestAnimationFrame(() => this._enforceScrollFreeze?.());
+        this._releaseScrollFreeze?.();
     }
 
     connectScrollStabilizerObserver() {
@@ -1367,13 +1340,20 @@ export class HybridMarkdownEditor {
             if (this.scrollStabilizerObserver) this.scrollStabilizerObserver.disconnect();
             this.scrollStabilizerObserver = new MutationObserver((records) => {
                 if (this.sourceMode || this.isReadingMode) return;
+                // Structural removals are exactly what collapses content above
+                // the caret. If a freeze is active, clamp immediately; if not
+                // (a path we didn't wrap in an event), start one from the
+                // current position so we never let the drift through.
                 const removedStructural = records.some(r => r.removedNodes.length > 0);
                 if (!removedStructural) return;
                 if (this.isProgrammaticScroll) return;
-                const state = this.scrollStabilizeState;
-                this.scrollStabilizeState = null;
-                if (state?.scroller?.isConnected) this.stabilizeScroll(state);
-                else this.stabilizeScroll(this.readScrollStabilizeState());
+                if (!this.scrollFreeze?.active) {
+                    const scroller = this.getScrollContainer();
+                    if (scroller) this.scrollFreeze = { scroller, scrollTop: scroller.scrollTop, active: true };
+                }
+                this._enforceScrollFreeze?.();
+                requestAnimationFrame(() => this._enforceScrollFreeze?.());
+                this._releaseScrollFreeze?.();
             });
             this.scrollStabilizerObserver.observe(root, {
                 childList: true,
