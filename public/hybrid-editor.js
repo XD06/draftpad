@@ -189,7 +189,7 @@ export class HybridMarkdownEditor {
             this.onInput(value);
             this.dispatch('input', { value });
             this.dispatch('change', { value });
-        }, 120);
+        }, 300);
 
         this.syncTheme();
         this.themeObserver = new MutationObserver(() => this.syncTheme());
@@ -1760,6 +1760,13 @@ export class HybridMarkdownEditor {
     restoreListAnnotationsFromSource(root) {
         const source = this.sourceTextarea?.value || this._lastValue || this.pendingValue || '';
         if (!source) return;
+        // Fast path: this runs at the top of EVERY decoration pass (i.e. on
+        // every keystroke). The line-by-line annotation scan below costs a
+        // full-document split plus a querySelectorAll('li') per matched line,
+        // which janks typing on long documents. Annotations can only exist
+        // when the source still carries their marker, so bail out early for
+        // the (common) marker-free document.
+        if (!source.includes('data-note=')) return;
         const annotationLine = /^\s*((?:[-+*]|\d+[.)])\s+)(<span\b[^>]*\bdata-note=(?:"[^"]*"|'[^']*')[^>]*>[\s\S]*?<\/span>\s*<sub\b[^>]*\bdata-note-label\b[^>]*>[\s\S]*?<\/sub>)\s*$/i;
         source.split('\n').forEach(line => {
             const match = line.match(annotationLine);
@@ -1804,7 +1811,17 @@ export class HybridMarkdownEditor {
                 if (origin?.closest?.('.dumbpad-code-header, .dumbpad-code-language-popover')) return;
                 const code = origin?.closest?.('pre > code');
                 if (code) changedCode.add(code);
-                if (record.type === 'characterData') inspectMarks = true;
+                if (record.type === 'characterData') {
+                    // Fast path: a plain text-node edit can only introduce
+                    // marker source if the edited text itself contains a
+                    // trigger character ('=' / '[' / '<'). Skipping the full
+                    // document walk for marker-free edits removes an O(doc)
+                    // TreeWalker scan from every keystroke/backspace.
+                    const text = record.target?.nodeValue || '';
+                    if (text.includes('=') || text.includes('[') || text.includes('<')) {
+                        inspectMarks = true;
+                    }
+                }
                 record.addedNodes?.forEach(node => {
                     if (node.nodeType !== Node.ELEMENT_NODE) return;
                     node.querySelectorAll?.('pre > code').forEach(item => changedCode.add(item));
