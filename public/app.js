@@ -1322,6 +1322,21 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         showEditingSurface();
         restoreEditorCaretForNotepad(notepadId);
+        // While the rich editor is still loading, the boot textarea is the
+        // visible surface — approximate the saved reading position on it too,
+        // so a refresh/PWA cold start reopens at (near) the last scroll offset
+        // instead of the top. The exact position is re-applied at handoff via
+        // pendingCaretRestoreNotepadId above.
+        if (!editorInstance && bootEditorActive && bootEditor) {
+            const snapshot = loadCaretPositions()[notepadId];
+            if (snapshot && Number(snapshot.scrollTop) > 0) {
+                requestAnimationFrame(() => {
+                    if (!editorInstance && bootEditorActive && bootEditor) {
+                        bootEditor.scrollTop = Number(snapshot.scrollTop) || 0;
+                    }
+                });
+            }
+        }
 
         const currentNotepad = currentNotepads.find(note => note.id === notepadId);
         if (currentNotepad) trackRecentFile(currentNotepad);

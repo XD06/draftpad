@@ -265,6 +265,14 @@ export class HybridMarkdownEditor {
 
     restorePersistentCaret(snapshot = {}) {
         if (!snapshot || this.isReadingMode) return false;
+        // During boot the restore can be requested right after construction,
+        // before Vditor's async `after` hook has built the editing DOM — the
+        // rAF below would then find no root and silently drop the position.
+        // Defer until ready so cold starts still land on the saved caret/scroll.
+        if (!this.ready) {
+            this.whenReady().then(() => this.restorePersistentCaret(snapshot)).catch(() => {});
+            return true;
+        }
         const offset = Math.max(0, Number(snapshot.offset) || 0);
         if (snapshot.mode === 'source' && this.sourceMode && this.sourceTextarea) {
             const apply = () => {

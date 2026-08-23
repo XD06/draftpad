@@ -80,7 +80,13 @@ function registerAuthRoutes(app, context) {
         return {
             httpOnly: true,
             secure: Boolean(NODE_ENV === 'production' && String(BASE_URL || '').startsWith('https')),
-            sameSite: 'strict',
+            // 'lax' (not 'strict'): launching an installed PWA from the home
+            // screen can arrive without a same-site initiator on some mobile
+            // browsers, and 'strict' then drops the auth cookie on that first
+            // navigation — the user is asked to re-enter the PIN/password on
+            // every cold start. 'lax' still withholds the cookie from
+            // cross-site POSTs, which is the CSRF-relevant part here.
+            sameSite: 'lax',
             maxAge
         };
     }
@@ -454,6 +460,19 @@ function registerAuthRoutes(app, context) {
                 req.auth = { kind: 'legacy' };
             } else {
                 req.auth = await authorizeRequest(req);
+                // Sliding renewal for browser sessions: re-issue the session
+                // cookie with its remaining (absolute) lifetime on
+                // authenticated activity, at most once per hour, so an
+                // actively used device is not bounced back to the login
+                // screen once the original 30-day cookie maxAge lapses.
+                // Mirrors the legacy PIN cookie sliding renewal below.
+                if (req.auth.kind === 'session' && req.auth.session?.token) {
+                    const remaining = Number(req.auth.session.expiresAt) - Date.now();
+                    const renewWindowMs = SESSION_MS - 60 * 60 * 1000;
+                    if (remaining > 0 && remaining < renewWindowMs) {
+                        res.cookie(sessionCookieName, req.auth.session.token, cookieOptions(remaining));
+                    }
+                }
             }
             return next();
         } catch (error) {
