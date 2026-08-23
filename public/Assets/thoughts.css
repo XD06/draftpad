@@ -2962,13 +2962,13 @@ body.quick-add-open {
     transform: translateY(1px);
 }
 
-/* Premium Link Styling */
+/* Premium Link Styling — colored highlight only, no underline; the link
+   still opens on click/tap via the thought-link click handler. */
 .thought-link {
     color: var(--primary-color);
     text-decoration: none;
     font-weight: 500;
     transition: all 0.2s ease;
-    border-bottom: 1.5px solid rgba(var(--primary-rgb), 0.3);
     padding: 0 2px;
     margin: 0 -2px;
     display: inline-block;
@@ -2978,13 +2978,11 @@ body.quick-add-open {
 .thought-link:hover {
     color: var(--primary-color);
     background: rgba(var(--primary-rgb), 0.08);
-    border-bottom-color: var(--primary-color);
     border-radius: 4px;
 }
 
 .thought-card.completed .thought-link {
     color: var(--muted-text);
-    border-bottom-color: rgba(0, 0, 0, 0.15);
 }
 
 .thought-card.completed .thought-link:hover {

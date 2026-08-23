@@ -288,16 +288,14 @@
     color: var(--primary-color);
     cursor: pointer;
     text-decoration: none;
-    text-decoration-line: underline;
-    text-decoration-thickness: 1px;
-    text-underline-offset: 3px;
     overflow-wrap: anywhere;
 }
 
 .today-draft-link:hover,
 .today-draft-link:focus-visible {
     color: color-mix(in srgb, var(--primary-color) 76%, var(--text-color));
-    text-decoration-thickness: 2px;
+    background: color-mix(in srgb, var(--primary-color) 10%, transparent);
+    border-radius: 3px;
 }
 
 .today-draft-time {
