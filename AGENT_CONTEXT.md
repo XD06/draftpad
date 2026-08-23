@@ -52,7 +52,15 @@ Current test scripts are declared in `package.json`. Run the full suite with `np
 - Keep AI-generated relations separate from user-confirmed/manual relations.
 - Preserve multi-device version conflict handling for notes.
 - Preserve PWA/mobile performance work: service worker caching, cached app shell, lazy Thought rendering, and mobile layout behavior.
-- For PWA caching, keep unversioned JS/CSS/JSON on a network-first-with-cache-fallback path. Do not switch them back to pure cache-first unless asset URLs are content-hashed; normal reloads must not keep serving stale styles or modules.
+- For PWA caching, keep unversioned JS/CSS/JSON on a network-first-with-cache-fallback path. Do not switch them back to pure cache-first unless asset URLs are content-hashed; normal reloads must not keep serving stale styles or modules. The fallback windows (navigation 600ms / static 450ms) are codified in `test/test_pwa_cache_regression.js`.
+- Auth cookies use `SameSite=Lax` (not Strict): installed-PWA cold starts can arrive without a same-site initiator on some mobile browsers, and Strict then drops the cookie so the user must re-enter the PIN/password on every full exit. Legacy PIN cookies already slide-renew on API activity; V2 session cookies are also re-issued (remaining lifetime, at most hourly) on authenticated API activity.
+
+## Performance/Sync Notes (2026-08)
+
+- Today Drafts outbox flushes are chained (a flush requested during an in-flight sync re-runs when it finishes), retried with a 3s backoff on network failure, and flushed before leaving the Today view. On `ws_connected` the day list is refetched to catch updates missed while disconnected. The manager is created during idle startup in every workspace so background pushes are always received.
+- The hybrid editor debounces change serialization at 300ms (was 120ms): each tick clones the WYSIWYG DOM and runs Lute twice, which janked backspace/typing on long articles. The marker MutationObserver skips its full-document TreeWalker when a plain text edit carries no marker trigger characters (`=`/`[`/`<`), and `restoreListAnnotationsFromSource` bails early when the source has no `data-note=` annotations.
+- On editor boot the instant boot textarea also restores the saved per-notepad scroll offset from `dumbpad_caret_positions_v1` (exact position is re-applied at the rich-editor handoff).
+- Draft/Thought links render without underline (no `border-bottom`/`text-decoration-line`) but keep their color highlight, hover highlight, and click-to-open behavior (`public/Assets/today-drafts.css`, `public/Assets/thoughts.css`).
 
 ## Data Safety Fixes (2026-06)
 
