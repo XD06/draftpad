@@ -59,8 +59,8 @@ assert(
     'service worker should use navigation preload to reduce installed PWA cold-start latency'
 );
 assert(
-    serviceWorker.includes('NAVIGATION_NETWORK_TIMEOUT = 900') &&
-    serviceWorker.includes('STATIC_NETWORK_TIMEOUT = 650'),
+    serviceWorker.includes('NAVIGATION_NETWORK_TIMEOUT = 600') &&
+    serviceWorker.includes('STATIC_NETWORK_TIMEOUT = 450'),
     'service worker should use short cached-fallback windows for warm PWA starts'
 );
 assert(

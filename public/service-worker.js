@@ -69,8 +69,13 @@ const CORE_ASSETS = [
 const WARM_ASSETS = [];
 
 const NETWORK_FIRST_STATIC_EXTENSIONS = [".js", ".css", ".json"];
-const NAVIGATION_NETWORK_TIMEOUT = 900;
-const STATIC_NETWORK_TIMEOUT = 650;
+// How long a navigation/static request may stall on a slow (e.g. home-server
+// over WAN) link before we fall back to the cached copy. Kept short because
+// the fallback is the same versioned cache the network response would have
+// refreshed: a timeout only trades one fresh copy for the previous identical
+// one, while a long timeout delays first paint on every refresh.
+const NAVIGATION_NETWORK_TIMEOUT = 600;
+const STATIC_NETWORK_TIMEOUT = 450;
 
 const getConfig = async () => {
   try {
@@ -294,7 +299,7 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  const staticAssetExtensions = [".js", ".css", ".json", ".png", ".ico", ".svg", ".woff", ".woff2", ".ttf"];
+  const staticAssetExtensions = [".js", ".css", ".json", ".png", ".ico", ".svg", ".woff", ".woff2", ".ttf", ".wasm"];
   const isNavigation = event.request.mode === "navigate";
   const isStaticAsset = staticAssetExtensions.some(ext => requestUrl.pathname.endsWith(ext));
   const isNetworkFirstStaticAsset = NETWORK_FIRST_STATIC_EXTENSIONS.some(ext => requestUrl.pathname.endsWith(ext));
