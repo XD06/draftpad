@@ -3408,6 +3408,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         appSettings = settingsManager.loadSettings();
         if (initialWorkspace === 'thoughts') {
             await ensureThoughtsManager();
+            scheduleIdleTask(() => {
+                ensureTodayDraftsManager().catch(() => {});
+            });
         } else if (initialWorkspace === 'today') {
             await ensureTodayDraftsManager();
         } else if (startsInEditor) {
@@ -3419,6 +3422,12 @@ document.addEventListener('DOMContentLoaded', async () => {
             ensureEditor().catch(() => {});
             scheduleIdleTask(() => {
                 ensureThoughtsManager().catch(() => {});
+                // Also keep the today-drafts manager alive from boot so
+                // today_drafts_update pushes are received and the outbox
+                // flushes even while the user stays in the editor workspace —
+                // otherwise draft records only catch up when the Today tab is
+                // opened.
+                ensureTodayDraftsManager().catch(() => {});
             });
         }
         loadAppConfig();

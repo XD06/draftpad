@@ -96,6 +96,9 @@ Thought 创建和修改不能等待 AI extract、embedding、rerank 或 S3 之�
 - 新记录用客户端生成的 id 调用 `PUT /api/today-drafts/:id`，不带 `baseVersion`；更新与删除必须带当前 `baseVersion`，版本过期返回 `409`。
 - 成功创建、更新、删除后广播 `today_drafts_update`，其 payload 只包含受影响的一条草稿。
 - 前端将当天缓存和待同步 outbox 分开保存；本机存在待同步项时，不以 WebSocket 的远端版本覆盖它。
+- outbox 冲刷是链式的：同步进行中再次触发的冲刷会在当前请求结束后立即重跑；网络失败以 3 秒退避自动重试；离开今日草稿视图前会先冲刷待同步项，而不是丢弃定时器。
+- WebSocket 重连（`ws_connected`）时，除重试 outbox 外还会重新拉取当天列表，补齐断线期间其他设备的更新。
+- 今日草稿管理器在应用启动的空闲时段即创建（编辑器/Thought 工作区也会），保证后台也能接收 `today_drafts_update` 推送并冲刷 outbox，而不是等用户首次打开今日视图。
 - 草稿不写入垃圾桶、Thought AI、relation 或搜索索引；需要长期保留时，先显式创建 Thought 或文章，再删除草稿。
 
 ## 5. Relation 边界

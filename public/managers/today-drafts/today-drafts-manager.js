@@ -27,11 +27,19 @@ export class TodayDraftsManager {
         this.dayTimer = null;
         this.syncTimer = null;
         this.syncInFlight = false;
+        this.syncQueued = false;
         this.isComposingDraft = false;
         this.pendingRender = false;
         this.bindEvents();
         window.addEventListener('today_drafts_update', event => this.handleSocketUpdate(event.detail || {}));
-        window.addEventListener('ws_connected', () => this.retryOutbox());
+        // On (re)connect, flush anything queued while offline AND pull the
+        // current day from the server: updates pushed by other devices while
+        // this client was disconnected never arrived, so without a refetch the
+        // local list stays stale until the user re-enters the Today tab.
+        window.addEventListener('ws_connected', () => {
+            this.retryOutbox();
+            if (this.isActive) this.refreshForCurrentDay();
+        });
         this.render();
     }
 
@@ -238,6 +246,10 @@ export class TodayDraftsManager {
         this.dayTimer = null;
         clearTimeout(this.syncTimer);
         this.syncTimer = null;
+        // Leaving the Today tab must not strand a pending edit in the outbox
+        // (the timer above may have been the only thing about to send it).
+        // Flush now; retryOutbox is idempotent and safe to run in background.
+        if (this.outbox.load().length > 0) this.retryOutbox();
     }
 
     async refreshForCurrentDay() {
@@ -362,8 +374,17 @@ export class TodayDraftsManager {
     }
 
     async retryOutbox() {
-        if (this.syncInFlight || this.outbox.load().length === 0) return;
+        // A sync already running: remember that another run was requested and
+        // let the in-flight one chain it in its finally block. Returning here
+        // without rescheduling is what used to strand edits queued while a
+        // request was in flight (the caller's timer had already fired).
+        if (this.syncInFlight) {
+            this.syncQueued = true;
+            return;
+        }
+        if (this.outbox.load().length === 0) return;
         this.syncInFlight = true;
+        this.syncQueued = false;
         try {
             const result = await this.outbox.retry(this.apiClient);
             for (const saved of result.saved) {
@@ -382,8 +403,16 @@ export class TodayDraftsManager {
             this.render();
         } catch (error) {
             console.info('Today drafts sync will retry later:', error?.message || error);
+            // Network/server failure: nothing else will trigger a retry while
+            // the user idles on the tab (ws_connected only fires on reconnect),
+            // so schedule one ourselves. Backoff keeps this cheap while offline.
+            if (this.outbox.load().length > 0) this.scheduleSync(3000);
         } finally {
             this.syncInFlight = false;
+            if (this.syncQueued && this.outbox.load().length > 0) {
+                this.syncQueued = false;
+                this.scheduleSync(0);
+            }
         }
     }
 
