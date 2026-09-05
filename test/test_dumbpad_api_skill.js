@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 
 const root = path.resolve(__dirname, '..');
-const skillPath = path.join(root, 'SKILL.md');
+const skillPath = path.join(root, 'docs', 'SKILL.md');
 const skill = fs.readFileSync(skillPath, 'utf8');
 
 [

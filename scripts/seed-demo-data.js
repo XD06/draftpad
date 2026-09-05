@@ -13,7 +13,7 @@ function timestamp(minutes) {
 }
 
 function readAgentSkill() {
-    return fsSync.readFileSync(path.join(__dirname, '..', 'SKILL.md'), 'utf8');
+    return fsSync.readFileSync(path.join(__dirname, '..', 'docs', 'SKILL.md'), 'utf8');
 }
 
 function demoNote(id, name, content, offset, options = {}) {
@@ -124,7 +124,7 @@ console.log(features.join(', '));
 行号只属于阅读态和所见即所得编辑态的视觉层，不会写入 Markdown，也不会进入复制内容。阅读态和编辑态都提供复制图标，进入编辑时代码块高度保持稳定，不遮挡下一行。`, 8),
     demoNote('demo-api-guide', '开发者 API 指南', `# 开发者 API 指南
 
-完整契约见 [api.md](../api.md) 和 \`/openapi.json\`。所有客户端都应只通过 HTTP API 操作内容，不应直接读写 \`data/\`。
+完整契约见仓库文档 \`docs/api.md\` 与 \`/openapi.json\`。所有客户端都应只通过 HTTP API 操作内容，不应直接读写 \`data/\`。
 
 ## Notepad 与 Note
 
@@ -233,7 +233,7 @@ const THOUGHTS = [
         pinned: true,
         tags: ['API', '测试夹具', '乐观并发'],
         subItems: [
-            { id: 'demo-api-read', text: '打开 api.md 与 /openapi.json，对照 Notepad 和 Note 端点。', completed: true },
+            { id: 'demo-api-read', text: '打开 docs/api.md 与 /openapi.json，对照 Notepad 和 Note 端点。', completed: true },
             { id: 'demo-api-conflict', text: '用旧 baseVersion 发送 POST /api/notes/:id，检查 409 与 currentVersion。', completed: false },
             { id: 'demo-api-search', text: '调用 /api/search?q=乐观并发，检查文章和 Thought 是否都可命中。', completed: false }
         ]
