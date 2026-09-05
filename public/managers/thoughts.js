@@ -1072,13 +1072,43 @@ export class ThoughtsManager {
                 if (payload.aiTags === undefined && this.thoughts[index].aiTags !== undefined) {
                     payload.aiTags = this.thoughts[index].aiTags;
                 }
-                this.thoughts[index] = payload;
+                // Merge in place instead of replacing the array slot: queued
+                // mutations (mutateThought closures) hold this object and read
+                // its version when their turn comes; swapping in a fresh
+                // object left them sending a stale baseVersion and catching
+                // their own echo as a 409 conflict.
+                Object.assign(current, payload);
             }
         } else if (action === 'delete') {
             this.thoughts = this.thoughts.filter(t => t.id !== payload.id);
         }
 
-        this.scheduleRender();
+        this.renderSocketDelta(action === 'update' ? payload?.id : null);
+    }
+
+    // Live pushes must surface immediately even while a timeline input holds
+    // focus: scheduleRender defers full rebuilds in that case, which used to
+    // hide other devices' changes until the field blurred. When the focused
+    // field is outside the affected card, rebuild just that card in place;
+    // when it is inside, the update stays queued for the blur flush so the
+    // mobile keyboard never collapses mid-edit.
+    renderSocketDelta(changedThoughtId) {
+        const active = document.activeElement;
+        const focusHeld = Boolean(active)
+            && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable === true)
+            && Boolean(this.timeline?.contains(active));
+        if (!focusHeld) {
+            this.scheduleRender();
+            return;
+        }
+        const card = changedThoughtId
+            ? this.timeline?.querySelector(`.thought-card[data-id="${CSS.escape(String(changedThoughtId))}"]`)
+            : null;
+        if (card?.contains(active)) {
+            this.scheduleRender();
+            return;
+        }
+        this.patchRenderedThought(changedThoughtId || undefined);
     }
 
     handleRelationsSocketUpdate(detail) {
@@ -2438,6 +2468,8 @@ export class ThoughtsManager {
         let suppressNextClick = false;
         let wasReady = false;
         let swipePointerType = '';
+        let pendingSwipeState = null;
+        let swipeFrameScheduled = false;
 
         const captureSwipePointer = (event) => {
             capturedPointerId = event.pointerId;
@@ -2463,10 +2495,11 @@ export class ThoughtsManager {
 
         const resetSwipe = (event) => {
             releaseSwipePointer(event);
+            pendingSwipeState = null;
+            swipeFrameScheduled = false;
             card.classList.remove('swiping', 'swipe-ready');
             card.style.removeProperty('--swipe-x');
             card.style.removeProperty('transform');
-            card.style.removeProperty('--swipe-progress');
             card.style.removeProperty('--swipe-action-opacity');
             tracking = false;
             isDragging = false;
@@ -2501,20 +2534,33 @@ export class ThoughtsManager {
             }
             if (!isDragging) return;
             event.preventDefault();
-            const state = getThoughtSwipeState(deltaX, threshold, maxSwipe);
-            card.style.setProperty('--swipe-x', `${state.swipeX}px`);
-            card.style.transform = `translate3d(${state.swipeX}px, 0, 0)`;
-            card.style.setProperty('--swipe-progress', String(state.progress));
-            card.style.setProperty('--swipe-action-opacity', String(state.actionOpacity));
-            card.classList.toggle('swipe-ready', state.ready);
-            if (state.ready && !wasReady && (swipePointerType === 'touch' || swipePointerType === 'pen')) {
-                navigator.vibrate?.(10);
-            }
-            wasReady = state.ready;
+            // Custom property writes invalidate style for the whole card
+            // subtree, which is expensive on cards with many subtask rows —
+            // and pointermove can fire twice per frame on high-refresh
+            // screens. Coalesce the writes into one rAF per frame; the card
+            // transform itself is driven by the --swipe-x CSS variable, so
+            // no inline transform write is needed here.
+            pendingSwipeState = getThoughtSwipeState(deltaX, threshold, maxSwipe);
+            if (swipeFrameScheduled) return;
+            swipeFrameScheduled = true;
+            requestAnimationFrame(() => {
+                swipeFrameScheduled = false;
+                const state = pendingSwipeState;
+                pendingSwipeState = null;
+                if (!tracking || !isDragging || !state) return;
+                card.style.setProperty('--swipe-x', `${state.swipeX}px`);
+                card.style.setProperty('--swipe-action-opacity', String(state.actionOpacity));
+                card.classList.toggle('swipe-ready', state.ready);
+                if (state.ready && !wasReady && (swipePointerType === 'touch' || swipePointerType === 'pen')) {
+                    navigator.vibrate?.(10);
+                }
+                wasReady = state.ready;
+            });
         });
 
         const finishSwipe = async (event) => {
             if (!tracking) return;
+            pendingSwipeState = null;
             const shouldDelete = isDragging && deltaX >= threshold;
             if (isDragging) suppressNextClick = true;
             releaseSwipePointer(event);
@@ -2525,8 +2571,6 @@ export class ThoughtsManager {
 
             card.classList.add('swipe-ready');
             card.style.setProperty('--swipe-x', `${threshold}px`);
-            card.style.transform = `translate3d(${threshold}px, 0, 0)`;
-            card.style.setProperty('--swipe-progress', '1');
             card.style.setProperty('--swipe-action-opacity', '1');
             const confirmed = await this.app.confirmationManager.show('确认移入垃圾桶吗？');
             if (!confirmed) {
@@ -3537,8 +3581,6 @@ export class ThoughtsManager {
         const input = row.querySelector('input[type="text"]');
         input.focus();
 
-        let committed = false;
-
         const cleanup = () => {
             row.remove();
             if (addBtn) addBtn.style.display = '';
@@ -3548,23 +3590,44 @@ export class ThoughtsManager {
             }
         };
 
-        const commit = async ({ chainNext = false } = {}) => {
-            if (committed) return;
-            committed = true;
+        // Committed subtasks surface as a non-interactive preview row above
+        // the input; the render that runs once the field blurs replaces it
+        // with the fully bound row (server-assigned subitem id included).
+        const insertPreviewRow = (subItem) => {
+            const previewRow = document.createElement('div');
+            previewRow.className = 'subtask';
+            previewRow.dataset.subid = subItem.id;
+            previewRow.innerHTML = '<input type="checkbox" class="subtask-check" disabled><span class="subtask-text"></span>';
+            previewRow.querySelector('.subtask-text').textContent = subItem.text;
+            sublist.insertBefore(previewRow, row);
+        };
+
+        const commit = async ({ keepInput = false } = {}) => {
             const text = input.value.trim();
-            if (!text) { cleanup(); return; }
-            appendLocalSubItem(thought, text);
-            this.render();
+            if (!text) {
+                if (!keepInput) {
+                    cleanup();
+                    this.scheduleRender();
+                }
+                return;
+            }
+            // Consume the text immediately so a trailing blur cannot commit
+            // it twice, and chain on the SAME input: focus (and the mobile
+            // keyboard) never leaves the field between subtasks. A full
+            // card rebuild here is what dropped focus and collapsed the
+            // keyboard after every Enter.
+            input.value = '';
+            const subItem = appendLocalSubItem(thought, text);
+            insertPreviewRow(subItem);
+            if (!keepInput) {
+                cleanup();
+                this.scheduleRender();
+            }
             try {
                 this.beginThoughtSync();
                 await this.mutateThought(thought, () => this.apiClient.addSubitem(thought.id, text, thought.version));
-                this.render();
-                // Enter keeps the flow going: reopen a fresh inline input on
-                // the re-rendered card instead of ending after one subtask.
-                if (chainNext) {
-                    const nextCard = this.timeline?.querySelector(`.thought-card[data-id="${CSS.escape(thought.id)}"]`);
-                    if (nextCard) this.quickAddSubtask(nextCard, thought);
-                }
+                this.refreshThoughtSubtaskView(thought);
+                this.reorderTimelineInPlace();
             } catch (err) {
                 console.error('Failed to add subtask:', err);
                 this.enqueueThoughtOverwrite(thought, err);
@@ -3573,12 +3636,13 @@ export class ThoughtsManager {
         };
 
         input.addEventListener('keydown', (e) => {
+            if (e.isComposing) return;
             if (handleTimeCommandKeydown(e)) return;
-            if (e.key === 'Enter') { e.preventDefault(); commit({ chainNext: true }); }
-            else if (e.key === 'Escape') { cleanup(); }
+            if (e.key === 'Enter') { e.preventDefault(); commit({ keepInput: true }); }
+            else if (e.key === 'Escape') { cleanup(); this.scheduleRender(); }
         });
         input.addEventListener('blur', () => {
-            setTimeout(() => { if (row.parentNode) commit(); }, 100);
+            setTimeout(() => { if (row.parentNode) commit({ keepInput: false }); }, 100);
         });
     }
 

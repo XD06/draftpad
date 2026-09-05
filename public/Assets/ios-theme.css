@@ -1393,6 +1393,12 @@ main {
         border: 0.5px solid rgba(255, 59, 48, 0.28) !important;
     }
 
+    #universal-confirmation-modal .primary-btn {
+        color: var(--primary-color) !important;
+        background: color-mix(in srgb, var(--primary-color) 14%, transparent) !important;
+        border: 0.5px solid color-mix(in srgb, var(--primary-color) 30%, transparent) !important;
+    }
+
     [data-theme="dark"] header .icon-button,
     [data-theme="dark"] body:not(.thoughts-mode) .floating-btn,
     [data-theme="dark"] .typora-source-toggle {
@@ -1483,6 +1489,12 @@ main {
         color: color-mix(in srgb, var(--danger-color) 82%, var(--text-color));
         background: rgba(255, 69, 58, 0.12) !important;
         border-color: rgba(255, 69, 58, 0.32) !important;
+    }
+
+    [data-theme="dark"] #universal-confirmation-modal .primary-btn {
+        color: color-mix(in srgb, var(--primary-color) 86%, var(--text-color)) !important;
+        background: color-mix(in srgb, var(--primary-color) 16%, transparent) !important;
+        border-color: color-mix(in srgb, var(--primary-color) 34%, transparent) !important;
     }
 }
 

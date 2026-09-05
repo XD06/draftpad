@@ -1279,7 +1279,7 @@ export class HybridMarkdownEditor {
 
     preserveInlineInputNodes(html, spin) {
         const source = String(html);
-        if (!/md-time-marker|md-mark|has-annotation|data-draw|article-upload-card/.test(source)) return spin(html);
+        if (!/md-time-marker|md-mark|has-annotation|data-draw|article-upload-card|dumbpad-article-image/.test(source)) return spin(html);
         const input = document.createElement('template');
         input.innerHTML = source;
         // Vditor removes inline styles before calling Lute. Reinstate only the
@@ -1300,7 +1300,7 @@ export class HybridMarkdownEditor {
         const caretCount = input.content.querySelectorAll('wbr').length;
         let prefix = 'DUMBPADINLINETOKEN';
         while (source.includes(prefix)) prefix += 'X';
-        input.content.querySelectorAll('.md-time-marker, mark.md-mark, .has-annotation, [data-draw], .article-upload-card').forEach(node => {
+        input.content.querySelectorAll('.md-time-marker, mark.md-mark, .has-annotation, [data-draw], .article-upload-card, img.dumbpad-article-image').forEach(node => {
             if (!input.content.contains(node) || node.closest('code, pre:not(.vditor-reset)')) return;
             const token = `${prefix}${saved.length}END`;
             saved.push({ token, node });
