@@ -86,6 +86,32 @@ async function run() {
     assert.strictEqual(discarded, true, 'discardConflict should report removal');
     assert.strictEqual(outbox2.count(), 0, 'discarding a conflict empties the queue');
 
+    // A 404 means the Thought no longer exists remotely (deleted on another
+    // device, or a pending temp id that never reached the server). The item
+    // must be dropped instead of retrying forever with the badge stuck on
+    // "待同步".
+    const outbox3 = new ThoughtOutbox({ storage: createStorage() });
+    outbox3.enqueueOverwrite({ id: 'thought-3', text: 'deleted elsewhere', version: 2 });
+    outbox3.enqueueDeleteThought('thought-4');
+    let notFoundCalls = 0;
+    const failingClient = {
+        async requestOutboxItem() {
+            notFoundCalls += 1;
+            const error = new Error('HTTP 404');
+            error.status = 404;
+            error.body = { error: 'Thought not found' };
+            throw error;
+        }
+    };
+    const dropped = await outbox3.retry(failingClient);
+    assert.strictEqual(notFoundCalls, 2, 'both queued items should be attempted once');
+    assert.strictEqual(dropped.dropped404.length, 2, '404 answers must be reported as dropped items');
+    assert.strictEqual(dropped.remaining.length, 0, '404 answers must not stay queued');
+    assert.strictEqual(outbox3.count(), 0, 'the outbox must be empty after 404 drops');
+    assert.strictEqual(dropped.changed, true, 'dropping 404 items counts as a queue change');
+    await outbox3.retry(failingClient);
+    assert.strictEqual(notFoundCalls, 2, 'dropped items must not be retried again');
+
     console.log('Thought outbox conflict checks passed');
 }
 

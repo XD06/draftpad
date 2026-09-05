@@ -255,7 +255,7 @@ function assertThoughtsFrontendRegressions() {
     assert(
         thoughtsSource.includes('queueManualRelationSearch') &&
         thoughtsSource.includes('manualRelationSearchSeq') &&
-        thoughtsSource.includes('limit: 8, light: true') &&
+        thoughtsSource.includes('this.apiClient.searchTargets(q, 8)') &&
         thoughtRelationsPanelSource.includes('summaryHtml = highlightPlainText') &&
         thoughtRelationsPanelSource.includes('textSnippetAroundQuery'),
         'manual relation search should be debounced, lightweight, stale-safe, and keyword-highlighted'
@@ -471,6 +471,37 @@ function assertThoughtsFrontendRegressions() {
         initializeSource.includes('scheduleIdleTask(() =>') &&
         initializeSource.indexOf('await ensureThoughtsManager()') < initializeSource.indexOf('await loadNotepads({ loadCurrentNote: startsInEditor })'),
         'Thoughts view should load its module immediately on #thoughts and render cached thoughts before the network refresh'
+    );
+    assert(
+        thoughtOutboxSource.includes('dropped404') &&
+        thoughtOutboxSource.includes("Number(err?.status) === 404 && item.kind !== 'create'") &&
+        thoughtsSource.includes('dropped404') &&
+        thoughtsSource.includes('result.dropped404?.length'),
+        'outbox replay must drop items whose Thought no longer exists remotely instead of retrying 404s forever'
+    );
+    assert(
+        thoughtsSource.includes('_thoughtMutationQueues') &&
+        thoughtsSource.includes('async mutateThought(thought, send') &&
+        thoughtsSource.includes("this.apiClient.addSubitem(thought.id, text, thought.version)") &&
+        thoughtsSource.includes("this.apiClient.toggleSubitem(id, subId, thought.version)"),
+        'subtask mutations must run through the per-Thought serialized queue so rapid edits never reuse a stale baseVersion'
+    );
+    assert(
+        thoughtApiClientSource.includes('searchTargets(query, limit = 8)') &&
+        thoughtsSource.includes('this.apiClient.searchTargets(q, 8)') &&
+        thoughtRoutesSource.includes("app.get('/api/thoughts/search'") &&
+        storageSource.includes('async function searchThoughtsLight('),
+        'manual relation search must use the index-backed lightweight search endpoint instead of a full Thought read'
+    );
+    assert(
+        thoughtsSource.includes('const holdsFocus = (element) => {') &&
+        thoughtsSource.includes('flushWhenFocusFree'),
+        'background Thought re-renders must defer while a timeline input holds focus so mobile keyboards are not dismissed'
+    );
+    assert(
+        hybridEditorSource.includes('bindArticleLinkInteractions()') &&
+        hybridEditorSource.includes("target.closest('.vditor-reset a[href]')"),
+        'article links (Lute bare-URL autolinks and authored links) must stay clickable in reading mode'
     );
 }
 
@@ -1064,6 +1095,43 @@ async function run() {
             assert(nextTimelinePage.response.ok, 'the next timeline Thought cursor page should succeed');
             assert(nextTimelinePage.body.items[0]?.id !== firstTimelineId, 'the next timeline cursor page should not repeat the previous item');
         }
+
+        result = await request('/api/thoughts', {
+            method: 'POST',
+            body: JSON.stringify({
+                text: 'API progress thought',
+                subItems: [
+                    { id: 'progress-sub-1', text: 'step done', completed: true },
+                    { id: 'progress-sub-2', text: 'step pending', completed: false }
+                ]
+            })
+        });
+        assert(result.response.ok, 'POST partial-progress thought should succeed');
+        const progressThoughtId = result.body.id;
+        // Created after the progress thought so plain createdAt ordering
+        // would put the idle one first — the progress boost must win.
+        result = await request('/api/thoughts', {
+            method: 'POST',
+            body: JSON.stringify({ text: 'API idle newest thought', subItems: [] })
+        });
+        assert(result.response.ok, 'POST idle thought should succeed');
+        const idleThoughtId = result.body.id;
+        result = await request('/api/thoughts?format=page&light=1&limit=1&sort=timeline&status=todo');
+        assert(result.response.ok, 'timeline page after progress thoughts should succeed');
+        assert(result.body.items[0]?.id === progressThoughtId, 'timeline order should surface partial subtask progress above newer idle Thoughts');
+
+        result = await request('/api/thoughts/search?q=progress');
+        assert(result.response.ok, 'GET /api/thoughts/search should succeed');
+        assert(Array.isArray(result.body.items), 'light Thought search should return an items array');
+        assert(result.body.items.some(item => item.id === progressThoughtId), 'light Thought search should match Thought text');
+        assert(result.body.items.every(item => !Array.isArray(item.attachments)), 'light Thought search should stay lightweight');
+        result = await request('/api/thoughts/search?q=');
+        assert(result.response.ok && result.body.items.length === 0, 'empty light Thought search should return no items');
+
+        result = await request(`/api/thoughts/${idleThoughtId}`, { method: 'DELETE' });
+        assert(result.response.ok, 'DELETE idle thought cleanup should succeed');
+        result = await request(`/api/thoughts/${progressThoughtId}`, { method: 'DELETE' });
+        assert(result.response.ok, 'DELETE progress thought cleanup should succeed');
 
         result = await request(`/api/thoughts/${completedThoughtId}`, {
             method: 'PATCH',

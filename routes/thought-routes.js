@@ -1,6 +1,17 @@
 const { createAnalysisSourceSignature } = require('../scripts/thought-ai-source');
 const { createAssetStorage, safeAssetId } = require('../scripts/asset-storage');
 
+// Timeline surfaces Thoughts being actively worked through (some subtasks
+// done, some pending) above idle ones. Cursor entries precompute the flag as
+// `subtaskPartial`; live Thought objects derive it from `subItems`.
+function thoughtPartialProgress(entry) {
+    if (typeof entry?.subtaskPartial === 'boolean') return entry.subtaskPartial;
+    const items = Array.isArray(entry?.subItems) ? entry.subItems : [];
+    if (items.length < 2) return false;
+    const done = items.filter(item => item?.completed === true).length;
+    return done > 0 && done < items.length;
+}
+
 function registerThoughtRoutes(app, context) {
     const {
         storage,
@@ -415,6 +426,22 @@ function registerThoughtRoutes(app, context) {
         }
     });
 
+    // Lightweight index-backed keyword search for UI quick-pickers (manual
+    // relation search). Registered before '/api/thoughts/:id'.
+    app.get('/api/thoughts/search', async (req, res) => {
+        try {
+            const q = String(req.query.q ?? req.query.query ?? '').trim();
+            if (!q) return res.json({ items: [] });
+            const rawLimit = Number.parseInt(req.query.limit, 10);
+            const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, 20) : 8;
+            const items = await storage.searchThoughtsLight({ query: q, limit });
+            res.json({ items });
+        } catch (err) {
+            console.error('Error searching thoughts:', err);
+            res.status(500).json({ error: 'Error searching thoughts' });
+        }
+    });
+
     app.get('/api/thoughts/:id', async (req, res) => {
         try {
             const { id } = req.params;
@@ -455,6 +482,11 @@ function registerThoughtRoutes(app, context) {
                     if ((left.completed === true) !== (right.completed === true)) {
                         return left.completed === true ? 1 : -1;
                     }
+                    // Thoughts being worked through (some subtasks done, some
+                    // pending) surface above idle ones so users see them first.
+                    const leftPartial = thoughtPartialProgress(left);
+                    const rightPartial = thoughtPartialProgress(right);
+                    if (leftPartial !== rightPartial) return leftPartial ? -1 : 1;
                     return Number(right.createdAt || 0) - Number(left.createdAt || 0)
                         || String(right.id).localeCompare(String(left.id));
                 }
@@ -475,12 +507,15 @@ function registerThoughtRoutes(app, context) {
                             || typeof decoded?.id !== 'string') {
                             throw new Error('invalid timeline cursor');
                         }
+                        // `subtaskPartial` is optional: cursors issued before
+                        // the progress-aware ordering still stay valid.
                         cursor = {
                             pinned: decoded.pinned,
                             pinnedAt: Number(decoded.pinnedAt),
                             completed: decoded.completed,
                             createdAt: Number(decoded.createdAt),
-                            id: decoded.id
+                            id: decoded.id,
+                            subtaskPartial: decoded.subtaskPartial === true
                         };
                     } else {
                         if (!Number.isFinite(Number(decoded?.updatedAt)) || typeof decoded?.id !== 'string') throw new Error('invalid cursor');
@@ -568,7 +603,8 @@ function registerThoughtRoutes(app, context) {
                         pinnedAt: Number(last.pinnedAt || 0),
                         completed: last.completed === true,
                         createdAt: Number(last.createdAt || 0),
-                        id: String(last.id)
+                        id: String(last.id),
+                        subtaskPartial: thoughtPartialProgress(last)
                     }
                     : {
                         updatedAt: Number(last.updatedAt || last.createdAt || 0),

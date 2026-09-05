@@ -100,6 +100,7 @@ async function run() {
             completed: thought.completed,
             pinned: thought.pinned,
             pinnedAt: thought.pinnedAt || 0,
+            subtaskPartial: false,
             createdAt: thought.createdAt,
             updatedAt: thought.updatedAt
         })),
@@ -150,6 +151,46 @@ async function run() {
 
     const queryFallback = await storage.listThoughtsPage({ query: 'needle', limit: 5, sort: 'timeline' });
     assert.strictEqual(queryFallback, null, 'full-text queries should preserve the complete-read fallback for exact results');
+
+    // An index without searchText (pre-search layout) must fall back to a
+    // full read so results stay complete instead of silently truncated.
+    const legacySearch = await storage.searchThoughtsLight({ query: 'needle', limit: 8 });
+    assert.strictEqual(legacySearch.length, 1, 'legacy indexes should fall back to a complete read for search');
+    assert.strictEqual(legacySearch[0].id, 'thought-39', 'the fallback search should match Thought text');
+
+    // A current index filters on the stored corpus and reads only the
+    // matched Thought objects.
+    objects.set('indexes/thoughts-index.json', JSON.stringify({
+        items: thoughts.map(thought => ({
+            id: thought.id,
+            type: 'thought',
+            textPreview: thought.text.slice(0, 300),
+            searchText: [thought.text, (thought.subItems || []).map(s => s.text).join('\n'), thought.tags.join('\n')]
+                .filter(Boolean)
+                .join('\n')
+                .toLowerCase(),
+            tags: thought.tags,
+            completed: thought.completed,
+            pinned: thought.pinned,
+            pinnedAt: thought.pinnedAt || 0,
+            subtaskPartial: false,
+            createdAt: thought.createdAt,
+            updatedAt: thought.updatedAt
+        })),
+        updatedAt: Date.now()
+    }));
+    const getsBeforeSearch = count('GetObjectCommand');
+    const indexSearch = await storage.searchThoughtsLight({ query: 'NEEDLE', limit: 8 });
+    assert.strictEqual(indexSearch.length, 1, 'index-backed search should match case-insensitively');
+    assert.strictEqual(indexSearch[0].id, 'thought-39', 'index-backed search should return the matched Thought');
+    assert.strictEqual(indexSearch[0].text, 'needle last thought', 'index-backed search results should carry the full text');
+    assert.strictEqual(
+        count('GetObjectCommand') - getsBeforeSearch,
+        2,
+        'index-backed search should read the index plus only the matched Thought objects'
+    );
+    const subtaskSearch = await storage.searchThoughtsLight({ query: 'subtask 7', limit: 8 });
+    assert(subtaskSearch.some(item => item.id === 'thought-07'), 'index-backed search should match subtask text');
 
     console.log('Thought storage pagination checks passed');
 }

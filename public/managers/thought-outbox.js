@@ -259,6 +259,11 @@ export default class ThoughtOutbox {
         let changed = false;
         const created = [];
         const conflicts = [];
+        // A patch/relation/delete that answers 404 means the Thought no longer
+        // exists remotely (deleted on another device, or a pending temp id that
+        // never made it to the server). Retrying it can never succeed, so the
+        // item is dropped here and the caller removes the stale local copy.
+        const dropped404 = [];
 
         for (const item of items) {
             if (item.state === 'conflict') {
@@ -287,6 +292,11 @@ export default class ThoughtOutbox {
                     conflicts.push(conflict);
                     continue;
                 }
+                if (Number(err?.status) === 404 && item.kind !== 'create') {
+                    changed = true;
+                    dropped404.push(item);
+                    continue;
+                }
                 failedUpdates.set(item.id, {
                     ...item,
                     attempts: Number(item.attempts || 0) + 1,
@@ -300,10 +310,11 @@ export default class ThoughtOutbox {
         // drop the succeeded ones, and update the failed ones in place —
         // otherwise this.save(remaining) would overwrite storage and silently
         // delete anything queued while retry was running.
+        const droppedIds = new Set(dropped404.map(item => item.id));
         const latest = this.load();
         const remaining = [];
         for (const item of latest) {
-            if (succeededIds.has(item.id)) continue;
+            if (succeededIds.has(item.id) || droppedIds.has(item.id)) continue;
             if (failedUpdates.has(item.id)) {
                 const failed = failedUpdates.get(item.id);
                 // Dead-letter: give up on permanently failing items (>10 attempts)
@@ -318,6 +329,6 @@ export default class ThoughtOutbox {
             }
         }
         this.save(remaining);
-        return { changed, remaining, created, conflicts };
+        return { changed, remaining, created, conflicts, dropped404 };
     }
 }

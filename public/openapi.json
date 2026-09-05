@@ -194,6 +194,16 @@
     "/api/thoughts/ai-queue/status": {
       "get": { "summary": "Read background Thought AI queue status", "responses": { "200": { "description": "Queue status" } } }
     },
+    "/api/thoughts/search": {
+      "get": {
+        "summary": "Lightweight index-backed Thought keyword search for UI quick-pickers",
+        "parameters": [
+          { "name": "q", "in": "query", "required": true, "schema": { "type": "string" } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 20, "default": 8 } }
+        ],
+        "responses": { "200": { "description": "Matched Thought summaries (id, text, subItems, tags, completed, pinned, createdAt, updatedAt)" } }
+      }
+    },
     "/api/agent/capability": {
       "get": { "summary": "Read interactive AI Agent capability", "responses": { "200": { "description": "Enabled/configured capability without provider secrets" } } }
     },

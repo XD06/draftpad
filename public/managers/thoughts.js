@@ -115,6 +115,9 @@ export class ThoughtsManager {
         this._hasMoreThoughts = false;
         this._isLoadingThoughtPage = false;
         this._thoughtPageFilterKey = '';
+        // Serializes server mutations per Thought so overlapping user actions
+        // (rapid subtask adds/toggles) never send a stale baseVersion.
+        this._thoughtMutationQueues = new Map();
         this.thoughtAgentController = app.thoughtAgentController || new ThoughtAgentController({
             apiClient: this.agentApi,
             onStateChange: (thoughtId, state) => this.handleThoughtAgentStateChange(thoughtId, state)
@@ -537,6 +540,42 @@ export class ThoughtsManager {
         return this.handleOutboxResult(result);
     }
 
+    // Run a server mutation for one Thought through a per-Thought queue so
+    // overlapping user actions (rapid subtask adds/toggles/edits) apply in
+    // order, each reading the version written by the previous one. On a 409
+    // the mutation is rebased onto the current remote version and retried
+    // once: subtask actions are intent-preserving on the server, so this
+    // keeps the user's edit alive instead of raising the conflict dialog.
+    async mutateThought(thought, send, { rebase = true } = {}) {
+        if (!thought?.id || typeof send !== 'function') return null;
+        const previous = this._thoughtMutationQueues.get(thought.id) || Promise.resolve();
+        const task = previous.catch(() => {}).then(async () => {
+            for (let attempt = 0; attempt < 2; attempt += 1) {
+                try {
+                    const data = await send();
+                    this.applySavedThought(thought, data);
+                    return data;
+                } catch (err) {
+                    if (rebase && Number(err?.status) === 409 && attempt === 0) {
+                        const remote = await this.apiClient.get(thought.id).catch(() => null);
+                        if (!remote) throw err;
+                        thought.version = remote.version;
+                        continue;
+                    }
+                    throw err;
+                }
+            }
+        });
+        this._thoughtMutationQueues.set(thought.id, task);
+        try {
+            return await task;
+        } finally {
+            if (this._thoughtMutationQueues.get(thought.id) === task) {
+                this._thoughtMutationQueues.delete(thought.id);
+            }
+        }
+    }
+
     async refreshThoughtConflict(thoughtId, error = null) {
         const localThought = this.thoughts.find(thought => thought.id === thoughtId);
         if (localThought) {
@@ -647,6 +686,14 @@ export class ThoughtsManager {
                     created.data
                 );
             }
+            // A 404 during replay means the remote Thought is gone; the local
+            // copy (including pending temp ids) must not linger in the list or
+            // the sync badge would stay on "待同步" forever.
+            if (result.dropped404?.length) {
+                const droppedIds = new Set(result.dropped404.map(item => item.thoughtId));
+                this.thoughts = this.thoughts.filter(thought => !droppedIds.has(thought.id));
+                this.syncTagsFromThoughts(this.thoughts);
+            }
             await Promise.all(result.conflicts.map(item => this.refreshThoughtConflict(item.thoughtId, {
                 body: item.conflict,
                 message: item.lastError
@@ -655,6 +702,9 @@ export class ThoughtsManager {
             this.thoughtSyncState = result.remaining.length ? (result.conflicts.length ? 'conflict' : 'pending') : 'synced';
             if (result.changed) await this.fetchThoughts();
             if (!silent) {
+                if (result.dropped404?.length) {
+                    this.app.toaster?.show('已清理失效的待同步记录（对应 Thought 已在云端删除）', 'info', false, 2800);
+                }
                 this.app.toaster?.show(
                     result.remaining.length === 0 ? '待同步 Thought 已全部提交' : result.conflicts.length ? `有 ${result.conflicts.length} 条 Thought 需要合并` : `仍有 ${result.remaining.length} 条 Thought 待同步`,
                     result.remaining.length === 0 ? 'success' : 'warning',
@@ -1205,6 +1255,32 @@ export class ThoughtsManager {
 
     scheduleRender() {
         if (this._renderScheduled) return;
+        // A full re-render destroys the focused field (manual relation
+        // search, inline subtask edit) and collapses the mobile keyboard
+        // mid-typing. While an editable element inside the timeline holds
+        // focus, defer the render; the capture-phase blur listener flushes
+        // it, and every later scheduleRender call re-checks focus so a
+        // removed field can never wedge rendering.
+        const holdsFocus = (element) => {
+            if (!element) return false;
+            const editable = element.tagName === 'INPUT'
+                || element.tagName === 'TEXTAREA'
+                || element.isContentEditable === true;
+            return editable && this.timeline?.contains(element);
+        };
+        if (holdsFocus(document.activeElement)) {
+            if (!this._focusHoldFlushBound) {
+                this._focusHoldFlushBound = true;
+                const flushWhenFocusFree = () => {
+                    if (holdsFocus(document.activeElement)) return;
+                    document.removeEventListener('blur', flushWhenFocusFree, true);
+                    this._focusHoldFlushBound = false;
+                    this.scheduleRender();
+                };
+                document.addEventListener('blur', flushWhenFocusFree, true);
+            }
+            return;
+        }
         this._renderScheduled = true;
         requestAnimationFrame(() => {
             this._renderScheduled = false;
@@ -2146,8 +2222,7 @@ export class ThoughtsManager {
         this.render();
         try {
             this.beginThoughtSync();
-            const data = await this.apiClient.updateSubitem(thought.id, subId, nextText, thought.version);
-            this.applySavedThought(thought, data);
+            await this.mutateThought(thought, () => this.apiClient.updateSubitem(thought.id, subId, nextText, thought.version));
             this.render();
         } catch (err) {
             console.error('Failed to style subtask text:', err);
@@ -2278,8 +2353,7 @@ export class ThoughtsManager {
             this.render();
             try {
                 this.beginThoughtSync();
-                const data = await this.apiClient.updateSubitem(thought.id, marker.subId, nextText, thought.version);
-                this.applySavedThought(thought, data);
+                await this.mutateThought(thought, () => this.apiClient.updateSubitem(thought.id, marker.subId, nextText, thought.version));
                 this.render();
             } catch (err) {
                 console.error('Failed to update thought time marker:', err);
@@ -2959,9 +3033,10 @@ export class ThoughtsManager {
         }
 
         try {
-            const thoughts = await this.apiClient.list({ query: q, limit: 8, light: true });
+            const page = await this.apiClient.searchTargets(q, 8);
             if (searchSeq !== this.manualRelationSearchSeq) return;
             if (!panel.isConnected || !resultsEl.isConnected) return;
+            const thoughts = Array.isArray(page?.items) ? page.items : [];
             const linkedIds = new Set(
                 Array.from(panel.querySelectorAll('.thought-relation-item'))
                     .map(item => item.dataset.relationTarget)
@@ -3207,6 +3282,18 @@ export class ThoughtsManager {
                 row.querySelector('.subtask-edit-input').oninput = (e) => {
                     subtasks[i].text = e.target.value;
                 };
+                // Enter starts the next subtask instead of ending the flow.
+                row.querySelector('.subtask-edit-input').onkeydown = (e) => {
+                    if (e.key !== 'Enter' || e.isComposing) return;
+                    e.preventDefault();
+                    if (!subtasks[i].text.trim()) return;
+                    subtasks.splice(i + 1, 0, { id: 'new_' + Date.now(), text: '', completed: false });
+                    renderSubtaskEditor();
+                    setTimeout(() => {
+                        const inputs = panel.querySelectorAll('.subtask-edit-input');
+                        if (inputs[i + 1]) inputs[i + 1].focus();
+                    }, 50);
+                };
                 row.querySelector('.subtask-delete-btn').onclick = () => {
                     subtasks.splice(i, 1);
                     renderSubtaskEditor();
@@ -3408,7 +3495,7 @@ export class ThoughtsManager {
             }
         };
 
-        const commit = async () => {
+        const commit = async ({ chainNext = false } = {}) => {
             if (committed) return;
             committed = true;
             const text = input.value.trim();
@@ -3417,9 +3504,14 @@ export class ThoughtsManager {
             this.render();
             try {
                 this.beginThoughtSync();
-                const updated = await this.apiClient.addSubitem(thought.id, text, thought.version);
-                this.applySavedThought(thought, updated);
+                await this.mutateThought(thought, () => this.apiClient.addSubitem(thought.id, text, thought.version));
                 this.render();
+                // Enter keeps the flow going: reopen a fresh inline input on
+                // the re-rendered card instead of ending after one subtask.
+                if (chainNext) {
+                    const nextCard = this.timeline?.querySelector(`.thought-card[data-id="${CSS.escape(thought.id)}"]`);
+                    if (nextCard) this.quickAddSubtask(nextCard, thought);
+                }
             } catch (err) {
                 console.error('Failed to add subtask:', err);
                 this.enqueueThoughtOverwrite(thought, err);
@@ -3429,7 +3521,7 @@ export class ThoughtsManager {
 
         input.addEventListener('keydown', (e) => {
             if (handleTimeCommandKeydown(e)) return;
-            if (e.key === 'Enter') { e.preventDefault(); commit(); }
+            if (e.key === 'Enter') { e.preventDefault(); commit({ chainNext: true }); }
             else if (e.key === 'Escape') { cleanup(); }
         });
         input.addEventListener('blur', () => {
@@ -3511,13 +3603,11 @@ export class ThoughtsManager {
             if (edit.action === 'delete') {
                 this.render();
                 this.beginThoughtSync();
-                const data = await this.apiClient.deleteSubitem(thought.id, subId, thought.version);
-                this.applySavedThought(thought, data);
+                await this.mutateThought(thought, () => this.apiClient.deleteSubitem(thought.id, subId, thought.version), { rebase: false });
             } else {
                 this.render();
                 this.beginThoughtSync();
-                const data = await this.apiClient.updateSubitem(thought.id, subId, edit.text, thought.version);
-                this.applySavedThought(thought, data);
+                await this.mutateThought(thought, () => this.apiClient.updateSubitem(thought.id, subId, edit.text, thought.version));
             }
             this.render();
         } catch (err) {
@@ -3538,8 +3628,7 @@ export class ThoughtsManager {
             this.render();
             try {
                 this.beginThoughtSync();
-                const data = await this.apiClient.overwrite(id, thought);
-                this.applySavedThought(thought, data);
+                await this.mutateThought(thought, () => this.apiClient.overwrite(id, thought), { rebase: false });
                 this.render();
             } catch (err) {
                 console.error('Failed to toggle legacy subtask:', err);
@@ -3555,8 +3644,7 @@ export class ThoughtsManager {
 
         try {
             this.beginThoughtSync();
-            const data = await this.apiClient.toggleSubitem(id, subId, thought.version);
-            this.applySavedThought(thought, data);
+            await this.mutateThought(thought, () => this.apiClient.toggleSubitem(id, subId, thought.version));
             this.render();
         } catch (err) {
             console.error('Failed to toggle subtask:', err);

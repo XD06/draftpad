@@ -702,7 +702,7 @@ Thought 是一个**主任务 + 子任务（最多二层）**的待办结构。
 | `light` | `1` / `true` | 轻量列表模式，只返回基础 Thought 字段，不读取 AI meta 和 relation count。用于手动关联搜索等高频输入场景。 |
 | `format` | `page` | 可选游标分页模式；省略时继续返回兼容的 `Thought[]` 数组。 |
 | `cursor` | string | `format=page` 返回的下一页游标。 |
-| `sort` | `timeline` | 可选。仅在 `format=page` 下使用，按页面时间线顺序（置顶、未完成、已完成、创建时间）返回，并配套返回专用游标；省略时维持按最近更新排序，适合同步程序。 |
+| `sort` | `timeline` | 可选。仅在 `format=page` 下使用，按页面时间线顺序（置顶、未完成、子任务部分完成、创建时间）返回，并配套返回专用游标；省略时维持按最近更新排序，适合同步程序。 |
 | `updatedSince` | number | 仅返回 `updatedAt` 大于该 Unix 毫秒时间戳的 Thought。 |
 
 **响应：** `Thought[]`
@@ -742,6 +742,25 @@ curl "http://localhost:3000/api/thoughts?q=车&date=2026-05-17"
   "nextCursor": "eyJ1cGRhdGVkQXQiOjE3Nzg5NjY2Njg0MzAsImlkIjoiMTc3ODk2NjY2ODQzMCJ9",
   "hasMore": true
 }
+```
+
+---
+
+### GET /api/thoughts/search
+
+轻量 Thought 关键词搜索，服务端基于 `indexes/thoughts-index.json`（单个索引文件，含全文检索语料）过滤，只为命中的条目读取完整对象；S3 后端下避免全量读取。供手动关联搜索等 UI 快速选择器使用。索引缺少检索字段时自动回退全量读取，保证结果完整。
+
+**Query 参数：**
+
+| 参数 | 类型 | 说明 |
+|---|---|---|
+| `q` | string | 搜索关键词（匹配主任务 + 子任务 + 标签，大小写不敏感）；必填，空串返回空列表 |
+| `limit` | number | 返回上限，默认 8，最大 20 |
+
+**响应：** `{ "items": [{ "id", "text", "subItems", "tags", "completed", "pinned", "createdAt", "updatedAt" }] }`
+
+```bash
+curl "http://localhost:3000/api/thoughts/search?q=%E5%A4%87%E4%BB%BD&limit=8"
 ```
 
 ---

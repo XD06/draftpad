@@ -27,6 +27,15 @@ export function filterThoughts(thoughts, { query = '', status = 'all', activeTag
     return filtered;
 }
 
+// A Thought with several subtasks where part (but not all) are done is
+// actively being worked through — surface it above idle Thoughts.
+export function hasPartialSubtaskProgress(thought) {
+    const items = Array.isArray(thought?.subItems) ? thought.subItems : [];
+    if (items.length < 2) return false;
+    const done = items.filter(item => item?.completed === true).length;
+    return done > 0 && done < items.length;
+}
+
 export function sortThoughts(thoughts) {
     return [...thoughts].sort((a, b) => {
         const aPinned = a.pinned === true;
@@ -39,6 +48,11 @@ export function sortThoughts(thoughts) {
         }
         if (a.completed !== b.completed) {
             return a.completed ? 1 : -1;
+        }
+        const aPartial = hasPartialSubtaskProgress(a);
+        const bPartial = hasPartialSubtaskProgress(b);
+        if (aPartial !== bPartial) {
+            return aPartial ? -1 : 1;
         }
         return Number(b.createdAt || 0) - Number(a.createdAt || 0)
             || String(b.id || '').localeCompare(String(a.id || ''));

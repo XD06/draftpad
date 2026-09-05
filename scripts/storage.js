@@ -257,15 +257,39 @@ function prepareAgentRunForStorage(run) {
         : assertValidAgentRun(candidate);
 }
 
+// Timeline surfaces Thoughts being actively worked through (some subtasks
+// done, some pending) above idle ones. Must stay in sync with the comparator
+// in routes/thought-routes.js.
+function thoughtSubtaskPartial(thought) {
+    const items = Array.isArray(thought?.subItems) ? thought.subItems : [];
+    if (items.length < 2) return false;
+    const done = items.filter(item => item?.completed === true).length;
+    return done > 0 && done < items.length;
+}
+
 function thoughtIndexEntryFrom(thought) {
+    const subText = (Array.isArray(thought.subItems) ? thought.subItems : [])
+        .map(item => String(item?.text || ''))
+        .join('\n');
+    const tagText = (Array.isArray(thought.tags) ? thought.tags : [])
+        .map(tag => String(tag || ''))
+        .join('\n');
     return {
         id: thought.id,
         type: 'thought',
         textPreview: String(thought.text || '').slice(0, 300),
+        // Full search corpus (text + subtasks + tags, lowercased) so keyword
+        // search can filter on the index alone instead of reading every
+        // Thought object (S3: one GET per Thought).
+        searchText: [String(thought.text || ''), subText, tagText]
+            .filter(Boolean)
+            .join('\n')
+            .toLowerCase(),
         tags: Array.isArray(thought.tags) ? thought.tags : [],
         completed: !!thought.completed,
         pinned: thought.pinned === true,
         pinnedAt: Number(thought.pinnedAt || 0),
+        subtaskPartial: thoughtSubtaskPartial(thought),
         createdAt: thought.createdAt || 0,
         updatedAt: thought.updatedAt || 0
     };
@@ -290,6 +314,9 @@ function compareThoughtPageEntries(left, right, sort = 'updated') {
         if ((left.completed === true) !== (right.completed === true)) {
             return left.completed === true ? 1 : -1;
         }
+        const leftPartial = left.subtaskPartial === true;
+        const rightPartial = right.subtaskPartial === true;
+        if (leftPartial !== rightPartial) return leftPartial ? -1 : 1;
         return Number(right.createdAt || 0) - Number(left.createdAt || 0)
             || String(right.id).localeCompare(String(left.id));
     }
@@ -308,6 +335,7 @@ function hasUsableThoughtPageIndex(index, sort = 'updated') {
             typeof item.pinned === 'boolean'
             && Number.isFinite(Number(item.pinnedAt || 0))
             && typeof item.completed === 'boolean'
+            && typeof item.subtaskPartial === 'boolean'
         ))
     ));
 }
@@ -710,6 +738,60 @@ async function listThoughtsPage({
     }
 
     return { items, hasMore, usedIndex: true };
+}
+
+// Lightweight keyword search for UI quick-pickers (e.g. manual relation
+// search). Filters on the thoughts index (one small JSON read, even on S3)
+// and only fetches the matched objects. An index without `searchText`
+// (written before the field existed) falls back to a full read: a search
+// must never silently return incomplete results.
+async function searchThoughtsLight({ query = '', limit = 8 } = {}) {
+    await init();
+    const q = String(query || '').trim().toLowerCase();
+    if (!q) return [];
+    const cappedLimit = Math.max(1, Math.min(Number(limit) || 8, 20));
+
+    const matchFull = (thought) => {
+        if (String(thought?.text || '').toLowerCase().includes(q)) return true;
+        if ((thought?.subItems || []).some(item => String(item?.text || '').toLowerCase().includes(q))) return true;
+        if ((thought?.tags || []).some(tag => String(tag || '').toLowerCase().includes(q))) return true;
+        return false;
+    };
+    const toLight = thought => ({
+        id: thought.id,
+        text: thought.text || '',
+        subItems: Array.isArray(thought.subItems) ? thought.subItems : [],
+        tags: Array.isArray(thought.tags) ? thought.tags : [],
+        completed: thought.completed === true,
+        pinned: thought.pinned === true,
+        createdAt: thought.createdAt || 0,
+        updatedAt: thought.updatedAt || thought.createdAt || 0
+    });
+
+    const index = await readIndex('thoughts-index');
+    const searchUsable = Array.isArray(index?.items) && index.items.every(item => (
+        item
+        && typeof item.id === 'string'
+        && typeof item.searchText === 'string'
+        && Number.isFinite(Number(item.updatedAt || item.createdAt || 0))
+    ));
+    if (!searchUsable) {
+        const thoughts = await readThoughts();
+        return thoughts.filter(matchFull)
+            .sort((left, right) => Number(right.updatedAt || right.createdAt || 0) - Number(left.updatedAt || left.createdAt || 0))
+            .slice(0, cappedLimit)
+            .map(toLight);
+    }
+
+    const matched = index.items
+        .filter(item => item.searchText.includes(q))
+        .sort((left, right) => Number(right.updatedAt || right.createdAt || 0) - Number(left.updatedAt || left.createdAt || 0))
+        .slice(0, cappedLimit);
+    const items = await Promise.all(matched.map(entry => readThought(entry.id)));
+    return items
+        .filter(item => item?.id)
+        .filter(matchFull)
+        .map(toLight);
 }
 
 async function writeThought(thought) {
@@ -1579,6 +1661,7 @@ module.exports = {
     saveTodayDrafts,
     readThought,
     listThoughtsPage,
+    searchThoughtsLight,
     writeThought,
     deleteThought,
     readAgentRun,
