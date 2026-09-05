@@ -103,6 +103,16 @@ Thought 页面使用 `GET /api/thoughts?format=page&light=1&limit=30&sort=timeli
 
 `ThoughtsManager` 将“已从服务端取到的条数”和“已插入 DOM 的卡片数”分开管理：前者由游标追加，后者仍按 30 张批量插入。完成和置顶不调用 `render()` 清空时间线，而是仅重建被操作卡片，并在当前可见批次内移动、补入或移除卡片。筛选条件改变时重置游标重新请求，避免只对已加载的局部数据筛选造成漏项。
 
+### 多端 Thought 同步的渲染边界
+
+服务端对 Thought 的 create/update/delete 都会广播 `thoughts_update`；客户端 `handleSocketUpdate()` 先更新内存模型，再交给 `renderSocketDelta()` 决定渲染路径：没有 timeline 输入持有焦点时走常规 `scheduleRender()`；有焦点且焦点在被更新卡片之外时，用 `patchRenderedThought()` 只重建受影响卡片（新建/删除则原位补入或移除），远端变化立即可见；焦点在被更新卡片内部时保持焦点优先，推迟到失焦 flush（此时用户正在该卡上输入，模型已是最新）。`scheduleRender()` 的焦点保持逻辑只应影响“正在编辑的那张卡”，不允许吞掉其他卡的实时更新。
+
+WS 回声应用时对 `this.thoughts` 中的对象做原位 `Object.assign` 合并而不是替换数组槽位：`mutateThought()` 的排队闭包持有同一对象并在轮到时读取 `version`，整体替换会让后续排队请求带旧 `baseVersion` 而撞上自己的回声 409。
+
+inline 子任务新增走“同一输入框链式”流：回车提交后清空输入值、原位插入一条不可交互的预览行（服务端会在落库时重新分配子任务 id，预览行不绑事件避免操作到过期本地 id），输入框保持聚焦，移动端键盘在连续添加期间不收起；失焦或 Escape 后 cleanup 并调度一次完整 render，用服务端 id 的完整绑定行替换预览行。回车带 `isComposing` 守卫，中文输入法确认拼音的回车不会误提交。
+
+多设备同步的浏览器回归：`npm run test:thought-sync-browser`（不在 `npm test` 中，需要本机 Chrome 与可导入的 playwright，环境要求同 `test:editor-input-browser`），覆盖双端互加子任务的实时与刷新可见性、新建 Thought 实时同步、焦点输入期间跨卡片远端更新立即渲染，以及服务端数据与双端 outbox 清空断言。
+
 ### 手动关联搜索
 
 Thought 关联面板里的“搜索并手动链接 Thought”使用 `/api/thoughts?q=...&limit=8&light=1`。该轻量模式只返回候选 Thought 的基础字段，不读取每条候选的 AI meta 和 relation count，避免 S3 场景下输入每个字都触发多次远程对象读取。

@@ -17,10 +17,42 @@ function run() {
             /quickAddSubtask\(card, thought\) \{[\s\S]{0,400}?can-expand[\s\S]{0,300}?setThoughtCardExpanded\(card, thought\.id, true, \{ collapseOthers: true \}\)/.test(thoughtsSource),
         'quick add should expand a collapsed card before inserting the inline input'
     );
+    // Enter chains on the SAME input: commit must clear the value and keep
+    // the field focused instead of rebuilding the card (a full render here
+    // dropped focus and collapsed the mobile keyboard after every Enter).
+    // The committed row appears as a non-interactive preview until the
+    // blur-scheduled render replaces it with a fully bound row.
+    const quickAddBody = thoughtsSource.slice(
+        thoughtsSource.indexOf('async quickAddSubtask(card, thought) {'),
+        thoughtsSource.indexOf('ensureSubtaskList(card) {')
+    );
     assert(
-        thoughtsSource.includes('if (chainNext) {') &&
-            thoughtsSource.includes('this.quickAddSubtask(nextCard, thought)'),
-        'Enter must keep chaining the next inline subtask input'
+        quickAddBody.includes('input.value = \'\';') &&
+            quickAddBody.includes('insertPreviewRow(subItem);') &&
+            !quickAddBody.includes('this.render();\n            try {') &&
+            quickAddBody.includes('this.reorderTimelineInPlace();'),
+        'subtask commit must chain on the same focused input without a full card rebuild'
+    );
+    assert(
+        quickAddBody.includes('if (e.isComposing) return;'),
+        'the inline add input must not commit while an IME composition is active'
+    );
+
+    // Live WebSocket updates must not wait for the focus-hold flush: while a
+    // timeline input is focused, updates to OTHER cards rebuild just that
+    // card in place; same-card updates defer to the blur flush.
+    const socketDeltaBody = thoughtsSource.slice(
+        thoughtsSource.indexOf('renderSocketDelta(changedThoughtId) {'),
+        thoughtsSource.indexOf('renderSocketDelta(changedThoughtId) {') + 1400
+    );
+    assert(
+        socketDeltaBody.includes('this.patchRenderedThought(changedThoughtId || undefined);') &&
+            socketDeltaBody.includes('card?.contains(active)'),
+        'socket updates should rebuild only the affected card and defer same-card updates to blur'
+    );
+    assert(
+        thoughtsSource.includes('this.renderSocketDelta(action === \'update\' ? payload?.id : null);'),
+        'handleSocketUpdate must route rendering through renderSocketDelta'
     );
 
     // Toggling a subtask refreshes only the affected card in place; a full

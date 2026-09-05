@@ -44,6 +44,7 @@
     "test:hybrid-editor-time-command": "node test/test_hybrid_editor_time_command.js",
     "test:hybrid-editor-caret-stability": "node test/test_hybrid_editor_caret_stability.js",
     "test:editor-input-browser": "node test/browser/editor-input.js",
+    "test:thought-sync-browser": "node test/browser/thought-sync.js",
     "test:source-mode-roundtrip": "node test/test_source_mode_roundtrip.js",
     "test:editor-noop-save-guard": "node test/test_editor_noop_save_guard.js",
     "test:scroll-helper": "node test/test_scroll_helper_regression.js",
