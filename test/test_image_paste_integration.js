@@ -174,11 +174,12 @@ handleVditorInput.call({
 });
 assert.strictEqual(vditorInputState.handled, 0, 'the delayed Vditor callback created by a block move should be skipped exactly once');
 
-const regularVditorInputState = { handled: 0 };
+const regularVditorInputState = { handled: 0, junkNormalized: 0 };
 const regularVditorInputContext = {
     skipNextVditorInput: false,
     preferLastValueUntilInput: true,
     scheduleMissingCodeBlockDecoration() {},
+    normalizeInvisibleListJunk: () => { regularVditorInputState.junkNormalized += 1; },
     isDecorating: false,
     suppressInput: false,
     isComposing: false,
@@ -187,6 +188,7 @@ const regularVditorInputContext = {
 };
 handleVditorInput.call(regularVditorInputContext);
 assert.strictEqual(regularVditorInputState.handled, 1, 'the next real Vditor input should continue through the normal save path');
+assert.strictEqual(regularVditorInputState.junkNormalized, 1, 'every real Vditor input should normalize invisible list junk so list exit stays reliable');
 assert.strictEqual(regularVditorInputContext.preferLastValueUntilInput, false, 'a real edit should release the exact-value pin before normal serialization resumes');
 assert(
     renderAfterMutationBlock?.[0].includes('this.decorateArticleImages({ decorateCode: false });') &&

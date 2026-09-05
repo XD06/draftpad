@@ -44,6 +44,28 @@ const MARK_PROTECTED_SELECTOR = [
     '.md-time-marker'
 ].join(',');
 
+// IME 提交稳定器的归一化集合：装饰元素的已渲染文本（快照侧跳过）与它们
+// 的裸 markdown 源码（重建后出现，回放侧剥除）两侧都不计入长度与指纹。
+const DECORATED_TEXT_SELECTOR = '.md-time-marker, mark.md-mark, .has-annotation, [data-draw], [data-note]';
+const RAW_SOURCE_PATTERNS = [
+    /\[\[time:[^\]]*\]\]/g,
+    /==[^=\n]+==/g,
+    /<span data-draw[^>]*>[\s\S]*?<\/span>/g,
+    /<span data-note[^>]*>[\s\S]*?<\/span>(?:<sub[^>]*>[\s\S]*?<\/sub>)?/g
+];
+
+function compositionBlockFingerprint(block) {
+    let out = '';
+    const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT);
+    let node;
+    while ((node = walker.nextNode())) {
+        if (node.parentElement?.closest(DECORATED_TEXT_SELECTOR)) continue;
+        out += (node.nodeValue || '').replace(/[\u200B\uFEFF]/g, '');
+    }
+    for (const pattern of RAW_SOURCE_PATTERNS) out = out.replace(pattern, '');
+    return `${block.tagName}:${out.length}:${out.slice(0, 16)}`;
+}
+
 // Vditor renders `language-mermaid` during every WYSIWYG setValue/input pass.
 // Keep Mermaid source intact while using a private display-only language so a
 // malformed or expensive diagram cannot block the editor itself.
@@ -98,8 +120,8 @@ export class HybridMarkdownEditor {
         this.articleDecorationTimers = new Set();
         this.markDecorationTimers = new Set();
         this.codeDecorationFrame = 0;
-        // Phase C caret-stability (feature flagged, default OFF — see
-        // isCaretStabilityEnabled).  When enabled, typing never rebuilds the
+        // Phase C caret-stability (feature flagged, ships ON — see
+        // isCaretStabilityEnabled).  While enabled, typing never rebuilds the
         // block that currently holds the caret; decoration for that block is
         // deferred until the caret leaves it.
         this.caretStabilityOverride = null;
@@ -197,6 +219,7 @@ export class HybridMarkdownEditor {
         this.setupSelectionMenu();
         this.bindReadingModeGuard();
         this.bindArticleFileInteractions();
+        this.bindArticleLinkInteractions();
         this.bindMermaidPasteNormalization();
         this.bindArticleImageInteractions();
         this.bindArticleUploadInteractions();
@@ -335,6 +358,7 @@ export class HybridMarkdownEditor {
         }
         this.scheduleMissingCodeBlockDecoration();
         this.preferLastValueUntilInput = false;
+        this.normalizeInvisibleListJunk();
         if (this.isDecorating || this.suppressInput || this.isComposing) return;
         if (this.handlePendingCodeFenceInput()) return;
         this.handleWysiwygInput();
@@ -352,6 +376,47 @@ export class HybridMarkdownEditor {
                 )
             );
             if (missing.size) this.decorateCodeBlockLineNumbers(root, missing);
+        });
+    }
+
+    // Enter after a decorated element (time marker, annotation guard) splits
+    // the list item and carries invisible leftovers into the new one —
+    // zero-width guard characters, empty text nodes, the structural space
+    // after a task checkbox. Vditor therefore sees the fresh item as
+    // non-empty: pressing Enter keeps spawning items instead of exiting the
+    // list, and Backspace first deletes invisible characters. Strip the
+    // junk so the item behaves like a real empty one.
+    normalizeInvisibleListJunk() {
+        if (this.sourceMode || this.isReadingMode || this.isComposing) return;
+        const root = this.container.querySelector('.vditor-wysiwyg .vditor-reset');
+        if (!root) return;
+        const selection = window.getSelection();
+        const caretNode = selection && selection.rangeCount > 0 ? selection.getRangeAt(0).startContainer : null;
+        root.querySelectorAll('li').forEach(li => {
+            if (String(li.textContent || '').replace(/[\u200B\uFEFF]/g, '').trim() !== '') return;
+            let caretWasInside = false;
+            Array.from(li.childNodes).forEach(node => {
+                if (node.nodeType !== Node.TEXT_NODE) return;
+                if (node === caretNode || node.contains(caretNode)) caretWasInside = true;
+                const cleaned = String(node.nodeValue || '').replace(/[\u200B\uFEFF]/g, '');
+                if (cleaned.trim() === '') node.remove();
+                else node.nodeValue = cleaned;
+            });
+            if (caretWasInside || !li.childNodes.length) {
+                const caretHolder = document.createTextNode('');
+                li.appendChild(caretHolder);
+                if (caretWasInside) {
+                    try {
+                        const range = document.createRange();
+                        range.setStart(caretHolder, 0);
+                        range.collapse(true);
+                        selection.removeAllRanges();
+                        selection.addRange(range);
+                    } catch (_error) {
+                        // Caret restore is best-effort; the junk is gone either way.
+                    }
+                }
+            }
         });
     }
 
@@ -986,10 +1051,16 @@ export class HybridMarkdownEditor {
 
     scrollRenderedElementIntoView(target) {
         if (!target) return;
-        const scroller = this.container.querySelector('.vditor-wysiwyg') || this.container;
-        const scrollerRect = scroller.getBoundingClientRect();
+        // Desktop scrolls inside `.vditor-wysiwyg`; mobile (ios-theme) scrolls
+        // the page and the wysiwyg element never overflows. Use whichever
+        // element actually carries the scroll, and treat the viewport top as
+        // 0 for the page scroller (its rect spans the whole document).
+        const scroller = this.getScrollContainer();
+        const isPageScroll = scroller === document.scrollingElement
+            || scroller === document.documentElement;
+        const viewTop = isPageScroll ? 0 : scroller.getBoundingClientRect().top;
         const targetRect = target.getBoundingClientRect();
-        const nextTop = scroller.scrollTop + targetRect.top - scrollerRect.top - Math.max(24, scroller.clientHeight * 0.18);
+        const nextTop = scroller.scrollTop + targetRect.top - viewTop - Math.max(24, scroller.clientHeight * 0.18);
         scroller.scrollTo({ top: Math.max(0, nextTop), behavior: 'smooth' });
         target.classList.add('is-jump-target');
         setTimeout(() => target.classList.remove('is-jump-target'), 1600);
@@ -1206,10 +1277,16 @@ export class HybridMarkdownEditor {
             cancelAnimationFrame(this.compositionEndFrame);
             // This listener runs during capture, before Vditor's own
             // compositionend handler commits the candidate text and rebuilds
-            // affected nodes. Keep decorations locked through that work.
-            this.compositionEndFrame = requestAnimationFrame(() => {
+            // the affected block (stripping rendered markers to raw source and
+            // re-anchoring the caret — sometimes to a neighbouring list item).
+            // Snapshot the caret NOW, then stabilize in a microtask: after all
+            // synchronous handlers (incl. Vditor's rebuild) but before paint,
+            // so the raw source is never rendered and the caret never jumps.
+            const snapshot = this.snapshotCompositionCaret();
+            queueMicrotask(() => {
                 this.compositionEndFrame = 0;
                 this.isComposing = false;
+                this.stabilizeCompositionCommit(snapshot);
                 if (this.sourceMode && event.target === this.sourceTextarea) {
                     this.emitSourceInput();
                     return;
@@ -1217,6 +1294,155 @@ export class HybridMarkdownEditor {
                 this.handleWysiwygInput();
             });
         }, true);
+    }
+
+    // Capture-phase caret snapshot for the IME commit stabilizer: which BLOCK
+    // (li / p / heading…) holds the caret and the caret's normalized text
+    // offset inside it. Decorated elements (time markers, highlights,
+    // annotations…) contribute no length on this side; after Vditor's rebuild
+    // their raw markdown source is stripped from the replay side the same way,
+    // so offsets and content fingerprints stay aligned across the rebuild.
+    snapshotCompositionCaret() {
+        const root = this.container.querySelector('.vditor-wysiwyg .vditor-reset');
+        const selection = window.getSelection();
+        if (!root || !selection || selection.rangeCount === 0) return null;
+        const range = selection.getRangeAt(0);
+        if (!root.contains(range.startContainer)) return null;
+        const BLOCK_SELECTOR = 'li, p, h1, h2, h3, h4, h5, h6, blockquote, pre';
+        let block = range.startContainer.nodeType === Node.ELEMENT_NODE
+            ? range.startContainer
+            : range.startContainer.parentElement;
+        block = block?.closest?.(BLOCK_SELECTOR);
+        if (!block || !root.contains(block)) return null;
+
+        let offset = 0;
+        let seenCaret = false;
+        const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT);
+        let node;
+        while ((node = walker.nextNode())) {
+            if (node.parentElement?.closest(DECORATED_TEXT_SELECTOR)) continue;
+            if (node === range.startContainer) {
+                offset += range.startOffset;
+                seenCaret = true;
+                break;
+            }
+            offset += (node.nodeValue || '').length;
+        }
+        if (!seenCaret) return null;
+
+        return {
+            tag: block.tagName,
+            fingerprint: compositionBlockFingerprint(block),
+            offset
+        };
+    }
+
+    // After Vditor's synchronous composition commit: put the caret back where
+    // the user had it and re-render stripped markers synchronously (before
+    // paint) so the commit neither flashes raw source nor moves the caret.
+    //
+    // Vditor's rebuild is not always synchronous — it can strip markers and
+    // displace the caret ~90ms AFTER the compositionend task. So the commit
+    // opens a short settle window during which marker protection skips the
+    // active-block deferral (post-commit re-rendering is safe and required),
+    // and two delayed passes re-apply the caret snapshot + decoration after
+    // the async rebuild has landed.
+    stabilizeCompositionCommit(snapshot) {
+        this.compositionSettleUntil = Date.now() + 400;
+        this.restoreCompositionCaret(snapshot);
+        this.decorateRenderedMarks(true, this.getPerformanceToken(), false);
+        this.decorateArticleImages({ decorateCode: false }, this.getPerformanceToken());
+        for (const delay of [120, 280]) {
+            setTimeout(() => {
+                if (this.sourceMode || this.isComposing) return;
+                this.restoreCompositionCaret(snapshot);
+                this.decorateRenderedMarks(true, this.getPerformanceToken(), false);
+            }, delay);
+        }
+    }
+
+    withinCompositionSettleWindow() {
+        return Date.now() < (this.compositionSettleUntil || 0);
+    }
+
+    restoreCompositionCaret(snapshot) {
+        if (!snapshot) return;
+        const root = this.container.querySelector('.vditor-wysiwyg .vditor-reset');
+        if (!root) return;
+
+        // 定位重建后的块：标签一致、归一化内容指纹相同（列表合并/重建后
+        // 父节点和索引都不可靠，内容指纹才是稳定标识）。
+        let block = null;
+        const candidates = root.querySelectorAll(snapshot.tag.toLowerCase());
+        for (const candidate of candidates) {
+            if (compositionBlockFingerprint(candidate) === snapshot.fingerprint) {
+                block = candidate;
+                break;
+            }
+        }
+        if (!block) return;
+
+        // Replay the normalized offset: raw marker source sequences left by
+        // the rebuild count as zero length, mirroring the snapshot side.
+        const placeAt = (textNode, charOffset) => {
+            try {
+                const range = document.createRange();
+                range.setStart(textNode, Math.min(charOffset, textNode.nodeValue.length));
+                range.collapse(true);
+                const selection = window.getSelection();
+                selection.removeAllRanges();
+                selection.addRange(range);
+            } catch (_error) {
+                // Best-effort: a failed restore is no worse than the jump.
+            }
+        };
+        const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT);
+        let node;
+        let acc = 0;
+        while ((node = walker.nextNode())) {
+            if (node.parentElement?.closest(DECORATED_TEXT_SELECTOR)) continue;
+            const value = node.nodeValue || '';
+            let last = 0;
+            let match;
+            RAW_SOURCE_PATTERNS.lastIndex = -1;
+            const plainSegments = [];
+            let cursor = value;
+            // 逐段剥掉裸标记源码，保留普通文本段与其在节点内的位置。
+            while (cursor.length) {
+                let earliest = -1;
+                let matchedLength = 0;
+                for (const pattern of RAW_SOURCE_PATTERNS) {
+                    pattern.lastIndex = 0;
+                    const found = pattern.exec(cursor);
+                    if (found && (earliest === -1 || found.index < earliest)) {
+                        earliest = found.index;
+                        matchedLength = found[0].length;
+                    }
+                }
+                if (earliest === -1) {
+                    plainSegments.push({ start: last, length: cursor.length });
+                    break;
+                }
+                if (earliest > 0) plainSegments.push({ start: last, length: earliest });
+                last += earliest + matchedLength;
+                cursor = value.slice(last);
+            }
+            for (const segment of plainSegments) {
+                if (acc + segment.length >= snapshot.offset) {
+                    return placeAt(node, segment.start + (snapshot.offset - acc));
+                }
+                acc += segment.length;
+            }
+        }
+        // Offset fell past the end (block content changed shape): park the
+        // caret at the end of the matched block instead of leaving it stranded
+        // in a neighbouring list item.
+        const range = document.createRange();
+        range.selectNodeContents(block);
+        range.collapse(false);
+        const selection = window.getSelection();
+        selection.removeAllRanges();
+        selection.addRange(range);
     }
 
     // Vditor's input pipeline re-renders the edited block by replacing its
@@ -1254,19 +1480,27 @@ export class HybridMarkdownEditor {
             const viewBottom = isPageScroll ? window.innerHeight : scroller.getBoundingClientRect().bottom;
             const rect = range.getBoundingClientRect();
             // Use the block element as fallback when the collapsed caret rect
-            // is zero-height (common at element boundaries / in list items).
+            // is zero-height (common at element boundaries / in list items /
+            // right after Vditor rebuilds a block). Headings must be included
+            // or a caret in a heading measures as 0/0 and every keystroke
+            // scrolls the view up by the full top padding (viewport creep).
             let top = rect.top, bottom = rect.bottom;
-            if (rect.height === 0 && rect.top === 0) {
+            if (rect.height === 0) {
                 const blockEl = (range.startContainer.nodeType === Node.ELEMENT_NODE
                     ? range.startContainer
-                    : range.startContainer.parentElement)?.closest?.('li, p, blockquote, pre, [data-block="0"]');
+                    : range.startContainer.parentElement)?.closest?.('li, p, h1, h2, h3, h4, h5, h6, blockquote, pre, [data-block="0"]');
                 if (blockEl) {
                     const br = blockEl.getBoundingClientRect();
                     top = br.top; bottom = br.bottom;
                 }
             }
             // Minimal scroll: only move if the caret is outside the visible
-            // band. Never recenter — just enough to reveal it.
+            // band, and only when we hold a meaningful rect. A still-degenerate
+            // rect (no measurable position) must never trigger a scroll.
+            if (rect.height === 0 && top === 0 && bottom === 0) {
+                this.isProgrammaticScroll = false;
+                return scroller.scrollTop;
+            }
             const topPad = 48;
             const bottomPad = 80;
             if (top < viewTop + topPad) {
@@ -1496,10 +1730,10 @@ export class HybridMarkdownEditor {
     }
 
     /**
-     * Phase C caret-stability feature flag.  Default OFF so the verified
-     * baseline typing/decoration path is preserved.  Can be toggled at
-     * runtime (no rebuild) for real-machine regression, so it can be turned
-     * off instantly if a regression appears:
+     * Phase C caret-stability feature flag.  Ships ON since the per-keystroke
+     * raw→rendered decoration flicker fix (see handleWysiwygInputStable); can
+     * be toggled at runtime (no rebuild) for real-machine regression, so it
+     * can be turned off instantly if a regression appears:
      *   - HybridMarkdownEditor instance override (caretStabilityOverride)
      *   - window.__DUMBPAD_CARET_STABILITY (boolean)
      *   - localStorage 'dumbpad:caret-stability' = 'on' | 'off'
@@ -1514,7 +1748,7 @@ export class HybridMarkdownEditor {
                 if (stored === 'off' || stored === 'false') return false;
             }
         } catch (_e) {}
-        return false;
+        return true;
     }
 
     /**
@@ -1859,7 +2093,11 @@ export class HybridMarkdownEditor {
                 }
             }
             if (needsFix || needsListAnnotationRestore) {
-                this.scheduleDecorateRenderedMarks(this.getPerformanceToken(), this.decorationGeneration, this.isCaretStabilityEnabled());
+                // During the IME settle window a rebuild just stripped markers
+                // under the caret — re-render immediately (post-commit, FEFF
+                // keeps the caret), don't defer to "caret leaves the block".
+                const skipActive = this.isCaretStabilityEnabled() && !this.withinCompositionSettleWindow();
+                this.scheduleDecorateRenderedMarks(this.getPerformanceToken(), this.decorationGeneration, skipActive);
             }
         });
 
@@ -2882,7 +3120,9 @@ export class HybridMarkdownEditor {
             if (target.closest('.has-annotation, [data-note], .md-mark, [data-draw], .md-time-marker')) return;
             if (target.closest('.vditor-copy, .code-lang-copy-button, .dumbpad-code-copy')) return;
             if (target.closest('.vditor-reset img[data-dumbpad-asset], .vditor-reset img[src*="/api/assets/"], .vditor-reset img[src^="data:image/"]')) return;
-            if (target.closest('.vditor-reset a.dumbpad-article-file')) return;
+            // Links (authored markdown links and Lute's bare-URL autolinks)
+            // stay clickable in reading mode — the browser navigates.
+            if (target.closest('.vditor-reset a[href]')) return;
             if (target.closest('.vditor-reset')) {
                 event.preventDefault();
                 event.stopPropagation();
@@ -4199,6 +4439,31 @@ export class HybridMarkdownEditor {
             link.draggable = false;
             link.setAttribute('aria-label', `下载附件：${link.textContent || '文件'}`);
         });
+    }
+
+    // Bare URLs already render as real <a> elements via Lute's GFM autolink;
+    // what's missing is affordance: highlight them (CSS) and open them on
+    // click in edit mode. Only links whose visible text is the URL itself are
+    // hijacked — authored [text](url) links keep normal caret placement so
+    // their label stays editable.
+    bindArticleLinkInteractions() {
+        if (this.articleLinkInteractionsBound) return;
+        this.articleLinkInteractionsBound = true;
+        this.container.addEventListener('click', event => {
+            if (this.isReadingMode || this.sourceMode) return;
+            const link = event.target.closest('.vditor-reset a[href]');
+            if (!link || link.classList.contains('dumbpad-article-file')) return;
+            const href = String(link.getAttribute('href') || '');
+            if (!/^(https?:)?\/\//i.test(href)) return;
+            const text = String(link.textContent || '').trim();
+            if (text !== href && text !== href.replace(/\/$/, '')) return;
+            if (Date.now() - (this.lastArticleFileDragAt || 0) < 250) return;
+            const selection = window.getSelection();
+            if (selection && !selection.isCollapsed && selection.rangeCount > 0 && selection.containsNode(link, true)) return;
+            event.preventDefault();
+            event.stopPropagation();
+            window.open(href, '_blank', 'noopener');
+        }, true);
     }
 
     queueArticleImageUpload(file) {

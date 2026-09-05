@@ -7,10 +7,11 @@
  * fix manipulates a live Vditor DOM + browser Selection, DOM behaviour cannot
  * be fully asserted in Node.
  *
- * REQUIRED MANUAL REAL-MACHINE REGRESSION (do before shipping the flag ON):
- * The feature ships OFF by default; enable it for testing via any of:
- *   - localStorage.setItem('dumbpad:caret-stability', 'on')   // then reload
- *   - window.__DUMBPAD_CARET_STABILITY = true
+ * REQUIRED MANUAL REAL-MACHINE REGRESSION (the flag ships ON; verify on a
+ * real device after changing the stable typing path — instant rollback via
+ * any of the toggles below):
+ *   - localStorage.setItem('dumbpad:caret-stability', 'off')  // then reload
+ *   - window.__DUMBPAD_CARET_STABILITY = false
  * With the flag ON, in a real browser verify the caret does NOT jump when:
  *   1. Typing continuously in headings (#, ##) and ordered/unordered lists.
  *   2. Inserting a /time marker and continuing to type around it.
@@ -108,29 +109,34 @@ function run() {
         'Deferred decoration must run once the caret leaves the edited block (selectionchange)'
     );
     assert(
-        /if \(needsFix \|\| needsListAnnotationRestore\) \{\s*this\.scheduleDecorateRenderedMarks\(this\.getPerformanceToken\(\), this\.decorationGeneration, this\.isCaretStabilityEnabled\(\)\);/.test(source),
-        'The marker MutationObserver must also skip the active block when the flag is enabled'
+        /if \(needsFix \|\| needsListAnnotationRestore\) \{[\s\S]{0,300}?const skipActive = this\.isCaretStabilityEnabled\(\) && !this\.withinCompositionSettleWindow\(\);[\s\S]{0,80}?this\.scheduleDecorateRenderedMarks\(this\.getPerformanceToken\(\), this\.decorationGeneration, skipActive\);/.test(source),
+        'The marker MutationObserver must also skip the active block when the flag is enabled — except during the IME settle window, where a rebuild just stripped markers under the caret and they must be re-rendered immediately'
+    );
+    assert(
+        source.includes('compositionSettleUntil = Date.now() + 400') &&
+            source.includes('withinCompositionSettleWindow()'),
+        'The IME commit stabilizer must open a settle window so post-rebuild marker strips are re-rendered immediately instead of deferred'
     );
 
-    // --- Executable check: default OFF, runtime toggles ---
+    // --- Executable check: ships ON, runtime rollback still wins ---
     const { factory: flagFactory } = extractMethod(source, 'isCaretStabilityEnabled', ['window']);
 
     const noWindow = flagFactory(undefined);
-    assert(noWindow.call({ caretStabilityOverride: null }) === false,
-        'With no window and no override the flag defaults OFF');
+    assert(noWindow.call({ caretStabilityOverride: null }) === true,
+        'With no window and no override the flag ships ON (flicker fix default)');
 
     const emptyWindow = flagFactory({});
-    assert(emptyWindow.call({ caretStabilityOverride: null }) === false,
-        'With an empty window the flag defaults OFF (verified baseline preserved)');
+    assert(emptyWindow.call({ caretStabilityOverride: null }) === true,
+        'With an empty window the flag ships ON (flicker fix default)');
 
     assert(emptyWindow.call({ caretStabilityOverride: true }) === true,
         'An instance override of true must enable the flag');
     assert(emptyWindow.call({ caretStabilityOverride: false }) === false,
-        'An instance override of false must force the flag OFF');
+        'An instance override of false must force the flag OFF (rollback path)');
 
-    const flaggedWindow = flagFactory({ __DUMBPAD_CARET_STABILITY: true });
-    assert(flaggedWindow.call({ caretStabilityOverride: null }) === true,
-        'window.__DUMBPAD_CARET_STABILITY=true must enable the flag');
+    const flaggedWindow = flagFactory({ __DUMBPAD_CARET_STABILITY: false });
+    assert(flaggedWindow.call({ caretStabilityOverride: null }) === false,
+        'window.__DUMBPAD_CARET_STABILITY=false must disable the flag (rollback path)');
 
     const makeStorageWindow = (value) => flagFactory({ localStorage: { getItem: () => value } });
     assert(makeStorageWindow('on').call({ caretStabilityOverride: null }) === true,
@@ -139,8 +145,8 @@ function run() {
         "localStorage 'true' must enable the flag");
     assert(makeStorageWindow('off').call({ caretStabilityOverride: null }) === false,
         "localStorage 'off' must disable the flag");
-    assert(makeStorageWindow(null).call({ caretStabilityOverride: null }) === false,
-        'Missing localStorage value must leave the flag OFF');
+    assert(makeStorageWindow(null).call({ caretStabilityOverride: null }) === true,
+        'Missing localStorage value must leave the shipped default ON');
 
     // --- Executable check: active caret block detection ---
     const Node = { TEXT_NODE: 3, ELEMENT_NODE: 1 };

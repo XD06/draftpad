@@ -112,8 +112,15 @@ function run() {
     assert(
         source.includes('this.compositionEndFrame') &&
             source.includes('cancelAnimationFrame(this.compositionEndFrame)') &&
-            /compositionend[\s\S]*?requestAnimationFrame\(\(\) => \{[\s\S]*?this\.isComposing = false;[\s\S]*?this\.handleWysiwygInput\(\)/.test(source),
-        'Composition lock must remain active through Vditor\'s composition-end DOM commit, then release on the next frame'
+            /compositionend[\s\S]*?const snapshot = this\.snapshotCompositionCaret\(\);[\s\S]*?queueMicrotask\(\(\) => \{[\s\S]*?this\.isComposing = false;[\s\S]*?this\.stabilizeCompositionCommit\(snapshot\);[\s\S]*?this\.handleWysiwygInput\(\)/.test(source),
+        'Composition lock must stay active through Vditor\'s composition-end rebuild, then release in a pre-paint microtask that restores the caret and re-renders stripped markers synchronously'
+    );
+    assert(
+        source.includes('snapshotCompositionCaret()') &&
+            source.includes('stabilizeCompositionCommit(snapshot)') &&
+            source.includes('restoreCompositionCaret(snapshot)') &&
+            /stabilizeCompositionCommit\(snapshot\) \{[\s\S]*?this\.restoreCompositionCaret\(snapshot\);[\s\S]*?this\.decorateRenderedMarks\(true, this\.getPerformanceToken\(\), false\);/.test(source),
+        'The IME commit stabilizer must restore the pre-commit caret and synchronously re-render stripped markers before paint (no raw-source flash, no caret jump)'
     );
     const articleDecorationStart = source.indexOf('decorateArticleImages({ decorateCode = true } = {}, performanceToken = this.getPerformanceToken())');
     const articleDecorationBody = source.slice(articleDecorationStart, articleDecorationStart + 500);
