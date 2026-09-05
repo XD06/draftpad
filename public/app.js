@@ -42,6 +42,22 @@ import {
     };
 })();
 
+// Track the visual viewport so the mobile app shell can shrink with the
+// on-screen keyboard. Without this, the fixed 100dvh containers keep their
+// full height while the visible area shrinks and scrolling exposes the page
+// background as white blocks under the editor.
+(function () {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const applyViewportHeight = () => {
+        document.documentElement.style.setProperty('--dumbpad-vvh', `${Math.round(vv.height)}px`);
+        document.documentElement.classList.toggle('keyboard-open', window.innerHeight - vv.height > 120);
+    };
+    vv.addEventListener('resize', applyViewportHeight);
+    vv.addEventListener('scroll', applyViewportHeight);
+    applyViewportHeight();
+})();
+
 document.addEventListener('DOMContentLoaded', async () => {
     const DEBUG = false;
     const THEME_KEY = 'dumbpad_theme';
@@ -1590,44 +1606,235 @@ document.addEventListener('DOMContentLoaded', async () => {
         tocUpdateTimeout = setTimeout(() => updateToC(), 500);
     }
 
+    // In-article TOC (文章内目录): rendered into the right sidebar column on
+    // desktop and into the same element when it slides in as a mobile drawer.
+    // Works in both edit and reading mode; the active heading follows scroll.
     function updateToC() {
-        const tocContainer = document.getElementById('toc-container');
-        const tocList = document.getElementById('toc-list');
-        if (!editorInstance || !editor.isReadingMode || !currentNotepadId) {
-            tocContainer?.classList.remove('visible');
-            document.body.classList.remove('toc-active');
+        const tocList = document.getElementById('article-toc-list');
+        if (!tocList) return;
+        setupTocScrollSync();
+        if (!currentNotepadId) {
+            tocList.innerHTML = '<div class="article-toc-empty">打开文章后显示目录</div>';
+            updateActiveTocItem();
             return;
         }
+        if (!editorInstance) return;
 
         const toc = editorInstance.generateToC(pendingEditorValue || undefined);
         if (toc.length === 0) {
-            tocContainer?.classList.remove('visible');
-            document.body.classList.remove('toc-active');
+            tocList.innerHTML = '<div class="article-toc-empty">本文暂无标题目录</div>';
             return;
         }
 
-        tocContainer?.classList.add('visible');
-        document.body.classList.add('toc-active');
         editorInstance.syncRenderedHeadingIds(toc);
-        tocList.innerHTML = toc.map(item => `
-            <div class="toc-item h${item.level}" data-index="${item.line}" data-heading-id="${escapeHtml(item.id)}">
-                ${escapeHtml(item.text)}
-            </div>
-        `).join('');
+        lastGeneratedToc = toc;
 
-        tocList.querySelectorAll('.toc-item').forEach(el => {
+        // 目录补充：把各标题区段内的加粗/划线/高亮/批注片段列成子条目，
+        // 点击直接跳到那个片段（有序/无序列表和待办不进目录）。
+        const markGroups = collectTocMarkEntries(toc);
+        let markHtml = '';
+        const markRefs = [];
+        toc.forEach(item => {
+            const entries = markGroups.get(item.id) || [];
+            markHtml += `
+            <div class="toc-item h${item.level}" data-index="${item.line}" data-heading-id="${escapeHtml(item.id)}">
+                <span class="toc-level-badge" aria-hidden="true">H${item.level}</span>
+                <span class="toc-item-text">${escapeHtml(item.text)}</span>
+            </div>`;
+            entries.forEach(entry => {
+                const refIndex = markRefs.push(entry.el) - 1;
+                markHtml += `
+                <div class="toc-item mark-entry type-${entry.type}" data-mark-ref="${refIndex}" title="${entry.typeLabel}">
+                    <span class="toc-level-badge mark-badge" aria-hidden="true">${entry.badge}</span>
+                    <span class="toc-item-text">${escapeHtml(entry.snippet)}</span>
+                </div>`;
+            });
+        });
+        tocList.innerHTML = markHtml;
+
+        tocList.querySelectorAll('.mark-entry').forEach(el => {
+            el.onclick = () => {
+                const target = markRefs[Number(el.dataset.markRef)];
+                if (!target || !target.isConnected) return;
+                editorInstance.scrollRenderedElementIntoView(target);
+                if (window.matchMedia('(max-width: 980px)').matches) {
+                    setArticleTocDrawerVisible(false);
+                }
+            };
+        });
+
+        tocList.querySelectorAll('.toc-item:not(.mark-entry)').forEach(el => {
             el.onclick = () => {
                 const index = parseInt(el.dataset.index);
                 if (!editor.isReadingMode) {
-                    editorInstance.focusLine(index, 0);
+                    focusEditorHeading(el.dataset.headingId || '', index);
                 } else {
                     const headingId = el.dataset.headingId || '';
                     if (!editorInstance.scrollToHeadingId(headingId)) {
                         editorInstance.scrollToLine(index);
                     }
                 }
+                if (window.matchMedia('(max-width: 980px)').matches) {
+                    setArticleTocDrawerVisible(false);
+                }
             };
         });
+        updateActiveTocItem();
+    }
+
+    // 收集各标题区段内的加粗/划线/高亮/批注片段，供文章目录作为子条目展示。
+    // 单次 DOM 顺序遍历：遇到标题就切换当前分组，命中装饰元素就归类；
+    // 已收录元素的嵌套后代跳过，避免同一段文字重复出现。
+    function collectTocMarkEntries(toc) {
+        const root = document.querySelector('.vditor-wysiwyg .vditor-reset');
+        const groups = new Map();
+        if (!root || !toc.length) return groups;
+        const MARK_SELECTOR = 'strong, u, mark, .md-mark, .has-annotation, [data-note], [data-draw]';
+        const classify = (el) => {
+            if (el.matches('.has-annotation, [data-note]')) return { type: 'note', badge: 'N', typeLabel: '批注' };
+            if (el.matches('mark, .md-mark')) return { type: 'highlight', badge: 'H', typeLabel: '高亮' };
+            if (el.matches('u, [data-draw]')) return { type: 'underline', badge: 'U', typeLabel: '划线' };
+            return { type: 'bold', badge: 'B', typeLabel: '加粗' };
+        };
+        const accepted = new Set();
+        let currentGroupId = '__preamble__';
+        groups.set(currentGroupId, []);
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+        let node;
+        while ((node = walker.nextNode())) {
+            if (/^H[1-6]$/.test(node.tagName) && node.dataset.headingId) {
+                currentGroupId = node.dataset.headingId;
+                if (!groups.has(currentGroupId)) groups.set(currentGroupId, []);
+                continue;
+            }
+            if (!node.matches(MARK_SELECTOR)) continue;
+            let nested = false;
+            let ancestor = node.parentElement;
+            while (ancestor && ancestor !== root) {
+                if (accepted.has(ancestor)) { nested = true; break; }
+                ancestor = ancestor.parentElement;
+            }
+            if (nested) continue;
+            const snippet = String(node.textContent || '').replace(/\s+/g, ' ').trim();
+            if (!snippet) continue;
+            accepted.add(node);
+            if (!groups.has(currentGroupId)) groups.set(currentGroupId, []);
+            const info = classify(node);
+            groups.get(currentGroupId).push({
+                el: node,
+                ...info,
+                snippet: snippet.length > 26 ? `${snippet.slice(0, 26)}…` : snippet
+            });
+        }
+        // 没有标题的分组（文首片段）并入第一个标题，避免出现孤儿条目。
+        const preamble = groups.get('__preamble__');
+        if (preamble?.length && toc.length) {
+            const first = groups.get(toc[0].id);
+            if (first) first.unshift(...preamble);
+        }
+        groups.delete('__preamble__');
+        return groups;
+    }
+
+    // Edit-mode TOC jump: place the caret at the target heading before
+    // focusing, otherwise focus() pulls the viewport back to the old caret
+    // position and the jump appears to land at the top of the document.
+    function focusEditorHeading(headingId, lineIndex) {
+        const root = document.querySelector('.vditor-wysiwyg .vditor-reset');
+        let heading = headingId && root ? root.querySelector(`#${CSS.escape(headingId)}`) : null;
+        if (!heading && root) {
+            const tocIndex = lastGeneratedToc.findIndex(item => item.id === headingId);
+            const headingEls = Array.from(root.querySelectorAll('h1, h2, h3, h4, h5, h6'));
+            heading = tocIndex >= 0 ? headingEls[tocIndex] : null;
+        }
+        if (heading) {
+            try {
+                const range = document.createRange();
+                range.setStart(heading, 0);
+                range.collapse(true);
+                const selection = window.getSelection();
+                selection?.removeAllRanges();
+                selection?.addRange(range);
+            } catch (_error) {
+                // Caret placement is best-effort; scrolling still applies.
+            }
+        }
+        editorInstance.focus();
+        const scrollToHeading = () => editorInstance.scrollToLine(lineIndex, heading?.textContent?.trim() || '');
+        if (window.matchMedia('(max-width: 980px)').matches) {
+            // Mobile: focusing opens the keyboard and the viewport reflows;
+            // wait one beat so the jump lands on the settled layout.
+            setTimeout(scrollToHeading, 300);
+        } else {
+            scrollToHeading();
+        }
+    }
+
+    // Highlight the sidebar TOC entry for the heading currently near the top
+    // of the editor viewport. Bound once to the editor scroll container.
+    let tocScrollSyncBound = false;
+    let lastGeneratedToc = [];
+    function setupTocScrollSync() {
+        if (tocScrollSyncBound) return;
+        const scroller = document.querySelector('.vditor-wysiwyg');
+        if (!scroller) return;
+        tocScrollSyncBound = true;
+        let frame = 0;
+        scroller.addEventListener('scroll', () => {
+            if (frame) return;
+            frame = requestAnimationFrame(() => {
+                frame = 0;
+                updateActiveTocItem();
+            });
+        }, { passive: true });
+    }
+
+    function updateActiveTocItem() {
+        const tocList = document.getElementById('article-toc-list');
+        const scroller = document.querySelector('.vditor-wysiwyg');
+        const root = scroller?.querySelector('.vditor-reset');
+        if (!tocList || !root) return;
+        const items = Array.from(tocList.querySelectorAll('.toc-item[data-heading-id]'));
+        if (items.length === 0) return;
+
+        // Vditor's setValue pipeline rebuilds heading nodes and drops the
+        // synced anchor ids; re-apply them from the last generated TOC and
+        // fall back to positional matching (rendered headings and TOC entries
+        // derive from the same ATX sequence) so scroll tracking survives.
+        const headingEls = Array.from(root.querySelectorAll('h1, h2, h3, h4, h5, h6'));
+        if (items.some(item => !root.querySelector(`#${CSS.escape(item.dataset.headingId)}`))) {
+            editorInstance?.syncRenderedHeadingIds(lastGeneratedToc);
+        }
+        const resolveHeading = (item, index) => root.querySelector(`#${CSS.escape(item.dataset.headingId)}`)
+            || headingEls[index]
+            || null;
+
+        const scrollerRect = scroller.getBoundingClientRect();
+        const probeLine = scrollerRect.top + Math.min(scrollerRect.height * 0.25, 160);
+        let activeId = items[0].dataset.headingId;
+        for (let i = 0; i < items.length; i += 1) {
+            const heading = resolveHeading(items[i], i);
+            if (!heading) continue;
+            if (heading.getBoundingClientRect().top <= probeLine) {
+                activeId = items[i].dataset.headingId;
+            } else {
+                break;
+            }
+        }
+        items.forEach(item => item.classList.toggle('active', item.dataset.headingId === activeId));
+    }
+
+    // Mobile: the right sidebar doubles as a TOC drawer opened from the
+    // floating button, mirroring the 目录 tab drawer of the left sidebar.
+    function setArticleTocDrawerVisible(visible) {
+        const side = document.getElementById('sidebar-right');
+        const overlay = document.getElementById('sidebar-overlay');
+        if (!side) return;
+        side.classList.toggle('visible', visible);
+        overlay?.classList.toggle('visible', visible || document.getElementById('sidebar-left')?.classList.contains('visible'));
+        if (visible) {
+            updateToC();
+        }
     }
 
     function loadStylesheetOnce(id, href) {
@@ -1753,6 +1960,11 @@ document.addEventListener('DOMContentLoaded', async () => {
                     // Safety net: never leave the opaque cover stuck if `after` never fires.
                     setTimeout(finishBootHandoff, 3000);
                 }
+                // The sidebar TOC needs the mounted Vditor DOM; the rAF call right
+                // after notepad selection can run before Vditor finishes mounting.
+                editorInstance.whenReady().then(() => {
+                    if (currentNotepadId) updateToC();
+                }).catch(() => {});
                 return editorInstance;
             })().catch(error => {
                 editorLoader = null;
@@ -3126,7 +3338,35 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         overlay?.addEventListener('click', () => {
             setMobileSidebarVisible(false);
+            setArticleTocDrawerVisible(false);
         });
+
+        document.getElementById('toggle-article-toc')?.addEventListener('click', () => {
+            const side = document.getElementById('sidebar-right');
+            setArticleTocDrawerVisible(!side?.classList.contains('visible'));
+        });
+
+        document.getElementById('close-sidebar-right')?.addEventListener('click', () => {
+            setArticleTocDrawerVisible(false);
+        });
+
+        // Collapse the mobile floating-action group behind a single "more"
+        // toggle. Expansion is intentionally transient: every fresh page load
+        // (including a PWA refresh) starts collapsed to save screen space,
+        // and tapping anywhere outside the group collapses it again.
+        const applyFabExpanded = (expanded) => {
+            document.body.classList.toggle('fab-expanded', expanded);
+            document.getElementById('fab-toggle-group')?.setAttribute('aria-expanded', String(expanded));
+        };
+        applyFabExpanded(false);
+        document.getElementById('fab-toggle-group')?.addEventListener('click', () => {
+            applyFabExpanded(!document.body.classList.contains('fab-expanded'));
+        });
+        document.addEventListener('pointerdown', (event) => {
+            if (!document.body.classList.contains('fab-expanded')) return;
+            if (event.target.closest?.('.floating-actions')) return;
+            applyFabExpanded(false);
+        }, true);
 
         setupSidebarTabs();
         setupDirectoryTitleSearch();
@@ -3251,7 +3491,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const tabDirectory = document.getElementById('tab-directory');
         const tabRecent = document.getElementById('tab-recent');
         const directoryTree = document.getElementById('directory-tree');
-        const recentFilesMobile = document.getElementById('recent-files-mobile');
+        const recentFilesMobile = document.getElementById('recent-files-panel');
 
         if (tabDirectory && tabRecent) {
             tabDirectory.addEventListener('click', () => {
@@ -3278,7 +3518,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const directoryTab = document.getElementById('tab-directory');
         const recentTab = document.getElementById('tab-recent');
         const directoryTree = document.getElementById('directory-tree');
-        const recentFiles = document.getElementById('recent-files-mobile');
+        const recentFiles = document.getElementById('recent-files-panel');
         if (!toggle || !row || !input) return;
 
         const setOpen = (open) => {

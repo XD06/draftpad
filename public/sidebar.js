@@ -245,8 +245,7 @@ export function renderSidebar(notepads, currentNotepadId, onSelect, onDelete, on
 
 export function renderRecentFiles(currentNotepadId, notepads, onSelect, onDelete, onRename, onPin) {
     const containers = [
-        document.getElementById('recent-files'),
-        document.getElementById('recent-files-mobile')
+        document.getElementById('recent-files-panel')
     ].filter(c => c !== null);
     
     if (containers.length === 0) return;
