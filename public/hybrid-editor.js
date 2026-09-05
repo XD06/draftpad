@@ -1,3 +1,6 @@
+/**
+ * Article editing, Markdown serialization and Vditor display integration.
+ */
 import { stripHybridDisplayArtifacts, collapseOverEscapedEmphasis, stripInactiveArticleUploadTokens } from './managers/hybrid-display-sanitizer.js';
 import {
     buildTimeMarker,
@@ -152,6 +155,7 @@ export class HybridMarkdownEditor {
             after: () => {
                 const performanceToken = this.getPerformanceToken();
                 const generation = this.decorationGeneration;
+                this.installInputRenderAdapter();
                 this.ready = true;
                 this.createSourceModeControls();
                 if (this.pendingValue) {
@@ -1263,6 +1267,69 @@ export class HybridMarkdownEditor {
         return target === this.sourceTextarea || Boolean(target?.closest?.('.vditor-wysiwyg'));
     }
 
+    // Keep custom inline DOM opaque to Lute during an input transaction. Restore
+    // it in detached HTML before Vditor installs the result and resolves <wbr>.
+    installInputRenderAdapter() {
+        const lute = this.editor?.vditor?.lute;
+        if (this.inputRenderAdapterInstalled || typeof lute?.SpinVditorDOM !== 'function') return;
+        const spin = lute.SpinVditorDOM.bind(lute);
+        lute.SpinVditorDOM = html => this.preserveInlineInputNodes(html, spin);
+        this.inputRenderAdapterInstalled = true;
+    }
+
+    preserveInlineInputNodes(html, spin) {
+        const source = String(html);
+        if (!/md-time-marker|md-mark|has-annotation|data-draw|article-upload-card/.test(source)) return spin(html);
+        const input = document.createElement('template');
+        input.innerHTML = source;
+        // Vditor removes inline styles before calling Lute. Reinstate only the
+        // presentation owned by these custom nodes, on the detached copy.
+        input.content.querySelectorAll('[data-draw]').forEach(node => {
+            node.style.textDecoration = 'underline blue';
+            node.style.textDecorationThickness = '2px';
+        });
+        input.content.querySelectorAll('.has-annotation').forEach(node => {
+            if (node.firstElementChild) {
+                node.firstElementChild.style.textDecoration = 'underline wavy #e74c3c';
+                node.firstElementChild.style.textDecorationThickness = '2.5px';
+            }
+            const label = node.querySelector(':scope > sub');
+            if (label) label.style.display = 'none';
+        });
+        const saved = [];
+        const caretCount = input.content.querySelectorAll('wbr').length;
+        let prefix = 'DUMBPADINLINETOKEN';
+        while (source.includes(prefix)) prefix += 'X';
+        input.content.querySelectorAll('.md-time-marker, mark.md-mark, .has-annotation, [data-draw], .article-upload-card').forEach(node => {
+            if (!input.content.contains(node) || node.closest('code, pre:not(.vditor-reset)')) return;
+            const token = `${prefix}${saved.length}END`;
+            saved.push({ token, node });
+            node.replaceWith(document.createTextNode(token));
+        });
+        if (!saved.length) return spin(html);
+        const output = document.createElement('template');
+        output.innerHTML = spin(input.innerHTML);
+        let restored = 0;
+        for (const { token, node } of saved) {
+            const walker = document.createTreeWalker(output.content, NodeFilter.SHOW_TEXT);
+            let text;
+            while ((text = walker.nextNode())) {
+                const offset = text.data.indexOf(token);
+                if (offset < 0) continue;
+                const tail = text.splitText(offset);
+                tail.splitText(token.length);
+                tail.replaceWith(node);
+                restored += 1;
+                break;
+            }
+        }
+        // A token absorbed into a URL or other syntax must never reach the
+        // live document or its serializer. Fall back to the original parser.
+        if (restored !== saved.length || output.innerHTML.includes(prefix) ||
+            output.content.querySelectorAll('wbr').length !== caretCount) return spin(html);
+        return output.innerHTML;
+    }
+
     bindCompositionEvents() {
         this.container.addEventListener('compositionstart', (event) => {
             if (!this.isEditorInputTarget(event.target)) return;
@@ -1303,6 +1370,7 @@ export class HybridMarkdownEditor {
     // their raw markdown source is stripped from the replay side the same way,
     // so offsets and content fingerprints stay aligned across the rebuild.
     snapshotCompositionCaret() {
+        if (this.inputRenderAdapterInstalled) return null;
         const root = this.container.querySelector('.vditor-wysiwyg .vditor-reset');
         const selection = window.getSelection();
         if (!root || !selection || selection.rangeCount === 0) return null;
@@ -1348,6 +1416,7 @@ export class HybridMarkdownEditor {
     // and two delayed passes re-apply the caret snapshot + decoration after
     // the async rebuild has landed.
     stabilizeCompositionCommit(snapshot) {
+        if (this.inputRenderAdapterInstalled) return;
         this.compositionSettleUntil = Date.now() + 400;
         this.restoreCompositionCaret(snapshot);
         this.decorateRenderedMarks(true, this.getPerformanceToken(), false);

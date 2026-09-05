@@ -57,6 +57,22 @@ Thought 前端 helper 拆分模块有聚合测试入口：`npm run test:thought-
 - `public/managers/settings-data-panel.js`：设置页数据空间、垃圾桶和云端维护 API adapter。
 - `public/managers/ws-client.js`：轻量 WebSocket 客户端，把服务端事件转成浏览器 `CustomEvent`。
 
+### 严重 bug 记录：文章输入时光标乱跳与特殊样式闪烁
+
+**记录日期：2026-09-05。状态：修复已通过独立浏览器回归，用户初步反馈可用；完整真机验收尚未完成。**
+
+症状：在时间标记、高亮前输入，或在已完成/未完成待办项中进行中文组合输入时，特殊样式可能退回源码、闪烁，光标可能跳到其他列表项；此前曾出现“先跳走，再被拉回来”的短暂纠正过程。用户同时报告图片上方输入时视口跳动。此问题按严重编辑体验 bug 记录，因为错误光标位置可能导致后续文字插入错误位置；本次没有确认持久化数据丢失。
+
+根因证据：当前安装的 Vditor 在 `src/ts/wysiwyg/input.ts` 中通过 `SpinVditorDOM` 重新解析输入块，列表场景会重建整个顶层列表及相邻列表，然后利用 `<wbr>` 恢复光标。应用层对同一 DOM 的自定义装饰和光标纠正与该流程产生竞争。独立 Chrome 测试在第二个待办项输入 `abc` 后，修复前两项时间标记均消失并暴露源码，修复后逐帧检查保持标记与当前列表项光标。历史说明中的“约 90ms 异步重建”不是本次确认的固定时序，不应作为设计依据。
+
+失败方案与教训：旧方案使用块文本指纹和偏移定位，在 IME 提交后微任务及 120/280ms 定时器中恢复光标，用户仍能看到跳动后纠正。随后尝试在每次 `MutationObserver` 回调中套用旧快照，用户反馈乱跳加重；该修改已撤掉。不能把任何 DOM 变化都视为需要回放旧光标的位置恢复事件，也不能仅用源码包含某段恢复逻辑的断言证明交互稳定。
+
+文章输入解析通过 `HybridMarkdownEditor.installInputRenderAdapter()` 包装当前 Vditor 实例的 `lute.SpinVditorDOM`。已渲染的时间标记、高亮、批注、划线和上传卡片在脱离页面的 HTML 中临时替换为占位文本，Lute 完成块解析后原样还原，随后由 Vditor 写入 DOM 并使用自己的 `<wbr>` 定位光标。占位符或光标锚点不能完整还原时回退原始解析，不允许临时文本进入正文。适配器启用时不再执行 IME 指纹光标恢复和 120/280ms 定时纠正；不支持该内部接口时保留旧兼容路径。升级 Vditor 时必须重跑浏览器回归。
+
+`npm run test:editor-input-browser` 使用临时静态服务器和独立 Chrome 页面，不访问用户数据。测试需要可导入的 `playwright` 和本机 Chrome；也可用 `DUMBPAD_PLAYWRIGHT_MODULE` 指定已安装 Playwright 模块的绝对路径。覆盖逐帧标记/光标检查、CDP 中文组合输入、提交后主动移动光标、高亮编辑、撤销/重做及图片附近视口检查。CDP 组合输入不替代真实系统输入法验收；该浏览器测试不包含在 `npm test` 中。
+
+本次已通过 `npm run check`、`test:hybrid-editor-time-command`、`test:hybrid-editor-caret-stability`、`test:source-mode-roundtrip`、`test:editor-noop-save-guard` 和 `test:editor-input-browser`；没有运行全量 `npm test`。图片跳动未在独立样例中复现，相关视口检查通过不能代表原复杂文档的问题已解决，本次未修改滚动逻辑。移动端系统输入法、复杂嵌套列表和原图片场景仍保留为后续验收项；本次先固化稳定点，不继续扩展修复或更换编辑器内核。
+
 ### 普通 Enter 的兼容性边界
 
 `HybridMarkdownEditor` 不把所有 Enter 交给 Vditor。顶层普通段落使用 `handleWysiwygSoftEnter()`：它仅在无修饰键、非组合输入、同一顶层 `p` 且不在内联代码时拦截事件，插入软换行和零宽光标保护字符，再异步走 `notifyEditorValueChanged()`。这样源码模式不会产生额外的可编辑空段。
