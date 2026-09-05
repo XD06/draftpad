@@ -1,6 +1,9 @@
 @font-face {
     font-family: "DumbPad Reading";
-    src: url("/font/SourceHanSerifSC-Regular-subset.woff2") format("woff2");
+    /* ?v=2 busts the 30-day immutable HTTP cache and the service-worker cache-first
+       store after the font was re-compressed (the old build was a corrupt CFF that
+       Chrome refused to decode). Bump this token whenever the font file changes. */
+    src: url("/font/changerwencai.woff2?v=2") format("woff2");
     font-weight: 400;
     font-style: normal;
     font-display: swap;
@@ -17,12 +20,315 @@
 .mobile-only {
     display: none !important;
 }
+
+/* Keep the first paint on the workspace requested by the URL or last session. */
+html[data-initial-workspace="thoughts"] main.three-column-layout,
+html[data-initial-workspace="today"] main.three-column-layout,
+html[data-initial-workspace="thoughts"] .floating-actions,
+html[data-initial-workspace="today"] .floating-actions {
+    display: none !important;
+}
+
+html[data-initial-workspace="thoughts"] #thoughts-view {
+    display: flex !important;
+}
+
+/* Do not expose unstyled Thought controls while its lazy stylesheet arrives. */
+html:not([data-thoughts-styles-ready]) #thoughts-view {
+    visibility: hidden !important;
+}
+
+html[data-initial-workspace="today"] #today-drafts-view {
+    display: block !important;
+}
+
+@media (min-width: 981px) {
+    html[data-initial-workspace="today"] #today-drafts-view {
+        display: flex !important;
+    }
+}
+
+html[data-initial-workspace="thoughts"] #header-title,
+html[data-initial-workspace="today"] #header-title {
+    visibility: hidden;
+}
+
 .vditor-reset pre > code{
     background: var(--code-bg);
+    background-image: none !important;
 }
 
 [data-theme="dark"] .vditor-reset pre > code{
     background: var(--code-bg);
+    background-image: none !important;
+}
+
+.typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] > pre {
+    position: relative;
+    box-sizing: border-box;
+    padding: 29px 16px 12px 54px !important;
+    border: 1px solid color-mix(in srgb, var(--border-color) 80%, transparent);
+    border-radius: 8px;
+    background: var(--code-bg) !important;
+    background-image: none !important;
+    font-family: var(--font-code) !important;
+    line-height: 1.55;
+    margin-bottom: 1em;
+}
+
+.typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] > pre.dumbpad-code-lines::before {
+    content: attr(data-line-numbers);
+    position: absolute;
+    top: 29px;
+    bottom: 12px;
+    left: 0;
+    width: 40px;
+    box-sizing: border-box;
+    padding: 0 9px 0 4px;
+    border-right: 1px solid color-mix(in srgb, var(--border-color) 82%, transparent);
+    color: color-mix(in srgb, var(--muted-text) 78%, transparent);
+    font: 400 13px/1.55 var(--font-code);
+    text-align: right;
+    white-space: pre;
+    overflow: hidden;
+    pointer-events: none;
+    user-select: none;
+}
+
+.typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] > pre > code {
+    display: block;
+    min-width: 0;
+    padding: 0 !important;
+    background: transparent !important;
+    background-image: none !important;
+    font: 400 13px/1.55 var(--font-code) !important;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+}
+
+.typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] > pre > .dumbpad-code-header {
+    position: absolute;
+    inset: 0 0 auto;
+    z-index: 3;
+    display: flex;
+    width: 100%;
+    height: 24px;
+    box-sizing: border-box;
+    padding: 0 6px 0 8px;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid color-mix(in srgb, var(--border-color) 64%, transparent);
+    border-radius: 7px 7px 0 0;
+    background: color-mix(in srgb, var(--code-bg) 92%, var(--border-color) 8%);
+    font-family: var(--font-code);
+}
+
+.typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] > pre > .dumbpad-code-header.is-readonly {
+    user-select: none;
+}
+
+.typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] > pre > .dumbpad-code-header.is-readonly .dumbpad-code-language-badge {
+    pointer-events: none;
+}
+
+.typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] .dumbpad-code-language-badge {
+    display: inline-flex;
+    max-width: 104px;
+    height: 18px !important;
+    box-sizing: border-box;
+    margin: 0 !important;
+    padding: 0 4px !important;
+    align-items: center;
+    gap: 3px;
+    border: 0;
+    border-radius: 4px;
+    outline: none;
+    background: transparent;
+    color: color-mix(in srgb, var(--muted-text) 78%, var(--text-color));
+    font: 600 10px/18px var(--font-code) !important;
+    letter-spacing: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] .dumbpad-code-language-icon {
+    display: block;
+    flex: 0 0 11px;
+    width: 11px;
+    height: 11px;
+    object-fit: contain;
+    pointer-events: none;
+}
+
+.typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] .dumbpad-code-language-token {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] .dumbpad-code-language-token::before {
+    content: attr(data-language-label);
+}
+
+.typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] button.dumbpad-code-language-badge {
+    cursor: pointer;
+}
+
+.typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] button.dumbpad-code-language-badge:hover,
+.typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] button.dumbpad-code-language-badge:focus-visible,
+.typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] button.dumbpad-code-language-badge[aria-expanded="true"] {
+    background: color-mix(in srgb, var(--primary-color) 10%, transparent);
+    color: var(--primary-color);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--primary-color) 28%, transparent);
+}
+
+.typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] > pre > .vditor-copy {
+    display: none !important;
+}
+
+.typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] > .dumbpad-mermaid-render {
+    display: none;
+}
+
+.typora-editor-shell.is-reading-mode .vditor-reset .vditor-wysiwyg__block[data-type="code-block"]:has(> .dumbpad-mermaid-render) > pre {
+    display: none !important;
+}
+
+.typora-editor-shell.is-reading-mode .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] > .dumbpad-mermaid-render {
+    display: flex;
+    min-height: 96px;
+    margin: 0 0 1em;
+    padding: 14px;
+    align-items: center;
+    justify-content: center;
+    overflow: auto;
+    border: 1px solid color-mix(in srgb, var(--border-color) 80%, transparent);
+    border-radius: 8px;
+    background: var(--code-bg);
+}
+
+.typora-editor-shell.is-reading-mode .dumbpad-mermaid-render svg {
+    display: block;
+    max-width: 100%;
+    height: auto;
+    margin: auto;
+}
+
+.typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] .dumbpad-code-copy {
+    display: inline-grid;
+    width: 18px;
+    height: 18px;
+    padding: 0;
+    place-items: center;
+    border: 0;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--muted-text);
+    cursor: pointer;
+    opacity: 0.78;
+}
+
+.typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] .dumbpad-code-copy:hover,
+.typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] .dumbpad-code-copy:focus-visible,
+.typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] .dumbpad-code-copy.is-copied {
+    outline: none;
+    background: color-mix(in srgb, var(--primary-color) 12%, transparent);
+    color: var(--primary-color);
+    opacity: 1;
+}
+
+.typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] .dumbpad-code-copy svg {
+    width: 12px;
+    height: 12px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+.dumbpad-code-language-popover {
+    position: fixed;
+    z-index: 4300;
+    width: calc(var(--code-language-popover-size, 9) * 1ch + 20px);
+    max-width: calc(100vw - 16px);
+    box-sizing: border-box;
+    padding: 4px;
+    border: 1px solid var(--border-color);
+    border-radius: 7px;
+    background: var(--modal-bg);
+    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.16);
+}
+
+.dumbpad-code-language-popover[hidden] {
+    display: none;
+}
+
+.dumbpad-code-language-input {
+    display: block;
+    width: 100%;
+    height: 28px;
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0 4px;
+    border: 1px solid var(--border-color);
+    border-radius: 5px;
+    outline: none;
+    background: var(--textarea-bg);
+    color: var(--text-color);
+    font: 500 12px/26px var(--font-code);
+    letter-spacing: 0;
+}
+
+.dumbpad-code-language-input:focus {
+    border-color: color-mix(in srgb, var(--primary-color) 68%, var(--border-color));
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary-color) 12%, transparent);
+}
+
+.dumbpad-code-language-popover.is-invalid .dumbpad-code-language-input {
+    border-color: #d84a44;
+    box-shadow: 0 0 0 2px color-mix(in srgb, #d84a44 12%, transparent);
+}
+
+.dumbpad-code-language-list {
+    display: grid;
+    gap: 2px;
+    margin-top: 4px;
+}
+
+.dumbpad-code-language-list[hidden] {
+    display: none;
+}
+
+.dumbpad-code-language-option {
+    display: block;
+    min-width: 0;
+    min-height: 27px;
+    box-sizing: border-box;
+    padding: 5px;
+    border: 0;
+    border-radius: 5px;
+    background: transparent;
+    color: var(--text-color);
+    text-align: left;
+    font: 600 11px/17px var(--font-code);
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.dumbpad-code-language-option:hover,
+.dumbpad-code-language-option:focus-visible,
+.dumbpad-code-language-option[aria-selected="true"] {
+    outline: none;
+    background: color-mix(in srgb, var(--primary-color) 12%, transparent);
+}
+
+.typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] >
+    .vditor-wysiwyg__pre:not([style*="display: none"]):not([style*="display:none"]) + .vditor-wysiwyg__preview {
+    display: none !important;
 }
 
 /* Vditor loads the GitHub light highlight stylesheet for both app themes.
@@ -146,11 +452,16 @@
     --danger-color: #dc2626;
     --danger-hover: #ef4444;
     --code-markdown: rgba(37, 100, 235, 0.2);
-    --code-bg: #f4f5f7;
+    --code-bg: #fafaf8;
     --transition: background-color 0.3s, color 0.3s;
     --input-element-transition: background-color 0.2s ease;
     --ease-out-expo: cubic-bezier(0.19, 1, 0.22, 1);
     --font-reading: "DumbPad Reading", "Source Han Sans SC", "Noto Serif SC", "Microsoft YaHei", sans-serif;
+    /* System-only reading stack (no custom webfont) so the first-paint boot editor
+       can render instantly without pulling the 1.9MB reading webfont into the
+       first-paint critical window. The custom font loads later, triggered by the
+       real editor (.vditor-reset), and swaps in seamlessly. */
+    --font-reading-system: "Source Han Sans SC", "Noto Serif SC", "Microsoft YaHei", sans-serif;
     --font-code: "DumbPad Code", "Fira Code", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
 }
 
@@ -555,6 +866,7 @@ main {
 }
 
 .editor-main {
+    position: relative;
     padding: 0;
     flex: 1;
     background-color: transparent;
@@ -939,6 +1251,175 @@ main {
     line-height: 1.5;
 }
 
+/* Download keeps format choices prominent without changing the shared modal pattern. */
+#download-modal .download-modal-content {
+    width: min(560px, calc(100vw - 32px));
+    max-width: 560px;
+    padding: 28px;
+}
+
+#download-modal .download-modal-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+}
+
+#download-modal .download-modal-header h2 {
+    margin: 0;
+    font-size: 1.5rem;
+    line-height: 1.25;
+}
+
+#download-modal .download-modal-header .modal-message {
+    margin: 6px 0 0;
+    color: var(--muted-text);
+    font-size: 0.9375rem;
+}
+
+#download-modal .download-modal-close {
+    display: inline-flex;
+    flex: 0 0 36px;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    background: transparent;
+    color: var(--muted-text);
+    cursor: pointer;
+    transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease;
+}
+
+#download-modal .download-format-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+    margin-top: 24px;
+}
+
+#download-modal .download-format-option {
+    display: flex;
+    min-width: 0;
+    min-height: 126px;
+    padding: 16px;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    background: var(--textarea-bg);
+    color: var(--text-color);
+    cursor: pointer;
+    text-align: left;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: flex-start;
+    gap: 8px;
+    transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease;
+}
+
+#download-modal .download-format-icon {
+    color: var(--primary-color);
+}
+
+#download-modal .download-format-name {
+    font-size: 0.9375rem;
+    font-weight: 600;
+    line-height: 1.3;
+}
+
+#download-modal .download-format-detail {
+    margin-top: auto;
+    color: var(--muted-text);
+    font-size: 0.75rem;
+    line-height: 1.35;
+    white-space: nowrap;
+}
+
+#download-modal .download-modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 16px;
+}
+
+#download-modal .download-modal-cancel {
+    min-height: 36px;
+    padding: 8px 12px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--muted-text);
+    cursor: pointer;
+    font-size: 0.875rem;
+    transition: background-color 160ms ease, color 160ms ease;
+}
+
+@media (hover: hover) {
+    #download-modal .download-modal-close:hover,
+    #download-modal .download-modal-cancel:hover {
+        background: var(--button-hover);
+        color: var(--text-color);
+    }
+
+    #download-modal .download-format-option:hover {
+        border-color: var(--primary-color);
+        background: rgba(var(--primary-rgb), 0.06);
+    }
+}
+
+#download-modal button:focus-visible {
+    outline: 2px solid var(--primary-color);
+    outline-offset: 2px;
+}
+
+#download-modal .download-format-option:active {
+    background: rgba(var(--primary-rgb), 0.12);
+}
+
+@media (max-width: 560px) {
+    #download-modal .download-modal-content {
+        padding: 22px;
+    }
+
+    #download-modal .download-format-grid {
+        grid-template-columns: 1fr;
+        gap: 8px;
+        margin-top: 20px;
+    }
+
+    #download-modal .download-format-option {
+        display: grid;
+        grid-template-columns: 28px minmax(0, 1fr);
+        grid-template-rows: auto auto;
+        min-height: 0;
+        padding: 13px 14px;
+        column-gap: 12px;
+        row-gap: 2px;
+    }
+
+    #download-modal .download-format-icon {
+        grid-row: span 2;
+        align-self: center;
+    }
+
+    #download-modal .download-format-detail {
+        margin-top: 0;
+    }
+
+    #download-modal .download-modal-cancel {
+        min-height: 44px;
+        padding-inline: 14px;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    #download-modal .download-modal-close,
+    #download-modal .download-format-option,
+    #download-modal .download-modal-cancel {
+        transition: none;
+    }
+}
+
 /* Command Palette Styles */
 .command-palette-overlay {
     position: fixed;
@@ -1062,39 +1543,8 @@ main {
     color: inherit;
 }
 
-/* Table of Contents */
-.toc-container {
-    position: fixed;
-    right: 30px;
-    top: 100px;
-    width: 240px;
-    max-height: 70vh;
-    background: var(--toc-bg);
-    backdrop-filter: blur(20px) saturate(180%);
-    -webkit-backdrop-filter: blur(20px) saturate(180%);
-    border-radius: 16px;
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    padding: 24px;
-    overflow-y: auto;
-    display: none;
-    z-index: 1000;
-    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.05);
-}
-
-.toc-container.visible {
-    display: block;
-}
-
-.toc-title {
-    font-size: 11px;
-    font-weight: 700;
-    color: var(--muted-text);
-    text-transform: uppercase;
-    letter-spacing: 0.15em;
-    margin-bottom: 20px;
-    opacity: 0.8;
-}
-
+/* Table of Contents — the floating panel was replaced by the sidebar column
+   (see .article-toc-list); only the shared .toc-item styles below remain. */
 .toc-list {
     display: flex;
     flex-direction: column;
@@ -1211,12 +1661,6 @@ main {
 }
 
 /* Responsive Optimizations */
-@media (max-width: 1024px) {
-    .toc-container {
-        display: none !important;
-    }
-}
-
 @media (max-width: 768px) {
     .empty-state-title {
         font-size: 28px;
@@ -1390,10 +1834,108 @@ main {
 .hybrid-editor {
     height: 100%;
     width: 100%;
-    background: var(--textarea-bg);
+    /* Transparent, NOT white. This is the full-width editor container, which is
+       wider than the 800px article card. The only white surface must be the centred card
+       (.boot-editor / pre.vditor-reset). If this container is painted white, then during
+       the boot gap -- before vditor adds .typora-editor-shell.vditor and the transparent
+       rule further below takes over -- a full-width white block extends past the card's
+       right edge and shows THROUGH the frosted-glass .floating-actions toolbar, which the
+       user perceives as a white background that appears then disappears on refresh. */
+    background: transparent;
     color: var(--text-color);
     overflow: hidden;
     border-radius: 8px;
+}
+
+/* Instant boot editor: a plain textarea shown over the editor slot while the
+   rich editor engine downloads and initializes, so the user can read and type
+   immediately. It is removed the moment the rich editor is ready and takes over
+   (see the boot handoff in ensureEditor). Both its geometry AND its chrome
+   (background/border/shadow) mirror the live editor's .vditor-reset card measured
+   from the RUNNING vditor (see the notes below), so the swap to the rich editor
+   neither shifts nor resizes the text nor changes the visible article region. */
+.boot-editor {
+    /* Render the boot textarea as the SAME centred white card as the live vditor
+       surface (pre.vditor-reset), so the boot->vditor handoff never changes the
+       visible article region. Earlier this element was full-bleed + transparent,
+       so at handoff a white card (bg+border+shadow) appeared out of nowhere
+       over the grey background -- the "article region swelling" the user saw, even
+       though the text column never moved. The card sits 64px below the editor top,
+       is capped at 800px, and uses the same 35px side padding + 24px top padding.
+       Reproduce that
+       card exactly: */
+    position: absolute;
+    top: 64px;
+    bottom: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 3;
+    width: 100%;
+    max-width: 800px;
+    margin: 0;
+    outline: none;
+    resize: none;
+    box-sizing: border-box;
+    background: var(--textarea-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    box-shadow: 0 10px 30px rgba(15, 23, 42, 0.05);
+    color: var(--text-color);
+    /* Same font stack + line-height as vditor so glyph widths match and the text
+       does not re-wrap at handoff ("DumbPad Reading" first; 1.72 == 28.38px/16.5). */
+    font-family: var(--font-reading);
+    font-size: 16.5px;
+    line-height: 1.72;
+    /* 24px top + 35px side padding == vditor's runtime inline padding, giving the
+       aligned text column inside the 800px card. */
+    padding: 24px 35px 64px;
+    overflow: auto;
+    -webkit-appearance: none;
+    appearance: none;
+}
+
+.boot-editor[hidden] {
+    display: none;
+}
+
+.boot-editor::placeholder {
+    color: var(--muted-text);
+    opacity: 0.7;
+}
+
+/* Mobile: the boot card must mirror the MOBILE vditor card, not the desktop
+   one. Measured at 375px, the running vditor card differs from the desktop
+   geometry in four ways:
+     1. vditor's setPadding gives pre.vditor-reset an inline "10px 10px"
+        padding on narrow viewports (its 35px gutter only applies when
+        innerWidth > MOBILE_WIDTH, and (clientWidth - preview.maxWidth)/2 is
+        negative here);
+     2. ios-theme.css puts the bottom gap OUTSIDE the card
+        (.vditor-wysiwyg padding-bottom: env(safe-area) + 64px), so the card
+        itself stops 64px above the container bottom;
+     3. the desktop-only @media (min-width:981px) rules (margin-top 64px /
+        padding-top 24px) never apply, so the card sits at top: 0;
+     4. the card runs vditor's own line-height (1.68) and its scoped
+        --border-color (#d1d5da light / #141414 dark).
+   The global top:64px / 24px 35px 64px rules above are desktop measurements;
+   leaving them in place parks the boot card 64px below the vditor card on
+   phones with the text starting 78px lower -- the mobile "region swelling"
+   (vertical). Mirror the measured mobile geometry instead: */
+@media (max-width: 980px) {
+    .boot-editor {
+        top: 0;
+        /* The bottom breathing room lives on .vditor-wysiwyg (outside the
+           card), so stop the boot card 64px above the container bottom to
+           match pre.vditor-reset's measured height. */
+        bottom: calc(env(safe-area-inset-bottom, 0px) + 64px);
+        padding: 10px 10px 64px;
+        line-height: 1.68;
+        border-color: #d1d5da;
+    }
+
+    [data-theme="dark"] .boot-editor {
+        border-color: #141414;
+    }
 }
 
 .hybrid-editor-scroller {
@@ -1591,7 +2133,7 @@ main {
 }
 
 .typora-editor-shell .vditor-reset {
-    max-width: 760px;
+    max-width: 800px;
     margin: 0 auto;
     padding: 38px 40px 110px;
     background: transparent;
@@ -1603,7 +2145,7 @@ main {
 
 .typora-editor-shell .vditor-wysiwyg pre.vditor-reset {
     width: 100%;
-    max-width: 760px;
+    max-width: 800px;
     min-height: 100%;
     height: auto;
     margin: 0 auto;
@@ -1623,7 +2165,7 @@ main {
     border: 0;
     outline: 0;
     resize: none;
-    padding: 38px max(40px, calc((100% - 760px) / 2)) 110px;
+    padding: 38px 40px 110px;
     background: var(--textarea-bg);
     color: var(--text-color);
     font: 14px/1.7 var(--font-code);
@@ -1701,11 +2243,6 @@ main {
 
 .typora-editor-shell.is-reading-mode .vditor-reset,
 .typora-editor-shell.is-reading-mode .vditor-reset * {
-    pointer-events: auto;
-}
-
-body.reading-mode-active .toc-container,
-body.reading-mode-active .toc-container * {
     pointer-events: auto;
 }
 
@@ -2394,6 +2931,216 @@ body.reading-mode-active .toc-container * {
 .settings-trash-footer button:disabled {
     cursor: not-allowed;
     opacity: 0.45;
+}
+
+.settings-assets-section {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 12px;
+    border: 1px solid color-mix(in srgb, var(--border-color) 86%, var(--primary-color) 14%);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--modal-bg) 82%, transparent);
+}
+
+.settings-assets-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-height: 300px;
+    overflow: auto;
+}
+
+.settings-asset-item,
+.settings-assets-empty {
+    min-width: 0;
+    padding: 10px;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--modal-bg) 88%, transparent);
+}
+
+.settings-asset-item {
+    display: grid;
+    grid-template-columns: auto 44px minmax(0, 1fr) auto;
+    gap: 10px;
+    align-items: center;
+}
+
+.settings-assets-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 10px;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--modal-bg) 88%, transparent);
+}
+
+.settings-assets-toolbar[hidden] {
+    display: none;
+}
+
+.settings-assets-selectall {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--text-color);
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+    user-select: none;
+}
+
+.settings-assets-selected-count {
+    margin-right: auto;
+    color: var(--muted-text);
+    font-size: 12px;
+}
+
+.settings-assets-toolbar button.danger {
+    padding: 7px 12px;
+    border: 1px solid var(--border-color);
+    border-radius: 7px;
+    background: var(--button-bg);
+    color: var(--danger-color);
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.settings-assets-toolbar button.danger:disabled {
+    cursor: not-allowed;
+    opacity: 0.45;
+}
+
+.settings-asset-select-wrap {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+}
+
+/* The settings modal restyles every checkbox into a toggle switch
+   (`#settings-modal input[type="checkbox"]`). For the asset multi-select we want
+   a plain small checkbox with the theme accent fill and a crisp WHITE check.
+   `accent-color` lets the browser auto-pick a dark check on the light gold
+   accent, so we draw the box and paint the check as an inline SVG background.
+   The [type]/id qualifiers keep specificity above the global switch rule. */
+#settings-modal input.settings-asset-select[type="checkbox"],
+#settings-modal input#settings-assets-select-all[type="checkbox"] {
+    appearance: none;
+    -webkit-appearance: none;
+    position: relative;
+    width: 16px;
+    height: 16px;
+    margin: 0;
+    padding: 0;
+    flex: none;
+    border: 1.5px solid color-mix(in srgb, var(--primary-color) 50%, var(--border-color));
+    border-radius: 4px;
+    background-color: var(--textarea-bg);
+    background-repeat: no-repeat;
+    background-position: center;
+    background-size: 12px 12px;
+    cursor: pointer;
+    transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+/* Remove the inherited toggle knob (global `:after`). */
+#settings-modal input.settings-asset-select[type="checkbox"]::after,
+#settings-modal input#settings-assets-select-all[type="checkbox"]::after {
+    content: none;
+}
+
+#settings-modal input.settings-asset-select[type="checkbox"]:focus-visible,
+#settings-modal input#settings-assets-select-all[type="checkbox"]:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary-color) 35%, transparent);
+}
+
+/* Checked: theme accent fill + white check. */
+#settings-modal input.settings-asset-select[type="checkbox"]:checked,
+#settings-modal input#settings-assets-select-all[type="checkbox"]:checked {
+    background-color: var(--primary-color);
+    border-color: var(--primary-color);
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='none' stroke='%23ffffff' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round' d='M3.5 8.5 6.5 11.5 12.5 4.5'/%3E%3C/svg%3E");
+    transform: none;
+}
+
+/* Select-all partial state: theme accent fill + white dash. */
+#settings-modal input#settings-assets-select-all[type="checkbox"]:indeterminate {
+    background-color: var(--primary-color);
+    border-color: var(--primary-color);
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath stroke='%23ffffff' stroke-width='2.2' stroke-linecap='round' d='M4 8 12 8'/%3E%3C/svg%3E");
+    transform: none;
+}
+
+.settings-asset-thumb {
+    width: 44px;
+    height: 44px;
+    border-radius: 6px;
+    object-fit: cover;
+    background: color-mix(in srgb, var(--modal-bg) 70%, transparent);
+    border: 1px solid var(--border-color);
+}
+
+.settings-asset-thumb-file {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 20px;
+}
+
+.settings-asset-info {
+    min-width: 0;
+}
+
+.settings-asset-name {
+    overflow: hidden;
+    color: var(--text-color);
+    font-size: 13px;
+    font-weight: 800;
+    line-height: 1.35;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.settings-asset-meta {
+    overflow: hidden;
+    color: var(--muted-text);
+    font-size: 12px;
+    line-height: 1.4;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.settings-asset-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 6px;
+}
+
+.settings-asset-actions .settings-asset-download,
+.settings-asset-actions button {
+    padding: 7px 10px;
+    border: 1px solid var(--border-color);
+    border-radius: 7px;
+    background: var(--button-bg);
+    color: var(--text-color);
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 700;
+    text-decoration: none;
+}
+
+.settings-asset-actions button.danger {
+    color: var(--danger-color);
+}
+
+.settings-asset-actions .settings-asset-insert {
+    color: var(--primary-color);
+    border-color: color-mix(in srgb, var(--primary-color) 45%, var(--border-color));
 }
 
 .settings-cloud-status {
@@ -3453,16 +4200,13 @@ body.reading-mode-active .editor-main {
     padding: 10px 0;
 }
 
-body.reading-mode-active .sidebar-right {
-    opacity: 0;
-    visibility: hidden;
-    pointer-events: none;
-}
+/* The right sidebar hosts the in-article heading TOC (文章内目录), which is
+   most useful exactly in reading mode — keep it visible. */
 
 /* Tablet Optimizations */
 @media (min-width: 981px) and (max-width: 1200px) {
     .sidebar-right {
-        display: none;
+        width: 200px;
     }
 
     .sidebar-left {
@@ -3482,11 +4226,8 @@ body.reading-mode-active .sidebar-right {
 }
 
 /* Dynamic Floating Actions Positioning */
-body.toc-active .floating-actions {
-    right: 290px;
-    /* Moves buttons to the left of the ToC (30px + 240px + 20px gap) */
-    transition: right 0.3s var(--ease-out-expo);
-}
+/* The floating TOC panel was replaced by the sidebar column; FABs keep their
+   default position. */
 
 /* Mobile Polish */
 @media (max-width: 768px) {
@@ -3513,10 +4254,239 @@ body.toc-active .floating-actions {
     }
 }
 
-/* On smaller screens where ToC is hidden, reset button position */
-@media (max-width: 1200px) {
-    body.toc-active .floating-actions {
-        right: 20px;
+/* In-article heading TOC (文章内目录) inside the right sidebar column.
+   Each row carries a fixed-width H1–H6 badge (echoing the editor's faint
+   heading labels) so entries align in a column; heavier levels read bolder. */
+.article-toc-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px 10px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    scrollbar-width: thin;
+}
+
+.article-toc-list .toc-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    line-height: 1.45;
+    color: var(--muted-text);
+    padding: 5px 8px;
+    border-radius: 7px;
+}
+
+.article-toc-list .toc-item.h1 {
+    padding-left: 8px;
+}
+
+.article-toc-list .toc-item.h2 {
+    padding-left: 26px;
+}
+
+.article-toc-list .toc-item.h3 {
+    padding-left: 44px;
+}
+
+.article-toc-list .toc-item.h4,
+.article-toc-list .toc-item.h5,
+.article-toc-list .toc-item.h6 {
+    padding-left: 62px;
+}
+
+/* 加粗/划线/高亮/批注子条目：比所属标题再低一级，徽标用类型色区分。 */
+.article-toc-list .toc-item.mark-entry {
+    padding-left: 46px;
+    font-size: 12.5px;
+}
+
+.article-toc-list .toc-item.mark-entry .mark-badge {
+    min-width: 18px;
+    font-size: 9px;
+}
+
+.article-toc-list .toc-item.type-bold .mark-badge {
+    color: var(--text-color);
+    background: color-mix(in srgb, var(--muted-text) 22%, transparent);
+}
+
+.article-toc-list .toc-item.type-underline .mark-badge {
+    color: #2f7dd1;
+    background: rgba(47, 125, 209, 0.14);
+}
+
+.article-toc-list .toc-item.type-highlight .mark-badge {
+    color: #b07d10;
+    background: rgba(214, 158, 46, 0.18);
+}
+
+.article-toc-list .toc-item.type-note .mark-badge {
+    color: #cf5b52;
+    background: rgba(207, 91, 82, 0.14);
+}
+
+.toc-level-badge {
+    flex: 0 0 auto;
+    min-width: 22px;
+    text-align: center;
+    font-family: var(--font-code);
+    font-size: 9.5px;
+    font-weight: 600;
+    line-height: 1;
+    padding: 3px 0;
+    border-radius: 4px;
+    color: color-mix(in srgb, var(--text-color) 60%, var(--muted-text));
+    background: color-mix(in srgb, var(--muted-text) 14%, transparent);
+}
+
+.article-toc-list .toc-item.h1 .toc-level-badge {
+    color: var(--primary-color);
+    background: rgba(var(--primary-rgb), 0.14);
+}
+
+.article-toc-list .toc-item-text {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.article-toc-list .toc-item.h1 .toc-item-text {
+    font-weight: 600;
+    color: var(--text-color);
+}
+
+.article-toc-list .toc-item.h2 .toc-item-text {
+    font-weight: 500;
+    color: color-mix(in srgb, var(--text-color) 88%, var(--muted-text));
+}
+
+.article-toc-list .toc-item:hover {
+    color: var(--primary-color);
+    background: rgba(var(--primary-rgb), 0.06);
+}
+
+.article-toc-list .toc-item.active {
+    color: var(--primary-color);
+    background: rgba(var(--primary-rgb), 0.1);
+}
+
+.article-toc-list .toc-item.active .toc-item-text {
+    color: var(--primary-color);
+    font-weight: 600;
+}
+
+.article-toc-empty {
+    padding: 18px 12px;
+    color: var(--muted-text);
+    font-size: 12.5px;
+    text-align: center;
+    opacity: 0.75;
+}
+
+/* Sidebar tab sub-pages (目录 / 最近切换) — shared by the mobile drawer and
+   the desktop column; the .active tab decides which section is visible. */
+.sidebar-content-section {
+    display: none;
+}
+
+.sidebar-content-section.active {
+    display: block;
+}
+
+@media (min-width: 981px) {
+    .sidebar-tabs {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        flex: 1;
+        min-width: 0;
+    }
+
+    .sidebar-tab {
+        appearance: none;
+        border: none;
+        background: transparent;
+        color: var(--muted-text);
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 7px 10px;
+        border-radius: 8px;
+        cursor: pointer;
+        transition: background-color 160ms ease-out, color 160ms ease-out;
+    }
+
+    .sidebar-tab svg {
+        display: block;
+    }
+
+    .sidebar-tab:hover {
+        color: var(--text-color);
+        background: rgba(var(--primary-rgb), 0.06);
+    }
+
+    .sidebar-tab.active {
+        color: var(--primary-color);
+        background: rgba(var(--primary-rgb), 0.1);
+    }
+
+    .article-toc-heading {
+        display: inline-flex;
+        align-items: center;
+        margin: 0;
+        color: color-mix(in srgb, var(--text-color) 62%, var(--muted-text));
+    }
+
+    body:not(.thoughts-mode) .sidebar-left .recent-files-list {
+        padding: 8px 10px 16px;
+        overflow-y: auto;
+    }
+}
+
+/* Mobile: collapse the floating-action group behind the "more" toggle. */
+#fab-toggle-group {
+    display: none;
+}
+
+@media (max-width: 980px) {
+    #toggle-article-toc {
+        display: flex;
+    }
+
+    #fab-toggle-group {
+        display: flex;
+    }
+
+    /* Collapsed by default: the TOC entry, the scroll helper and the group
+       toggle stay visible; the rest slide in when body.fab-expanded is set. */
+    body:not(.fab-expanded) .floating-actions .floating-btn:not(#fab-toggle-group):not(#scroll-helper):not(#toggle-article-toc) {
+        display: none;
+    }
+
+    body.fab-expanded #fab-toggle-group svg {
+        transform: rotate(90deg);
+    }
+}
+
+@media (min-width: 981px) {
+    #toggle-article-toc {
+        display: none;
+    }
+}
+
+/* The right sidebar becomes a TOC drawer on mobile; reuse the left drawer's
+   overlay behaviour (z-index above the overlay content scrim). */
+@media (max-width: 980px) {
+    #sidebar-right.visible {
+        z-index: 1850;
+    }
+
+    #sidebar-right .sidebar-header {
+        justify-content: space-between;
     }
 }
 
@@ -3956,6 +4926,146 @@ body.toc-active .floating-actions {
 }
 
 /* Article image assets */
+.article-file-command-input {
+    position: fixed;
+    width: 1px;
+    height: 1px;
+    opacity: 0;
+    pointer-events: none;
+    clip-path: inset(50%);
+}
+
+.article-upload-card {
+    display: inline-flex;
+    width: min(100%, 560px);
+    min-height: 66px;
+    box-sizing: border-box;
+    align-items: center;
+    gap: 12px;
+    margin: 8px 0;
+    padding: 11px 12px;
+    border: 1px solid color-mix(in srgb, var(--border-color) 86%, transparent);
+    border-radius: 9px;
+    background: color-mix(in srgb, var(--textarea-bg) 94%, var(--primary-color) 6%);
+    color: var(--text-color);
+    font-family: var(--font-reading);
+    line-height: 1.35;
+    user-select: none;
+    vertical-align: middle;
+}
+
+.article-upload-card.is-error {
+    border-color: color-mix(in srgb, #c94a43 48%, var(--border-color));
+    background: color-mix(in srgb, var(--textarea-bg) 92%, #c94a43 8%);
+}
+
+.article-upload-icon {
+    display: inline-grid;
+    flex: 0 0 34px;
+    width: 34px;
+    height: 34px;
+    place-items: center;
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--primary-color) 15%, transparent);
+    color: var(--primary-color);
+    font: 600 18px/1 var(--font-reading);
+}
+
+.article-upload-content {
+    display: flex;
+    min-width: 0;
+    flex: 1;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.article-upload-heading {
+    display: flex;
+    min-width: 0;
+    align-items: baseline;
+    gap: 8px;
+}
+
+.article-upload-name {
+    overflow: hidden;
+    min-width: 0;
+    flex: 1;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.article-upload-size,
+.article-upload-status {
+    color: var(--muted-text);
+    font-size: 11px;
+}
+
+.article-upload-progress {
+    display: block;
+    overflow: hidden;
+    height: 3px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--border-color) 68%, transparent);
+}
+
+.article-upload-progress-fill {
+    display: block;
+    height: 100%;
+    border-radius: inherit;
+    background: var(--primary-color);
+    transition: width 120ms linear;
+}
+
+.article-upload-card.is-error .article-upload-progress-fill {
+    background: #c94a43;
+}
+
+.article-upload-actions {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 4px;
+}
+
+.article-upload-actions button {
+    min-height: 30px;
+    padding: 0 9px;
+    border: 0;
+    border-radius: 7px;
+    background: transparent;
+    color: var(--muted-text);
+    font: 500 12px/1 var(--font-reading);
+    cursor: pointer;
+}
+
+.article-upload-actions button:hover,
+.article-upload-actions button:focus-visible {
+    outline: none;
+    background: var(--button-hover);
+    color: var(--text-color);
+}
+
+@media (max-width: 600px) {
+    .article-upload-card {
+        align-items: flex-start;
+        gap: 9px;
+        padding: 10px;
+    }
+
+    .article-upload-icon {
+        flex-basis: 30px;
+        width: 30px;
+        height: 30px;
+    }
+
+    .article-upload-actions {
+        flex-direction: column;
+        align-items: stretch;
+    }
+}
+
 .vditor-reset img.dumbpad-article-image {
     display: block;
     max-width: 100%;
@@ -3984,6 +5094,126 @@ body.toc-active .floating-actions {
     outline-offset: 4px;
 }
 
+.vditor-reset a.dumbpad-article-file {
+    display: inline-flex;
+    align-items: center;
+    max-width: min(100%, 560px);
+    min-height: 36px;
+    margin: 10px 0;
+    padding: 7px 11px;
+    overflow: hidden;
+    border: 1px solid color-mix(in srgb, var(--border-color) 78%, var(--primary-color));
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--surface-subtle) 82%, var(--textarea-bg));
+    color: var(--text-color);
+    font-size: 13px;
+    line-height: 1.35;
+    text-decoration: none;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    vertical-align: middle;
+    cursor: pointer;
+}
+
+.vditor-reset a.dumbpad-article-file:hover,
+.vditor-reset a.dumbpad-article-file:focus-visible {
+    outline: none;
+    border-color: color-mix(in srgb, var(--primary-color) 62%, var(--border-color));
+    background: color-mix(in srgb, var(--primary-color) 11%, var(--textarea-bg));
+    color: var(--primary-color);
+}
+
+.vditor-reset a.dumbpad-article-file:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--primary-color) 45%, transparent);
+    outline-offset: 2px;
+}
+
+.vditor-reset a.dumbpad-article-file.is-article-file-dragging {
+    cursor: grabbing;
+    opacity: 0.58;
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+/* Links in the article editor — Lute already renders bare URLs (GFM
+   autolink) and authored [text](url) as real <a> elements; give them the
+   same highlighted, clickable affordance as Thoughts and Today Drafts. */
+.vditor-reset a[href] {
+    color: var(--primary-color);
+    text-decoration: underline;
+    text-decoration-color: color-mix(in srgb, var(--primary-color) 45%, transparent);
+    text-underline-offset: 3px;
+    word-break: break-all;
+}
+
+.vditor-reset a[href]:hover {
+    text-decoration-color: var(--primary-color);
+    background: color-mix(in srgb, var(--primary-color) 10%, transparent);
+    border-radius: 3px;
+}
+
+.vditor-reset a.dumbpad-article-file {
+    color: var(--text-color);
+    text-decoration: none;
+}
+
+/* Vditor 的标题级别侧标（H2/H3…）默认 float 在行盒顶部，看起来标题"偏上"、
+   标记和文字没对齐。改为相对标题垂直居中，并缩小弱化；H1 也补上标记。
+   移动端横向空间有限，直接隐藏侧标。 */
+.typora-editor-shell .vditor-wysiwyg > .vditor-reset > h1,
+.typora-editor-shell .vditor-wysiwyg > .vditor-reset > h2,
+.typora-editor-shell .vditor-wysiwyg > .vditor-reset > h3,
+.typora-editor-shell .vditor-wysiwyg > .vditor-reset > h4,
+.typora-editor-shell .vditor-wysiwyg > .vditor-reset > h5,
+.typora-editor-shell .vditor-wysiwyg > .vditor-reset > h6 {
+    position: relative;
+}
+
+.typora-editor-shell .vditor-wysiwyg > .vditor-reset > h1::before {
+    content: 'H1';
+}
+
+.typora-editor-shell .vditor-wysiwyg > .vditor-reset > h1::before,
+.typora-editor-shell .vditor-wysiwyg > .vditor-reset > h2::before,
+.typora-editor-shell .vditor-wysiwyg > .vditor-reset > h3::before,
+.typora-editor-shell .vditor-wysiwyg > .vditor-reset > h4::before,
+.typora-editor-shell .vditor-wysiwyg > .vditor-reset > h5::before,
+.typora-editor-shell .vditor-wysiwyg > .vditor-reset > h6::before {
+    float: none;
+    position: absolute;
+    left: -36px;
+    top: 50%;
+    transform: translateY(-50%);
+    margin: 0;
+    padding: 0;
+    font-size: 11px;
+    line-height: 1;
+    font-weight: 500;
+    opacity: 0.55;
+    pointer-events: none;
+}
+
+@media (max-width: 980px) {
+    .typora-editor-shell .vditor-wysiwyg > .vditor-reset > h1::before,
+    .typora-editor-shell .vditor-wysiwyg > .vditor-reset > h2::before,
+    .typora-editor-shell .vditor-wysiwyg > .vditor-reset > h3::before,
+    .typora-editor-shell .vditor-wysiwyg > .vditor-reset > h4::before,
+    .typora-editor-shell .vditor-wysiwyg > .vditor-reset > h5::before,
+    .typora-editor-shell .vditor-wysiwyg > .vditor-reset > h6::before {
+        display: none;
+    }
+}
+
+.typora-editor-shell .vditor-tip {
+    position: fixed !important;
+    top: 72px !important;
+    z-index: 4300;
+}
+
+.typora-editor-shell:not(.is-reading-mode) .vditor-reset a.dumbpad-article-file {
+    touch-action: none;
+}
+
 .article-image-size-menu {
     position: fixed;
     z-index: 4200;
@@ -3999,6 +5229,57 @@ body.toc-active .floating-actions {
 
 .article-image-size-menu[hidden] {
     display: none;
+}
+
+.article-file-menu {
+    position: fixed;
+    z-index: 4200;
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    padding: 4px;
+    border: 1px solid var(--border-color);
+    border-radius: 7px;
+    background: var(--modal-bg);
+    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.16);
+}
+
+.article-file-menu[hidden] {
+    display: none;
+}
+
+.article-file-menu .article-file-download,
+.article-file-menu .article-file-delete {
+    display: inline-grid;
+    width: 28px;
+    min-width: 28px;
+    height: 28px;
+    place-items: center;
+    padding: 0;
+    border: 0;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--muted-text);
+    cursor: pointer;
+    text-decoration: none;
+}
+
+.article-file-menu .article-file-download:hover,
+.article-file-menu .article-file-download:focus-visible {
+    outline: none;
+    background: color-mix(in srgb, var(--primary-color) 16%, transparent);
+    color: var(--primary-color);
+}
+
+.article-file-menu .article-file-delete {
+    color: #d84a44;
+}
+
+.article-file-menu .article-file-delete:hover,
+.article-file-menu .article-file-delete:focus-visible {
+    outline: none;
+    background: color-mix(in srgb, #d84a44 12%, transparent);
+    color: #c53631;
 }
 
 .article-image-size-menu button {

@@ -212,6 +212,7 @@ async function run(argv = process.argv.slice(2)) {
     await uploadDirectory(report, 'thoughts.meta', path.join(report.dataDir, 'thoughts.meta'), 'thoughts.meta');
     await uploadDirectory(report, 'relations', path.join(report.dataDir, 'relations'), 'relations');
     await uploadDirectory(report, 'relations.suppressed', path.join(report.dataDir, 'relations.suppressed'), 'relations.suppressed');
+    await uploadDirectory(report, 'agent-runs', path.join(report.dataDir, 'agent-runs'), 'agent-runs');
     await uploadDirectory(report, 'indexes', path.join(report.dataDir, 'indexes'), 'indexes');
     await uploadDirectory(report, 'notepads', path.join(report.dataDir, 'notepads'), 'notepads');
     await uploadRootFile(report, 'notepads.json', 'notepads.json');

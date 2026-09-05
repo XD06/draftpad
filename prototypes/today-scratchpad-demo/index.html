@@ -1,0 +1,413 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>今日草稿 - UI Prototype</title>
+    <style>
+        :root {
+            color-scheme: light;
+            --page: #f2f2f7;
+            --surface: #ffffff;
+            --text: #1c1c1e;
+            --muted: #6e6e73;
+            --line: rgba(60, 60, 67, 0.11);
+            --line-strong: rgba(60, 60, 67, 0.18);
+            --accent: #e5a100;
+            --accent-soft: rgba(229, 161, 0, 0.13);
+            --shadow: 0 8px 18px rgba(39, 37, 33, 0.06);
+            --radius: 14px;
+        }
+
+        [data-theme="dark"] {
+            color-scheme: dark;
+            --page: #1c1c1e;
+            --surface: #2c2c2e;
+            --text: #ffffff;
+            --muted: #b2b2b7;
+            --line: rgba(255, 255, 255, 0.11);
+            --line-strong: rgba(255, 255, 255, 0.18);
+            --accent: #ffd60a;
+            --accent-soft: rgba(255, 214, 10, 0.16);
+            --shadow: 0 8px 18px rgba(0, 0, 0, 0.24);
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            min-height: 100dvh;
+            margin: 0;
+            background: var(--page);
+            color: var(--text);
+            font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", "Microsoft YaHei", sans-serif;
+            letter-spacing: 0;
+        }
+
+        button, input, textarea { font: inherit; }
+        button { color: inherit; }
+
+        .app-header {
+            position: fixed;
+            top: 12px;
+            right: 12px;
+            left: 12px;
+            z-index: 5;
+            display: flex;
+            min-height: 52px;
+            padding: 6px 16px;
+            align-items: center;
+            justify-content: space-between;
+            border: 1px solid color-mix(in srgb, var(--surface) 56%, var(--line));
+            border-radius: 14px;
+            background: color-mix(in srgb, var(--page) 74%, transparent);
+            box-shadow: 0 4px 16px rgba(39, 37, 33, 0.04);
+            backdrop-filter: blur(18px) saturate(150%);
+            -webkit-backdrop-filter: blur(18px) saturate(150%);
+        }
+
+        .app-mark, .header-actions, .sheet-tools { display: flex; align-items: center; gap: 8px; }
+        .app-mark { font-size: 14px; font-weight: 700; }
+        .app-mark span { color: var(--muted); font-weight: 500; }
+
+        .icon-button, .utility-button, .target-button, .variant-button {
+            min-height: 36px;
+            border: 1px solid transparent;
+            border-radius: 9px;
+            background: transparent;
+            cursor: pointer;
+            transition: background-color 150ms ease-out, border-color 150ms ease-out, transform 150ms ease-out;
+        }
+        .icon-button { width: 36px; padding: 0; color: var(--muted); font-size: 18px; }
+        .icon-button:hover, .utility-button:hover, .target-button:hover, .variant-button:hover { background: var(--accent-soft); }
+        .icon-button:active, .utility-button:active, .target-button:active, .variant-button:active { transform: scale(0.97); }
+        .icon-button:focus-visible, .utility-button:focus-visible, .target-button:focus-visible, .variant-button:focus-visible, .row-input:focus-visible, .row-check:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+        .workspace {
+            width: min(820px, calc(100% - 32px));
+            margin: 94px auto 112px;
+        }
+
+        .scratchpad {
+            position: relative;
+            overflow: hidden;
+            min-height: 0;
+            border: 1px solid var(--line-strong);
+            border-radius: 12px;
+            background: var(--surface);
+            box-shadow: none;
+        }
+
+        .sheet-top {
+            display: grid;
+            min-height: 86px;
+            padding: 18px 24px 14px;
+            grid-template-columns: 1fr auto;
+            gap: 18px;
+            align-items: end;
+            border-bottom: 1px solid var(--line-strong);
+        }
+
+        h1 { margin: 0; font-size: 21px; line-height: 1.2; font-weight: 700; }
+        .day-stamp { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+        .clear-note { color: var(--accent); }
+
+        .sheet-tools { justify-content: flex-end; }
+        .utility-button { padding: 0 11px; color: var(--muted); font-size: 13px; }
+        .utility-button.import { border-color: transparent; background: var(--accent-soft); color: var(--text); }
+
+        .list-region { position: relative; padding: 2px 24px 10px; }
+        .scratch-list { position: relative; }
+
+        .scratch-row {
+            position: relative;
+            display: grid;
+            min-height: 52px;
+            grid-template-columns: 40px minmax(0, 1fr) auto;
+            gap: 2px;
+            align-items: center;
+            border-bottom: 1px solid var(--line);
+            transition: opacity 180ms ease-out, transform 180ms ease-out, background-color 180ms ease-out;
+        }
+        .scratch-row:hover { background: color-mix(in srgb, var(--accent-soft) 28%, transparent); }
+        .scratch-row.done { opacity: 0.42; }
+        .scratch-row.done .row-input { color: var(--muted); text-decoration: line-through; }
+
+        .row-check {
+            position: relative;
+            width: 40px;
+            height: 44px;
+            border: 0;
+            background: transparent;
+            cursor: pointer;
+        }
+        .row-check::before { position: absolute; top: 12px; left: 11px; width: 18px; height: 18px; border: 1.5px solid var(--muted); border-radius: 50%; content: ""; }
+        .done .row-check::before { border-color: var(--accent); background: var(--accent); }
+        .done .row-check::after { position: absolute; top: 15px; left: 17px; width: 5px; height: 8px; border: solid #1c1c1e; border-width: 0 2px 2px 0; transform: rotate(45deg); content: ""; }
+
+        .row-input {
+            width: 100%;
+            min-width: 0;
+            padding: 10px 4px 10px 0;
+            border: 0;
+            outline: 0;
+            background: transparent;
+            color: var(--text);
+            font-size: 15px;
+        }
+        .row-input::placeholder { color: var(--muted); }
+        .row-meta { padding-right: 4px; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+
+        .new-row { border-bottom: 0; }
+        .new-row .row-check::before { border-style: dashed; opacity: 0.62; }
+        .new-row .row-input { color: var(--muted); }
+
+        .sheet-footer { display: flex; min-height: 42px; padding: 12px 24px 10px; justify-content: space-between; color: var(--muted); font-size: 12px; }
+        .status { color: var(--accent); }
+
+        .variant-inbox .scratchpad { border-radius: 14px; box-shadow: var(--shadow); }
+        .variant-inbox .sheet-top { min-height: 130px; padding: 28px 30px 18px; border-bottom: 0; }
+        .variant-inbox .list-region { margin: 0 18px 18px; padding: 4px 14px 16px; border: 1px solid var(--line); border-radius: 12px; background: color-mix(in srgb, var(--page) 68%, var(--surface)); }
+        .variant-inbox .scratch-row { min-height: 48px; }
+        .variant-inbox .sheet-footer { padding-left: 32px; }
+
+        .variant-plain .scratchpad { border: 0; border-radius: 0; background: transparent; box-shadow: none; }
+        .variant-plain .sheet-top { min-height: 92px; padding: 12px 0 18px; }
+        .variant-plain .list-region { padding: 0; }
+        .variant-plain .scratch-row { min-height: 54px; padding: 0 0 0 0; }
+        .variant-plain .sheet-footer { padding: 16px 0 8px; }
+
+        .prototype-switcher {
+            position: fixed;
+            right: 18px;
+            bottom: 18px;
+            left: 18px;
+            z-index: 8;
+            display: flex;
+            min-height: 48px;
+            padding: 6px;
+            align-items: center;
+            justify-content: center;
+            gap: 5px;
+            border: 1px solid var(--line-strong);
+            border-radius: 14px;
+            background: color-mix(in srgb, var(--surface) 88%, transparent);
+            box-shadow: var(--shadow);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+        }
+        .variant-button { min-height: 34px; padding: 0 11px; color: var(--muted); font-size: 12px; }
+        .variant-button.active { background: var(--accent-soft); color: var(--text); }
+        .prototype-state { margin-left: 8px; color: var(--muted); font-size: 11px; }
+
+        dialog {
+            width: min(560px, calc(100% - 28px));
+            padding: 0;
+            border: 1px solid var(--line-strong);
+            border-radius: 16px;
+            background: var(--surface);
+            color: var(--text);
+            box-shadow: 0 24px 80px rgba(0, 0, 0, 0.28);
+        }
+        dialog::backdrop { background: rgba(0, 0, 0, 0.32); backdrop-filter: blur(4px); }
+        .dialog-inner { padding: 22px; }
+        .dialog-top { display: flex; align-items: start; justify-content: space-between; gap: 12px; }
+        .dialog-top h2 { margin: 0; font-size: 18px; }
+        .dialog-top p { margin: 5px 0 0; color: var(--muted); font-size: 13px; }
+        textarea { width: 100%; min-height: 112px; margin: 18px 0 14px; padding: 12px; resize: vertical; border: 1px solid var(--line-strong); border-radius: 10px; outline: none; background: color-mix(in srgb, var(--page) 64%, var(--surface)); color: var(--text); line-height: 1.5; }
+        textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+        .target-picker { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; }
+        .target-button { min-height: 42px; padding: 6px 8px; border-color: var(--line); color: var(--muted); font-size: 13px; }
+        .target-button.active { border-color: color-mix(in srgb, var(--accent) 48%, var(--line)); background: var(--accent-soft); color: var(--text); }
+        .dialog-actions { display: flex; margin-top: 18px; justify-content: flex-end; gap: 8px; }
+        .dialog-actions button { min-height: 38px; padding: 0 14px; border: 0; border-radius: 9px; cursor: pointer; }
+        .dialog-actions .confirm { background: var(--accent); color: #1c1c1e; font-weight: 700; }
+        .dialog-actions .cancel { background: var(--button, color-mix(in srgb, var(--page) 78%, var(--surface))); color: var(--text); }
+
+        @media (max-width: 640px) {
+            .app-header { right: 10px; left: 10px; padding: 6px 14px; }
+            .workspace { width: min(100% - 20px, 720px); margin-top: 82px; }
+            .sheet-top { min-height: 82px; padding: 16px; gap: 10px; }
+            .list-region { padding: 2px 16px 10px; }
+            .sheet-footer { padding: 12px 16px 8px; }
+            .prototype-switcher { justify-content: flex-start; overflow-x: auto; }
+            .prototype-state { display: none; }
+            .variant-inbox .sheet-top { padding: 20px 18px 14px; }
+            .variant-inbox .list-region { margin: 0 10px 12px; }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            *, *::before, *::after { transition-duration: 0.01ms !important; }
+        }
+    </style>
+</head>
+<body class="variant-ledger">
+    <header class="app-header">
+        <div class="app-mark">DumbPad <span>/ 今日草稿</span></div>
+        <div class="header-actions">
+            <button id="theme-toggle" class="icon-button" type="button" title="切换深浅主题" aria-label="切换深浅主题">◐</button>
+        </div>
+    </header>
+
+    <main class="workspace">
+        <section class="scratchpad" aria-label="今日草稿示例">
+            <div class="sheet-top">
+                <div>
+                    <h1>今日草稿</h1>
+                </div>
+                <div class="sheet-tools">
+                    <span class="day-stamp">08/04 <span class="clear-note">今晚清空</span></span>
+                    <button id="import-button" class="utility-button import" type="button">读取剪贴板</button>
+                </div>
+            </div>
+            <div class="list-region">
+                <div id="scratch-list" class="scratch-list"></div>
+            </div>
+            <footer class="sheet-footer">
+                <span id="footer-count">4 条待处理</span>
+                <span class="status" id="route-status" aria-live="polite"></span>
+            </footer>
+        </section>
+    </main>
+
+    <nav class="prototype-switcher" aria-label="原型样式切换">
+        <button class="variant-button active" data-variant="ledger" type="button">横线本页</button>
+        <button class="variant-button" data-variant="inbox" type="button">收件清单</button>
+        <button class="variant-button" data-variant="plain" type="button">无框清单</button>
+        <span class="prototype-state" id="prototype-state">推荐：横线本页</span>
+    </nav>
+
+    <dialog id="import-dialog" aria-labelledby="import-title">
+        <form class="dialog-inner" method="dialog">
+            <div class="dialog-top">
+                <div>
+                    <h2 id="import-title">剪贴板内容</h2>
+                    <p>先编辑，再选择保存位置。</p>
+                </div>
+                <button id="close-dialog" class="icon-button" type="submit" aria-label="关闭">×</button>
+            </div>
+            <textarea id="clipboard-content">确认今天的会议时间
+给 API 补一个回归测试</textarea>
+            <div class="target-picker" aria-label="保存位置">
+                <button class="target-button active" data-target="今日草稿" type="button">今日草稿</button>
+                <button class="target-button" data-target="Thought" type="button">Thought</button>
+                <button class="target-button" data-target="文章" type="button">新建文章</button>
+            </div>
+            <div class="dialog-actions">
+                <button class="cancel" type="submit">取消</button>
+                <button id="confirm-import" class="confirm" type="button">保存到今日草稿</button>
+            </div>
+        </form>
+    </dialog>
+
+    <script>
+        const entries = [
+            { text: '回复客户邮件', time: '09:20' },
+            { text: '给 API 补一个回归测试', time: '10:00' },
+            { text: '确认今天的会议时间', time: '11:30' },
+            { text: '整理刚复制的资料', time: '14:00' }
+        ];
+        const list = document.getElementById('scratch-list');
+        const count = document.getElementById('footer-count');
+        const routeStatus = document.getElementById('route-status');
+        const dialog = document.getElementById('import-dialog');
+        const content = document.getElementById('clipboard-content');
+        const state = document.getElementById('prototype-state');
+        let target = '今日草稿';
+
+        function render() {
+            list.innerHTML = '';
+            entries.forEach((entry, index) => {
+                const row = document.createElement('div');
+                row.className = `scratch-row${entry.done ? ' done' : ''}`;
+                const check = document.createElement('button');
+                check.className = 'row-check';
+                check.type = 'button';
+                check.setAttribute('aria-label', entry.done ? '恢复事项' : '完成事项');
+                check.addEventListener('click', () => {
+                    entry.done = !entry.done;
+                    render();
+                });
+                const input = document.createElement('input');
+                input.className = 'row-input';
+                input.value = entry.text;
+                input.setAttribute('aria-label', `第 ${index + 1} 条草稿`);
+                input.addEventListener('input', event => { entry.text = event.target.value; });
+                input.addEventListener('keydown', event => {
+                    if (event.key !== 'Enter') return;
+                    event.preventDefault();
+                    entries.splice(index + 1, 0, { text: '', time: '现在' });
+                    render();
+                    requestAnimationFrame(() => list.querySelectorAll('.row-input')[index + 1]?.focus());
+                });
+                const meta = document.createElement('span');
+                meta.className = 'row-meta';
+                meta.textContent = entry.time;
+                row.append(check, input, meta);
+                list.append(row);
+            });
+            const add = document.createElement('div');
+            add.className = 'scratch-row new-row';
+            const placeholderCheck = document.createElement('span');
+            placeholderCheck.className = 'row-check';
+            const newInput = document.createElement('input');
+            newInput.className = 'row-input';
+            newInput.placeholder = '写下一件今天要做的事';
+            newInput.setAttribute('aria-label', '新增今日草稿');
+            newInput.addEventListener('keydown', event => {
+                if (event.key !== 'Enter' || !event.target.value.trim()) return;
+                entries.push({ text: event.target.value.trim(), time: '现在' });
+                render();
+            });
+            add.append(placeholderCheck, newInput, document.createElement('span'));
+            list.append(add);
+            const remaining = entries.filter(entry => !entry.done).length;
+            count.textContent = `${remaining} 条待处理`;
+        }
+
+        document.querySelectorAll('[data-variant]').forEach(button => {
+            button.addEventListener('click', () => {
+                const variant = button.dataset.variant;
+                document.body.className = `variant-${variant}`;
+                document.querySelectorAll('[data-variant]').forEach(item => item.classList.toggle('active', item === button));
+                const names = { ledger: '推荐：横线本页', inbox: '收件清单：更聚合', plain: '无框清单：更轻' };
+                state.textContent = names[variant];
+                const url = new URL(window.location.href);
+                url.searchParams.set('variant', variant);
+                history.replaceState(null, '', url);
+            });
+        });
+
+        document.getElementById('import-button').addEventListener('click', () => dialog.showModal());
+        document.querySelectorAll('[data-target]').forEach(button => {
+            button.addEventListener('click', () => {
+                target = button.dataset.target;
+                document.querySelectorAll('[data-target]').forEach(item => item.classList.toggle('active', item === button));
+                document.getElementById('confirm-import').textContent = target === '文章' ? '创建新文章' : `保存到${target}`;
+            });
+        });
+        document.getElementById('confirm-import').addEventListener('click', () => {
+            const value = content.value.trim();
+            if (target === '今日草稿' && value) {
+                value.split('\n').map(line => line.trim()).filter(Boolean).forEach(line => entries.push({ text: line, time: '刚刚' }));
+                render();
+                routeStatus.textContent = '已加入今日草稿';
+            } else if (target === 'Thought') {
+                routeStatus.textContent = '将进入 Thought 保存路径';
+            } else {
+                routeStatus.textContent = '将创建一篇新文章';
+            }
+            dialog.close();
+        });
+        document.getElementById('theme-toggle').addEventListener('click', () => {
+            if (document.documentElement.dataset.theme === 'dark') {
+                document.documentElement.removeAttribute('data-theme');
+            } else {
+                document.documentElement.dataset.theme = 'dark';
+            }
+        });
+        const initial = new URLSearchParams(window.location.search).get('variant');
+        if (initial && document.querySelector(`[data-variant="${initial}"]`)) document.querySelector(`[data-variant="${initial}"]`).click();
+        render();
+    </script>
+</body>
+</html>

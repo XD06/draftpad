@@ -2,40 +2,142 @@
   "openapi": "3.1.0",
   "info": {
     "title": "DumbPad API",
-    "version": "1.0.8",
-    "description": "DumbPad content-management API. Authenticate with the dumbpad_auth cookie or an Authorization: Bearer <PIN> header."
+    "version": "1.0.9",
+    "description": "DumbPad content-management API. Legacy deployments authenticate with a PIN; AUTH_V2_ENABLED deployments use an opaque browser session or a scoped API token. API tokens cannot access authentication or data-management routes."
   },
   "servers": [{ "url": "/" }],
-  "security": [{ "cookieAuth": [] }, { "pinBearer": [] }],
+  "security": [{ "cookieAuth": [] }, { "sessionCookieAuth": [] }, { "apiTokenBearer": [] }, { "pinBearer": [] }],
   "paths": {
+    "/api/verify-pin": {
+      "post": { "security": [], "summary": "Verify a legacy PIN and create the browser cookie", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PinVerification" } } } }, "responses": { "200": { "description": "Verified or PIN is not required" }, "401": { "$ref": "#/components/responses/Error" }, "410": { "$ref": "#/components/responses/Error" }, "429": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/pin-required": {
+      "get": { "security": [], "summary": "Read whether a legacy PIN is required", "responses": { "200": { "description": "Legacy PIN requirement or V2 mode", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PinRequirement" } } } } } }
+    },
+    "/api/config": {
+      "get": { "security": [], "summary": "Read public runtime configuration without credentials", "responses": { "200": { "description": "Public client configuration", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PublicConfig" } } } } } }
+    },
+    "/api/meta": {
+      "get": { "security": [], "summary": "Read public API capability and limit metadata without secrets", "responses": { "200": { "description": "Runtime capability metadata", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ApiMeta" } } } } } }
+    },
+    "/api/auth/status": {
+      "get": { "security": [], "summary": "Read authentication mode and setup status", "responses": { "200": { "description": "Legacy, setup, or login status without secrets" } } }
+    },
+    "/api/auth/setup/start": {
+      "post": { "security": [], "summary": "Begin one-time V2 password and TOTP setup", "responses": { "200": { "description": "Temporary setup id and TOTP secret" }, "401": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/auth/setup/confirm": {
+      "post": { "security": [], "summary": "Confirm V2 TOTP setup and return one-time recovery codes", "responses": { "200": { "description": "Initialized session and recovery codes" }, "400": { "$ref": "#/components/responses/Error" }, "401": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/auth/login": {
+      "post": { "security": [], "summary": "Create an opaque V2 browser session", "responses": { "200": { "description": "Session cookie and expiry metadata" }, "401": { "$ref": "#/components/responses/Error" }, "429": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/auth/recovery/start": {
+      "post": { "security": [], "summary": "Validate a recovery code and begin TOTP replacement", "responses": { "200": { "description": "Temporary recovery id and new TOTP secret" }, "401": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/auth/recovery/confirm": {
+      "post": { "security": [], "summary": "Confirm a replacement TOTP secret using a one-time recovery code", "responses": { "200": { "description": "Recovered session" }, "400": { "$ref": "#/components/responses/Error" }, "401": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/auth/elevate": {
+      "post": { "security": [{ "sessionCookieAuth": [] }], "summary": "Verify TOTP for a short high-risk-operation window", "responses": { "200": { "description": "Elevation expiry" }, "401": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/auth/logout": {
+      "post": { "security": [{ "sessionCookieAuth": [] }], "summary": "Revoke the current V2 browser session", "responses": { "200": { "description": "Session revoked" } } }
+    },
+    "/api/auth/api-tokens": {
+      "get": { "security": [{ "sessionCookieAuth": [] }], "summary": "List scoped API token metadata after elevation", "responses": { "200": { "description": "Token metadata" }, "403": { "$ref": "#/components/responses/Error" } } },
+      "post": { "security": [{ "sessionCookieAuth": [] }], "summary": "Create a scoped API token after elevation", "responses": { "201": { "description": "One-time plaintext token and metadata" }, "403": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/auth/api-tokens/{tokenId}": {
+      "delete": { "security": [{ "sessionCookieAuth": [] }], "summary": "Revoke a scoped API token after elevation", "responses": { "200": { "description": "Token revoked" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/auth/devices": {
+      "get": { "security": [{ "sessionCookieAuth": [] }], "summary": "List trusted-device metadata after elevation", "responses": { "200": { "description": "Trusted devices" }, "403": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/auth/devices/{deviceId}": {
+      "delete": { "security": [{ "sessionCookieAuth": [] }], "summary": "Revoke a trusted device after elevation", "responses": { "200": { "description": "Device and linked sessions revoked" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" } } }
+    },
     "/api/notepads": {
       "get": { "summary": "List notepads", "responses": { "200": { "description": "Notepad metadata" } } },
       "post": { "summary": "Create a notepad", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/NotepadCreate" } } } }, "responses": { "200": { "description": "Created notepad", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Notepad" } } } }, "400": { "$ref": "#/components/responses/Error" } } }
     },
     "/api/notepads/{id}": {
       "parameters": [{ "$ref": "#/components/parameters/NotepadId" }],
-      "patch": { "summary": "Update a notepad pin state", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/NotepadPinUpdate" } } } }, "responses": { "200": { "description": "Updated notepad", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Notepad" } } } }, "400": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" } } }
+      "get": { "summary": "Read one Notepad's current metadata", "responses": { "200": { "description": "Notepad metadata", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Notepad" } } } }, "404": { "$ref": "#/components/responses/Error" } } },
+      "put": { "summary": "Rename a notepad with optimistic concurrency", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/NotepadRename" } } } }, "responses": { "200": { "description": "Renamed notepad", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Notepad" } } } }, "404": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" } } },
+      "patch": { "summary": "Update a notepad pin state", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/NotepadPinUpdate" } } } }, "responses": { "200": { "description": "Updated notepad", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Notepad" } } } }, "400": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" } } },
+      "delete": { "summary": "Move a notepad to trash; the default notepad cannot be deleted", "responses": { "200": { "description": "Trashed" }, "400": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" } } }
     },
     "/api/notes/{id}": {
       "parameters": [{ "$ref": "#/components/parameters/NotepadId" }],
       "get": { "summary": "Read a note", "responses": { "200": { "description": "Note content", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Note" } } } }, "404": { "$ref": "#/components/responses/Error" } } },
       "post": { "summary": "Overwrite a note with optimistic concurrency", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/NoteSave" } } } }, "responses": { "200": { "description": "Saved" }, "409": { "$ref": "#/components/responses/Error" } } },
-      "patch": { "summary": "Patch note content", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/NotePatch" } } } }, "responses": { "200": { "description": "Updated" }, "409": { "$ref": "#/components/responses/Error" } } }
+      "patch": { "summary": "Patch note content", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/NotePatch" } } } }, "responses": { "200": { "description": "Updated" }, "400": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/notes/{id}/outline": {
+      "parameters": [{ "$ref": "#/components/parameters/NotepadId" }],
+      "get": { "summary": "Read a note's Markdown heading outline for section-targeted edits", "responses": { "200": { "description": "Heading outline", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/NoteOutline" } } } }, "404": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/notes/{id}/edits": {
+      "parameters": [{ "$ref": "#/components/parameters/NotepadId" }],
+      "post": { "summary": "Apply an ordered batch of fine-grained edits atomically", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/NoteBatchEdit" } } } }, "responses": { "200": { "description": "Applied batch with a per-edit result log", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/NoteBatchResult" } } } }, "400": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/trash": {
+      "get": { "summary": "List deleted Notepads and Thoughts", "responses": { "200": { "description": "Trash item summaries", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TrashList" } } } } } },
+      "delete": { "summary": "Permanently empty the trash", "responses": { "200": { "description": "Number of deleted trash items" } } }
+    },
+    "/api/trash/{trashId}": {
+      "parameters": [{ "$ref": "#/components/parameters/TrashId" }],
+      "get": { "summary": "Read a trash item and its recovery payload", "responses": { "200": { "description": "Trash payload" }, "404": { "$ref": "#/components/responses/Error" } } },
+      "delete": { "summary": "Permanently remove one trash item", "responses": { "200": { "description": "Deleted" }, "404": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/trash/{trashId}/restore": {
+      "parameters": [{ "$ref": "#/components/parameters/TrashId" }],
+      "post": { "summary": "Restore a trashed Notepad or Thought", "responses": { "200": { "description": "Restored item", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TrashRestoreResult" } } } }, "404": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/assets": {
+      "get": { "summary": "List image and file assets, newest first", "parameters": [{ "name": "kind", "in": "query", "schema": { "type": "string", "enum": ["image", "file"] } }, { "name": "limit", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 100 } }, { "name": "cursor", "in": "query", "schema": { "type": "string" } }], "responses": { "200": { "description": "Asset metadata list; limit or cursor adds pagination fields", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AssetList" } } } }, "400": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/assets/bulk-delete": {
+      "post": { "summary": "Delete multiple assets by id (max 1000)", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AssetBulkDelete" } } } }, "responses": { "200": { "description": "Deleted and missing id lists", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AssetBulkDeleteResult" } } } }, "400": { "$ref": "#/components/responses/Error" }, "413": { "$ref": "#/components/responses/Error" } } }
     },
     "/api/assets/images": {
       "post": {
         "summary": "Upload an image asset while preserving its original bytes",
         "parameters": [{ "name": "X-Asset-Name", "in": "header", "description": "URL-encoded filename for display and download", "schema": { "type": "string" } }],
         "requestBody": { "required": true, "content": { "image/jpeg": { "schema": { "type": "string", "format": "binary" } }, "image/png": { "schema": { "type": "string", "format": "binary" } }, "image/webp": { "schema": { "type": "string", "format": "binary" } }, "image/avif": { "schema": { "type": "string", "format": "binary" } }, "image/gif": { "schema": { "type": "string", "format": "binary" } } } },
-        "responses": { "201": { "description": "Created image asset", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ImageAsset" } } } }, "413": { "$ref": "#/components/responses/Error" }, "415": { "$ref": "#/components/responses/Error" } }
+        "responses": { "200": { "description": "Reused an existing byte-identical image asset", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ImageAsset" } } } }, "201": { "description": "Created image asset", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ImageAsset" } } } }, "413": { "$ref": "#/components/responses/Error" }, "415": { "$ref": "#/components/responses/Error" } }
       }
+    },
+    "/api/assets/files": {
+      "post": {
+        "summary": "Upload an allow-listed ordinary file asset for article download",
+        "parameters": [
+          { "name": "X-Asset-Name", "in": "header", "required": true, "description": "URL-encoded filename", "schema": { "type": "string" } },
+          { "name": "X-Asset-Type", "in": "header", "description": "Browser-reported MIME, checked against the filename extension", "schema": { "type": "string" } }
+        ],
+        "requestBody": { "required": true, "content": { "application/octet-stream": { "schema": { "type": "string", "format": "binary" } } } },
+        "responses": { "200": { "description": "Reused an existing byte-identical ordinary file asset", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/FileAsset" } } } }, "201": { "description": "Created ordinary file asset", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/FileAsset" } } } }, "413": { "$ref": "#/components/responses/Error" }, "415": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/assets/{id}": {
+      "delete": { "summary": "Delete a single asset", "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "description": "Deleted" }, "404": { "$ref": "#/components/responses/Error" } } }
     },
     "/api/assets/{id}/{variant}": {
       "parameters": [
         { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "pattern": "^[a-fA-F0-9-]{16,64}$" } },
         { "name": "variant", "in": "path", "required": true, "schema": { "type": "string", "enum": ["preview", "original", "download"] } }
       ],
-      "get": { "summary": "Read an image preview, original, or download", "responses": { "200": { "description": "Binary image response" }, "404": { "$ref": "#/components/responses/Error" } } }
+      "get": { "summary": "Read an image preview, original, or ordinary-file download", "responses": { "200": { "description": "Binary asset response" }, "404": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/today-drafts": {
+      "get": { "summary": "List Today Drafts for the server's current local day", "responses": { "200": { "description": "Current day and its disposable single-line drafts", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TodayDraftList" } } } }, "500": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/today-drafts/{id}": {
+      "parameters": [{ "$ref": "#/components/parameters/TodayDraftId" }],
+      "get": { "summary": "Read one Today Draft from the current server day", "responses": { "200": { "description": "Today Draft", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TodayDraft" } } } }, "400": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" } } },
+      "put": { "summary": "Create or update one Today Draft with optimistic concurrency", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TodayDraftUpsert" } } } }, "responses": { "200": { "description": "Updated Today Draft", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TodayDraftMutationResult" } } } }, "201": { "description": "Created Today Draft", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TodayDraftMutationResult" } } } }, "400": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" } } },
+      "delete": { "summary": "Delete one Today Draft from the current server day", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TodayDraftDelete" } } } }, "responses": { "200": { "description": "Deleted Today Draft", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TodayDraftDeleteResult" } } } }, "400": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" } } }
     },
     "/api/thoughts": {
       "get": {
@@ -59,38 +161,133 @@
     "/api/thoughts/{id}": {
       "parameters": [{ "$ref": "#/components/parameters/ThoughtId" }],
       "get": { "summary": "Read a Thought", "responses": { "200": { "description": "Thought", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Thought" } } } }, "404": { "$ref": "#/components/responses/Error" } } },
-      "patch": { "summary": "Mutate a Thought with optimistic concurrency", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ThoughtMutation" } } } }, "responses": { "200": { "description": "Updated Thought" }, "409": { "$ref": "#/components/responses/Error" } } },
+      "patch": { "summary": "Mutate a Thought with optimistic concurrency", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ThoughtMutation" } } } }, "responses": { "200": { "description": "Updated Thought and its new version", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ThoughtMutationResult" } } } }, "400": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" } } },
       "delete": { "summary": "Move a Thought to trash", "responses": { "200": { "description": "Trashed" }, "404": { "$ref": "#/components/responses/Error" } } }
     },
+    "/api/thoughts/{id}/relations": {
+      "parameters": [{ "$ref": "#/components/parameters/ThoughtId" }],
+      "get": { "summary": "Read manual and AI-suggested Thought relations", "responses": { "200": { "description": "Relation summaries; missing Thoughts return an empty result" } } },
+      "post": { "summary": "Create or confirm a manual Thought relation", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ThoughtRelationCreate" } } } }, "responses": { "201": { "description": "Created relation" }, "400": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/thoughts/{id}/relations/{targetId}": {
+      "parameters": [{ "$ref": "#/components/parameters/ThoughtId" }, { "$ref": "#/components/parameters/TargetThoughtId" }],
+      "delete": { "summary": "Remove and suppress a Thought relation", "responses": { "200": { "description": "Relation removal result" } } }
+    },
+    "/api/thoughts/{id}/ai-status": {
+      "parameters": [{ "$ref": "#/components/parameters/ThoughtId" }],
+      "get": { "summary": "Read a Thought's derived AI and relation status", "responses": { "200": { "description": "AI status details" }, "404": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/thoughts/{id}/ai-process": {
+      "parameters": [{ "$ref": "#/components/parameters/ThoughtId" }],
+      "post": { "summary": "Queue manual AI processing for a Thought", "responses": { "202": { "description": "Queue state" }, "404": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/thoughts/{id}/ai-insight": {
+      "parameters": [{ "$ref": "#/components/parameters/ThoughtId" }],
+      "post": { "summary": "Generate a manual AI insight for a Thought", "responses": { "200": { "description": "Generated insight" }, "404": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" }, "503": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/thoughts/ai-backfill": {
+      "post": { "summary": "Queue missing or stale Thought AI metadata", "responses": { "202": { "description": "Queued count" } } }
+    },
+    "/api/thoughts/relations-rebuild": {
+      "post": { "summary": "Rebuild derived Thought relations", "responses": { "202": { "description": "Rebuild count" } } }
+    },
+    "/api/thoughts/ai-queue/status": {
+      "get": { "summary": "Read background Thought AI queue status", "responses": { "200": { "description": "Queue status" } } }
+    },
+    "/api/thoughts/search": {
+      "get": {
+        "summary": "Lightweight index-backed Thought keyword search for UI quick-pickers",
+        "parameters": [
+          { "name": "q", "in": "query", "required": true, "schema": { "type": "string" } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 20, "default": 8 } }
+        ],
+        "responses": { "200": { "description": "Matched Thought summaries (id, text, subItems, tags, completed, pinned, createdAt, updatedAt)" } }
+      }
+    },
+    "/api/agent/capability": {
+      "get": { "summary": "Read interactive AI Agent capability", "responses": { "200": { "description": "Enabled/configured capability without provider secrets" } } }
+    },
+    "/api/agent/runs": {
+      "post": {
+        "summary": "Start or reuse a read-only recall_context Agent run",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentRunCreate" } } } },
+        "responses": { "200": { "description": "Reused active run" }, "202": { "description": "Queued Agent run" }, "400": { "$ref": "#/components/responses/Error" }, "429": { "$ref": "#/components/responses/Error" }, "503": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/agent/runs/{runId}": {
+      "parameters": [{ "name": "runId", "in": "path", "required": true, "schema": { "type": "string" } }],
+      "get": { "summary": "Read an Agent run result or progress", "responses": { "200": { "description": "Agent run", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentRunResponse" } } } }, "404": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/agent/runs/{runId}/events": {
+      "parameters": [{ "name": "runId", "in": "path", "required": true, "schema": { "type": "string" } }],
+      "get": { "summary": "Stream Agent run progress via SSE", "parameters": [{ "name": "Last-Event-ID", "in": "header", "schema": { "type": "integer", "minimum": 0 } }], "responses": { "200": { "description": "text/event-stream with resumable user-visible events" }, "404": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/agent/runs/{runId}/cancel": {
+      "parameters": [{ "name": "runId", "in": "path", "required": true, "schema": { "type": "string" } }],
+      "post": { "summary": "Cancel an active Agent run", "responses": { "200": { "description": "Current/cancelled Agent run" }, "404": { "$ref": "#/components/responses/Error" } } }
+    },
     "/api/search": {
-      "get": { "summary": "Search Notepads", "parameters": [{ "name": "q", "in": "query", "schema": { "type": "string" } }, { "name": "page", "in": "query", "schema": { "type": "integer", "minimum": 1 } }, { "name": "pageSize", "in": "query", "schema": { "type": "integer", "minimum": 1 } }], "responses": { "200": { "description": "Search results with match ranges" } } }
+      "get": { "summary": "Search Notepads, Thoughts, or both", "parameters": [{ "name": "q", "in": "query", "schema": { "type": "string" } }, { "name": "scope", "in": "query", "description": "Omitted keeps the legacy Notepad-only search.", "schema": { "type": "string", "enum": ["notepads", "thoughts", "all"], "default": "notepads" } }, { "name": "page", "in": "query", "schema": { "type": "integer", "minimum": 1 } }, { "name": "pageSize", "in": "query", "schema": { "type": "integer", "minimum": 1 } }], "responses": { "200": { "description": "Typed search results with match ranges" }, "400": { "$ref": "#/components/responses/Error" } } }
     },
     "/health": { "get": { "security": [], "summary": "Service health", "responses": { "200": { "description": "Healthy" } } } }
   },
   "components": {
     "securitySchemes": {
       "cookieAuth": { "type": "apiKey", "in": "cookie", "name": "dumbpad_auth" },
-      "pinBearer": { "type": "http", "scheme": "bearer", "description": "DumbPad PIN for trusted automation only." }
+      "sessionCookieAuth": { "type": "apiKey", "in": "cookie", "name": "dumbpad_auth_session" },
+      "apiTokenBearer": { "type": "http", "scheme": "bearer", "description": "Scoped V2 content API token; cannot access auth or data-management routes." },
+      "pinBearer": { "type": "http", "scheme": "bearer", "description": "Legacy DumbPad PIN for trusted automation only. Disabled in V2." }
     },
     "parameters": {
       "NotepadId": { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
-      "ThoughtId": { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+      "TodayDraftId": { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{2,95}$" } },
+      "ThoughtId": { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
+      "TargetThoughtId": { "name": "targetId", "in": "path", "required": true, "schema": { "type": "string" } },
+      "TrashId": { "name": "trashId", "in": "path", "required": true, "schema": { "type": "string" } }
     },
     "responses": { "Error": { "description": "Request failed", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } } },
     "schemas": {
-      "Error": { "type": "object", "properties": { "error": { "type": "string" }, "currentVersion": { "type": "integer" } }, "required": ["error"] },
+      "Error": { "type": "object", "properties": { "error": { "type": "string" }, "code": { "type": "string" }, "details": { "type": "object", "additionalProperties": true }, "currentVersion": { "type": "integer" }, "matchCount": { "type": "integer" }, "index": { "type": "integer" }, "retryable": { "type": "boolean" } }, "required": ["error"] },
+      "PinVerification": { "type": "object", "required": ["pin"], "properties": { "pin": { "type": "string", "description": "Legacy numeric PIN; disabled when Auth V2 is enabled." } } },
+      "PinRequirement": { "type": "object", "required": ["required", "locked"], "properties": { "required": { "type": "boolean" }, "length": { "type": "integer" }, "locked": { "type": "boolean" }, "mode": { "type": "string", "enum": ["v2"] } } },
+      "PublicConfig": { "type": "object", "required": ["siteTitle", "version", "highlightLanguages", "assetMaxFileBytes", "authMode"], "properties": { "siteTitle": { "type": "string" }, "baseUrl": { "type": ["string", "null"] }, "version": { "type": "string" }, "highlightLanguages": { "type": "array", "items": { "type": "string" } }, "assetMaxFileBytes": { "type": "integer", "format": "int64" }, "authMode": { "type": "string", "enum": ["legacy", "v2"] } } },
+      "ApiMeta": { "type": "object", "required": ["version", "auth", "storage", "capabilities", "limits"], "properties": { "version": { "type": "string" }, "auth": { "type": "object", "required": ["mode"], "properties": { "mode": { "type": "string", "enum": ["legacy", "v2"] } } }, "storage": { "type": "object", "required": ["backend"], "properties": { "backend": { "type": "string", "enum": ["local", "s3"] } } }, "capabilities": { "type": "object", "properties": { "agent": { "type": "object", "properties": { "enabled": { "type": "boolean" }, "ready": { "type": "boolean" } } }, "ai": { "type": "object", "properties": { "insightReady": { "type": "boolean" }, "queueAvailable": { "type": "boolean" } } }, "s3": { "type": "object", "properties": { "enabled": { "type": "boolean" } } } } }, "limits": { "type": "object", "properties": { "assetMaxFileBytes": { "type": "integer", "format": "int64" }, "assetPageMax": { "type": "integer" }, "thoughtPageMax": { "type": "integer" } } } } },
       "Notepad": { "type": "object", "required": ["id", "name", "version"], "properties": { "id": { "type": "string" }, "name": { "type": "string" }, "pinned": { "type": "boolean" }, "pinnedAt": { "type": "integer", "format": "int64" }, "version": { "type": "integer" }, "createdAt": { "type": "integer" }, "updatedAt": { "type": "integer" } } },
       "NotepadCreate": { "type": "object", "required": ["name"], "properties": { "name": { "type": "string" }, "content": { "type": "string" } } },
       "NotepadPinUpdate": { "type": "object", "required": ["pinned"], "properties": { "pinned": { "type": "boolean" }, "baseVersion": { "type": "integer" } } },
+      "TrashItem": { "type": "object", "required": ["trashId", "type", "sourceId", "title", "deletedAt"], "properties": { "trashId": { "type": "string" }, "type": { "type": "string", "enum": ["notepad", "thought"] }, "sourceId": { "type": "string" }, "title": { "type": "string" }, "preview": { "type": "string" }, "deletedAt": { "type": "integer", "format": "int64" }, "originalUpdatedAt": { "type": "integer", "format": "int64" }, "payloadKey": { "type": "string" } } },
+      "TrashList": { "type": "object", "required": ["items"], "properties": { "items": { "type": "array", "items": { "$ref": "#/components/schemas/TrashItem" } } } },
+      "TrashRestoreResult": { "type": "object", "required": ["success", "restored"], "properties": { "success": { "const": true }, "restored": { "type": "object", "required": ["type", "item"], "properties": { "type": { "type": "string", "enum": ["notepad", "thought"] }, "item": { "type": "object" }, "affectedRelationIds": { "type": "array", "items": { "type": "string" } } } } } },
       "Note": { "type": "object", "required": ["content", "version"], "properties": { "content": { "type": "string" }, "version": { "type": "integer" } } },
       "NoteSave": { "type": "object", "required": ["content"], "properties": { "content": { "type": "string" }, "baseVersion": { "type": "integer" }, "userId": { "type": "string" }, "saveId": { "type": "string" } } },
-      "NotePatch": { "allOf": [{ "$ref": "#/components/schemas/NoteSave" }, { "type": "object", "required": ["action"], "properties": { "action": { "type": "string", "enum": ["append", "prepend", "replace", "replace_first", "overwrite"] }, "text": { "type": "string" }, "target": { "type": "string" }, "replacement": { "type": "string" } } }] },
-      "ImageAsset": { "type": "object", "required": ["id", "assetId", "name", "type", "size", "previewUrl", "originalUrl", "downloadUrl"], "properties": { "id": { "type": "string" }, "assetId": { "type": "string" }, "name": { "type": "string" }, "type": { "type": "string", "pattern": "^image/" }, "size": { "type": "integer", "format": "int64" }, "previewUrl": { "type": "string" }, "originalUrl": { "type": "string" }, "downloadUrl": { "type": "string" } } },
+      "NotePatch": { "allOf": [{ "$ref": "#/components/schemas/NoteSave" }, { "type": "object", "required": ["action"], "properties": { "action": { "type": "string", "enum": ["append", "prepend", "replace", "replace_first", "insert_before", "insert_after", "replace_section", "append_to_section", "overwrite"] }, "text": { "type": "string" }, "target": { "type": "string" }, "replacement": { "type": "string" }, "section": { "type": "string", "description": "Heading slug from GET /api/notes/{id}/outline (or exact heading text); required by replace_section and append_to_section." }, "expectedCount": { "type": "integer", "minimum": 1, "description": "Optional guard: reject with 400 unless the target/anchor occurs exactly this many times." } } }] },
+      "NoteEdit": { "type": "object", "required": ["action"], "properties": { "action": { "type": "string", "enum": ["append", "prepend", "replace", "replace_first", "insert_before", "insert_after", "replace_section", "append_to_section", "overwrite"] }, "text": { "type": "string" }, "target": { "type": "string" }, "replacement": { "type": "string" }, "section": { "type": "string" }, "expectedCount": { "type": "integer", "minimum": 1 } } },
+      "NoteBatchEdit": { "type": "object", "required": ["edits"], "properties": { "edits": { "type": "array", "minItems": 1, "items": { "$ref": "#/components/schemas/NoteEdit" } }, "baseVersion": { "type": "integer" }, "userId": { "type": "string" } } },
+      "NoteOutline": { "type": "object", "required": ["version", "outline"], "properties": { "version": { "type": "integer" }, "outline": { "type": "array", "items": { "type": "object", "required": ["id", "text", "level", "line"], "properties": { "id": { "type": "string" }, "text": { "type": "string" }, "level": { "type": "integer", "minimum": 1, "maximum": 6 }, "line": { "type": "integer" } } } } } },
+      "NoteBatchResult": { "type": "object", "required": ["success", "content", "modified", "version", "results"], "properties": { "success": { "type": "boolean" }, "content": { "type": "string" }, "modified": { "type": "boolean" }, "version": { "type": "integer" }, "results": { "type": "array", "items": { "type": "object", "properties": { "index": { "type": "integer" }, "action": { "type": "string" }, "modified": { "type": "boolean" }, "matchCount": { "type": "integer" }, "replaced": { "type": "integer" }, "section": { "type": "string" } } } } } },
+      "ImageAsset": { "type": "object", "required": ["id", "assetId", "name", "type", "size", "kind", "previewUrl", "originalUrl", "downloadUrl"], "properties": { "id": { "type": "string" }, "assetId": { "type": "string" }, "name": { "type": "string" }, "type": { "type": "string", "pattern": "^image/" }, "kind": { "const": "image" }, "size": { "type": "integer", "format": "int64" }, "previewUrl": { "type": "string" }, "originalUrl": { "type": "string" }, "downloadUrl": { "type": "string" } } },
+      "FileAsset": { "type": "object", "required": ["id", "assetId", "name", "type", "size", "kind", "previewUrl", "originalUrl", "downloadUrl"], "properties": { "id": { "type": "string" }, "assetId": { "type": "string" }, "name": { "type": "string" }, "type": { "type": "string" }, "kind": { "const": "file" }, "size": { "type": "integer", "format": "int64", "maximum": 104857600 }, "previewUrl": { "type": "null" }, "originalUrl": { "type": "string" }, "downloadUrl": { "type": "string" } } },
+      "AssetSummary": { "type": "object", "required": ["id", "assetId", "name", "type", "size", "kind", "originalUrl", "downloadUrl"], "properties": { "id": { "type": "string" }, "assetId": { "type": "string" }, "name": { "type": "string" }, "type": { "type": "string" }, "kind": { "type": "string", "enum": ["image", "file"] }, "size": { "type": "integer", "format": "int64" }, "createdAt": { "type": ["integer", "null"], "format": "int64" }, "previewUrl": { "type": ["string", "null"] }, "originalUrl": { "type": "string" }, "downloadUrl": { "type": "string" } } },
+      "AssetList": { "type": "object", "required": ["assets"], "properties": { "assets": { "type": "array", "items": { "$ref": "#/components/schemas/AssetSummary" } }, "hasMore": { "type": "boolean" }, "nextCursor": { "type": ["string", "null"] } } },
+      "AssetBulkDelete": { "type": "object", "required": ["ids"], "properties": { "ids": { "type": "array", "items": { "type": "string" }, "minItems": 1, "maxItems": 1000 } } },
+      "AssetBulkDeleteResult": { "type": "object", "required": ["success", "deleted", "missing"], "properties": { "success": { "type": "boolean" }, "deleted": { "type": "array", "items": { "type": "string" } }, "missing": { "type": "array", "items": { "type": "string" } } } },
+      "NotepadRename": { "type": "object", "required": ["name"], "properties": { "name": { "type": "string" }, "baseVersion": { "type": "integer" } } },
+      "TodayDraft": { "type": "object", "required": ["id", "text", "completed", "day", "version", "createdAt", "updatedAt"], "properties": { "id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{2,95}$" }, "text": { "type": "string", "minLength": 1 }, "completed": { "type": "boolean" }, "day": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$" }, "version": { "type": "integer", "minimum": 1 }, "createdAt": { "type": "integer", "format": "int64" }, "updatedAt": { "type": "integer", "format": "int64" } } },
+      "TodayDraftList": { "type": "object", "required": ["day", "items"], "properties": { "day": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$" }, "items": { "type": "array", "items": { "$ref": "#/components/schemas/TodayDraft" } } } },
+      "TodayDraftUpsert": { "type": "object", "required": ["text"], "properties": { "text": { "type": "string", "minLength": 1 }, "completed": { "type": "boolean" }, "baseVersion": { "type": "integer", "minimum": 1, "description": "Required when the id already exists; omit only for a new id." } } },
+      "TodayDraftDelete": { "type": "object", "required": ["baseVersion"], "properties": { "baseVersion": { "type": "integer", "minimum": 1 } } },
+      "TodayDraftMutationResult": { "type": "object", "required": ["success", "created", "draft"], "properties": { "success": { "const": true }, "created": { "type": "boolean" }, "draft": { "$ref": "#/components/schemas/TodayDraft" } } },
+      "TodayDraftDeleteResult": { "type": "object", "required": ["success", "deleted", "draft"], "properties": { "success": { "const": true }, "deleted": { "const": true }, "draft": { "$ref": "#/components/schemas/TodayDraft" } } },
       "SubItem": { "type": "object", "required": ["id", "text", "completed"], "properties": { "id": { "type": "string" }, "text": { "type": "string" }, "completed": { "type": "boolean" } } },
-      "Thought": { "type": "object", "required": ["id", "text", "version", "createdAt", "updatedAt"], "properties": { "id": { "type": "string" }, "text": { "type": "string" }, "subItems": { "type": "array", "items": { "$ref": "#/components/schemas/SubItem" } }, "tags": { "type": "array", "items": { "type": "string" } }, "completed": { "type": "boolean" }, "pinned": { "type": "boolean" }, "version": { "type": "integer" }, "createdAt": { "type": "integer" }, "updatedAt": { "type": "integer" } } },
-      "ThoughtCreate": { "type": "object", "required": ["text"], "properties": { "text": { "type": "string" }, "subItems": { "type": "array", "items": { "$ref": "#/components/schemas/SubItem" } }, "tags": { "type": "array", "items": { "type": "string" } }, "completed": { "type": "boolean" } } },
-      "ThoughtMutation": { "type": "object", "required": ["action"], "properties": { "action": { "type": "string", "enum": ["toggle_complete", "toggle_pin", "overwrite", "add_subitem", "update_subitem", "delete_subitem", "toggle_subitem", "append", "replace"] }, "baseVersion": { "type": "integer" }, "text": { "type": "string" }, "subId": { "type": "string" }, "subItems": { "type": "array", "items": { "$ref": "#/components/schemas/SubItem" } }, "tags": { "type": "array", "items": { "type": "string" } }, "completed": { "type": "boolean" }, "pinned": { "type": "boolean" } } },
-      "ThoughtPage": { "type": "object", "required": ["items", "hasMore"], "properties": { "items": { "type": "array", "items": { "$ref": "#/components/schemas/Thought" } }, "nextCursor": { "type": ["string", "null"] }, "hasMore": { "type": "boolean" } } }
+      "ThoughtAttachment": { "type": "object", "description": "A stored asset may be attached with assetId alone; the server hydrates its current metadata and URLs. Legacy data-url attachments remain supported.", "properties": { "id": { "type": "string" }, "assetId": { "type": "string" }, "name": { "type": "string" }, "type": { "type": "string" }, "size": { "type": "integer", "format": "int64" }, "previewUrl": { "type": ["string", "null"] }, "originalUrl": { "type": "string" }, "downloadUrl": { "type": "string" }, "dataUrl": { "type": "string" } } },
+      "Thought": { "type": "object", "required": ["id", "text", "version", "createdAt", "updatedAt"], "properties": { "id": { "type": "string" }, "text": { "type": "string" }, "subItems": { "type": "array", "items": { "$ref": "#/components/schemas/SubItem" } }, "tags": { "type": "array", "items": { "type": "string" } }, "attachments": { "type": "array", "items": { "$ref": "#/components/schemas/ThoughtAttachment" } }, "completed": { "type": "boolean" }, "pinned": { "type": "boolean" }, "pinnedAt": { "type": "integer", "format": "int64" }, "relationCount": { "type": "integer", "minimum": 0 }, "aiStatus": { "type": "string" }, "aiError": { "type": ["string", "null"] }, "aiProcessedAt": { "type": "integer", "format": "int64" }, "aiTags": { "type": "array", "items": { "type": "string" } }, "version": { "type": "integer" }, "createdAt": { "type": "integer" }, "updatedAt": { "type": "integer" } } },
+      "ThoughtCreate": { "type": "object", "required": ["text"], "properties": { "text": { "type": "string" }, "subItems": { "type": "array", "items": { "$ref": "#/components/schemas/SubItem" } }, "tags": { "type": "array", "items": { "type": "string" } }, "attachments": { "type": "array", "items": { "$ref": "#/components/schemas/ThoughtAttachment" } }, "completed": { "type": "boolean" } } },
+      "ThoughtMutation": { "type": "object", "required": ["action"], "properties": { "action": { "type": "string", "enum": ["toggle_complete", "toggle_pin", "overwrite", "add_subitem", "update_subitem", "delete_subitem", "toggle_subitem", "append", "replace"] }, "baseVersion": { "type": "integer" }, "text": { "type": "string" }, "target": { "type": "string" }, "replacement": { "type": "string" }, "subId": { "type": "string" }, "subItems": { "type": "array", "items": { "$ref": "#/components/schemas/SubItem" } }, "tags": { "type": "array", "items": { "type": "string" } }, "attachments": { "type": "array", "items": { "$ref": "#/components/schemas/ThoughtAttachment" } }, "completed": { "type": "boolean" }, "pinned": { "type": "boolean" } } },
+      "ThoughtMutationResult": { "type": "object", "required": ["success", "thought"], "properties": { "success": { "const": true }, "thought": { "$ref": "#/components/schemas/Thought" } } },
+      "ThoughtRelationCreate": { "type": "object", "required": ["targetId"], "properties": { "targetId": { "type": "string" }, "relationType": { "type": "string" } } },
+      "ThoughtPage": { "type": "object", "required": ["items", "hasMore"], "properties": { "items": { "type": "array", "items": { "$ref": "#/components/schemas/Thought" } }, "nextCursor": { "type": ["string", "null"] }, "hasMore": { "type": "boolean" } } },
+      "AgentRunCreate": { "type": "object", "required": ["workflowId", "source", "idempotencyKey"], "properties": { "workflowId": { "type": "string", "enum": ["recall_context"] }, "source": { "type": "object", "required": ["kind", "id"], "properties": { "kind": { "type": "string", "enum": ["thought"] }, "id": { "type": "string" } } }, "idempotencyKey": { "type": "string", "minLength": 8, "maxLength": 256 } } },
+      "AgentRunResponse": { "type": "object", "required": ["run"], "properties": { "run": { "type": "object", "required": ["id", "workflowId", "status"], "properties": { "id": { "type": "string" }, "workflowId": { "type": "string", "enum": ["recall_context"] }, "status": { "type": "string", "enum": ["queued", "running", "cancelling", "cancelled", "completed", "failed"] }, "sourceStale": { "type": "boolean" }, "result": { "type": "object", "properties": { "summary": { "type": "string" }, "claims": { "type": "array" }, "citations": { "type": "array" } } }, "error": { "$ref": "#/components/schemas/Error" } } } } }
     }
   }
 }

@@ -5,6 +5,14 @@ import SettingsManager from './managers/settings.js'
 import ConfirmationManager from './managers/confirmation.js';
 import NoteSyncController from './managers/note-sync-controller.js';
 import SettingsDataPanel from './managers/settings-data-panel.js';
+import { AssetApiClient } from './managers/asset-api-client.js';
+import { WorkspaceRouter } from './managers/workspace-router.js';
+import { ImportTargetRegistry } from './managers/import-target-registry.js';
+import { ClipboardImportCoordinator } from './managers/clipboard-import-coordinator.js';
+import {
+    createEditorPerformanceMonitor,
+    isEditorPerformanceEnabled
+} from './managers/editor-performance.js';
 import {
     getStartupNotepadId,
     renderSidebar,
@@ -34,31 +42,159 @@ import {
     };
 })();
 
+// Track the visual viewport so the mobile app shell can shrink with the
+// on-screen keyboard. Without this, the fixed 100dvh containers keep their
+// full height while the visible area shrinks and scrolling exposes the page
+// background as white blocks under the editor.
+(function () {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const applyViewportHeight = () => {
+        document.documentElement.style.setProperty('--dumbpad-vvh', `${Math.round(vv.height)}px`);
+        document.documentElement.classList.toggle('keyboard-open', window.innerHeight - vv.height > 120);
+    };
+    vv.addEventListener('resize', applyViewportHeight);
+    vv.addEventListener('scroll', applyViewportHeight);
+    applyViewportHeight();
+})();
+
 document.addEventListener('DOMContentLoaded', async () => {
     const DEBUG = false;
     const THEME_KEY = 'dumbpad_theme';
+    let editorPerformanceDiagnostics = null;
+    const publishEditorPerformanceDiagnostics = summary => {
+        if (!editorPerformanceDiagnostics) return;
+        editorPerformanceDiagnostics.textContent = JSON.stringify(summary);
+    };
+    const editorPerformanceMonitor = createEditorPerformanceMonitor({
+        enabled: isEditorPerformanceEnabled(window.location.search),
+        onSummaryChange: publishEditorPerformanceDiagnostics
+    });
+    let editorPerformanceSwitchToken = null;
+    if (editorPerformanceMonitor.enabled) {
+        editorPerformanceDiagnostics = document.createElement('output');
+        editorPerformanceDiagnostics.id = 'editor-performance-diagnostics';
+        editorPerformanceDiagnostics.hidden = true;
+        editorPerformanceDiagnostics.setAttribute('aria-hidden', 'true');
+        editorPerformanceDiagnostics.setAttribute('data-readonly-diagnostics', 'editor-performance');
+        document.body.appendChild(editorPerformanceDiagnostics);
+        publishEditorPerformanceDiagnostics(editorPerformanceMonitor.summary());
+        window.__dumbpadEditorPerformance = Object.freeze({
+            reset: () => editorPerformanceMonitor.reset(),
+            summary: () => editorPerformanceMonitor.summary()
+        });
+    }
+    const markEditorPerformanceContent = token => {
+        if (!editorPerformanceMonitor.enabled || token === null || token === undefined) return;
+        requestAnimationFrame(() => editorPerformanceMonitor.markFirstContent(token));
+        // Completion belongs to the selection trace, even when two articles
+        // have identical (including empty) Markdown and setValue is skipped.
+        editorPerformanceMonitor.scheduleFinish(token, 260);
+    };
     let appSettings = {};
     let isApplyingRemoteUpdate = false;
     let hasUnsavedChanges = false;
     let editorInstance = null;
     let editorLoader = null;
     let pendingEditorValue = '';
+    let runtimeConfig = {};
+
+    // Instant boot editor — a plain <textarea> the user can type into while the
+    // heavy rich editor engine downloads and initializes. The `editor` proxy
+    // transparently reads/writes it when the rich editor isn't ready yet, so the
+    // rest of the app keeps using `editor.value` / `editor.focus()` unchanged.
+    const bootEditor = document.getElementById('boot-editor');
+    let bootEditorActive = false;
+    let bootEditorWired = false;
 
     const editor = {
-        get value() { return editorInstance ? editorInstance.getValue() : pendingEditorValue; },
+        get value() {
+            if (editorInstance) return editorInstance.getValue();
+            if (bootEditorActive && bootEditor) return bootEditor.value;
+            return pendingEditorValue;
+        },
         set value(val) {
             pendingEditorValue = val || '';
             if (editorInstance) editorInstance.setValue(pendingEditorValue, false);
+            else if (bootEditorActive && bootEditor) bootEditor.value = pendingEditorValue;
         },
-        focus: () => editorInstance?.focus(),
-        get selectionStart() { return editorInstance?.selectionStart || 0; },
-        get selectionEnd() { return editorInstance?.selectionEnd || 0; },
-        setSelectionRange: (start, end) => editorInstance?.setSelectionRange(start, end),
+        // Like `value = ...`, but keeps the caret where the user is typing when the
+        // new content arrives from a background sync/merge (issue #5). Falls back
+        // to a plain assignment when the editor isn't focused.
+        applyRemoteValue(val) {
+            pendingEditorValue = val || '';
+            if (editorInstance) {
+                editorInstance.setValuePreservingCaret(pendingEditorValue, false);
+            } else if (bootEditorActive && bootEditor) {
+                const focused = document.activeElement === bootEditor;
+                const start = bootEditor.selectionStart;
+                const end = bootEditor.selectionEnd;
+                bootEditor.value = pendingEditorValue;
+                if (focused) {
+                    const max = bootEditor.value.length;
+                    bootEditor.setSelectionRange(Math.min(start, max), Math.min(end, max));
+                }
+            }
+        },
+        focus: () => (editorInstance ? editorInstance.focus() : (bootEditorActive ? bootEditor?.focus() : undefined)),
+        get selectionStart() {
+            if (editorInstance) return editorInstance.selectionStart || 0;
+            return bootEditorActive && bootEditor ? bootEditor.selectionStart : 0;
+        },
+        get selectionEnd() {
+            if (editorInstance) return editorInstance.selectionEnd || 0;
+            return bootEditorActive && bootEditor ? bootEditor.selectionEnd : 0;
+        },
+        setSelectionRange: (start, end) => (editorInstance ? editorInstance.setSelectionRange(start, end) : (bootEditorActive ? bootEditor?.setSelectionRange(start, end) : undefined)),
         addEventListener: (...args) => editorInstance?.addEventListener(...args),
         removeEventListener: (...args) => editorInstance?.removeEventListener(...args),
         setReadingMode: (enabled) => editorInstance?.setReadingMode(enabled),
         get isReadingMode() { return editorInstance?.isReadingMode || false; }
     };
+
+    function wireBootEditor() {
+        if (bootEditorWired || !bootEditor) return;
+        bootEditorWired = true;
+        // Mirror the rich editor's input handler so typing is saved identically.
+        bootEditor.addEventListener('input', () => {
+            const value = bootEditor.value;
+            pendingEditorValue = value || '';
+            if (isApplyingRemoteUpdate) return;
+            hasUnsavedChanges = true;
+            editorRevision += 1;
+            debouncedSave(value);
+            debouncedUpdateToC();
+        });
+    }
+
+    function activateBootEditor() {
+        // Only bridge plain editing: skip when the rich editor already exists, or
+        // when reading mode needs rendered Markdown (read localStorage directly so
+        // this stays correct even before the reading-mode toggle is initialized).
+        if (!bootEditor || editorInstance) return false;
+        if (isReadingMode || localStorage.getItem('dumbpad_reading_mode') === 'true') return false;
+        wireBootEditor();
+        bootEditorActive = true;
+        if (bootEditor.value !== (pendingEditorValue || '')) bootEditor.value = pendingEditorValue || '';
+        bootEditor.hidden = false;
+        return true;
+    }
+
+    function deactivateBootEditor() {
+        bootEditorActive = false;
+        if (bootEditor) bootEditor.hidden = true;
+    }
+
+    // Reveal the editing area, choosing the instant boot editor while the rich
+    // editor is still loading and the rich editor once it is ready.
+    function showEditingSurface() {
+        const emptyState = document.getElementById('empty-state');
+        const hybridEditor = document.getElementById('hybrid-editor');
+        if (emptyState) emptyState.style.display = 'none';
+        if (hybridEditor) hybridEditor.style.display = 'block';
+        if (editorInstance) deactivateBootEditor();
+        else activateBootEditor();
+    }
 
     const themeToggle = document.getElementById('theme-toggle');
     const copyAllBtn = document.getElementById('copy-all');
@@ -88,7 +224,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     const downloadModal = document.getElementById('download-modal');
     const downloadTxt = document.getElementById('download-txt');
     const downloadMd = document.getElementById('download-md');
+    const downloadZip = document.getElementById('download-zip');
     const downloadCancel = document.getElementById('download-cancel');
+    const downloadClose = document.getElementById('download-close');
     const settingsButton = document.getElementById('settings-button');
     const settingsModal = document.getElementById('settings-modal');
     const settingsCancel = document.getElementById('settings-cancel');
@@ -130,6 +268,16 @@ document.addEventListener('DOMContentLoaded', async () => {
     const settingsTrashRefresh = document.getElementById('settings-trash-refresh');
     const settingsTrashList = document.getElementById('settings-trash-list');
     const settingsTrashEmpty = document.getElementById('settings-trash-empty');
+    const settingsAssetsRefresh = document.getElementById('settings-assets-refresh');
+    const settingsAssetsList = document.getElementById('settings-assets-list');
+    const settingsAssetsToolbar = document.getElementById('settings-assets-toolbar');
+    const settingsAssetsSelectAll = document.getElementById('settings-assets-select-all');
+    const settingsAssetsSelectedCount = document.getElementById('settings-assets-selected-count');
+    const settingsAssetsDeleteSelected = document.getElementById('settings-assets-delete-selected');
+    const selectedAssetIds = new Set();
+    // Cache the latest asset metadata by id so the "插入" action can reference an
+    // existing asset (no re-upload, no duplicate copy) without another request.
+    const assetItemsById = new Map();
     const startupSyncStatus = document.getElementById('startup-sync-status');
 
     let saveTimeout;
@@ -146,6 +294,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     let currentNotepadId = 'default';
     let currentNoteVersion = null;
     let currentNotepads = []; 
+    const CARET_POSITIONS_KEY = 'dumbpad_caret_positions_v1';
+    let pendingCaretRestoreNotepadId = null;
     let directorySearchQuery = '';
     let isInitialLoad = true;
     let notepadIdToDelete = null;
@@ -157,6 +307,44 @@ document.addEventListener('DOMContentLoaded', async () => {
         label: '同步状态',
         kind: 'idle'
     };
+
+    function loadCaretPositions() {
+        try {
+            const value = JSON.parse(localStorage.getItem(CARET_POSITIONS_KEY) || '{}');
+            return value && typeof value === 'object' ? value : {};
+        } catch (_error) {
+            return {};
+        }
+    }
+
+    function saveEditorCaretForNotepad(notepadId, snapshot = null) {
+        if (!notepadId || !snapshot) return;
+        try {
+            const positions = loadCaretPositions();
+            positions[notepadId] = {
+                mode: snapshot.mode === 'source' ? 'source' : 'wysiwyg',
+                offset: Math.max(0, Number(snapshot.offset) || 0),
+                visibleOffset: Math.max(0, Number(snapshot.visibleOffset) || 0),
+                scrollTop: Math.max(0, Number(snapshot.scrollTop) || 0),
+                updatedAt: Date.now()
+            };
+            localStorage.setItem(CARET_POSITIONS_KEY, JSON.stringify(positions));
+        } catch (_error) {
+            // Caret recovery is best effort and must never interrupt editing.
+        }
+    }
+
+    function restoreEditorCaretForNotepad(notepadId) {
+        if (!notepadId) return false;
+        const snapshot = loadCaretPositions()[notepadId];
+        if (!snapshot) return false;
+        if (!editorInstance) {
+            pendingCaretRestoreNotepadId = notepadId;
+            return false;
+        }
+        pendingCaretRestoreNotepadId = null;
+        return editorInstance.restorePersistentCaret(snapshot);
+    }
 
     function createSaveId() {
         const randomPart = window.crypto?.randomUUID?.() || Math.random().toString(36).slice(2);
@@ -234,8 +422,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     const storageManager = new StorageManager();
     const noteSyncController = new NoteSyncController({ storageManager });
     let settingsDataPanel = null;
+    const settingsAssetApi = new AssetApiClient();
     let thoughtsManager = null;
     let thoughtsManagerLoader = null;
+    let todayDraftsManager = null;
+    let todayDraftsManagerLoader = null;
+    let workspaceRouter = null;
+    let clipboardImportCoordinator = null;
     let openCommandSearch = null;
     let markedLoader = null;
     let currentTheme = storageManager.load(THEME_KEY);
@@ -257,7 +450,18 @@ document.addEventListener('DOMContentLoaded', async () => {
                     thoughtsManager = new ThoughtsManager({
                         toaster,
                         confirmationManager,
-                        openEditorView: () => openEditorView()
+                        navigateWorkspace: workspace => workspaceRouter?.navigate(workspace),
+                        openNotepadCitation: async ({ source } = {}) => {
+                            const notepadId = String(source?.id || '').trim();
+                            if (!notepadId) return false;
+                            if (!findNotepadByIdOrName(currentNotepads, notepadId)) {
+                                await loadNotepads({ loadCurrentNote: false });
+                            }
+                            if (!findNotepadByIdOrName(currentNotepads, notepadId)) return false;
+                            await workspaceRouter?.navigate('editor');
+                            await selectNotepad(notepadId);
+                            return true;
+                        }
                     });
                     thoughtsManager.app.openSearch = () => openCommandSearch?.();
                     return thoughtsManager;
@@ -270,6 +474,31 @@ document.addEventListener('DOMContentLoaded', async () => {
                 });
         }
         return thoughtsManagerLoader;
+    }
+
+    function ensureTodayDraftsManager() {
+        if (!todayDraftsManagerLoader) {
+            todayDraftsManagerLoader = import('./managers/today-drafts/today-drafts-manager.js')
+                .then(({ TodayDraftsManager }) => {
+                    todayDraftsManager = new TodayDraftsManager({
+                        onMoveToThought: async draft => {
+                            const manager = await ensureThoughtsManager();
+                            const moved = manager.createTodayDraftThought(draft.text);
+                            if (!moved) return false;
+                            await workspaceRouter?.navigate('thoughts');
+                            return true;
+                        }
+                    });
+                    return todayDraftsManager;
+                })
+                .catch(error => {
+                    todayDraftsManagerLoader = null;
+                    console.warn('Failed to load today drafts:', error);
+                    toaster.show('今日草稿加载失败', 'error', true);
+                    throw error;
+                });
+        }
+        return todayDraftsManagerLoader;
     }
 
     function renderMarkdown(markdown) {
@@ -291,8 +520,21 @@ document.addEventListener('DOMContentLoaded', async () => {
         preparePrintContent: async () => ({ formattedContent: await renderMarkdown(editor.value), mainStyles: '', previewStyles: '', highlightStyles: '', printStyles: '' })
     };
 
-    // Generate user ID for lightweight multi-tab update filtering.
-    const userId = Math.random().toString(36).substring(2, 15);
+    // Stable per-browser user ID for own-update filtering. Persisting it means
+    // multiple tabs / the PWA of the same browser are recognised as the same
+    // origin instead of being treated as concurrent "other devices".
+    const userId = (() => {
+        const key = 'dumbpad_device_id_v1';
+        try {
+            const existing = localStorage.getItem(key);
+            if (existing) return existing;
+            const generated = window.crypto?.randomUUID?.() || Math.random().toString(36).substring(2, 15);
+            localStorage.setItem(key, generated);
+            return generated;
+        } catch {
+            return Math.random().toString(36).substring(2, 15);
+        }
+    })();
     window.userId = userId; 
     const wsClient = new WSClient({ debug: DEBUG });
     if (navigator.onLine) wsClient.connect();
@@ -339,12 +581,57 @@ document.addEventListener('DOMContentLoaded', async () => {
                 setStartupSyncStatus('synced', '已同步');
                 return;
             }
+            // Try a local three-way merge before warning: disjoint edits are
+            // merged silently so a routine two-device session does not surface
+            // a scary conflict toast that the 409 path would auto-resolve later.
+            const remoteContent = typeof detail.content === 'string' ? detail.content : null;
+            const cachedNote = getCachedNote(currentNotepadId);
+            const merge = remoteContent === null
+                ? { ok: false, reason: 'missing_remote' }
+                : noteSyncController.mergeContents({
+                    base: cachedNote?.baseContent,
+                    local: editor.value,
+                    remote: remoteContent
+                });
+            if (merge.ok) {
+                setCurrentNoteVersion(currentNotepadId, remoteVersion);
+                dirtyConflictNotepadIds.delete(currentNotepadId);
+                hideNoteConflictToast();
+                if (merge.content === remoteContent) {
+                    isApplyingRemoteUpdate = true;
+                    editor.applyRemoteValue(merge.content);
+                    isApplyingRemoteUpdate = false;
+                    hasUnsavedChanges = false;
+                    cacheSyncedNote(currentNotepadId, merge.content, { version: remoteVersion });
+                    setStartupSyncStatus('synced', '已同步');
+                    debouncedUpdateToC();
+                    return;
+                }
+                editorRevision += 1;
+                const mergedRevision = editorRevision;
+                const mergedNotepadId = currentNotepadId;
+                isApplyingRemoteUpdate = true;
+                editor.applyRemoteValue(merge.content);
+                isApplyingRemoteUpdate = false;
+                hasUnsavedChanges = true;
+                cacheDirtyNote(mergedNotepadId, merge.content, {
+                    version: remoteVersion,
+                    baseContent: remoteContent
+                });
+                setStartupSyncStatus('syncing', '已自动合并，正在同步');
+                toaster.show('已自动合并远端修改', 'success', false, 2200);
+                debouncedUpdateToC();
+                setTimeout(() => {
+                    saveNotes(merge.content, true, false, 0, mergedNotepadId, mergedRevision);
+                }, 0);
+                return;
+            }
             showNoteConflictToast('warning', 5000);
             return;
         }
 
         isApplyingRemoteUpdate = true;
-        editor.value = detail.content || '';
+        editor.applyRemoteValue(detail.content || '');
         isApplyingRemoteUpdate = false;
         setCurrentNoteVersion(currentNotepadId, remoteVersion);
         cacheSyncedNote(currentNotepadId, detail.content || '', { version: remoteVersion });
@@ -665,7 +952,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         await refreshCloudStatus(false);
         setCloudResult({
             mode: 'auto-sync',
-            note: '基础保存、启动缓存、WebSocket 更新和 AI 后台分析由应用自动处理。需要强制覆盖时再使用本地覆盖云端或云端覆盖本地。'
+            note: '基础保存、启动缓存、WebSocket 更新和 AI 后台分析由应用自动处理。发生冲突时请先保留本地内容并查看同步状态；旧式强制覆盖入口已关闭。'
         }, '自动同步');
         toaster.show('自动同步状态已刷新', 'success', false, 1800);
     }
@@ -761,6 +1048,166 @@ document.addEventListener('DOMContentLoaded', async () => {
         await settingsDataPanel.emptyTrash();
         await refreshTrashList(false);
         toaster.show('垃圾桶已清空', 'success', false, 1600);
+    }
+
+    function formatAssetTimestamp(value) {
+        const time = Number(value);
+        if (!Number.isFinite(time) || time <= 0) return '未知时间';
+        try {
+            return new Date(time).toLocaleString();
+        } catch {
+            return '未知时间';
+        }
+    }
+
+    function updateAssetSelectionUi() {
+        if (!settingsAssetsToolbar) return;
+        const items = settingsAssetsList ? settingsAssetsList.querySelectorAll('.settings-asset-item') : [];
+        const total = items.length;
+        let selectedVisible = 0;
+        items.forEach(item => { if (selectedAssetIds.has(item.dataset.assetId)) selectedVisible += 1; });
+        settingsAssetsToolbar.hidden = total === 0;
+        if (settingsAssetsSelectedCount) settingsAssetsSelectedCount.textContent = `已选 ${selectedVisible} 项`;
+        if (settingsAssetsDeleteSelected) {
+            settingsAssetsDeleteSelected.disabled = selectedVisible === 0;
+            settingsAssetsDeleteSelected.textContent = selectedVisible > 0 ? `删除选中 (${selectedVisible})` : '删除选中';
+        }
+        if (settingsAssetsSelectAll) {
+            settingsAssetsSelectAll.checked = total > 0 && selectedVisible === total;
+            settingsAssetsSelectAll.indeterminate = selectedVisible > 0 && selectedVisible < total;
+        }
+    }
+
+    function renderAssetItems(items = []) {
+        if (!settingsAssetsList) return;
+        assetItemsById.clear();
+        (Array.isArray(items) ? items : []).forEach(item => {
+            const id = String(item?.id || '');
+            if (id) assetItemsById.set(id, item);
+        });
+        if (!Array.isArray(items) || items.length === 0) {
+            settingsAssetsList.innerHTML = '<div class="settings-assets-empty">暂无附件。</div>';
+            updateAssetSelectionUi();
+            return;
+        }
+        settingsAssetsList.innerHTML = items.map(item => {
+            const id = String(item.id || '');
+            const name = escapeHtml(item.name || '未命名附件');
+            const isImage = (item.kind || 'image') === 'image' && item.previewUrl;
+            const typeLabel = escapeHtml(item.type || (item.kind === 'file' ? '文件' : '图片'));
+            const meta = `${typeLabel} · ${escapeHtml(formatBytes(item.size))} · ${escapeHtml(formatAssetTimestamp(item.createdAt))}`;
+            const thumb = isImage
+                ? `<img class="settings-asset-thumb" src="${escapeHtml(item.previewUrl)}" alt="" loading="lazy" />`
+                : `<div class="settings-asset-thumb settings-asset-thumb-file" aria-hidden="true">📎</div>`;
+            const downloadUrl = escapeHtml(item.downloadUrl || item.originalUrl || '');
+            const checked = selectedAssetIds.has(id) ? ' checked' : '';
+            return `
+                <div class="settings-asset-item" data-asset-id="${escapeHtml(id)}">
+                    <label class="settings-asset-select-wrap">
+                        <input type="checkbox" class="settings-asset-select" data-asset-select aria-label="选择附件"${checked} />
+                    </label>
+                    ${thumb}
+                    <div class="settings-asset-info">
+                        <div class="settings-asset-name" title="${name}">${name}</div>
+                        <div class="settings-asset-meta">${meta}</div>
+                    </div>
+                    <div class="settings-asset-actions">
+                        <button type="button" class="settings-asset-insert" data-asset-action="insert">插入</button>
+                        <a class="settings-asset-download" href="${downloadUrl}" download data-asset-action="download">下载</a>
+                        <button type="button" class="danger" data-asset-action="delete">删除</button>
+                    </div>
+                </div>
+            `;
+        }).join('');
+        updateAssetSelectionUi();
+    }
+
+    async function refreshAssetsList(showToast = false) {
+        if (!settingsAssetsList) return;
+        settingsAssetsList.innerHTML = '<div class="settings-assets-empty">正在读取附件...</div>';
+        try {
+            const assets = await settingsAssetApi.listAssets();
+            const availableIds = new Set(assets.map(item => String(item.id || '')));
+            [...selectedAssetIds].forEach(id => { if (!availableIds.has(id)) selectedAssetIds.delete(id); });
+            renderAssetItems(assets);
+            if (showToast) toaster.show('附件列表已刷新', 'success', false, 1400);
+        } catch (error) {
+            selectedAssetIds.clear();
+            settingsAssetsList.innerHTML = `<div class="settings-assets-empty">读取失败：${escapeHtml(error.message || '未知错误')}</div>`;
+            updateAssetSelectionUi();
+            toaster.show(error.message || '附件读取失败', 'error', false, 2600);
+        }
+    }
+
+    // Reference an existing (already-uploaded) asset in the current article,
+    // the read side of #3: the settings asset manager shows every stored asset,
+    // and "插入" drops a markdown reference at the caret instead of forcing a
+    // duplicate re-upload through the normal image/file picker.
+    function insertAssetIntoArticle(assetId) {
+        const asset = assetItemsById.get(String(assetId || ''));
+        if (!asset) {
+            toaster.show('未找到附件，请刷新后重试', 'error', false, 2200);
+            return;
+        }
+        if (!editorInstance || typeof editorInstance.insertArticleAssetReference !== 'function') {
+            toaster.show('请先打开一篇文章再插入附件', 'error', false, 2600);
+            return;
+        }
+        const inserted = editorInstance.insertArticleAssetReference(asset);
+        if (!inserted) {
+            toaster.show('当前编辑器暂时无法插入附件', 'error', false, 2600);
+            return;
+        }
+        hideModal(settingsModal);
+        toaster.show('已插入到当前文章', 'success', false, 1600);
+    }
+
+    async function deleteAssetPermanently(assetId) {
+        const confirmed = await confirmationManager.show({
+            title: '删除附件',
+            message: '删除后附件将无法恢复，正文中引用该附件的链接会失效。',
+            confirmText: '删除',
+            cancelText: '取消',
+            confirmType: 'danger'
+        });
+        if (!confirmed) return;
+        try {
+            await settingsAssetApi.deleteAsset(assetId);
+            selectedAssetIds.delete(String(assetId || ''));
+            await refreshAssetsList(false);
+            toaster.show('附件已删除', 'success', false, 1600);
+        } catch (error) {
+            toaster.show(error.message || '删除附件失败', 'error', false, 2600);
+        }
+    }
+
+    async function deleteSelectedAssets() {
+        const ids = [...selectedAssetIds];
+        if (ids.length === 0) return;
+        const confirmed = await confirmationManager.show({
+            title: '批量删除附件',
+            message: `将删除选中的 ${ids.length} 个附件，删除后无法恢复，正文中引用它们的链接会失效。`,
+            confirmText: `删除 ${ids.length} 项`,
+            cancelText: '取消',
+            confirmType: 'danger'
+        });
+        if (!confirmed) return;
+        if (settingsAssetsDeleteSelected) settingsAssetsDeleteSelected.disabled = true;
+        try {
+            const result = await settingsAssetApi.deleteAssets(ids);
+            selectedAssetIds.clear();
+            await refreshAssetsList(false);
+            const deletedCount = result.deleted.length;
+            const missingCount = result.missing.length;
+            if (missingCount > 0) {
+                toaster.show(`已删除 ${deletedCount} 项，${missingCount} 项未找到`, 'success', false, 2600);
+            } else {
+                toaster.show(`已删除 ${deletedCount} 个附件`, 'success', false, 1800);
+            }
+        } catch (error) {
+            toaster.show(error.message || '批量删除失败', 'error', false, 2600);
+            updateAssetSelectionUi();
+        }
     }
 
     async function copyCurrentNotepadLink() {
@@ -870,27 +1317,49 @@ document.addEventListener('DOMContentLoaded', async () => {
         }).filter(note => isValidNotepadId(note.id));
     }
 
-    function renderCachedNotepad(notepadId, content) {
+    function renderCachedNotepad(notepadId, content, { updateLocation = true } = {}) {
         if (!findNotepadByIdOrName(currentNotepads, notepadId)) return false;
         currentNotepadId = notepadId;
         isApplyingRemoteUpdate = true;
         if (editor.value !== (content || '')) editor.value = content || '';
+        markEditorPerformanceContent(editorPerformanceSwitchToken);
         isApplyingRemoteUpdate = false;
         hasUnsavedChanges = false;
         const cachedNote = loadStartupCache()?.notes?.[notepadId];
         const noteIsDirty = !!cachedNote?.dirty;
-        setCurrentNoteVersion(notepadId, cachedNote?.version);
+        if (Number.isFinite(Number(cachedNote?.version))) {
+            setCurrentNoteVersion(notepadId, cachedNote.version);
+        } else if (notepadId === currentNotepadId) {
+            // Unknown cached version: clear instead of keeping the previous
+            // notepad's version, which would poison baseVersion on early saves.
+            currentNoteVersion = null;
+        }
         setStartupSyncStatus('cached', noteIsDirty ? '本地未同步' : '本地快照');
 
-        const emptyState = document.getElementById('empty-state');
-        const hybridEditor = document.getElementById('hybrid-editor');
-        if (emptyState) emptyState.style.display = 'none';
-        if (hybridEditor) hybridEditor.style.display = 'block';
+        showEditingSurface();
+        restoreEditorCaretForNotepad(notepadId);
+        // While the rich editor is still loading, the boot textarea is the
+        // visible surface — approximate the saved reading position on it too,
+        // so a refresh/PWA cold start reopens at (near) the last scroll offset
+        // instead of the top. The exact position is re-applied at handoff via
+        // pendingCaretRestoreNotepadId above.
+        if (!editorInstance && bootEditorActive && bootEditor) {
+            const snapshot = loadCaretPositions()[notepadId];
+            if (snapshot && Number(snapshot.scrollTop) > 0) {
+                requestAnimationFrame(() => {
+                    if (!editorInstance && bootEditorActive && bootEditor) {
+                        bootEditor.scrollTop = Number(snapshot.scrollTop) || 0;
+                    }
+                });
+            }
+        }
 
+        const currentNotepad = currentNotepads.find(note => note.id === notepadId);
+        if (currentNotepad) trackRecentFile(currentNotepad);
         updateSidebarSelection(notepadId);
         renderRecentFiles(notepadId, currentNotepads, selectNotepad, deleteNotepadById, renameNotepadById, toggleNotepadPin);
         const name = getCurrentNotepadName();
-        updateUrlWithNotepad(name);
+        if (updateLocation) updateUrlWithNotepad(name);
         applyCurrentNotepadTitle();
         return true;
     }
@@ -914,7 +1383,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             id !== currentNotepadId &&
             list.indexOf(id) === index &&
             !cached[id]?.dirty &&
-            !cached[id]?.content
+            !cached[id]
         )).slice(0, STARTUP_NOTE_PREFETCH_LIMIT);
         const concurrency = 2;
         let cursor = 0;
@@ -1017,6 +1486,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             toaster.show(`Notepad '${id}' not found`, 'error');
         }
 
+        const cachedCurrent = findNotepadByIdOrName(notepadsList, loadStartupCache()?.currentNotepadId);
+        if (cachedCurrent) return cachedCurrent.id;
+
         return getStartupNotepadId(notepadsList) || getFallbackNotepadId(notepadsList);
     }
 
@@ -1050,119 +1522,329 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     let loadingNotepadId = null;
     const dirtyConflictNotepadIds = new Set();
-    async function loadNotes(notepadId) { 
+    async function loadNotes(notepadId, { deferRemote = false } = {}) {
         if (!findNotepadByIdOrName(currentNotepads, notepadId)) return;
-        await ensureEditor();
         const cachedBeforeFetch = getCachedNote(notepadId);
-        if (cachedBeforeFetch?.content || cachedBeforeFetch?.dirty) {
-            renderCachedNotepad(notepadId, cachedBeforeFetch.content || '');
+        const renderedFromCache = Boolean(cachedBeforeFetch);
+        if (renderedFromCache) {
+            // Show cached content instantly (through the boot editor when the rich
+            // editor isn't ready yet) instead of blocking on the editor engine.
+            renderCachedNotepad(notepadId, cachedBeforeFetch.content || '', { updateLocation: false });
         }
+        await ensureEditor();
         if (!navigator.onLine) {
             setStartupSyncStatus('error', '服务器不可用，本地可读');
             return;
         }
         if (loadingNotepadId === notepadId) return; // Prevent redundant loading
         loadingNotepadId = notepadId;
-        try { 
-            const data = await fetchNoteData(notepadId);
-            if (loadingNotepadId !== notepadId) return;
+        const refreshFromServer = async () => {
+            try {
+                const data = await fetchNoteData(notepadId);
+                if (loadingNotepadId !== notepadId) return;
 
-            const cachedNote = getCachedNote(notepadId);
-            if (cachedNote?.dirty && currentNotepadId === notepadId) {
-                setCurrentNoteVersion(notepadId, cachedNote.version);
-                if (Number(data.version) > Number(cachedNote.version || 0)) {
-                    if ((data.content || '') === (cachedNote.content || '')) {
-                        dirtyConflictNotepadIds.delete(notepadId);
-                        cacheSyncedNote(notepadId, cachedNote.content || '', { version: data.version });
-                        setCurrentNoteVersion(notepadId, data.version);
-                        hasUnsavedChanges = false;
-                        hideNoteConflictToast();
-                        setStartupSyncStatus('synced', '已同步');
+                const cachedNote = getCachedNote(notepadId);
+                if (cachedNote?.dirty && currentNotepadId === notepadId) {
+                    setCurrentNoteVersion(notepadId, cachedNote.version);
+                    if (Number(data.version) > Number(cachedNote.version || 0)) {
+                        if ((data.content || '') === (cachedNote.content || '')) {
+                            dirtyConflictNotepadIds.delete(notepadId);
+                            cacheSyncedNote(notepadId, cachedNote.content || '', { version: data.version });
+                            setCurrentNoteVersion(notepadId, data.version);
+                            hasUnsavedChanges = false;
+                            hideNoteConflictToast();
+                            setStartupSyncStatus('synced', '已同步');
+                            return;
+                        }
+                        cacheConflictNote(notepadId, cachedNote.content || '', {
+                            localVersion: cachedNote.version,
+                            remoteVersion: data.version
+                        });
+                        dirtyConflictNotepadIds.add(notepadId);
+                        setStartupSyncStatus('error', '有远端更新，本地已保留');
                         return;
                     }
-                    cacheConflictNote(notepadId, cachedNote.content || '', {
-                        localVersion: cachedNote.version,
-                        remoteVersion: data.version
-                    });
-                    dirtyConflictNotepadIds.add(notepadId);
-                    setStartupSyncStatus('error', '有远端更新，本地已保留');
+                    dirtyConflictNotepadIds.delete(notepadId);
+                    cacheDirtyNote(notepadId, cachedNote.content || '', { version: cachedNote.version });
+                    setStartupSyncStatus('cached', '本地未同步');
                     return;
                 }
+
+                if (editor.value !== (data.content || '')) editor.value = data.content || '';
+                restoreEditorCaretForNotepad(notepadId);
+                markEditorPerformanceContent(editorPerformanceSwitchToken);
+                hasUnsavedChanges = false;
                 dirtyConflictNotepadIds.delete(notepadId);
-                cacheDirtyNote(notepadId, cachedNote.content || '', { version: cachedNote.version });
-                setStartupSyncStatus('cached', '本地未同步');
-                return;
+                setCurrentNoteVersion(notepadId, data.version);
+                cacheSyncedNote(notepadId, data.content || '', { version: data.version });
+                setStartupSyncStatus('synced', '已同步');
+
+                if (!renderedFromCache) {
+                    const currentNotepad = currentNotepads.find(n => n.id === notepadId);
+                    if (currentNotepad) trackRecentFile(currentNotepad);
+                    updateSidebarSelection(notepadId);
+                    renderRecentFiles(notepadId, currentNotepads, selectNotepad, deleteNotepadById, renameNotepadById, toggleNotepadPin);
+                }
+            } catch (err) {
+                console.warn('Error loading notes:', err);
+                setStartupSyncStatus('error', '服务器不可用，本地可读');
+            } finally {
+                if (loadingNotepadId === notepadId) loadingNotepadId = null;
             }
+        };
 
-            if (editor.value !== (data.content || '')) editor.value = data.content || '';
-            hasUnsavedChanges = false;
-            dirtyConflictNotepadIds.delete(notepadId);
-            setCurrentNoteVersion(notepadId, data.version);
-            cacheSyncedNote(notepadId, data.content || '', { version: data.version });
-            setStartupSyncStatus('synced', '已同步');
-
-            const currentNotepad = currentNotepads.find(n => n.id === notepadId); 
-            if (currentNotepad) trackRecentFile(currentNotepad); 
-            
-            updateSidebarSelection(notepadId);
-            renderRecentFiles(notepadId, currentNotepads, selectNotepad, deleteNotepadById, renameNotepadById, toggleNotepadPin);
-        } catch (err) { 
-            console.warn('Error loading notes:', err);
-            setStartupSyncStatus('error', '服务器不可用，本地可读');
-        } finally {
-            if (loadingNotepadId === notepadId) loadingNotepadId = null;
-        } 
+        if (renderedFromCache && deferRemote) {
+            void refreshFromServer();
+            return;
+        }
+        await refreshFromServer();
     }
 
-    let remoteUpdateTimeout;
     let tocUpdateTimeout;
     function debouncedUpdateToC() {
         clearTimeout(tocUpdateTimeout);
         tocUpdateTimeout = setTimeout(() => updateToC(), 500);
     }
 
+    // In-article TOC (文章内目录): rendered into the right sidebar column on
+    // desktop and into the same element when it slides in as a mobile drawer.
+    // Works in both edit and reading mode; the active heading follows scroll.
     function updateToC() {
-        const tocContainer = document.getElementById('toc-container');
-        const tocList = document.getElementById('toc-list');
-        if (!editorInstance || !editor.isReadingMode || !currentNotepadId) {
-            tocContainer?.classList.remove('visible');
-            document.body.classList.remove('toc-active');
+        const tocList = document.getElementById('article-toc-list');
+        if (!tocList) return;
+        setupTocScrollSync();
+        if (!currentNotepadId) {
+            tocList.innerHTML = '<div class="article-toc-empty">打开文章后显示目录</div>';
+            updateActiveTocItem();
             return;
         }
+        if (!editorInstance) return;
 
-        const toc = editorInstance.generateToC();
+        const toc = editorInstance.generateToC(pendingEditorValue || undefined);
         if (toc.length === 0) {
-            tocContainer?.classList.remove('visible');
-            document.body.classList.remove('toc-active');
+            tocList.innerHTML = '<div class="article-toc-empty">本文暂无标题目录</div>';
             return;
         }
 
-        tocContainer?.classList.add('visible');
-        document.body.classList.add('toc-active');
         editorInstance.syncRenderedHeadingIds(toc);
-        tocList.innerHTML = toc.map(item => `
-            <div class="toc-item h${item.level}" data-index="${item.line}" data-heading-id="${escapeHtml(item.id)}">
-                ${escapeHtml(item.text)}
-            </div>
-        `).join('');
+        lastGeneratedToc = toc;
 
-        tocList.querySelectorAll('.toc-item').forEach(el => {
+        // 目录补充：把各标题区段内的加粗/划线/高亮/批注片段列成子条目，
+        // 点击直接跳到那个片段（有序/无序列表和待办不进目录）。
+        const markGroups = collectTocMarkEntries(toc);
+        let markHtml = '';
+        const markRefs = [];
+        toc.forEach(item => {
+            const entries = markGroups.get(item.id) || [];
+            markHtml += `
+            <div class="toc-item h${item.level}" data-index="${item.line}" data-heading-id="${escapeHtml(item.id)}">
+                <span class="toc-level-badge" aria-hidden="true">H${item.level}</span>
+                <span class="toc-item-text">${escapeHtml(item.text)}</span>
+            </div>`;
+            entries.forEach(entry => {
+                const refIndex = markRefs.push(entry.el) - 1;
+                markHtml += `
+                <div class="toc-item mark-entry type-${entry.type}" data-mark-ref="${refIndex}" title="${entry.typeLabel}">
+                    <span class="toc-level-badge mark-badge" aria-hidden="true">${entry.badge}</span>
+                    <span class="toc-item-text">${escapeHtml(entry.snippet)}</span>
+                </div>`;
+            });
+        });
+        tocList.innerHTML = markHtml;
+
+        tocList.querySelectorAll('.mark-entry').forEach(el => {
+            el.onclick = () => {
+                const target = markRefs[Number(el.dataset.markRef)];
+                if (!target || !target.isConnected) return;
+                editorInstance.scrollRenderedElementIntoView(target);
+                if (window.matchMedia('(max-width: 980px)').matches) {
+                    setArticleTocDrawerVisible(false);
+                }
+            };
+        });
+
+        tocList.querySelectorAll('.toc-item:not(.mark-entry)').forEach(el => {
             el.onclick = () => {
                 const index = parseInt(el.dataset.index);
                 if (!editor.isReadingMode) {
-                    editorInstance.focusLine(index, 0);
+                    focusEditorHeading(el.dataset.headingId || '', index);
                 } else {
                     const headingId = el.dataset.headingId || '';
                     if (!editorInstance.scrollToHeadingId(headingId)) {
                         editorInstance.scrollToLine(index);
                     }
                 }
+                if (window.matchMedia('(max-width: 980px)').matches) {
+                    setArticleTocDrawerVisible(false);
+                }
             };
         });
+        updateActiveTocItem();
+    }
+
+    // 收集各标题区段内的加粗/划线/高亮/批注片段，供文章目录作为子条目展示。
+    // 单次 DOM 顺序遍历：遇到标题就切换当前分组，命中装饰元素就归类；
+    // 已收录元素的嵌套后代跳过，避免同一段文字重复出现。
+    function collectTocMarkEntries(toc) {
+        const root = document.querySelector('.vditor-wysiwyg .vditor-reset');
+        const groups = new Map();
+        if (!root || !toc.length) return groups;
+        const MARK_SELECTOR = 'strong, u, mark, .md-mark, .has-annotation, [data-note], [data-draw]';
+        const classify = (el) => {
+            if (el.matches('.has-annotation, [data-note]')) return { type: 'note', badge: 'N', typeLabel: '批注' };
+            if (el.matches('mark, .md-mark')) return { type: 'highlight', badge: 'H', typeLabel: '高亮' };
+            if (el.matches('u, [data-draw]')) return { type: 'underline', badge: 'U', typeLabel: '划线' };
+            return { type: 'bold', badge: 'B', typeLabel: '加粗' };
+        };
+        const accepted = new Set();
+        let currentGroupId = '__preamble__';
+        groups.set(currentGroupId, []);
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+        let node;
+        while ((node = walker.nextNode())) {
+            if (/^H[1-6]$/.test(node.tagName) && node.dataset.headingId) {
+                currentGroupId = node.dataset.headingId;
+                if (!groups.has(currentGroupId)) groups.set(currentGroupId, []);
+                continue;
+            }
+            if (!node.matches(MARK_SELECTOR)) continue;
+            let nested = false;
+            let ancestor = node.parentElement;
+            while (ancestor && ancestor !== root) {
+                if (accepted.has(ancestor)) { nested = true; break; }
+                ancestor = ancestor.parentElement;
+            }
+            if (nested) continue;
+            const snippet = String(node.textContent || '').replace(/\s+/g, ' ').trim();
+            if (!snippet) continue;
+            accepted.add(node);
+            if (!groups.has(currentGroupId)) groups.set(currentGroupId, []);
+            const info = classify(node);
+            groups.get(currentGroupId).push({
+                el: node,
+                ...info,
+                snippet: snippet.length > 26 ? `${snippet.slice(0, 26)}…` : snippet
+            });
+        }
+        // 没有标题的分组（文首片段）并入第一个标题，避免出现孤儿条目。
+        const preamble = groups.get('__preamble__');
+        if (preamble?.length && toc.length) {
+            const first = groups.get(toc[0].id);
+            if (first) first.unshift(...preamble);
+        }
+        groups.delete('__preamble__');
+        return groups;
+    }
+
+    // Edit-mode TOC jump: place the caret at the target heading before
+    // focusing, otherwise focus() pulls the viewport back to the old caret
+    // position and the jump appears to land at the top of the document.
+    function focusEditorHeading(headingId, lineIndex) {
+        const root = document.querySelector('.vditor-wysiwyg .vditor-reset');
+        let heading = headingId && root ? root.querySelector(`#${CSS.escape(headingId)}`) : null;
+        if (!heading && root) {
+            const tocIndex = lastGeneratedToc.findIndex(item => item.id === headingId);
+            const headingEls = Array.from(root.querySelectorAll('h1, h2, h3, h4, h5, h6'));
+            heading = tocIndex >= 0 ? headingEls[tocIndex] : null;
+        }
+        if (heading) {
+            try {
+                const range = document.createRange();
+                range.setStart(heading, 0);
+                range.collapse(true);
+                const selection = window.getSelection();
+                selection?.removeAllRanges();
+                selection?.addRange(range);
+            } catch (_error) {
+                // Caret placement is best-effort; scrolling still applies.
+            }
+        }
+        editorInstance.focus();
+        const scrollToHeading = () => editorInstance.scrollToLine(lineIndex, heading?.textContent?.trim() || '');
+        if (window.matchMedia('(max-width: 980px)').matches) {
+            // Mobile: focusing opens the keyboard and the viewport reflows;
+            // wait one beat so the jump lands on the settled layout.
+            setTimeout(scrollToHeading, 300);
+        } else {
+            scrollToHeading();
+        }
+    }
+
+    // Highlight the sidebar TOC entry for the heading currently near the top
+    // of the editor viewport. Bound once to the editor scroll container.
+    let tocScrollSyncBound = false;
+    let lastGeneratedToc = [];
+    function setupTocScrollSync() {
+        if (tocScrollSyncBound) return;
+        const scroller = document.querySelector('.vditor-wysiwyg');
+        if (!scroller) return;
+        tocScrollSyncBound = true;
+        let frame = 0;
+        scroller.addEventListener('scroll', () => {
+            if (frame) return;
+            frame = requestAnimationFrame(() => {
+                frame = 0;
+                updateActiveTocItem();
+            });
+        }, { passive: true });
+    }
+
+    function updateActiveTocItem() {
+        const tocList = document.getElementById('article-toc-list');
+        const scroller = document.querySelector('.vditor-wysiwyg');
+        const root = scroller?.querySelector('.vditor-reset');
+        if (!tocList || !root) return;
+        const items = Array.from(tocList.querySelectorAll('.toc-item[data-heading-id]'));
+        if (items.length === 0) return;
+
+        // Vditor's setValue pipeline rebuilds heading nodes and drops the
+        // synced anchor ids; re-apply them from the last generated TOC and
+        // fall back to positional matching (rendered headings and TOC entries
+        // derive from the same ATX sequence) so scroll tracking survives.
+        const headingEls = Array.from(root.querySelectorAll('h1, h2, h3, h4, h5, h6'));
+        if (items.some(item => !root.querySelector(`#${CSS.escape(item.dataset.headingId)}`))) {
+            editorInstance?.syncRenderedHeadingIds(lastGeneratedToc);
+        }
+        const resolveHeading = (item, index) => root.querySelector(`#${CSS.escape(item.dataset.headingId)}`)
+            || headingEls[index]
+            || null;
+
+        const scrollerRect = scroller.getBoundingClientRect();
+        const probeLine = scrollerRect.top + Math.min(scrollerRect.height * 0.25, 160);
+        let activeId = items[0].dataset.headingId;
+        for (let i = 0; i < items.length; i += 1) {
+            const heading = resolveHeading(items[i], i);
+            if (!heading) continue;
+            if (heading.getBoundingClientRect().top <= probeLine) {
+                activeId = items[i].dataset.headingId;
+            } else {
+                break;
+            }
+        }
+        items.forEach(item => item.classList.toggle('active', item.dataset.headingId === activeId));
+    }
+
+    // Mobile: the right sidebar doubles as a TOC drawer opened from the
+    // floating button, mirroring the 目录 tab drawer of the left sidebar.
+    function setArticleTocDrawerVisible(visible) {
+        const side = document.getElementById('sidebar-right');
+        const overlay = document.getElementById('sidebar-overlay');
+        if (!side) return;
+        side.classList.toggle('visible', visible);
+        overlay?.classList.toggle('visible', visible || document.getElementById('sidebar-left')?.classList.contains('visible'));
+        if (visible) {
+            updateToC();
+        }
     }
 
     function loadStylesheetOnce(id, href) {
-        const existing = document.getElementById(id) || document.querySelector(`link[href="${href}"]`);
+        // Only treat an *applied* stylesheet as "already loaded". We must NOT match a
+        // `<link rel="preload">` here: index.html preloads /vendor/vditor/index.css to warm
+        // the cache, and matching that preload would make us skip creating the real
+        // stylesheet — leaving vditor's base CSS unapplied (and tripping Chrome's
+        // "preloaded but not used" warning). Requiring rel="stylesheet" lets the preload
+        // simply feed the cache while this creates the actual applied stylesheet.
+        const existing = document.getElementById(id) || document.querySelector(`link[rel="stylesheet"][href="${href}"]`);
         if (existing) return Promise.resolve(existing);
 
         return new Promise((resolve, reject) => {
@@ -1214,6 +1896,10 @@ document.addEventListener('DOMContentLoaded', async () => {
                     vditorScript
                 ]);
                 editorInstance = new HybridMarkdownEditor(document.getElementById('hybrid-editor'), {
+                    performanceMonitor: editorPerformanceMonitor.enabled ? editorPerformanceMonitor : null,
+                    onCaretChange: snapshot => {
+                        if (activeNotepadLoaded) saveEditorCaretForNotepad(currentNotepadId, snapshot);
+                    },
                     input: (value) => {
                         pendingEditorValue = value || '';
                         if (isApplyingRemoteUpdate) return;
@@ -1221,14 +1907,64 @@ document.addEventListener('DOMContentLoaded', async () => {
                         editorRevision += 1;
                         debouncedSave(value);
                         debouncedUpdateToC();
-                        clearTimeout(remoteUpdateTimeout);
-                        remoteUpdateTimeout = setTimeout(() => {
-                            wsClient.sendUpdate('update', { notepadId: currentNotepadId, content: value, userId });
-                        }, 700);
+                        // Note: the old realtime 'update' broadcast was removed —
+                        // receivers drop version-less notes_update events, so it
+                        // only wasted bandwidth without providing live preview.
                     }
                 });
+                editorInstance.setAssetMaxFileBytes(runtimeConfig.assetMaxFileBytes);
+                // Seamless handoff from the instant boot editor: capture the latest
+                // keystrokes and caret before swapping so nothing typed is lost.
+                const bootWasActive = bootEditorActive;
+                const bootHadFocus = bootWasActive && bootEditor && document.activeElement === bootEditor;
+                const bootCaret = bootHadFocus ? bootEditor.selectionStart : null;
+                if (bootWasActive && bootEditor && bootEditor.value !== pendingEditorValue) {
+                    pendingEditorValue = bootEditor.value;
+                }
+                const handedOffValue = pendingEditorValue;
                 if (pendingEditorValue) editorInstance.setValue(pendingEditorValue, false);
                 editorInstance.setReadingMode(isReadingMode);
+                if (pendingCaretRestoreNotepadId) restoreEditorCaretForNotepad(pendingCaretRestoreNotepadId);
+                if (bootWasActive) {
+                    // The opaque boot textarea covers the rich editor while it mounts.
+                    // Vditor renders its content asynchronously (in its `after` hook), so
+                    // hiding the cover synchronously would expose the empty->content
+                    // reflow the user sees as a brief horizontal expansion. Keep the
+                    // cover until the editor is ready and its content is in the DOM,
+                    // then reveal it in a single layout pass so the swap shows no resize.
+                    let bootSwapped = false;
+                    const finishBootHandoff = () => {
+                        if (bootSwapped) return;
+                        bootSwapped = true;
+                        // Re-sync any keystrokes typed during the ready gap; this render
+                        // stays hidden behind the still-visible boot cover.
+                        if (bootEditor && bootEditor.value !== handedOffValue) {
+                            editorInstance.setValue(bootEditor.value, false);
+                        }
+                        const caret = (bootHadFocus && bootEditor) ? bootEditor.selectionStart : bootCaret;
+                        deactivateBootEditor();
+                        if (bootHadFocus) {
+                            editorInstance.focus();
+                            if (caret != null) {
+                                try { editorInstance.setSelectionRange(caret, caret); } catch (_) {}
+                            }
+                        }
+                    };
+                    // Call directly, NOT via requestAnimationFrame: rAF is paused while
+                    // the tab is hidden, which would strand the opaque cover if the editor
+                    // loads in a background tab. The content is already in the DOM once
+                    // whenReady resolves, so revealing it runs one layout pass with no
+                    // intermediate paint.
+                    if (editorInstance.ready) finishBootHandoff();
+                    else editorInstance.whenReady().then(finishBootHandoff, finishBootHandoff);
+                    // Safety net: never leave the opaque cover stuck if `after` never fires.
+                    setTimeout(finishBootHandoff, 3000);
+                }
+                // The sidebar TOC needs the mounted Vditor DOM; the rAF call right
+                // after notepad selection can run before Vditor finishes mounting.
+                editorInstance.whenReady().then(() => {
+                    if (currentNotepadId) updateToC();
+                }).catch(() => {});
                 return editorInstance;
             })().catch(error => {
                 editorLoader = null;
@@ -1241,9 +1977,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     async function createNotepad() {
+        const { content = '', throwOnError = false } = arguments[0] || {};
         const previousNotepads = [...currentNotepads];
         const previousNotepadId = currentNotepadId;
         const now = Date.now();
+        const initialContent = String(content || '');
         const optimisticNotepad = {
             id: createClientNotepadId(),
             name: `Notepad ${currentNotepads.length + 1}`,
@@ -1258,15 +1996,15 @@ document.addEventListener('DOMContentLoaded', async () => {
         ];
         currentNotepadId = optimisticNotepad.id;
         currentNoteVersion = 1;
-        cacheSyncedNote(optimisticNotepad.id, '', { version: 1 });
+        cacheSyncedNote(optimisticNotepad.id, initialContent, { version: 1 });
         renderNotepadLists(optimisticNotepad.id);
-        renderCachedNotepad(optimisticNotepad.id, '');
+        renderCachedNotepad(optimisticNotepad.id, initialContent);
 
         try {
             const response = await fetchWithPin('/api/notepads', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ id: optimisticNotepad.id, name: optimisticNotepad.name, content: '' })
+                body: JSON.stringify({ id: optimisticNotepad.id, name: optimisticNotepad.name, content: initialContent })
             });
             if (!response) throw new Error('Network error');
             const payload = await response.json().catch(() => ({}));
@@ -1282,13 +2020,14 @@ document.addEventListener('DOMContentLoaded', async () => {
                 { ...optimisticNotepad, ...newNotepad },
                 ...currentNotepads.filter(note => note.id !== optimisticNotepad.id && note.id !== newNotepad.id)
             ];
-            cacheSyncedNote(newNotepad.id, '', { version: newNotepad.version || 1 });
+            cacheSyncedNote(newNotepad.id, initialContent, { version: newNotepad.version || 1 });
             renderNotepadLists(newNotepad.id);
             if (currentNotepadId === optimisticNotepad.id || currentNotepadId === newNotepad.id) {
-                renderCachedNotepad(newNotepad.id, editor.value || '');
+                renderCachedNotepad(newNotepad.id, initialContent);
                 setCurrentNoteVersion(newNotepad.id, newNotepad.version || 1);
             }
             toaster.show(`New notepad: ${newNotepad.name}`, 'success');
+            return newNotepad;
         } catch (err) {
             console.error('Error creating notepad:', err);
             currentNotepads = previousNotepads;
@@ -1297,6 +2036,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                 await selectNotepad(previousNotepadId);
             }
             toaster.show(err?.message || 'Error creating notepad', 'error', true);
+            if (throwOnError) throw err;
+            return null;
         }
     }
 
@@ -1508,7 +2249,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
                         if (merge.content === (remoteNote.content || '')) {
                             isApplyingRemoteUpdate = true;
-                            editor.value = merge.content;
+                            editor.applyRemoteValue(merge.content);
                             isApplyingRemoteUpdate = false;
                             hasUnsavedChanges = false;
                             cacheSyncedNote(targetNotepadId, merge.content, { version: nextVersion });
@@ -1519,7 +2260,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                         editorRevision += 1;
                         const mergedRevision = editorRevision;
                         isApplyingRemoteUpdate = true;
-                        editor.value = merge.content;
+                        editor.applyRemoteValue(merge.content);
                         isApplyingRemoteUpdate = false;
                         hasUnsavedChanges = true;
                         cacheDirtyNote(targetNotepadId, merge.content, {
@@ -1687,6 +2428,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         updateSettingsConflictSection();
         refreshCloudStatus(false);
         refreshTrashList(false);
+        refreshAssetsList(false);
         const isMobile = window.matchMedia?.('(max-width: 720px)')?.matches;
         const focusTarget = options.focusSyncPanel
             ? settingsConflictSection
@@ -1899,6 +2641,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     let selectionToken = 0;
+    let activeNotepadLoaded = false;
     async function openEditorView() {
         if (currentNotepads.length === 0) {
             await loadNotepads({ loadCurrentNote: false });
@@ -1911,7 +2654,77 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     }
 
+    function initializeWorkspaceRouter() {
+        workspaceRouter = new WorkspaceRouter({
+            editorView: document.querySelector('main.three-column-layout'),
+            thoughtsView: document.getElementById('thoughts-view'),
+            todayView: document.getElementById('today-drafts-view'),
+            floatingActions,
+            ensureThoughts: ensureThoughtsManager,
+            ensureToday: ensureTodayDraftsManager,
+            openEditorView
+        });
+        document.querySelector('#header-title h1')?.addEventListener('click', () => {
+            if (workspaceRouter.activeWorkspace !== 'editor') workspaceRouter.navigate('editor');
+        });
+        return workspaceRouter;
+    }
+
+    function initializeClipboardImport() {
+        const registry = new ImportTargetRegistry();
+        registry.register({
+            id: 'article',
+            confirmLabel: '创建文章',
+            importText: async text => {
+                await workspaceRouter?.navigate('editor');
+                return createNotepad({ content: text, throwOnError: true });
+            }
+        });
+        registry.register({
+            id: 'today',
+            confirmLabel: '保存到今日草稿',
+            importText: async text => {
+                await workspaceRouter?.navigate('today');
+                const manager = await ensureTodayDraftsManager();
+                return manager.addImportedText(text);
+            }
+        });
+        registry.register({
+            id: 'thoughts',
+            confirmLabel: '保存为 Thought',
+            importText: async text => {
+                await workspaceRouter?.navigate('thoughts');
+                const manager = await ensureThoughtsManager();
+                manager.openQuickAdd({ initialText: text });
+                return true;
+            }
+        });
+        clipboardImportCoordinator = new ClipboardImportCoordinator({ registry, toaster });
+        return clipboardImportCoordinator;
+    }
+
+    // Fully tear down the mobile sidebar overlay. Every path that closes the
+    // sidebar must also clear body.mobile-sidebar-open (and restore the thoughts
+    // sidebar host), otherwise the CSS that hides the floating actions while the
+    // sidebar is open leaves the FAB permanently hidden -- e.g. after tapping a
+    // notepad on mobile, which previously only removed the `visible` classes.
+    function closeMobileSidebar() {
+        document.getElementById('sidebar-left')?.classList.remove('visible');
+        document.getElementById('sidebar-overlay')?.classList.remove('visible');
+        document.body.classList.remove('mobile-sidebar-open');
+        const host = document.querySelector('main.three-column-layout');
+        if (host && host.classList.contains('mobile-sidebar-host')) {
+            host.style.display = host.dataset.sidebarRestoreDisplay || '';
+            delete host.dataset.sidebarRestoreDisplay;
+            host.classList.remove('mobile-sidebar-host');
+        }
+    }
+
     async function selectNotepad(id, query = "") {
+        const selectedNotepad = findNotepadByIdOrName(currentNotepads, id);
+        if (!selectedNotepad) return;
+        if (selectedNotepad.id === currentNotepadId && activeNotepadLoaded && !query) return;
+        editorPerformanceSwitchToken = editorPerformanceMonitor.beginSwitch();
         const token = ++selectionToken;
         // Flush any pending debounced save for the current notepad before
         // switching. performSaveNotes guards on currentNotepadId ===
@@ -1925,31 +2738,36 @@ document.addEventListener('DOMContentLoaded', async () => {
                 saveNotes(pendingContent, true, false).catch(() => {});
             }
         }
-        const selectedNotepad = findNotepadByIdOrName(currentNotepads, id);
-        currentNotepadId = selectedNotepad?.id || null;
+        saveEditorCaretForNotepad(currentNotepadId, editorInstance?.getPersistentCaretSnapshot?.());
+        currentNotepadId = selectedNotepad.id;
+        cacheNotepads(null, currentNotepadId);
+        activeNotepadLoaded = false;
         applyCurrentNotepadTitle();
         
         // --- UI Visibility ---
-        const emptyState = document.getElementById('empty-state');
-        const hybridEditor = document.getElementById('hybrid-editor');
         if (currentNotepadId) {
-            emptyState.style.display = 'none';
-            hybridEditor.style.display = 'block';
+            showEditingSurface();
         } else {
+            const emptyState = document.getElementById('empty-state');
+            const hybridEditor = document.getElementById('hybrid-editor');
             emptyState.style.display = 'flex';
             hybridEditor.style.display = 'none';
+            deactivateBootEditor();
             // No valid notepad selected — avoid any further loading/rendering
             return;
         }
 
-        // Hide mobile sidebar on selection
-        document.getElementById('sidebar-left')?.classList.remove('visible');
-        document.getElementById('sidebar-overlay')?.classList.remove('visible');
+        // Hide mobile sidebar on selection (full teardown so the FAB reappears)
+        closeMobileSidebar();
 
-        await loadNotes(currentNotepadId);
+        await loadNotes(currentNotepadId, { deferRemote: true });
         if (token !== selectionToken) return;
+        activeNotepadLoaded = true;
+        restoreEditorCaretForNotepad(currentNotepadId);
 
-        updateToC(); // Update TOC on selection
+        requestAnimationFrame(() => {
+            if (token === selectionToken && currentNotepadId === selectedNotepad.id) updateToC();
+        });
 
         applyCurrentNotepadTitle();
 
@@ -2264,11 +3082,37 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
         deleteConfirm.addEventListener('click', doDeleteNotepad);
         deleteCancel.addEventListener('click', () => hideModal(deleteModal));
-        if (downloadNotepadBtn) downloadNotepadBtn.addEventListener('click', () => showModal(downloadModal, downloadCancel));
+        if (downloadNotepadBtn) downloadNotepadBtn.addEventListener('click', () => showModal(downloadModal, downloadClose));
         downloadTxt.addEventListener('click', () => { downloadNotepad('txt'); hideModal(downloadModal); });
         downloadMd.addEventListener('click', () => { downloadNotepad('md'); hideModal(downloadModal); });
-        document.getElementById('download-zip').addEventListener('click', () => { exportAllAsZip(); hideModal(downloadModal); });
+        downloadZip.addEventListener('click', () => { exportAllAsZip(); hideModal(downloadModal); });
         downloadCancel.addEventListener('click', () => hideModal(downloadModal));
+        downloadClose.addEventListener('click', () => hideModal(downloadModal));
+        downloadModal.addEventListener('click', event => {
+            if (event.target === downloadModal) hideModal(downloadModal);
+        });
+        downloadModal.addEventListener('keydown', event => {
+            if (event.key === 'Escape') {
+                event.preventDefault();
+                event.stopPropagation();
+                hideModal(downloadModal);
+                return;
+            }
+            if (event.key !== 'Tab') return;
+            const focusable = [...downloadModal.querySelectorAll(
+                'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+            )];
+            const first = focusable[0];
+            const last = focusable.at(-1);
+            if (!first || !last) return;
+            if (event.shiftKey && document.activeElement === first) {
+                event.preventDefault();
+                last.focus();
+            } else if (!event.shiftKey && document.activeElement === last) {
+                event.preventDefault();
+                first.focus();
+            }
+        });
         if (printNotepadBtn) printNotepadBtn.addEventListener('click', printNotepad);
         if (settingsButton) {
             settingsButton.addEventListener('click', () => {
@@ -2334,6 +3178,47 @@ document.addEventListener('DOMContentLoaded', async () => {
                 }
             });
         }
+        if (settingsAssetsRefresh) settingsAssetsRefresh.addEventListener('click', () => refreshAssetsList(true));
+        if (settingsAssetsList) {
+            settingsAssetsList.addEventListener('click', (event) => {
+                const button = event.target.closest('[data-asset-action]');
+                const item = event.target.closest('[data-asset-id]');
+                if (!button || !item) return;
+                if (button.dataset.assetAction === 'delete') {
+                    event.preventDefault();
+                    deleteAssetPermanently(item.dataset.assetId);
+                } else if (button.dataset.assetAction === 'insert') {
+                    event.preventDefault();
+                    insertAssetIntoArticle(item.dataset.assetId);
+                }
+            });
+            settingsAssetsList.addEventListener('change', (event) => {
+                const checkbox = event.target.closest('[data-asset-select]');
+                const item = event.target.closest('[data-asset-id]');
+                if (!checkbox || !item) return;
+                if (checkbox.checked) selectedAssetIds.add(item.dataset.assetId);
+                else selectedAssetIds.delete(item.dataset.assetId);
+                updateAssetSelectionUi();
+            });
+        }
+        if (settingsAssetsSelectAll) {
+            settingsAssetsSelectAll.addEventListener('change', () => {
+                const items = settingsAssetsList ? settingsAssetsList.querySelectorAll('.settings-asset-item') : [];
+                const shouldSelectAll = settingsAssetsSelectAll.checked;
+                items.forEach(item => {
+                    const checkbox = item.querySelector('[data-asset-select]');
+                    if (shouldSelectAll) {
+                        selectedAssetIds.add(item.dataset.assetId);
+                        if (checkbox) checkbox.checked = true;
+                    } else {
+                        selectedAssetIds.delete(item.dataset.assetId);
+                        if (checkbox) checkbox.checked = false;
+                    }
+                });
+                updateAssetSelectionUi();
+            });
+        }
+        if (settingsAssetsDeleteSelected) settingsAssetsDeleteSelected.addEventListener('click', () => deleteSelectedAssets());
         
         const readModeBtn = document.getElementById('toggle-reading-mode');
         isReadingMode = localStorage.getItem('dumbpad_reading_mode') === 'true';
@@ -2380,6 +3265,11 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         document.addEventListener('keydown', (e) => {
             if (e.key === 'Escape') closeAllModals();
+            if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.code === 'Space') {
+                e.preventDefault();
+                clipboardImportCoordinator?.open({ readClipboard: true });
+                return;
+            }
             if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); saveNotes(editor.value); }
             if ((e.ctrlKey || e.metaKey) && e.altKey && e.key === 'ArrowDown') { e.preventDefault(); selectNextNotepad(true); }
             if ((e.ctrlKey || e.metaKey) && e.altKey && e.key === 'ArrowUp') { e.preventDefault(); selectNextNotepad(false); }
@@ -2388,6 +3278,10 @@ document.addEventListener('DOMContentLoaded', async () => {
                 isReadingMode = !isReadingMode;
                 updateReadingMode(true);
             }
+        });
+
+        window.addEventListener('pagehide', () => {
+            saveEditorCaretForNotepad(currentNotepadId, editorInstance?.getPersistentCaretSnapshot?.());
         });
 
         window.addEventListener('popstate', (e) => {
@@ -2444,7 +3338,35 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         overlay?.addEventListener('click', () => {
             setMobileSidebarVisible(false);
+            setArticleTocDrawerVisible(false);
         });
+
+        document.getElementById('toggle-article-toc')?.addEventListener('click', () => {
+            const side = document.getElementById('sidebar-right');
+            setArticleTocDrawerVisible(!side?.classList.contains('visible'));
+        });
+
+        document.getElementById('close-sidebar-right')?.addEventListener('click', () => {
+            setArticleTocDrawerVisible(false);
+        });
+
+        // Collapse the mobile floating-action group behind a single "more"
+        // toggle. Expansion is intentionally transient: every fresh page load
+        // (including a PWA refresh) starts collapsed to save screen space,
+        // and tapping anywhere outside the group collapses it again.
+        const applyFabExpanded = (expanded) => {
+            document.body.classList.toggle('fab-expanded', expanded);
+            document.getElementById('fab-toggle-group')?.setAttribute('aria-expanded', String(expanded));
+        };
+        applyFabExpanded(false);
+        document.getElementById('fab-toggle-group')?.addEventListener('click', () => {
+            applyFabExpanded(!document.body.classList.contains('fab-expanded'));
+        });
+        document.addEventListener('pointerdown', (event) => {
+            if (!document.body.classList.contains('fab-expanded')) return;
+            if (event.target.closest?.('.floating-actions')) return;
+            applyFabExpanded(false);
+        }, true);
 
         setupSidebarTabs();
         setupDirectoryTitleSearch();
@@ -2569,7 +3491,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const tabDirectory = document.getElementById('tab-directory');
         const tabRecent = document.getElementById('tab-recent');
         const directoryTree = document.getElementById('directory-tree');
-        const recentFilesMobile = document.getElementById('recent-files-mobile');
+        const recentFilesMobile = document.getElementById('recent-files-panel');
 
         if (tabDirectory && tabRecent) {
             tabDirectory.addEventListener('click', () => {
@@ -2596,7 +3518,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const directoryTab = document.getElementById('tab-directory');
         const recentTab = document.getElementById('tab-recent');
         const directoryTree = document.getElementById('directory-tree');
-        const recentFiles = document.getElementById('recent-files-mobile');
+        const recentFiles = document.getElementById('recent-files-panel');
         if (!toggle || !row || !input) return;
 
         const setOpen = (open) => {
@@ -2706,6 +3628,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         try {
             if (!navigator.onLine) return;
             const config = await (await fetch('/api/config')).json();
+            runtimeConfig = config;
+            editorInstance?.setAssetMaxFileBytes(config.assetMaxFileBytes);
             _siteTitle = config.siteTitle;
             applyCurrentNotepadTitle();
         } catch (err) {
@@ -2714,23 +3638,44 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     const initializeApp = async () => {
-        const startsInThoughts = window.location.hash === '#thoughts';
+        const router = initializeWorkspaceRouter();
+        initializeClipboardImport();
+        const initialWorkspace = router.getWorkspaceFromLocation();
+        const startsInEditor = initialWorkspace === 'editor';
         addEventListeners();
+        // Apply the shell synchronously; data and feature managers can load behind it.
+        router.applyShellState(initialWorkspace);
         appSettings = settingsManager.loadSettings();
-        if (startsInThoughts) {
+        if (initialWorkspace === 'thoughts') {
             await ensureThoughtsManager();
-        } else {
-            await ensureEditor();
+            scheduleIdleTask(() => {
+                ensureTodayDraftsManager().catch(() => {});
+            });
+        } else if (initialWorkspace === 'today') {
+            await ensureTodayDraftsManager();
+        } else if (startsInEditor) {
+            // Paint cached content into the instant boot editor first so the user
+            // can read and type right away, then load the rich editor in the
+            // background (it hands off seamlessly once ready). Not awaiting the
+            // 500KB+ editor engine here is the core first-paint win.
             hydrateStartupCache();
+            ensureEditor().catch(() => {});
             scheduleIdleTask(() => {
                 ensureThoughtsManager().catch(() => {});
+                // Also keep the today-drafts manager alive from boot so
+                // today_drafts_update pushes are received and the outbox
+                // flushes even while the user stays in the editor workspace —
+                // otherwise draft records only catch up when the Today tab is
+                // opened.
+                ensureTodayDraftsManager().catch(() => {});
             });
         }
         loadAppConfig();
-        await loadNotepads({ loadCurrentNote: !startsInThoughts });
-        if (!startsInThoughts) await syncCurrentDirtyNote();
+        await loadNotepads({ loadCurrentNote: startsInEditor });
+        if (startsInEditor) await syncCurrentDirtyNote();
         applySettings(appSettings);
-        await registerServiceWorker();
+        registerServiceWorker().catch(() => {});
+        await router.init();
         isInitialLoad = false;
     };
 

@@ -41,8 +41,7 @@ export function renderThoughtCard({
     const relationCount = Number.isFinite(Number(thought.relationCount)) ? Number(thought.relationCount) : 0;
     const aiStatus = normalizeAIStatus(thought.aiStatus);
     const aiStatusHtml = renderAIStatus(thought, aiStatus, relationCount);
-    const hasSubtasks = sortedSubItems.length > 0;
-    const emptySubtaskActionHtml = hasSubtasks ? '' : `
+    const subtaskActionHtml = `
                 <button class="thought-tool-btn subtask-add-inline subtask-add-footer" title="添加子任务" aria-label="添加子任务">
                     <svg class="thought-tool-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round">
                         <line x1="12" y1="5" x2="12" y2="19"></line>
@@ -52,7 +51,7 @@ export function renderThoughtCard({
             `;
     const footerHtml = `
                 <div class="thought-card-footer">
-                    ${emptySubtaskActionHtml}
+                    ${subtaskActionHtml}
                     <button class="thought-tool-btn thought-attachment-add-footer" type="button" title="添加附件" aria-label="添加附件">
                         <svg class="thought-tool-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
                             <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path>
@@ -81,8 +80,10 @@ export function renderThoughtCard({
         linkify,
         highlightSearch
     });
-    const isLong = bodyText.split('\n').length > 6 || bodyText.length > 200 || subItems.length > 3;
+    const isLong = bodyText.split('\n').length > 6 || bodyText.length > 200 || subItems.length > 2;
     const isPinned = thought.pinned === true;
+    const isCompleted = thought.completed === true;
+    const completionLabel = isCompleted ? '恢复为待办' : '标记为已完成';
     const attachments = Array.isArray(thought.attachments) ? thought.attachments : [];
 
     return {
@@ -99,9 +100,9 @@ export function renderThoughtCard({
                 </div>
                 <div class="timeline-node"></div>
                 <div class="thought-card-header">
-                    <div class="thought-dot" title="点击切换完成状态">
+                    <button type="button" class="thought-dot" title="${completionLabel}" aria-label="${completionLabel}" aria-pressed="${isCompleted}">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="20 6 9 17 4 12"></polyline></svg>
-                    </div>
+                    </button>
                     <div class="thought-time">${dateStr}</div>
                     <button class="thought-pin-btn ${isPinned ? 'pinned' : ''}" data-pin="${escapeHtml(thought.id)}" title="${isPinned ? '取消置顶' : '置顶'}" aria-label="${isPinned ? '取消置顶' : '置顶'}">
                         <svg class="thought-pin-icon" viewBox="0 0 24 24" fill="${isPinned ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -127,6 +128,7 @@ export function renderThoughtCard({
 
 function renderAttachments(attachments) {
     if (!attachments.length) return '';
+    const hasFiles = attachments.some(att => !(att.type || '').startsWith('image/'));
     const items = attachments.map(att => {
         const isImage = att.type && att.type.startsWith('image/');
         const name = escapeAttText(att.name || '文件');
@@ -137,7 +139,7 @@ function renderAttachments(attachments) {
         }
         const sizeText = formatAttSize(att.size);
         const icon = getFileIcon(att.type);
-        return `<a class="thought-attachment thought-attachment-file" href="${escapeAttText(getAttachmentDownloadUrl(att))}" download="${name}" data-att-id="${escapeAttText(att.id || '')}">
+        return `<a class="thought-attachment thought-attachment-file" href="${escapeAttText(getAttachmentDownloadUrl(att))}" download="${name}" title="${name}" data-att-id="${escapeAttText(att.id || '')}">
                     <span class="thought-attachment-icon">${icon}</span>
                     <span class="thought-attachment-info">
                         <span class="thought-attachment-name">${name}</span>
@@ -145,7 +147,7 @@ function renderAttachments(attachments) {
                     </span>
                 </a>`;
     }).join('');
-    return `<div class="thought-attachments">${items}</div>`;
+    return `<div class="thought-attachments${hasFiles ? ' has-files' : ''}">${items}</div>`;
 }
 
 function escapeAttText(text) {
@@ -189,9 +191,14 @@ function renderSubtasks({ sortedSubItems, query, linkify, highlightSearch }) {
         if (query) {
             label = highlightSearch(label, query);
         }
-        const isExtra = sortedSubItems.length > 3 && index >= 3;
+        const isExtra = sortedSubItems.length > 2 && index >= 2;
         const extraClass = isExtra ? 'subtask-extra' : '';
         subtasksHtml += `<div class="subtask ${item.completed ? 'completed' : ''} ${extraClass}" data-subid="${item.id}">
+                        <span class="subtask-swipe-action" aria-hidden="true">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M3 6h18"></path><path d="M8 6V4h8v2"></path><path d="M19 6l-1 15H6L5 6"></path><path d="M10 11v6"></path><path d="M14 11v6"></path>
+                            </svg>
+                        </span>
                         <input type="checkbox" class="subtask-check" ${item.completed ? 'checked' : ''}>
                         <span class="subtask-text">${label}</span>
                         <button class="subtask-copy-btn" title="复制">
@@ -200,8 +207,8 @@ function renderSubtasks({ sortedSubItems, query, linkify, highlightSearch }) {
                     </div>`;
     });
 
-    if (sortedSubItems.length > 3) {
-        const remainingCount = sortedSubItems.length - 3;
+    if (sortedSubItems.length > 2) {
+        const remainingCount = sortedSubItems.length - 2;
         const completedCount = sortedSubItems.filter(item => item.completed).length;
         const totalCount = sortedSubItems.length;
         const radius = 7;
@@ -229,6 +236,6 @@ function renderSubtasks({ sortedSubItems, query, linkify, highlightSearch }) {
                     `;
     }
 
-    subtasksHtml += '<button class="subtask-add-inline" title="添加子任务"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg></button></div>';
+    subtasksHtml += '</div>';
     return subtasksHtml;
 }

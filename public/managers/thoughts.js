@@ -43,6 +43,9 @@ import {
     renderAIStatusLoading
 } from './thought-ai-status.js';
 import { renderThoughtCard } from './thought-card-renderer.js';
+import AgentApiClient from './agent-api-client.js';
+import { ThoughtAgentController } from './thought-agent-controller.js';
+import { renderThoughtAgentPanel } from './thought-agent-panel.js';
 import { buildAttachmentsFromFiles, getImageAttachments } from './thought-attachments.js';
 import { AssetApiClient, getAssetDownloadUrl, getAssetOriginalUrl, getAssetPreviewUrl, isImageFile } from './asset-api-client.js';
 import { getThoughtSwipeState } from './thought-swipe.js';
@@ -52,10 +55,19 @@ import { buildTimeMarker, buildUpdatedTimeMarker, deleteTimeMarker, handleTimeCo
 
 const THOUGHTS_CACHE_KEY = 'dumbpad_thoughts_cache_v1';
 
+function resetSubtaskSwipe(row) {
+    row.classList.remove('swiping', 'swipe-ready', 'swipe-deleting');
+    row.style.removeProperty('--subtask-swipe-x');
+    row.style.removeProperty('transform');
+    row.style.removeProperty('--subtask-swipe-progress');
+    row.style.removeProperty('--subtask-swipe-opacity');
+}
+
 export class ThoughtsManager {
     constructor(app) {
         this.app = app;
         this.apiClient = app.apiClient || new ThoughtApiClient();
+        this.agentApi = app.agentApi || new AgentApiClient();
         this.assetApi = app.assetApi || new AssetApiClient();
         this.outbox = app.outbox || new ThoughtOutbox();
         this.view = document.getElementById('thoughts-view');
@@ -99,6 +111,7 @@ export class ThoughtsManager {
         this.manualRelationSearchSeq = 0;
         this.openRelationsPanelIds = new Set();
         this.openAIStatusPanelIds = new Set();
+        this.openAgentPanelIds = new Set();
         this.expandedThoughtIds = new Set();
         this.activeThoughtSelection = null;
         this.thoughtSelectionToolbar = null;
@@ -110,6 +123,13 @@ export class ThoughtsManager {
         this._hasMoreThoughts = false;
         this._isLoadingThoughtPage = false;
         this._thoughtPageFilterKey = '';
+        // Serializes server mutations per Thought so overlapping user actions
+        // (rapid subtask adds/toggles) never send a stale baseVersion.
+        this._thoughtMutationQueues = new Map();
+        this.thoughtAgentController = app.thoughtAgentController || new ThoughtAgentController({
+            apiClient: this.agentApi,
+            onStateChange: (thoughtId, state) => this.handleThoughtAgentStateChange(thoughtId, state)
+        });
 
         this.initDateFilter();
         this.initEventListeners();
@@ -124,12 +144,10 @@ export class ThoughtsManager {
         this.addThoughtBtn.addEventListener('click', () => this.openQuickAdd());
         this.initQuickAddEvents();
         this.initQuickAddAttachEvents();
-        this.initThoughtsToggleEvents();
         this.initSearchAndFilterEvents();
         this.initOutboxEvents();
         this.initSocketEvents();
 
-        this.handleHashChange();
     }
 
     initQuickAddEvents() {
@@ -152,7 +170,7 @@ export class ThoughtsManager {
                 this.quickAddInput.style.height = 'auto';
                 this.quickAddInput.style.height = Math.min(this.quickAddInput.scrollHeight, 160) + 'px';
             });
-            this.quickAddInput.addEventListener('paste', event => this.queueQuickAddPastedImages(event));
+            this.quickAddInput.addEventListener('paste', event => this.queueQuickAddPastedFiles(event));
             this.initQuickAddTagEvents();
         }
     }
@@ -230,15 +248,23 @@ export class ThoughtsManager {
         }).join('');
     }
 
-    getPastedImageFiles(event) {
-        return Array.from(event?.clipboardData?.files || []).filter(isImageFile);
+    getPastedFiles(event) {
+        return Array.from(event?.clipboardData?.files || []);
     }
 
-    queueQuickAddPastedImages(event) {
-        const files = this.getPastedImageFiles(event);
+    getPastedImageFiles(event) {
+        return this.getPastedFiles(event).filter(isImageFile);
+    }
+
+    queueQuickAddPastedFiles(event) {
+        const files = this.getPastedFiles(event);
         if (!files.length) return;
         event.preventDefault();
         this.trackQuickAddAttachmentUpload(this.handleQuickAddFileSelect(files, this.quickAddSession));
+    }
+
+    queueQuickAddPastedImages(event) {
+        return this.queueQuickAddPastedFiles(event);
     }
 
     trackQuickAddAttachmentUpload(task) {
@@ -257,24 +283,6 @@ export class ThoughtsManager {
             const attId = btn.dataset.removeAtt;
             this.quickAddAttachments = this.quickAddAttachments.filter(a => a.id !== attId);
             this.renderQuickAddAttachments();
-        });
-    }
-
-    initThoughtsToggleEvents() {
-        this.toggleBtn.addEventListener('click', () => {
-            if (this.isActive) {
-                window.location.hash = '';
-            } else {
-                window.location.hash = 'thoughts';
-            }
-        });
-
-        window.addEventListener('hashchange', () => this.handleHashChange());
-
-        document.querySelector('#header-title h1')?.addEventListener('click', () => {
-            if (this.isActive) {
-                window.location.hash = '';
-            }
         });
     }
 
@@ -374,7 +382,7 @@ export class ThoughtsManager {
         if (this.outboxStatus) {
             this.outboxStatus.addEventListener('click', () => {
                 if (this.outboxStatus.dataset.syncState === 'conflict') {
-                    this.refreshOutboxConflicts();
+                    this.resolveOutboxConflicts();
                     return;
                 }
                 this.retryOutbox({ silent: false });
@@ -404,37 +412,28 @@ export class ThoughtsManager {
         });
     }
 
-    handleHashChange() {
-        const isThoughts = window.location.hash === '#thoughts';
-        if (isThoughts !== this.isActive) {
-            this.updateViewState(isThoughts);
-        }
+    activate() {
+        return this.updateViewState(true);
+    }
+
+    deactivate() {
+        return this.updateViewState(false);
     }
 
     async updateViewState(active) {
         this.isActive = active;
-        const floatingActions = document.querySelector('.floating-actions');
 
         if (this.isActive) {
-            document.body.classList.add('thoughts-mode');
             this.view.style.display = 'flex';
-            this.editorContainer.style.display = 'none';
             this.toggleBtn.classList.add('active');
-            if (floatingActions) floatingActions.style.display = 'none';
             if (this.thoughts.length > 0) {
                 this.syncTagsFromThoughts(this.thoughts);
                 this.render();
             }
             await this.fetchThoughts();
         } else {
-            document.body.classList.remove('thoughts-mode');
             this.view.style.display = 'none';
-            this.editorContainer.style.display = 'flex';
             this.toggleBtn.classList.remove('active');
-            if (floatingActions) floatingActions.style.display = 'flex';
-            this.app.openEditorView?.().catch(error => {
-                console.warn('Failed to restore editor view:', error);
-            });
         }
     }
 
@@ -549,6 +548,42 @@ export class ThoughtsManager {
         return this.handleOutboxResult(result);
     }
 
+    // Run a server mutation for one Thought through a per-Thought queue so
+    // overlapping user actions (rapid subtask adds/toggles/edits) apply in
+    // order, each reading the version written by the previous one. On a 409
+    // the mutation is rebased onto the current remote version and retried
+    // once: subtask actions are intent-preserving on the server, so this
+    // keeps the user's edit alive instead of raising the conflict dialog.
+    async mutateThought(thought, send, { rebase = true } = {}) {
+        if (!thought?.id || typeof send !== 'function') return null;
+        const previous = this._thoughtMutationQueues.get(thought.id) || Promise.resolve();
+        const task = previous.catch(() => {}).then(async () => {
+            for (let attempt = 0; attempt < 2; attempt += 1) {
+                try {
+                    const data = await send();
+                    this.applySavedThought(thought, data);
+                    return data;
+                } catch (err) {
+                    if (rebase && Number(err?.status) === 409 && attempt === 0) {
+                        const remote = await this.apiClient.get(thought.id).catch(() => null);
+                        if (!remote) throw err;
+                        thought.version = remote.version;
+                        continue;
+                    }
+                    throw err;
+                }
+            }
+        });
+        this._thoughtMutationQueues.set(thought.id, task);
+        try {
+            return await task;
+        } finally {
+            if (this._thoughtMutationQueues.get(thought.id) === task) {
+                this._thoughtMutationQueues.delete(thought.id);
+            }
+        }
+    }
+
     async refreshThoughtConflict(thoughtId, error = null) {
         const localThought = this.thoughts.find(thought => thought.id === thoughtId);
         if (localThought) {
@@ -577,6 +612,70 @@ export class ThoughtsManager {
         }
     }
 
+    // Recoverable conflict resolution: for each conflicted Thought let the user
+    // either keep local (overwrite remote) or discard local (use remote), so the
+    // outbox can never get stuck permanently showing "同步冲突".
+    async resolveOutboxConflicts() {
+        const conflicts = this.loadOutbox().filter(item => item.state === 'conflict');
+        if (!conflicts.length) {
+            this.retryOutbox({ silent: false });
+            return;
+        }
+        for (const item of conflicts) {
+            await this.resolveSingleConflict(item.thoughtId);
+        }
+    }
+
+    async resolveSingleConflict(thoughtId) {
+        if (!thoughtId) return;
+        // Pull the latest remote so we rebase onto the true current version and
+        // can show the user what they are comparing against.
+        let remote = null;
+        try {
+            remote = await this.apiClient.get(thoughtId);
+        } catch (err) {
+            console.warn('Failed to fetch remote Thought during conflict resolution:', err);
+        }
+        const local = this.thoughts.find(thought => thought.id === thoughtId);
+        const snippet = (local?.text || remote?.text || '').replace(/\s+/g, ' ').trim().slice(0, 40);
+        const keepLocal = await this.app.confirmationManager?.show({
+            title: '同步冲突',
+            message: `“${snippet || '这条想法'}” 在其他设备也被修改过，无法自动合并。\n\n选择“保留本地”用你的本地内容覆盖云端；选择“放弃本地”丢弃本地修改、改用云端版本。`,
+            confirmText: '保留本地',
+            cancelText: '放弃本地',
+            confirmType: 'primary'
+        });
+        if (keepLocal) {
+            const remoteVersion = Number(remote?.version);
+            this.outbox.rebaseConflict(thoughtId, Number.isFinite(remoteVersion) ? remoteVersion : undefined);
+            if (local) {
+                delete local.syncConflict;
+                delete local.remoteConflict;
+            }
+            this.updateOutboxStatus();
+            await this.retryOutbox({ silent: false });
+            return;
+        }
+        // Discarding local edits is destructive, so require an explicit second confirm.
+        const discard = await this.app.confirmationManager?.show({
+            title: '放弃本地修改？',
+            message: '将丢弃这条想法的本地修改，改用云端最新版本，此操作无法撤销。',
+            confirmText: '放弃本地',
+            cancelText: '取消',
+            confirmType: 'danger'
+        });
+        if (!discard) return; // Conflict is left intact and can be resolved later.
+        this.outbox.discardConflict(thoughtId);
+        if (local) {
+            delete local.localPending;
+            delete local.syncConflict;
+            delete local.remoteConflict;
+        }
+        this.updateOutboxStatus();
+        await this.fetchThoughts();
+        this.app.toaster?.show('已放弃本地修改，使用云端版本', 'info', false, 2200);
+    }
+
     mergeOutboxThoughts(thoughts) {
         return this.outbox.mergeThoughts(thoughts);
     }
@@ -595,6 +694,14 @@ export class ThoughtsManager {
                     created.data
                 );
             }
+            // A 404 during replay means the remote Thought is gone; the local
+            // copy (including pending temp ids) must not linger in the list or
+            // the sync badge would stay on "待同步" forever.
+            if (result.dropped404?.length) {
+                const droppedIds = new Set(result.dropped404.map(item => item.thoughtId));
+                this.thoughts = this.thoughts.filter(thought => !droppedIds.has(thought.id));
+                this.syncTagsFromThoughts(this.thoughts);
+            }
             await Promise.all(result.conflicts.map(item => this.refreshThoughtConflict(item.thoughtId, {
                 body: item.conflict,
                 message: item.lastError
@@ -603,6 +710,9 @@ export class ThoughtsManager {
             this.thoughtSyncState = result.remaining.length ? (result.conflicts.length ? 'conflict' : 'pending') : 'synced';
             if (result.changed) await this.fetchThoughts();
             if (!silent) {
+                if (result.dropped404?.length) {
+                    this.app.toaster?.show('已清理失效的待同步记录（对应 Thought 已在云端删除）', 'info', false, 2800);
+                }
                 this.app.toaster?.show(
                     result.remaining.length === 0 ? '待同步 Thought 已全部提交' : result.conflicts.length ? `有 ${result.conflicts.length} 条 Thought 需要合并` : `仍有 ${result.remaining.length} 条 Thought 待同步`,
                     result.remaining.length === 0 ? 'success' : 'warning',
@@ -738,7 +848,7 @@ export class ThoughtsManager {
         });
     }
 
-    openQuickAdd() {
+    openQuickAdd({ readClipboard = false, initialText = '' } = {}) {
         if (!this.quickAddBar) return;
         this.quickAddSession = (this.quickAddSession || 0) + 1;
         this.quickAddBar.style.display = 'flex';
@@ -746,7 +856,12 @@ export class ThoughtsManager {
         this.quickAddInput.value = '';
         this.quickAddTags = [];
         this.quickAddAttachments = [];
+        this.quickAddInput.value = String(initialText || '');
         this.quickAddInput.style.height = '52px';
+        if (this.quickAddInput.value) {
+            this.quickAddInput.style.height = 'auto';
+            this.quickAddInput.style.height = Math.min(this.quickAddInput.scrollHeight, 160) + 'px';
+        }
         this.quickAddSubmit.disabled = false;
         this.renderQuickAddTags();
         this.renderQuickAddAttachments();
@@ -754,7 +869,48 @@ export class ThoughtsManager {
         this.initQuickAddAttachmentRemoveEvents();
 
         // Auto-focus to trigger mobile keyboard
-        setTimeout(() => this.quickAddInput.focus(), 80);
+        setTimeout(() => {
+            this.quickAddInput.focus();
+            if (readClipboard) this.captureClipboardIntoQuickAdd();
+        }, 80);
+    }
+
+    async captureClipboardIntoQuickAdd() {
+        if (!navigator.clipboard) return;
+        const session = this.quickAddSession;
+        try {
+            if (!this.quickAddInput.value.trim() && typeof navigator.clipboard.readText === 'function') {
+                const text = await navigator.clipboard.readText();
+                if (text && session === this.quickAddSession && this.quickAddBar?.style.display !== 'none') {
+                    this.quickAddInput.value = text;
+                    this.quickAddInput.style.height = 'auto';
+                    this.quickAddInput.style.height = Math.min(this.quickAddInput.scrollHeight, 160) + 'px';
+                }
+            }
+        } catch (error) {
+            console.info('Clipboard text capture unavailable:', error?.message || error);
+        }
+
+        if (typeof navigator.clipboard.read !== 'function') return;
+        try {
+            const items = await navigator.clipboard.read();
+            const files = [];
+            for (const item of items || []) {
+                for (const type of item.types || []) {
+                    if (type === 'text/plain' || type === 'text/html') continue;
+                    const blob = await item.getType(type);
+                    if (!blob || !blob.size) continue;
+                    const extension = type.split('/')[1]?.split(';')[0] || 'bin';
+                    files.push(new File([blob], `clipboard-${Date.now()}-${files.length}.${extension}`, { type }));
+                }
+            }
+            if (files.length && session === this.quickAddSession && this.quickAddBar?.style.display !== 'none') {
+                this.trackQuickAddAttachmentUpload(this.handleQuickAddFileSelect(files, session));
+            }
+        } catch (error) {
+            // Clipboard read permission is optional; the normal paste event still works.
+            console.info('Clipboard file capture unavailable:', error?.message || error);
+        }
     }
 
     closeQuickAdd() {
@@ -1107,9 +1263,53 @@ export class ThoughtsManager {
 
     scheduleRender() {
         if (this._renderScheduled) return;
+        // A full re-render destroys the focused field (manual relation
+        // search, inline subtask edit) and collapses the mobile keyboard
+        // mid-typing. While an editable element inside the timeline holds
+        // focus, defer the render; the capture-phase blur listener flushes
+        // it, and every later scheduleRender call re-checks focus so a
+        // removed field can never wedge rendering.
+        const holdsFocus = (element) => {
+            if (!element) return false;
+            const editable = element.tagName === 'INPUT'
+                || element.tagName === 'TEXTAREA'
+                || element.isContentEditable === true;
+            return editable && this.timeline?.contains(element);
+        };
+        if (holdsFocus(document.activeElement)) {
+            if (!this._focusHoldFlushBound) {
+                this._focusHoldFlushBound = true;
+                const flushWhenFocusFree = () => {
+                    if (holdsFocus(document.activeElement)) return;
+                    document.removeEventListener('blur', flushWhenFocusFree, true);
+                    this._focusHoldFlushBound = false;
+                    this.scheduleRender();
+                };
+                document.addEventListener('blur', flushWhenFocusFree, true);
+            }
+            return;
+        }
         this._renderScheduled = true;
         requestAnimationFrame(() => {
             this._renderScheduled = false;
+            // The focus check ran at schedule time; between then and this
+            // frame the flow may have re-created and refocused an editable
+            // field (e.g. the chained inline subtask input after Enter).
+            // Re-check at flush time or the pending render would destroy the
+            // freshly focused field mid-frame.
+            if (holdsFocus(document.activeElement)) {
+                if (!this._focusHoldFlushBound) {
+                    this._focusHoldFlushBound = true;
+                    const flushWhenFocusFree = () => {
+                        if (holdsFocus(document.activeElement)) return;
+                        document.removeEventListener('blur', flushWhenFocusFree, true);
+                        this._focusHoldFlushBound = false;
+                        this.scheduleRender();
+                    };
+                    document.addEventListener('blur', flushWhenFocusFree, true);
+                }
+                return;
+            }
             this.render();
         });
     }
@@ -1317,6 +1517,7 @@ export class ThoughtsManager {
                 this.openAIStatusPanel(card, thought);
             }
         });
+
     }
 
     setThoughtCardExpanded(card, thoughtId, expanded, { collapseOthers = false } = {}) {
@@ -1349,10 +1550,13 @@ export class ThoughtsManager {
         const dotEl = card.querySelector('.thought-dot');
         const thoughtCopyBtn = card.querySelector('.thought-copy-btn');
 
-        dotEl.onclick = (e) => {
-            e.stopPropagation();
-            this.toggleComplete(thought.id);
-        };
+        if (dotEl) {
+            dotEl.onclick = (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                this.toggleComplete(thought.id);
+            };
+        }
 
         if (thoughtCopyBtn) {
             thoughtCopyBtn.addEventListener('click', (e) => {
@@ -1376,6 +1580,11 @@ export class ThoughtsManager {
 
         let lastTap = 0;
         let tapTimeout;
+        // Mouse clicks don't need the touch double-tap disambiguation wait:
+        // track the pointer type so desktop clicks expand instantly while the
+        // second click of a double-click still lands in the edit branch.
+        let lastPointerType = '';
+        card.addEventListener('pointerdown', (e) => { lastPointerType = e.pointerType || ''; });
         const handleGesture = (e) => {
             if (this.shouldIgnoreCardGesture(e, card)) return;
 
@@ -1388,6 +1597,13 @@ export class ThoughtsManager {
                 lastTap = 0;
             } else {
                 lastTap = now;
+                if (lastPointerType === 'mouse') {
+                    if (this.scrollFirstSearchHighlight(card)) return;
+                    if (isLong) {
+                        this.setThoughtCardExpanded(card, thought.id, !card.classList.contains('expanded'), { collapseOthers: true });
+                    }
+                    return;
+                }
                 tapTimeout = setTimeout(() => {
                     if (this.scrollFirstSearchHighlight(card)) return;
                     if (isLong) {
@@ -1472,6 +1688,14 @@ export class ThoughtsManager {
             }
         });
 
+        card.querySelectorAll('.subtask[data-subid]').forEach((row) => {
+            // Legacy ids are re-parsed from text on every render and cannot be
+            // deleted through the subitem API — keep them on dblclick editing.
+            if (!row.dataset.subid.startsWith('legacy_')) {
+                this.bindSubtaskSwipeDelete(row, thought);
+            }
+        });
+
         card.querySelectorAll('.subtask-text').forEach((textSpan) => {
             textSpan.addEventListener('dblclick', (e) => {
                 e.stopPropagation();
@@ -1510,6 +1734,7 @@ export class ThoughtsManager {
             event.target.closest('.thought-ai-tag-suggestion') ||
             event.target.closest('.thought-tag-remove') ||
             event.target.closest('.thought-relations-panel') ||
+            event.target.closest('.thought-agent-panel-container') ||
             event.target.closest('.thought-tag') ||
             event.target.closest('.thought-attachment') ||
             event.target.closest('.thought-attachment-add-footer') ||
@@ -1521,6 +1746,199 @@ export class ThoughtsManager {
             event.target.closest('.thought-link') ||
             card.classList.contains('editing')
         );
+    }
+
+    createTodayDraftThought(text) {
+        const content = String(text || '').trim();
+        if (!content) return false;
+
+        const tags = [];
+        const attachments = [];
+        const tempThought = createLocalPendingThought({
+            text: content,
+            tags,
+            attachments,
+            now: Date.now()
+        });
+        this.thoughts.unshift(tempThought);
+        this.syncTagsFromThoughts([tempThought]);
+        this.render();
+
+        setTimeout(() => {
+            const card = document.querySelector(`.thought-card[data-id="${CSS.escape(tempThought.id)}"]`);
+            if (card) card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }, 50);
+
+        void this.persistTodayDraftThought({ tempThought, text: content, tags, attachments });
+        return true;
+    }
+
+    async persistTodayDraftThought({ tempThought, text, tags, attachments }) {
+        try {
+            const data = markCreatedThoughtPending(
+                await this.apiClient.create({ text, tags, attachments })
+            );
+            this.pendingCreateIds.add(data.id);
+            const tempIndex = this.thoughts.findIndex(thought => thought.id === tempThought.id);
+            this.thoughts = this.thoughts.filter(thought => thought.id !== tempThought.id && thought.id !== data.id);
+            this.thoughts.splice(tempIndex >= 0 ? tempIndex : 0, 0, data);
+            this.syncTagsFromThoughts([data]);
+            this.render();
+            setTimeout(() => this.pendingCreateIds.delete(data.id), 2000);
+        } catch (err) {
+            console.error('Failed to move today draft into Thought:', err);
+            this.handleOutboxResult(this.outbox.enqueueCreate(buildQuickAddCreateOutboxItem({
+                text,
+                tags,
+                attachments,
+                tempThought
+            })));
+            this.render();
+        }
+    }
+
+    handleThoughtAgentStateChange(thoughtId, state) {
+        const id = String(thoughtId || '');
+        if (!id || !this.timeline) return;
+        const card = this.timeline.querySelector(`.thought-card[data-id="${CSS.escape(id)}"]`);
+        if (!card) return;
+        const thought = this.thoughts.find(item => item.id === id);
+        if (!thought) return;
+        this.syncThoughtAgentDisclosure(card, state);
+        const panel = card.querySelector('[data-agent-panel-host]');
+        if (panel && !panel.hidden) {
+            this.renderThoughtAgentPanel(card, thought, state);
+        }
+    }
+
+    syncThoughtAgentDisclosure(card, state = {}) {
+        const button = card?.querySelector('[data-agent-toggle]');
+        if (!button) return;
+        const active = ['queued', 'running', 'cancelling'].includes(String(state.status || '').toLowerCase());
+        const panel = card.querySelector('[data-agent-panel-host]');
+        button.classList.toggle('is-running', active);
+        button.title = active ? '正在找回相关内容' : '找回相关内容';
+        button.setAttribute('aria-label', button.title);
+        button.setAttribute('aria-expanded', panel && !panel.hidden ? 'true' : 'false');
+    }
+
+    toggleThoughtAgentPanel(card, thought) {
+        const existing = card?.querySelector('[data-agent-panel-host]');
+        if (existing && !existing.hidden) {
+            this.closeThoughtAgentPanel(card, thought);
+            return;
+        }
+        this.openThoughtAgentPanel(card, thought, { start: true });
+    }
+
+    closeThoughtAgentPanel(card, thought) {
+        const panel = card?.querySelector('[data-agent-panel-host]');
+        if (panel) {
+            panel.hidden = true;
+            panel.innerHTML = '';
+        }
+        card?.classList.remove('agent-panel-open');
+        if (thought?.id) this.openAgentPanelIds.delete(thought.id);
+        this.syncThoughtAgentDisclosure(card, this.thoughtAgentController.getState(thought?.id));
+    }
+
+    openThoughtAgentPanel(card, thought, { start = false } = {}) {
+        const panel = card?.querySelector('[data-agent-panel-host]');
+        if (!card || !thought?.id || !panel || !panel.hidden) return;
+        if (!panel.dataset.agentEventsBound) {
+            panel.addEventListener('click', async (event) => {
+                event.stopPropagation();
+                if (event.target.closest('[data-agent-close]')) {
+                    this.closeThoughtAgentPanel(card, thought);
+                    return;
+                }
+                if (event.target.closest('[data-agent-cancel]')) {
+                    await this.thoughtAgentController.cancel(thought.id);
+                    return;
+                }
+                if (event.target.closest('[data-agent-retry]')) {
+                    const currentThought = this.thoughts.find(item => item.id === thought.id) || thought;
+                    await this.thoughtAgentController.retry(currentThought);
+                    return;
+                }
+                const citationButton = event.target.closest('[data-agent-citation]');
+                if (citationButton) {
+                    this.handleThoughtAgentCitation(thought.id, citationButton.dataset.agentCitation);
+                }
+            });
+            panel.dataset.agentEventsBound = 'true';
+        }
+        panel.hidden = false;
+        card.classList.add('agent-panel-open');
+        this.openAIStatusPanelIds.add(thought.id);
+        this.openAgentPanelIds.add(thought.id);
+        this.renderThoughtAgentPanel(card, thought);
+        if (start) this.thoughtAgentController.start(thought);
+    }
+
+    renderThoughtAgentPanel(card, thought, state = this.thoughtAgentController.getState(thought?.id)) {
+        const panel = card?.querySelector('[data-agent-panel-host]');
+        if (!panel || !thought?.id) return;
+        panel.innerHTML = renderThoughtAgentPanel({
+            state,
+            thought,
+            escapeHtml: value => this.escapeHtml(value)
+        });
+        this.syncThoughtAgentDisclosure(card, state);
+    }
+
+    async handleThoughtAgentCitation(thoughtId, citationId) {
+        const state = this.thoughtAgentController.getState(thoughtId);
+        const citation = (state.citations || []).find((item, index) => {
+            const source = item?.sourceRef || item?.source || item || {};
+            return String(item?.citationId || item?.id || source?.id || index) === String(citationId);
+        });
+        const source = citation?.sourceRef || citation?.source || citation || {};
+        const kind = String(source.kind || '').toLowerCase();
+        try {
+            if (kind === 'thought') {
+                await this.openThoughtAgentThoughtCitation(source.id);
+            } else if (kind === 'notepad' || kind === 'note') {
+                const opened = await this.app.openNotepadCitation?.({ thoughtId, citation, source, state });
+                if (!opened) throw new Error('文章来源不可用');
+            } else {
+                throw new Error('引用来源不可用');
+            }
+            this.app.onThoughtAgentCitation?.({ thoughtId, citation, source, state });
+        } catch (error) {
+            this.app.toaster?.show(error?.message || '无法打开引用来源', 'error', false, 2200);
+        }
+    }
+
+    async openThoughtAgentThoughtCitation(targetId) {
+        const id = String(targetId || '').trim();
+        if (!id) throw new Error('引用 Thought 不存在');
+        const highlight = () => {
+            const card = this.timeline?.querySelector(`.thought-card[data-id="${CSS.escape(id)}"]`);
+            if (!card) return false;
+            card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            card.classList.add('relation-focus');
+            setTimeout(() => card.classList.remove('relation-focus'), 1800);
+            return true;
+        };
+        if (highlight()) return true;
+
+        const target = await this.apiClient.get(id);
+        if (!target?.id) throw new Error('引用 Thought 已不存在');
+        if (!this.thoughts.some(item => item.id === target.id)) {
+            // A citation is a direct, user-initiated navigation request. Keep
+            // the fetched card locally so pagination/filter state cannot make
+            // a verified source unreachable; the next normal refresh restores
+            // the user's filtered timeline.
+            this.thoughts = [{
+                ...target,
+                relationCount: Number(target.relationCount || 0),
+                aiStatus: target.aiStatus || 'missing'
+            }, ...this.thoughts];
+            this.render();
+        }
+        if (!highlight()) throw new Error('无法定位引用 Thought');
+        return true;
     }
 
     openThoughtAttachmentPicker(thought) {
@@ -1850,8 +2268,7 @@ export class ThoughtsManager {
         this.render();
         try {
             this.beginThoughtSync();
-            const data = await this.apiClient.updateSubitem(thought.id, subId, nextText, thought.version);
-            this.applySavedThought(thought, data);
+            await this.mutateThought(thought, () => this.apiClient.updateSubitem(thought.id, subId, nextText, thought.version));
             this.render();
         } catch (err) {
             console.error('Failed to style subtask text:', err);
@@ -1982,8 +2399,7 @@ export class ThoughtsManager {
             this.render();
             try {
                 this.beginThoughtSync();
-                const data = await this.apiClient.updateSubitem(thought.id, marker.subId, nextText, thought.version);
-                this.applySavedThought(thought, data);
+                await this.mutateThought(thought, () => this.apiClient.updateSubitem(thought.id, marker.subId, nextText, thought.version));
                 this.render();
             } catch (err) {
                 console.error('Failed to update thought time marker:', err);
@@ -2297,6 +2713,7 @@ export class ThoughtsManager {
     closeAIStatusPanel(card, thought) {
         const existing = card?.querySelector('.thought-ai-detail-panel');
         const button = card?.querySelector('.thought-ai-status');
+        this.closeThoughtAgentPanel(card, thought);
         existing?.remove();
         card?.classList.remove('ai-detail-open');
         button?.setAttribute('aria-expanded', 'false');
@@ -2324,6 +2741,10 @@ export class ThoughtsManager {
             const insightToggle = e.target.closest('[data-insight-toggle]');
             if (insightToggle && !e.target.closest('a')) {
                 this.toggleAIInsight(panel);
+                return;
+            }
+            if (e.target.closest('[data-agent-toggle]')) {
+                this.toggleThoughtAgentPanel(card, thought);
             }
         });
         panel.addEventListener('keydown', (e) => {
@@ -2360,6 +2781,11 @@ export class ThoughtsManager {
         if (!panel.isConnected) return null;
         panel.innerHTML = this.renderAIStatusDetail(detail);
         await this.hydrateAIInsightMarkdown(panel, detail.insight);
+        const card = panel.closest('.thought-card');
+        const thought = this.thoughts.find(item => item.id === thoughtId);
+        if (card && thought && this.openAgentPanelIds.has(thoughtId)) {
+            this.openThoughtAgentPanel(card, thought, { start: false });
+        }
         return detail;
     }
 
@@ -2653,9 +3079,10 @@ export class ThoughtsManager {
         }
 
         try {
-            const thoughts = await this.apiClient.list({ query: q, limit: 8, light: true });
+            const page = await this.apiClient.searchTargets(q, 8);
             if (searchSeq !== this.manualRelationSearchSeq) return;
             if (!panel.isConnected || !resultsEl.isConnected) return;
+            const thoughts = Array.isArray(page?.items) ? page.items : [];
             const linkedIds = new Set(
                 Array.from(panel.querySelectorAll('.thought-relation-item'))
                     .map(item => item.dataset.relationTarget)
@@ -2901,6 +3328,18 @@ export class ThoughtsManager {
                 row.querySelector('.subtask-edit-input').oninput = (e) => {
                     subtasks[i].text = e.target.value;
                 };
+                // Enter starts the next subtask instead of ending the flow.
+                row.querySelector('.subtask-edit-input').onkeydown = (e) => {
+                    if (e.key !== 'Enter' || e.isComposing) return;
+                    e.preventDefault();
+                    if (!subtasks[i].text.trim()) return;
+                    subtasks.splice(i + 1, 0, { id: 'new_' + Date.now(), text: '', completed: false });
+                    renderSubtaskEditor();
+                    setTimeout(() => {
+                        const inputs = panel.querySelectorAll('.subtask-edit-input');
+                        if (inputs[i + 1]) inputs[i + 1].focus();
+                    }, 50);
+                };
                 row.querySelector('.subtask-delete-btn').onclick = () => {
                     subtasks.splice(i, 1);
                     renderSubtaskEditor();
@@ -2977,10 +3416,13 @@ export class ThoughtsManager {
         let saveStarted = false;
         const saveAndExit = () => {
             if (saveStarted) return;
-            if (!textarea || !textarea.isConnected) {
+            if (!textarea) {
                 saveStarted = true;
                 return;
             }
+            // Even when a background render() rebuilt the card and detached the
+            // textarea, commit the captured working copies (text/subtasks/
+            // attachments) instead of silently discarding the user's edits.
             saveStarted = true;
             editCommitted = true;
             const newText = textarea.value.trim();
@@ -3037,6 +3479,9 @@ export class ThoughtsManager {
             if (!card.isConnected) {
                 document.removeEventListener('click', handleClickOutside);
                 card._clickOutsideHandler = null;
+                // The card was rebuilt while editing; commit the captured
+                // working copy so the in-progress edit is not lost.
+                saveAndExit();
                 return;
             }
             if (!e.target.isConnected) return;
@@ -3075,6 +3520,13 @@ export class ThoughtsManager {
     }
 
     async quickAddSubtask(card, thought) {
+        // On a collapsed card everything past the second subtask sits in the
+        // hidden .subtask-extra zone, so a committed subtask would land out
+        // of sight and the chained Enter input would look dead. Expand first
+        // to keep the whole add flow visible.
+        if (card.classList.contains('can-expand') && !card.classList.contains('expanded')) {
+            this.setThoughtCardExpanded(card, thought.id, true, { collapseOthers: true });
+        }
         const { sublist, createdSublist } = this.ensureSubtaskList(card);
         const addBtn = sublist.querySelector('.subtask-add-inline');
         const footerAddBtn = card.querySelector('.subtask-add-footer');
@@ -3096,7 +3548,7 @@ export class ThoughtsManager {
             }
         };
 
-        const commit = async () => {
+        const commit = async ({ chainNext = false } = {}) => {
             if (committed) return;
             committed = true;
             const text = input.value.trim();
@@ -3105,9 +3557,14 @@ export class ThoughtsManager {
             this.render();
             try {
                 this.beginThoughtSync();
-                const updated = await this.apiClient.addSubitem(thought.id, text, thought.version);
-                this.applySavedThought(thought, updated);
+                await this.mutateThought(thought, () => this.apiClient.addSubitem(thought.id, text, thought.version));
                 this.render();
+                // Enter keeps the flow going: reopen a fresh inline input on
+                // the re-rendered card instead of ending after one subtask.
+                if (chainNext) {
+                    const nextCard = this.timeline?.querySelector(`.thought-card[data-id="${CSS.escape(thought.id)}"]`);
+                    if (nextCard) this.quickAddSubtask(nextCard, thought);
+                }
             } catch (err) {
                 console.error('Failed to add subtask:', err);
                 this.enqueueThoughtOverwrite(thought, err);
@@ -3117,7 +3574,7 @@ export class ThoughtsManager {
 
         input.addEventListener('keydown', (e) => {
             if (handleTimeCommandKeydown(e)) return;
-            if (e.key === 'Enter') { e.preventDefault(); commit(); }
+            if (e.key === 'Enter') { e.preventDefault(); commit({ chainNext: true }); }
             else if (e.key === 'Escape') { cleanup(); }
         });
         input.addEventListener('blur', () => {
@@ -3199,13 +3656,11 @@ export class ThoughtsManager {
             if (edit.action === 'delete') {
                 this.render();
                 this.beginThoughtSync();
-                const data = await this.apiClient.deleteSubitem(thought.id, subId, thought.version);
-                this.applySavedThought(thought, data);
+                await this.mutateThought(thought, () => this.apiClient.deleteSubitem(thought.id, subId, thought.version), { rebase: false });
             } else {
                 this.render();
                 this.beginThoughtSync();
-                const data = await this.apiClient.updateSubitem(thought.id, subId, edit.text, thought.version);
-                this.applySavedThought(thought, data);
+                await this.mutateThought(thought, () => this.apiClient.updateSubitem(thought.id, subId, edit.text, thought.version));
             }
             this.render();
         } catch (err) {
@@ -3226,8 +3681,7 @@ export class ThoughtsManager {
             this.render();
             try {
                 this.beginThoughtSync();
-                const data = await this.apiClient.overwrite(id, thought);
-                this.applySavedThought(thought, data);
+                await this.mutateThought(thought, () => this.apiClient.overwrite(id, thought), { rebase: false });
                 this.render();
             } catch (err) {
                 console.error('Failed to toggle legacy subtask:', err);
@@ -3237,17 +3691,181 @@ export class ThoughtsManager {
             return;
         }
 
-        // Optimistic update
+        // Optimistic update — refresh only this card's rows in place; a full
+        // timeline rebuild per checkbox tap is what made collapsed cards with
+        // many subtasks feel laggy.
         if (!toggleLocalSubItemCompletion(thought, subId)) return;
-        this.render();
+        this.refreshThoughtSubtaskView(thought);
 
         try {
             this.beginThoughtSync();
-            const data = await this.apiClient.toggleSubitem(id, subId, thought.version);
-            this.applySavedThought(thought, data);
-            this.render();
+            await this.mutateThought(thought, () => this.apiClient.toggleSubitem(id, subId, thought.version));
+            this.refreshThoughtSubtaskView(thought);
+            this.reorderTimelineInPlace();
         } catch (err) {
             console.error('Failed to toggle subtask:', err);
+            this.enqueueThoughtOverwrite(thought, err);
+            this.render();
+        }
+    }
+
+    // In-place refresh of one card's subtask rows and progress summary.
+    // Keeps checkbox state, row styling and the collapsed-card progress ring
+    // in sync with the model without rebuilding the timeline.
+    refreshThoughtSubtaskView(thought) {
+        const card = this.timeline?.querySelector(`.thought-card[data-id="${CSS.escape(String(thought.id))}"]`);
+        if (!card) return;
+        const items = Array.isArray(thought.subItems) ? thought.subItems : [];
+        card.querySelectorAll('.subtask[data-subid]').forEach((row) => {
+            const item = items.find(candidate => String(candidate.id) === row.dataset.subid);
+            if (!item) return;
+            row.classList.toggle('completed', item.completed === true);
+            const check = row.querySelector('.subtask-check');
+            if (check) check.checked = item.completed === true;
+        });
+        if (items.length <= 2) {
+            // The summary row only exists while more than two subtasks are
+            // hidden; once the count drops back, show every row again.
+            card.querySelector('.subtasks-summary-row')?.remove();
+            card.querySelectorAll('.subtask.subtask-extra').forEach(row => row.classList.remove('subtask-extra'));
+            return;
+        }
+        const done = items.filter(item => item.completed === true).length;
+        const ring = card.querySelector('.progress-ring-fg');
+        if (ring) {
+            const dash = parseFloat(ring.getAttribute('stroke-dasharray'));
+            if (Number.isFinite(dash) && dash > 0) {
+                ring.setAttribute('stroke-dashoffset', String(dash - (done / items.length) * dash));
+            }
+        }
+        const moreNum = card.querySelector('.summary-more-num');
+        if (moreNum) moreNum.textContent = `+${items.length - 2}`;
+    }
+
+    // Move the already-rendered cards into the current sort order without
+    // rebuilding them (open panels, swipe state and focus survive). Falls
+    // back to the regular scheduled render whenever the DOM does not hold
+    // the complete filtered set — lazy batches, empty states, stale ids —
+    // so behavior stays identical to render().
+    reorderTimelineInPlace() {
+        if (!this.timeline) return;
+        const buffered = Array.isArray(this._lastFilteredIds)
+            && Number.isInteger(this._renderedCount)
+            && this._renderedCount < this._lastFilteredIds.length;
+        if (buffered) { this.scheduleRender(); return; }
+        const sorted = this.getFilteredThoughts();
+        const cards = Array.from(this.timeline.querySelectorAll('.thought-card[data-id]'));
+        if (cards.length !== sorted.length) { this.scheduleRender(); return; }
+        const byId = new Map(cards.map(card => [String(card.dataset.id), card]));
+        const ordered = [];
+        for (const thought of sorted) {
+            const card = byId.get(String(thought.id));
+            if (!card) { this.scheduleRender(); return; }
+            ordered.push(card);
+        }
+        const before = cards.map(card => String(card.dataset.id)).join('\u0000');
+        const after = ordered.map(card => String(card.dataset.id)).join('\u0000');
+        if (before === after) return;
+        const fragment = document.createDocumentFragment();
+        ordered.forEach(card => fragment.appendChild(card));
+        this.timeline.insertBefore(fragment, this.timeline.querySelector('.thoughts-load-more'));
+    }
+
+    // Row-level swipe-to-delete: mirrors the card gesture on a smaller
+    // scale. Touch/pen only — the mouse keeps dblclick-to-edit, and rows
+    // already opt out of text selection so a drag cannot start a selection.
+    bindSubtaskSwipeDelete(row, thought) {
+        const subId = row.dataset.subid;
+        let startX = 0;
+        let startY = 0;
+        let deltaX = 0;
+        let tracking = false;
+        let isDragging = false;
+        let threshold = 0;
+        let wasReady = false;
+        let suppressNextClick = false;
+
+        const reset = () => {
+            resetSubtaskSwipe(row);
+            tracking = false;
+            isDragging = false;
+            deltaX = 0;
+            wasReady = false;
+            suppressNextClick = false;
+        };
+
+        row.addEventListener('pointerdown', (event) => {
+            if (event.target.closest('button, input, textarea, a')) return;
+            if (this.hasActiveThoughtSelection()) this.clearThoughtSelectionForSwipe();
+            startX = event.clientX;
+            startY = event.clientY;
+            deltaX = 0;
+            wasReady = false;
+            threshold = Math.max(48, row.offsetWidth * 0.5);
+            tracking = true;
+            // Keep the card-level swipe handler out of row drags.
+            event.stopPropagation();
+            try { row.setPointerCapture?.(event.pointerId); } catch { /* capture is best-effort */ }
+        });
+
+        row.addEventListener('pointermove', (event) => {
+            if (!tracking) return;
+            deltaX = event.clientX - startX;
+            const deltaY = Math.abs(event.clientY - startY);
+            if (!isDragging && deltaX > 10 && deltaX > deltaY * 1.4) {
+                isDragging = true;
+                row.classList.add('swiping');
+            }
+            if (!isDragging) return;
+            event.preventDefault();
+            const state = getThoughtSwipeState(deltaX, threshold, threshold + 18);
+            row.style.setProperty('--subtask-swipe-x', `${state.swipeX}px`);
+            row.style.transform = `translate3d(${state.swipeX}px, 0, 0)`;
+            row.style.setProperty('--subtask-swipe-progress', String(state.progress));
+            row.style.setProperty('--subtask-swipe-opacity', String(state.actionOpacity));
+            row.classList.toggle('swipe-ready', state.ready);
+            if (state.ready && !wasReady) navigator.vibrate?.(8);
+            wasReady = state.ready;
+        });
+
+        const finish = (event) => {
+            if (!tracking) return;
+            const shouldDelete = isDragging && deltaX >= threshold;
+            if (isDragging) suppressNextClick = true;
+            try {
+                if (row.hasPointerCapture?.(event.pointerId)) row.releasePointerCapture(event.pointerId);
+            } catch { /* capture can already be gone */ }
+            if (!shouldDelete) { reset(); return; }
+            this.deleteSubtaskBySwipe(row, thought, subId);
+        };
+
+        row.addEventListener('pointerup', finish);
+        row.addEventListener('pointercancel', reset);
+
+        row.addEventListener('click', (event) => {
+            if (!suppressNextClick) return;
+            suppressNextClick = false;
+            event.preventDefault();
+            event.stopPropagation();
+        }, true);
+    }
+
+    async deleteSubtaskBySwipe(row, thought, subId) {
+        const edit = applyLocalSubItemTextEdit(thought, subId, '');
+        if (edit.action !== 'delete') {
+            resetSubtaskSwipe(row);
+            return;
+        }
+        row.classList.add('swipe-deleting');
+        await new Promise(resolve => setTimeout(resolve, 180));
+        row.remove();
+        this.refreshThoughtSubtaskView(thought);
+        try {
+            this.beginThoughtSync();
+            await this.mutateThought(thought, () => this.apiClient.deleteSubitem(thought.id, subId, thought.version), { rebase: false });
+            this.reorderTimelineInPlace();
+        } catch (err) {
+            console.error('Failed to delete subtask:', err);
             this.enqueueThoughtOverwrite(thought, err);
             this.render();
         }

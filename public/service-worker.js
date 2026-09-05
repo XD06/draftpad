@@ -9,6 +9,7 @@ const CORE_ASSETS = [
   "/Assets/styles.css",
   "/Assets/preview-styles.css",
   "/Assets/thoughts.css",
+  "/Assets/today-drafts.css",
   "/Assets/ios-theme.css",
   "/Assets/manifest.json",
   "/Assets/dumbpad.png",
@@ -19,16 +20,32 @@ const CORE_ASSETS = [
   "/css/@highlightjs/github.min.css",
   "/css/@highlightjs/github-dark.min.css",
   "/managers/confirmation.js",
+  "/managers/clipboard-import-coordinator.js",
   "/managers/hybrid-display-sanitizer.js",
+  "/managers/import-target-registry.js",
   "/managers/preview.js",
   "/managers/settings.js",
   "/managers/settings-data-panel.js",
   "/managers/storage.js",
   "/managers/note-sync-controller.js",
+  "/managers/editor-performance.js",
+  "/managers/heading-index.js",
   "/managers/thoughts.js",
+  "/managers/today-drafts/today-drafts-manager.js",
+  "/managers/today-drafts/today-drafts-api-client.js",
+  "/managers/today-drafts/today-drafts-outbox.js",
+  "/managers/today-drafts/today-drafts-renderer.js",
+  "/managers/today-drafts/today-drafts-swipe.js",
+  "/managers/today-drafts/today-drafts-store.js",
+  "/managers/workspace-router.js",
+  "/managers/agent-api-client.js",
+  "/managers/thought-agent-state.js",
+  "/managers/thought-agent-panel.js",
+  "/managers/thought-agent-controller.js",
   "/managers/thought-ai-status.js",
   "/managers/thought-api-client.js",
   "/managers/asset-api-client.js",
+  "/managers/article-file-command.js",
   "/managers/thought-attachments.js",
   "/managers/thought-card-renderer.js",
   "/managers/thought-editor.js",
@@ -47,11 +64,18 @@ const CORE_ASSETS = [
 
 // Fonts and the editor runtime are cached by the normal fetch handler after
 // first use. Do not force every PWA installation to download optional assets.
+// (First-paint parallelism is handled by <link rel=preload> in index.html,
+// which is per-navigation and does not bloat install-time caching.)
 const WARM_ASSETS = [];
 
 const NETWORK_FIRST_STATIC_EXTENSIONS = [".js", ".css", ".json"];
-const NAVIGATION_NETWORK_TIMEOUT = 900;
-const STATIC_NETWORK_TIMEOUT = 650;
+// How long a navigation/static request may stall on a slow (e.g. home-server
+// over WAN) link before we fall back to the cached copy. Kept short because
+// the fallback is the same versioned cache the network response would have
+// refreshed: a timeout only trades one fresh copy for the previous identical
+// one, while a long timeout delays first paint on every refresh.
+const NAVIGATION_NETWORK_TIMEOUT = 600;
+const STATIC_NETWORK_TIMEOUT = 450;
 
 const getConfig = async () => {
   try {
@@ -275,7 +299,7 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  const staticAssetExtensions = [".js", ".css", ".json", ".png", ".ico", ".svg", ".woff", ".woff2", ".ttf"];
+  const staticAssetExtensions = [".js", ".css", ".json", ".png", ".ico", ".svg", ".woff", ".woff2", ".ttf", ".wasm"];
   const isNavigation = event.request.mode === "navigate";
   const isStaticAsset = staticAssetExtensions.some(ext => requestUrl.pathname.endsWith(ext));
   const isNetworkFirstStaticAsset = NETWORK_FIRST_STATIC_EXTENSIONS.some(ext => requestUrl.pathname.endsWith(ext));

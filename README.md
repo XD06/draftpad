@@ -9,14 +9,18 @@ DumbPad 是一款专注于速度、美感与跨端体验的极简 Markdown 编�
 - **高性能渲染**：基于 Vditor 核心，支持完整的 Markdown 语法及实时代码高亮。
 
 ### 2. 深度移动端优化
-- **双标签侧边栏**：移动端专属“目录”与“最近”双面板切换，最大化利用屏幕空间。
+- **双标签侧边栏**：「目录」与「最近」以图标标签切换子页面（PC 与移动端一致）。
+- **文章内目录**：PC 右侧栏显示当前文章的标题目录（编辑/阅读模式均可用，带级别图标、滚动高亮、点击跳转）；移动端由悬浮「目录」按钮打开同一目录抽屉。
+- **悬浮按钮收缩**：移动端悬浮按钮组默认收起，只保留目录、智能滚动与「更多」，点击展开其余按钮，刷新后自动收起。
 - **智能分组**：侧边栏自动按日期（今天、昨天、2 天前等）对文件进行分组，并自动折叠较旧的记录。
+- **目录标题搜索与快速切换**：目录搜索仅匹配文章标题；切换已有文章时先展示本地启动缓存，再在后台校验服务端新版本，减少目录切换的等待感。
 - **触控友好**：移动端支持**长按**唤出重命名与删除按钮，防止单手操作误触。
 - **全 HTML 模态框**：弃用原生弹窗，统一使用精心设计的移动端友好交互界面。
 
 ### 3. 精准搜索与导航
 - **全局模糊搜索**：支持中文搜索，即便文件众多也能秒速定位。
 - **关键词直达**：搜索结果点击后，编辑器会自动滚动到关键词所在行并进行高亮闪烁提示。
+- **链接高亮可点击**：文章中的裸 URL 与 Markdown 链接统一样式高亮，点击直接打开（阅读模式同样可点击）。
 
 ### 4. 极致交互 UX
 - **悬浮助手组**：
@@ -41,43 +45,35 @@ DumbPad 是一款专注于速度、美感与跨端体验的极简 Markdown 编�
   - 双击文本 → 进入编辑模式（Ctrl+Enter 保存，Esc 取消）
   - 长按文本 → 删除
   - 点击圆点 → 切换完成状态
+  - 右滑卡片 → 删除整条 Thought（弹窗确认后移入垃圾桶）
+  - 右滑子任务行 → 删除该子任务（触屏/触控笔，越过半行宽即生效）
 - **置顶功能**：卡片右上角置顶按钮，置顶内容优先排序并显示金色边框
 - **附件支持**：支持插入图片和文件（Base64 存储，单文件最大 4MB），编辑模式下可管理附件
+- **输入与排序细节**：子任务输入框按 Enter 自动开启下一条；在折叠卡片上添加子任务会先自动展开，新行与续输输入框始终可见；勾选子任务只刷新当前卡片并原位重排时间线，不再整表重建；时间线排序让“多个子任务完成了一部分”的想法优先展示；手动关联搜索走索引化轻量接口，打字时后台刷新不再顶掉移动端键盘。
 
-### 6. AI Relations
+### 6. 今日草稿
+
+- **用完即走**：独立于文章和 Thought 的当日单行清单，次日自动清空，不会积累为长期待办。
+- **单条同步**：每条记录拥有版本号，支持跨端实时更新与离线重试。
+- **快捷整理**：横向手势可删除当前条目或转成可长期保留的 Thought。
+
+### 7. AI Relations
 
 - **AI 元数据**：创建 Thought 后异步生成摘要、实体、主题、意图、关键词、标签和 embedding；语义编辑后会标记为“AI 待更新”，由用户在 AI 面板手动重新运行。
 - **准确优先关联**：本地召回候选后，可选用专用 reranker 排序，再由 LLM 判断 `relationType`、置信度和原因。
 - **关系管理**：前端可展开关联列表、查看关联原因、跳转高亮目标 Thought、删除误判关联。
 - **手动关联搜索**：可搜索 Thought 并手动建立关联，候选项会高亮关键词；搜索使用轻量接口和前端防抖，避免 S3 场景下频繁读取 AI meta 和 relation count。
 - **误判记忆**：删除过的误判会写入 `relations.suppressed/`，后续重算不会立刻恢复。
+- **找回相关内容（可选）**：用户可在 Thought 的 AI 分析折叠区主动启动只读 `recall_context` 工作流，在有限候选中找回旧想法和文章片段，并查看可点击的结构化引用；不改写用户内容。
 - **降级可用**：没有 AI Key 或 AI 服务失败时，核心保存流程不受影响。
 
-### 7. 安全、同步与存储
+### 8. 安全、同步与存储
 - **PIN 码保护**：支持访问权限校验，保护私密草稿。
 - **多端同步**：基于轻量 WebSocket 事件同步 `notes_update`、`thoughts_update`、`relations_update`、`notepad_change`。
 - **多后端存储**：支持本地文件存储和 S3 兼容对象存储，前端 API 保持不变。
+- **文章资源命令**：编辑文章时输入 `/file` 后按 Enter，即可从系统选择一个或多个图片/附件；图片以内联预览显示，普通文件显示为下载卡片。普通附件默认单文件上限为 20MB（可通过 `ASSET_MAX_FILE_BYTES` 调整），正文不保存 Base64。
 - **PWA 支持**：可作为应用安装到手机或桌面，支持离线查看及沉浸式全屏体验。Service Worker 会缓存核心静态资源；字体和编辑器运行时资源在实际使用后写入缓存，避免首次安装额外下载大文件。
 - **移动端视口优化**：支持 `100dvh` 动态视口高度，降低手机浏览器地址栏收起、键盘弹出时造成的布局跳动。
-
-## 🧱 架构边界
-
-DumbPad 当前保持无构建工具的 Vanilla JS 前端和 Express 后端。重构原则是小步提取高内聚模块，不改变 API、数据结构和用户可见行为。
-
-- `server.js` 仍是后端入口，负责静态资源、鉴权、WebSocket、Notepad/Thought API、搜索和数据管理。
-- `scripts/storage.js` 是本地/S3、legacy/split layout 的统一存储边界；split 模式的 Thought 分页复用索引，只读取当前页对象，关键词搜索和 legacy 模式保留完整读取回退。
-- `scripts/ai-queue.js` 和 `scripts/ai-provider.js` 负责后端 AI pipeline；AI、S3、WebSocket 都不能阻塞 Thought 快速写入。
-- `public/managers/thought-api-client.js` 封装 Thought HTTP 细节，统一 URL 编码和非 `ok` 错误。
-- `public/managers/thought-outbox.js` 管理 Thought 浏览器本地 outbox 的持久化、合并和重试。
-- `public/managers/thought-*` 拆分 Thought 前端高变化逻辑：API client、outbox、卡片渲染、标签、AI 状态、关系面板、关系本地状态、Quick Add 数据构造、编辑 helper、文本格式化、过滤排序等。
-- `public/managers/note-sync-controller.js` 管理启动缓存和 Note cache 读写，`app.js` 继续协调编辑器和设置页 DOM。
-- `public/managers/settings-data-panel.js` 封装设置页数据空间和云端维护 API，前端不直接散落数据管理 URL。
-- `routes/data-management-routes.js` 承接后端数据管理 route，`server.js` 只负责注册。
-- `routes/auth-routes.js`、`routes/note-routes.js`、`routes/notepad-routes.js`、`routes/search-routes.js`、`routes/share-routes.js`、`routes/static-routes.js`、`routes/thought-routes.js` 承接主要 HTTP route，降低 `server.js` 的耦合度。
-- `public/managers/thoughts.js` 保留 Thought UI 协调职责：游标分页、批量卡片插入、局部卡片更新、事件绑定、toast、乐观更新和调用 API/outbox 模块。
-- `public/app.js` 的 Thought 视图与 Marked 渲染器采用延迟加载：首屏进入 Notepad 编辑时不再立即解析 Thought 大模块和 Markdown 渲染库。
-
-更详细的模块说明见 [项目技术介绍](docs/technical-overview.md)。
 
 ## 🚀 快速开始
 
@@ -95,7 +91,25 @@ DumbPad 当前保持无构建工具的 Vanilla JS 前端和 Express 后端。重
    ```
 
 4. **访问**：
-   默认地址为 `http://localhost:3000`
+   默认地址为 `http://localhost:3000`（端口由 `PORT` 控制，默认 `3000`）
+
+## 🧱 项目结构
+
+无构建步骤：浏览器直接加载原生 ES module，服务端一个 Express 进程同时提供 HTTP API、静态资源和 WebSocket。
+
+```
+server.js            后端入口，注册 13 个 route 模块
+routes/              HTTP 边界（auth/note/notepad/thought/today-drafts/trash/...）
+scripts/storage.js   ★ 唯一的用户数据读写出口，收敛 local/S3 与 legacy/split
+scripts/ai-*.js      后台 AI 管线（异步，不阻塞写入）
+scripts/agent/       交互 Agent 独立运行线（只读 recall_context + SSE）
+public/              前端：app.js、hybrid-editor.js、managers/、service-worker.js
+data/                运行时数据（已 gitignore）
+test/                全部回归测试 test/test_*.js
+docs/                文档；docs/archive/ 为本地历史存档（不推送）
+```
+
+模块边界、依赖规则与已知取舍见 [ARCHITECTURE.md](ARCHITECTURE.md)。
 
 ## 🐳 Docker 一键更新
 
@@ -143,7 +157,15 @@ S3_PREFIX=optional-prefix
 - `STORAGE_LAYOUT=legacy` 会把 Thought 保存在 `thoughts.json`，适合本地单机。
 - `STORAGE_LAYOUT=split` 会把 Thought 拆到 `thoughts/<id>.json`，推荐配合 S3 使用，避免大文件频繁读写。
 - `S3_PREFIX` 是数据集隔离边界，测试数据、真实数据、备份数据应使用不同 prefix。
+- `DUMBPAD_ENABLE_DESTRUCTIVE_DATA_OPERATIONS=false` 是默认安全开关：空间删除、本地覆盖 S3、S3 覆盖本地和非 dry-run 本地导入会被拒绝。不要在日常运行中开启；后续安全恢复流程会替代这些遗留操作。
+- `npm run test:s3-real` 会在结束时删除目标 `S3_PREFIX` 下的对象。运行前必须在命令环境中额外设置 `DUMBPAD_REAL_S3_SMOKE_CONFIRM_PREFIX` 为完全相同的 prefix，并使用专用测试空间。
 - 前端不会直接连接 S3，所有云端操作都走后端 API。
+
+个人安全模式在准备好独立持久目录后才启用：设置 `AUTH_V2_ENABLED=true`、`AUTH_STATE_DIR=/var/lib/dumbpad-security` 和一个随机 32 字节 `AUTH_MASTER_KEY`。Docker Compose 会把该宿主机目录挂载到容器内 `/app/security`，认证状态、可信设备、API token 与审计链不会因重建容器丢失。首次访问用旧 PIN 或一次性 `AUTH_BOOTSTRAP_TOKEN` 完成主密码、TOTP 与恢复码设置；以后已登录设备不被打断，可信设备在会话过期后只要求主密码，新设备和高危数据操作才要求 TOTP。不要把 `AUTH_MASTER_KEY` 放进仓库、浏览器或应用数据桶。
+
+备份由宿主机而非应用容器执行。`deploy/systemd/backup.env.example` 是 root-only 备份配置模板；它使用 `BACKUP_DIR=/var/lib/dumbpad-backups`、每仓库 1GiB 硬上限的去重加密仓库和独立 `BACKUP_S3_*` 桶。备份 CLI 不再自动加载项目 `.env`，无参数时只运行只读 `health`；写快照必须显式使用 `snapshot`。S3 源 Adapter 只暴露读取能力，运行桶与备份桶、两套凭证相同都会被写路径拒绝。
+
+最小部署步骤：将模板复制为仅 root 可读的 `/etc/dumbpad/backup.env`，填入只读运行桶凭证、仅用于备份桶的另一套凭证及独立 `BACKUP_MASTER_KEY`；先运行 `node scripts/backup/backup-cli.js readiness` 查看脱敏配置检查，再显式运行 `snapshot` 和 `health`。安装 `systemd` service/timer 后，快照成功会自动追加一次完整性健康检查。`restore-local` 只接受空的新目录；`restore-s3` 还必须临时提供独立的 `RESTORE_S3_ENDPOINT/REGION/BUCKET/ACCESS_KEY/SECRET_KEY`，并拒绝活动数据 prefix、其父子 prefix、备份桶及复用凭证。恢复完成后会回读全部文件/对象并校验字节，且不会自动删除演练目标。备份容量和保留规则见[数据安全 V1 设计](docs/superpowers/specs/2026-07-16-data-safety-v1-design.md)。
 
 AI 关联使用 OpenAI-compatible 接口；不配置 Key 时自动使用 noop provider：
 
@@ -169,6 +191,19 @@ AI 运行规则：
 - Thought 思考扩展只由用户在 AI 面板中手动触发，必须配置 `AI_INSIGHT_MODEL`，且不能复用 `AI_CHAT_MODEL`。它会向配置的 AI 服务发送当前 Thought、少量关联/相关 Thought 和匹配文章摘要；服务端以 `AI_INSIGHT_MAX_CHARS` 限制存储结果长度。
 - 关系重建优先使用已有 ready meta；需要强制重新分析时使用 backfill 脚本的 `--force`。
 
+交互 Agent 默认关闭，且必须使用单独的显式模型配置：
+
+```env
+AI_AGENT_ENABLED=false
+AI_AGENT_BASE_URL=https://example.com/v1
+AI_AGENT_API_KEY=your-agent-key
+AI_AGENT_MODEL=your-agent-model
+AI_AGENT_MAX_STEPS=3
+AI_AGENT_TIMEOUT_MS=45000
+```
+
+首期仅实现 Thought 的只读“找回相关内容”。模型、网络、SSE 或 AgentRun 存储失败不会影响 Thought/Notepad 保存；完整边界见 [AI 流程与 Agent 框架设计](docs/ai-agent-framework.md)。
+
 Relations 重建接口只使用已有 ready meta，不重新提取 Thought，不重新生成 embedding：
 
 ```bash
@@ -177,7 +212,7 @@ curl -X POST http://localhost:3000/api/thoughts/relations-rebuild \
   -d '{"limit": 100}'
 ```
 
-S3 后端会保存 `thoughts/`、`thoughts.meta/`、`relations/`、`relations.suppressed/`、`indexes/` 和 notepad 数据。应用仍然保持本地优先思路：AI 和 S3 都是后台能力，不应阻塞首屏和快速写入。
+S3 后端会保存 `thoughts/`、`thoughts.meta/`、`relations/`、`relations.suppressed/`、`agent-runs/`、`indexes/` 和 notepad 数据。应用仍然保持本地优先思路：AI 和 S3 都是后台能力，不应阻塞首屏和快速写入。
 
 真实数据迁移建议先走 staging prefix：先 dry-run，再导入到新 prefix，确认页面可读后再运行 AI backfill。不要直接清空 bucket，也不要把测试 prefix 当成真实数据源。
 
@@ -200,9 +235,15 @@ npm run seed:demo
 - Thought 的置顶、子任务、附件、手动关联、完成筛选、分页加载和离线 outbox 重试。
 - `baseVersion` 的乐观并发、`409` 冲突、Thought 的 `light=1`、`format=page`、`sort=timeline` 和 `updatedSince` API。
 
-固定测试 ID 见“开发者 API 指南”演示文章；完整 HTTP 契约见 [api.md](api.md) 与 [`/openapi.json`](/openapi.json)。
+固定测试 ID 见“开发者 API 指南”演示文章；完整 HTTP 契约见 [docs/api.md](docs/api.md) 与 [`/openapi.json`](/openapi.json)。
 
 ## 🧷 编辑器回归记录
+
+### 严重 bug：输入时光标乱跳与特殊样式闪烁
+
+在待办项及时间标记、高亮附近输入时，Vditor 块解析与应用层装饰、光标纠正产生竞争，可能暴露标记源码或让光标跳到其他位置。当前修复在解析阶段保护自定义节点并保留原生光标锚点，适配器启用后停用旧 IME 指纹恢复与延时纠正。浏览器回归通过，用户初步验证可用；完整真机输入法及原图片场景仍待验收。
+
+详细根因、失败方案、回归命令和限制见 [技术总览中的严重 bug 记录](docs/technical-overview.md)。升级 Vditor 必须运行 `npm run test:editor-input-browser`；本次不改变普通 Enter 的兼容性边界。
 
 ### 已修复：普通 Enter 生成可编辑空段
 
@@ -216,22 +257,17 @@ npm run seed:demo
 
 ## ✅ 验证命令
 
+所有测试文件位于 `test/` 目录（`test/test_*.js`），不再散落在项目根目录。
+
 ```bash
-npm run check
-npm run test:hybrid-editor-time-command
-npm run test:api
-npm run test:ai-provider
-npm run test:ai-queue
-npm run test:relations
-npm run test:thought-modules
-npm run test:note-sync
-npm run test:pwa-cache
-npm run test:s3-storage
-npm run test:s3-migration
-npm run test:s3-prefix
+npm run check   # 全量 node --check + 服务器启动冒烟
+npm test        # test/ 下的完整回归套件（排除需要真实 S3 的 smoke）
+npm run test:<name>   # 单个测试，脚本定义见 package.json
 ```
 
-真实 S3 smoke 需要先配置 S3 环境变量和唯一 `S3_PREFIX`：
+常用单项：`test:api`、`test:thought-modules`、`test:agent`、`test:safety`、`test:today-drafts`、`test:pwa-cache`、`test:hybrid-editor-time-command`、`test:s3-storage`。完整对照表与"改哪里跑哪个"见 [AGENTS.md](AGENTS.md)。
+
+真实 S3 smoke 会删除目标 `S3_PREFIX` 下的对象，需要先配置 S3 环境变量、唯一 `S3_PREFIX`，并额外设置完全相同的 `DUMBPAD_REAL_S3_SMOKE_CONFIRM_PREFIX`：
 
 ```bash
 npm run test:s3-real
@@ -248,14 +284,24 @@ npm run test:s3-real
 
 ## 📚 文档
 
-- [Agent Context](AGENT_CONTEXT.md) — 新开 AI 会话时优先阅读的项目入口
-- [DumbPad API Agent Skill](SKILL.md) — 供 AI Agent 通过认证 HTTP API 管理文章与 Thoughts
-- [文档索引](docs/README.md) — 当前文档、归档文档和维护规则
-- [API 文档](api.md) — 完整的 REST API 参考
-- [项目技术介绍](docs/technical-overview.md) — 当前模块边界、数据流和后续重构顺序
+根目录只保留四份入口文档，其余全部在 `docs/`。
+
+- [架构说明](ARCHITECTURE.md) — 系统全景、模块边界、关键数据流与技术债务
+- [更新日志](CHANGELOG.md) — 版本演进与破坏性变更
+- [AI 协作规范](AGENTS.md) — AI Agent 的行为宪章、命令与目录职责（**仅本地，不提交推送**）
+- [文档索引](docs/README.md) — 当前文档、历史存档和维护规则
+
+按用途深入：
+
+- [API 文档](docs/api.md) — 完整的 REST API 参考（`/openapi.json` 为机器可读版本）
+- [DumbPad API Agent Skill](docs/SKILL.md) — 供 AI Agent 选择文章、Thought 或今日草稿并执行高频 API 操作
+- [项目技术介绍](docs/technical-overview.md) — 模块级实现细节、数据流与重构顺序
 - [Storage Interface](docs/storage-interface.md) — 本地/S3 存储接口约束
 - [AI Pipeline Interface](docs/ai-pipeline-interface.md) — AI 队列、provider 与 relation 写入约束
+- [AI 流程与 Agent 框架设计](docs/ai-agent-framework.md) — 交互 Agent 的工作流、工具、引用和渐进实施约束
+- [数据安全 V1 设计](docs/superpowers/specs/2026-07-16-data-safety-v1-design.md) — 登录、备份、恢复、审计与部署隔离的执行边界
 - [同步边界说明](docs/sync-boundaries.md) — Notepad、Thought、AI、S3 和 WebSocket 的同步职责
+- [Cloudflare 部署](docs/cloudflare-deployment.md) — 面向 Cloudflare 的部署说明
 
 ## 🛠️ 技术栈
 - **后端**：Node.js + Express

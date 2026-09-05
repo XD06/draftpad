@@ -1,5 +1,6 @@
 const SUPPORTED_EVENTS = new Set([
     'thoughts_update',
+    'today_drafts_update',
     'notes_update',
     'ai_status_update',
     'relations_update',

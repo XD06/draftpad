@@ -7,15 +7,28 @@ const {
     migrateDefaultNotepad
 } = require('./notepad-migration');
 const s3 = require('./s3-service');
+const {
+    assertValidAgentRun,
+    assertValidTerminalAgentRun,
+    hashIdempotencyKey,
+    isAgentRunStatus,
+    isSha256,
+    isTerminalAgentRunStatus,
+    toActiveAgentRunIndexEntry,
+    validateSourceRef
+} = require('./agent/agent-contracts');
 
 const DATA_DIR = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.join(__dirname, '..', 'data');
 const NOTEPADS_FILE = path.join(DATA_DIR, 'notepads.json');
 const THOUGHTS_FILE = path.join(DATA_DIR, 'thoughts.json');
+const TODAY_DRAFTS_FILE = path.join(DATA_DIR, 'today-drafts.json');
 const THOUGHTS_DIR = path.join(DATA_DIR, 'thoughts');
 const META_DIR = path.join(DATA_DIR, 'thoughts.meta');
 const RELATIONS_DIR = path.join(DATA_DIR, 'relations');
 const SUPPRESSED_RELATIONS_DIR = path.join(DATA_DIR, 'relations.suppressed');
 const INDEX_DIR = path.join(DATA_DIR, 'indexes');
+const AGENT_RUNS_DIR = path.join(DATA_DIR, 'agent-runs');
+const AGENT_RUNS_ACTIVE_INDEX_FILE = path.join(AGENT_RUNS_DIR, 'active-index.json');
 const TRASH_DIR = path.join(DATA_DIR, 'trash');
 const TRASH_NOTEPADS_DIR = path.join(TRASH_DIR, 'notepads');
 const TRASH_THOUGHTS_DIR = path.join(TRASH_DIR, 'thoughts');
@@ -61,6 +74,23 @@ let notepadWriteLock = Promise.resolve();
 async function withNotepadWriteLock(task) {
     const run = notepadWriteLock.then(task, task);
     notepadWriteLock = run.catch(() => {});
+    return run;
+}
+
+let todayDraftWriteLock = Promise.resolve();
+async function withTodayDraftWriteLock(task) {
+    const run = todayDraftWriteLock.then(task, task);
+    todayDraftWriteLock = run.catch(() => {});
+    return run;
+}
+
+// AgentRun data is derived and must not block user content writes. Keep a
+// dedicated single-process lock for the small run record + active index
+// transaction; it intentionally does not promise cross-process S3 atomicity.
+let agentRunWriteLock = Promise.resolve();
+async function withAgentRunWriteLock(task) {
+    const run = agentRunWriteLock.then(task, task);
+    agentRunWriteLock = run.catch(() => {});
     return run;
 }
 
@@ -151,19 +181,123 @@ function thoughtPath(id) {
     return path.join(THOUGHTS_DIR, `${filename}.json`);
 }
 
+function agentRunPath(id) {
+    const filename = safeId(id);
+    if (!filename) throw new Error('AgentRun id is required');
+    if (filename === 'active-index') throw new Error('AgentRun id is reserved');
+    return path.join(AGENT_RUNS_DIR, `${filename}.json`);
+}
+
+function agentRunKey(id) {
+    const filename = safeId(id);
+    if (!filename) throw new Error('AgentRun id is required');
+    if (filename === 'active-index') throw new Error('AgentRun id is reserved');
+    return `agent-runs/${filename}.json`;
+}
+
+function normalizeAgentRunActiveIndex(index) {
+    const deduped = new Map();
+    for (const item of Array.isArray(index?.items) ? index.items : []) {
+        if (!item || typeof item !== 'object') continue;
+        const id = String(item.id || '').trim();
+        const workflowId = String(item.workflowId || '').trim();
+        const actorId = String(item.actorId || '').trim();
+        const objectScope = String(item.objectScope || '').trim();
+        const status = String(item.status || '').trim();
+        const createdAt = Number(item.createdAt);
+        const updatedAt = Number(item.updatedAt);
+        const sourceValidation = validateSourceRef(item.primarySource);
+        if (
+            !id || safeId(id) !== id || id === 'active-index' || !workflowId || !actorId || !objectScope ||
+            !isAgentRunStatus(status) || isTerminalAgentRunStatus(status) ||
+            !Number.isSafeInteger(createdAt) || createdAt < 0 ||
+            !Number.isSafeInteger(updatedAt) || updatedAt < createdAt ||
+            !sourceValidation.valid
+        ) {
+            continue;
+        }
+        const idempotencyKeyHash = String(item.idempotencyKeyHash || '').trim();
+        if (idempotencyKeyHash && !isSha256(idempotencyKeyHash)) continue;
+        const normalized = {
+            id,
+            workflowId,
+            actorId,
+            objectScope,
+            primarySource: sourceValidation.value,
+            status,
+            createdAt,
+            updatedAt,
+            ...(idempotencyKeyHash ? { idempotencyKeyHash } : {})
+        };
+        const existing = deduped.get(id);
+        if (!existing || normalized.updatedAt >= existing.updatedAt) deduped.set(id, normalized);
+    }
+    return {
+        version: 1,
+        updatedAt: Number.isSafeInteger(Number(index?.updatedAt)) ? Number(index.updatedAt) : Date.now(),
+        items: Array.from(deduped.values()).sort((left, right) => (
+            right.updatedAt - left.updatedAt || String(left.id).localeCompare(String(right.id))
+        ))
+    };
+}
+
+function prepareAgentRunForStorage(run) {
+    if (!run || typeof run !== 'object') throw new Error('AgentRun is required');
+    const candidate = { ...run };
+    if (candidate.idempotencyKey !== undefined) {
+        const derivedHash = hashIdempotencyKey(candidate.idempotencyKey);
+        if (candidate.idempotencyKeyHash && candidate.idempotencyKeyHash !== derivedHash) {
+            throw new Error('AgentRun idempotencyKeyHash does not match idempotencyKey');
+        }
+        candidate.idempotencyKeyHash = derivedHash;
+        delete candidate.idempotencyKey;
+    }
+    return isTerminalAgentRunStatus(candidate.status)
+        ? assertValidTerminalAgentRun(candidate)
+        : assertValidAgentRun(candidate);
+}
+
+// Timeline surfaces Thoughts being actively worked through (some subtasks
+// done, some pending) above idle ones. Must stay in sync with the comparator
+// in routes/thought-routes.js.
+function thoughtSubtaskPartial(thought) {
+    const items = Array.isArray(thought?.subItems) ? thought.subItems : [];
+    if (items.length < 2) return false;
+    const done = items.filter(item => item?.completed === true).length;
+    return done > 0 && done < items.length;
+}
+
+function thoughtIndexEntryFrom(thought) {
+    const subText = (Array.isArray(thought.subItems) ? thought.subItems : [])
+        .map(item => String(item?.text || ''))
+        .join('\n');
+    const tagText = (Array.isArray(thought.tags) ? thought.tags : [])
+        .map(tag => String(tag || ''))
+        .join('\n');
+    return {
+        id: thought.id,
+        type: 'thought',
+        textPreview: String(thought.text || '').slice(0, 300),
+        // Full search corpus (text + subtasks + tags, lowercased) so keyword
+        // search can filter on the index alone instead of reading every
+        // Thought object (S3: one GET per Thought).
+        searchText: [String(thought.text || ''), subText, tagText]
+            .filter(Boolean)
+            .join('\n')
+            .toLowerCase(),
+        tags: Array.isArray(thought.tags) ? thought.tags : [],
+        completed: !!thought.completed,
+        pinned: thought.pinned === true,
+        pinnedAt: Number(thought.pinnedAt || 0),
+        subtaskPartial: thoughtSubtaskPartial(thought),
+        createdAt: thought.createdAt || 0,
+        updatedAt: thought.updatedAt || 0
+    };
+}
+
 function thoughtIndexFrom(thoughts) {
     return {
-        items: thoughts.map(thought => ({
-            id: thought.id,
-            type: 'thought',
-            textPreview: String(thought.text || '').slice(0, 300),
-            tags: Array.isArray(thought.tags) ? thought.tags : [],
-            completed: !!thought.completed,
-            pinned: thought.pinned === true,
-            pinnedAt: Number(thought.pinnedAt || 0),
-            createdAt: thought.createdAt || 0,
-            updatedAt: thought.updatedAt || 0
-        })),
+        items: thoughts.map(thought => thoughtIndexEntryFrom(thought)),
         updatedAt: Date.now()
     };
 }
@@ -180,6 +314,9 @@ function compareThoughtPageEntries(left, right, sort = 'updated') {
         if ((left.completed === true) !== (right.completed === true)) {
             return left.completed === true ? 1 : -1;
         }
+        const leftPartial = left.subtaskPartial === true;
+        const rightPartial = right.subtaskPartial === true;
+        if (leftPartial !== rightPartial) return leftPartial ? -1 : 1;
         return Number(right.createdAt || 0) - Number(left.createdAt || 0)
             || String(right.id).localeCompare(String(left.id));
     }
@@ -198,6 +335,7 @@ function hasUsableThoughtPageIndex(index, sort = 'updated') {
             typeof item.pinned === 'boolean'
             && Number.isFinite(Number(item.pinnedAt || 0))
             && typeof item.completed === 'boolean'
+            && typeof item.subtaskPartial === 'boolean'
         ))
     ));
 }
@@ -347,6 +485,32 @@ async function writeThoughtIndex(thoughts) {
     await writeIndex('thoughts-index', thoughtIndexFrom(thoughts));
 }
 
+// Incrementally upsert a single entry in the thoughts index. Falls back to a
+// full rebuild only when the existing index is missing or unusable, so single
+// thought writes stay O(1) instead of re-reading every thought (S3: N GETs).
+async function upsertThoughtIndexEntry(thought) {
+    const index = await readIndex('thoughts-index');
+    if (!hasUsableThoughtPageIndex(index, 'timeline')) {
+        await writeThoughtIndex(await readThoughts());
+        return;
+    }
+    const items = index.items.filter(item => item.id !== thought.id);
+    items.unshift(thoughtIndexEntryFrom(thought));
+    await writeIndex('thoughts-index', { items, updatedAt: Date.now() });
+}
+
+async function removeThoughtIndexEntry(id) {
+    const index = await readIndex('thoughts-index');
+    if (!hasUsableThoughtPageIndex(index, 'timeline')) {
+        await writeThoughtIndex(await readThoughts());
+        return;
+    }
+    await writeIndex('thoughts-index', {
+        items: index.items.filter(item => item.id !== id),
+        updatedAt: Date.now()
+    });
+}
+
 async function readSplitThoughts() {
 await fs.mkdir(THOUGHTS_DIR, { recursive: true });
 const entries = await fs.readdir(THOUGHTS_DIR, { withFileTypes: true });
@@ -426,6 +590,10 @@ async function initStorage() {
             await s3WriteJSON('thoughts.json', []);
         }
 
+        if (!await s3PathExists('today-drafts.json')) {
+            await s3WriteJSON('today-drafts.json', []);
+        }
+
         if (!await s3PathExists('default.txt')) {
             await s3.putObject(s3Key('default.txt'), '', 'text/plain; charset=utf-8');
         }
@@ -439,6 +607,7 @@ async function initStorage() {
     await fs.mkdir(RELATIONS_DIR, { recursive: true });
     await fs.mkdir(SUPPRESSED_RELATIONS_DIR, { recursive: true });
     await fs.mkdir(INDEX_DIR, { recursive: true });
+    await fs.mkdir(AGENT_RUNS_DIR, { recursive: true });
     await fs.mkdir(TRASH_NOTEPADS_DIR, { recursive: true });
     await fs.mkdir(TRASH_THOUGHTS_DIR, { recursive: true });
 
@@ -453,6 +622,10 @@ async function initStorage() {
 
     if (!await pathExists(THOUGHTS_FILE)) {
         await writeJSON(THOUGHTS_FILE, []);
+    }
+
+    if (!await pathExists(TODAY_DRAFTS_FILE)) {
+        await writeJSON(TODAY_DRAFTS_FILE, []);
     }
 }
 
@@ -567,6 +740,60 @@ async function listThoughtsPage({
     return { items, hasMore, usedIndex: true };
 }
 
+// Lightweight keyword search for UI quick-pickers (e.g. manual relation
+// search). Filters on the thoughts index (one small JSON read, even on S3)
+// and only fetches the matched objects. An index without `searchText`
+// (written before the field existed) falls back to a full read: a search
+// must never silently return incomplete results.
+async function searchThoughtsLight({ query = '', limit = 8 } = {}) {
+    await init();
+    const q = String(query || '').trim().toLowerCase();
+    if (!q) return [];
+    const cappedLimit = Math.max(1, Math.min(Number(limit) || 8, 20));
+
+    const matchFull = (thought) => {
+        if (String(thought?.text || '').toLowerCase().includes(q)) return true;
+        if ((thought?.subItems || []).some(item => String(item?.text || '').toLowerCase().includes(q))) return true;
+        if ((thought?.tags || []).some(tag => String(tag || '').toLowerCase().includes(q))) return true;
+        return false;
+    };
+    const toLight = thought => ({
+        id: thought.id,
+        text: thought.text || '',
+        subItems: Array.isArray(thought.subItems) ? thought.subItems : [],
+        tags: Array.isArray(thought.tags) ? thought.tags : [],
+        completed: thought.completed === true,
+        pinned: thought.pinned === true,
+        createdAt: thought.createdAt || 0,
+        updatedAt: thought.updatedAt || thought.createdAt || 0
+    });
+
+    const index = await readIndex('thoughts-index');
+    const searchUsable = Array.isArray(index?.items) && index.items.every(item => (
+        item
+        && typeof item.id === 'string'
+        && typeof item.searchText === 'string'
+        && Number.isFinite(Number(item.updatedAt || item.createdAt || 0))
+    ));
+    if (!searchUsable) {
+        const thoughts = await readThoughts();
+        return thoughts.filter(matchFull)
+            .sort((left, right) => Number(right.updatedAt || right.createdAt || 0) - Number(left.updatedAt || left.createdAt || 0))
+            .slice(0, cappedLimit)
+            .map(toLight);
+    }
+
+    const matched = index.items
+        .filter(item => item.searchText.includes(q))
+        .sort((left, right) => Number(right.updatedAt || right.createdAt || 0) - Number(left.updatedAt || left.createdAt || 0))
+        .slice(0, cappedLimit);
+    const items = await Promise.all(matched.map(entry => readThought(entry.id)));
+    return items
+        .filter(item => item?.id)
+        .filter(matchFull)
+        .map(toLight);
+}
+
 async function writeThought(thought) {
     if (!thought || !thought.id) {
         throw new Error('writeThought requires a thought with an id');
@@ -576,7 +803,7 @@ async function writeThought(thought) {
     if (isS3Backend()) {
         if (STORAGE_LAYOUT === 'split') {
             await s3WriteJSON(`thoughts/${safeId(thought.id)}.json`, thought);
-            await writeThoughtIndex(await readS3SplitThoughts());
+            await upsertThoughtIndexEntry(thought);
             return;
         }
 
@@ -590,7 +817,7 @@ async function writeThought(thought) {
 
     if (STORAGE_LAYOUT === 'split') {
         await writeJSON(thoughtPath(thought.id), thought);
-        await writeThoughtIndex(await readSplitThoughts());
+        await upsertThoughtIndexEntry(thought);
         return;
     }
 
@@ -608,7 +835,7 @@ async function deleteThought(id) {
             const key = `thoughts/${safeId(id)}.json`;
             const existed = await s3PathExists(key);
             await s3.deleteObject(s3Key(key));
-            await writeThoughtIndex(await readS3SplitThoughts());
+            await removeThoughtIndexEntry(id);
             return existed;
         }
 
@@ -622,7 +849,7 @@ async function deleteThought(id) {
         const filePath = thoughtPath(id);
         const existed = await pathExists(filePath);
         await fs.rm(filePath, { force: true });
-        await writeThoughtIndex(await readSplitThoughts());
+        await removeThoughtIndexEntry(id);
         return existed;
     }
 
@@ -630,6 +857,148 @@ async function deleteThought(id) {
     const nextThoughts = thoughts.filter(thought => thought.id !== id);
     await saveThoughts(nextThoughts);
     return nextThoughts.length !== thoughts.length;
+}
+
+async function readTodayDrafts() {
+    await init();
+    if (isS3Backend()) {
+        const drafts = await s3ReadJSON('today-drafts.json', []);
+        return Array.isArray(drafts) ? drafts : [];
+    }
+    const drafts = await readJSON(TODAY_DRAFTS_FILE, []);
+    return Array.isArray(drafts) ? drafts : [];
+}
+
+async function saveTodayDrafts(drafts) {
+    await init();
+    const next = Array.isArray(drafts) ? drafts : [];
+    if (isS3Backend()) {
+        await s3WriteJSON('today-drafts.json', next);
+        return;
+    }
+    await writeJSON(TODAY_DRAFTS_FILE, next);
+}
+
+async function readAgentRunUnsafe(id) {
+    if (isS3Backend()) return s3ReadJSON(agentRunKey(id), null);
+    return readJSON(agentRunPath(id), null);
+}
+
+async function writeAgentRunUnsafe(run) {
+    if (isS3Backend()) {
+        await s3WriteJSON(agentRunKey(run.id), run);
+        return;
+    }
+    await writeJSON(agentRunPath(run.id), run);
+}
+
+async function readAgentRunActiveIndexUnsafe() {
+    const fallback = { version: 1, items: [] };
+    const index = isS3Backend()
+        ? await s3ReadJSON('agent-runs/active-index.json', fallback)
+        : await readJSON(AGENT_RUNS_ACTIVE_INDEX_FILE, fallback);
+    return normalizeAgentRunActiveIndex(index);
+}
+
+async function writeAgentRunActiveIndexUnsafe(index) {
+    const payload = normalizeAgentRunActiveIndex({ ...index, updatedAt: Date.now() });
+    if (isS3Backend()) {
+        await s3WriteJSON('agent-runs/active-index.json', payload);
+        return payload;
+    }
+    await writeJSON(AGENT_RUNS_ACTIVE_INDEX_FILE, payload);
+    return payload;
+}
+
+async function readAgentRun(id) {
+    await init();
+    return readAgentRunUnsafe(id);
+}
+
+async function readAgentRunActiveIndex() {
+    await init();
+    return readAgentRunActiveIndexUnsafe();
+}
+
+async function hasAgentRunActiveIndex() {
+    await init();
+    return isS3Backend()
+        ? s3PathExists('agent-runs/active-index.json')
+        : pathExists(AGENT_RUNS_ACTIVE_INDEX_FILE);
+}
+
+async function saveAgentRun(run) {
+    return withAgentRunWriteLock(async () => {
+        await init();
+        const storedRun = prepareAgentRunForStorage(run);
+        await writeAgentRunUnsafe(storedRun);
+
+        const activeIndex = await readAgentRunActiveIndexUnsafe();
+        const activeEntry = toActiveAgentRunIndexEntry(storedRun);
+        activeIndex.items = activeIndex.items.filter(item => item.id !== storedRun.id);
+        if (activeEntry) activeIndex.items.push(activeEntry);
+        await writeAgentRunActiveIndexUnsafe(activeIndex);
+        return storedRun;
+    });
+}
+
+async function listActiveAgentRunSummaries() {
+    const index = await readAgentRunActiveIndex();
+    return index.items;
+}
+
+async function listNonterminalAgentRuns() {
+    const summaries = await listActiveAgentRunSummaries();
+    const runs = await Promise.all(summaries.map(summary => readAgentRun(summary.id)));
+    return runs.filter((run, index) => {
+        if (!run || run.id !== summaries[index].id || isTerminalAgentRunStatus(run.status)) return false;
+        try {
+            return !!toActiveAgentRunIndexEntry(run);
+        } catch {
+            return false;
+        }
+    });
+}
+
+async function listActiveAgentRuns() {
+    return listNonterminalAgentRuns();
+}
+
+async function readStoredAgentRunsUnsafe() {
+    if (isS3Backend()) {
+        const activeIndexKey = s3Key('agent-runs/active-index.json');
+        const entries = await s3.listObjects(s3Key('agent-runs/'));
+        const runEntries = entries.filter(entry => (
+            entry.key.endsWith('.json') && entry.key !== activeIndexKey
+        ));
+        const runs = await Promise.all(runEntries.map(entry => s3.getJSONObject(entry.key, null)));
+        return runs.filter(run => run && run.id);
+    }
+
+    const entries = await fs.readdir(AGENT_RUNS_DIR, { withFileTypes: true });
+    const runEntries = entries.filter(entry => (
+        entry.isFile() && entry.name.endsWith('.json') && entry.name !== 'active-index.json'
+    ));
+    const runs = await Promise.all(runEntries.map(entry => readJSON(path.join(AGENT_RUNS_DIR, entry.name), null)));
+    return runs.filter(run => run && run.id);
+}
+
+async function rebuildAgentRunActiveIndex() {
+    return withAgentRunWriteLock(async () => {
+        await init();
+        const runs = await readStoredAgentRunsUnsafe();
+        const entries = [];
+        for (const run of runs) {
+            try {
+                const entry = toActiveAgentRunIndexEntry(run);
+                if (entry) entries.push(entry);
+            } catch {
+                // AgentRun records are derived data. A corrupt record must not
+                // prevent valid nonterminal runs from recovering after restart.
+            }
+        }
+        return writeAgentRunActiveIndexUnsafe({ version: 1, items: entries });
+    });
 }
 
 async function readThoughtMeta(id) {
@@ -1283,13 +1652,26 @@ async function getSearchDocuments() {
 module.exports = {
     init,
     withThoughtWriteLock,
+    withTodayDraftWriteLock,
     withNotepadWriteLock,
+    withAgentRunWriteLock,
     readThoughts,
     saveThoughts,
+    readTodayDrafts,
+    saveTodayDrafts,
     readThought,
     listThoughtsPage,
+    searchThoughtsLight,
     writeThought,
     deleteThought,
+    readAgentRun,
+    saveAgentRun,
+    readAgentRunActiveIndex,
+    hasAgentRunActiveIndex,
+    listActiveAgentRunSummaries,
+    listNonterminalAgentRuns,
+    listActiveAgentRuns,
+    rebuildAgentRunActiveIndex,
     readThoughtMeta,
     writeThoughtMeta,
     deleteThoughtMeta,
@@ -1324,11 +1706,14 @@ module.exports = {
         DATA_DIR,
         NOTEPADS_FILE,
         THOUGHTS_FILE,
+        TODAY_DRAFTS_FILE,
         THOUGHTS_DIR,
         META_DIR,
         RELATIONS_DIR,
         SUPPRESSED_RELATIONS_DIR,
         INDEX_DIR,
+        AGENT_RUNS_DIR,
+        AGENT_RUNS_ACTIVE_INDEX_FILE,
         TRASH_DIR,
         TRASH_INDEX_FILE
     },

@@ -73,6 +73,14 @@ export default class ThoughtApiClient {
         return this.list({ ...options, format: 'page' });
     }
 
+    // Lightweight keyword search backed by the server-side thoughts index.
+    // Used by UI quick-pickers (manual relation search) so typing there does
+    // not trigger a full Thought collection read on S3 backends.
+    searchTargets(query, limit = 8) {
+        const params = new URLSearchParams({ q: query, limit: String(limit) });
+        return this.request(`${this.baseUrl}/search?${params.toString()}`);
+    }
+
     create(body) {
         return this.request(this.baseUrl, {
             method: 'POST',

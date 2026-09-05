@@ -41,8 +41,7 @@ function createSearchIndex({ storage, dataDir, notepadsFile }) {
         }, delay);
     }
 
-    async function searchNotepads(query) {
-        if (!notepadsCache.index) await indexNotepads();
+    function searchNotepadsIfReady(query) {
         if (!notepadsCache.index) return [];
 
         return notepadsCache.index.search(query).map(({ item, matches = [] }) => {
@@ -109,6 +108,11 @@ function createSearchIndex({ storage, dataDir, notepadsFile }) {
         });
     }
 
+    async function searchNotepads(query) {
+        if (!notepadsCache.index) await indexNotepads();
+        return searchNotepadsIfReady(query);
+    }
+
     function watchSearchDocuments() {
         if (storage.backend === 's3') return;
 
@@ -131,6 +135,7 @@ function createSearchIndex({ storage, dataDir, notepadsFile }) {
         indexNotepads,
         scheduleIndexNotepads,
         searchNotepads,
+        searchNotepadsIfReady,
         watchSearchDocuments
     };
 }

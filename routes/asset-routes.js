@@ -2,10 +2,13 @@ const crypto = require('crypto');
 const express = require('express');
 const sharp = require('sharp');
 const { createAssetStorage, safeAssetId } = require('../scripts/asset-storage');
+const { getMaxFileBytes, validateFileAssetUpload } = require('../scripts/file-asset-policy');
 
 const MAX_IMAGE_BYTES = 50 * 1024 * 1024;
 const MAX_IMAGE_PIXELS = 100 * 1000 * 1000;
 const PREVIEW_EDGE = 2560;
+const DEFAULT_ASSET_PAGE_SIZE = 50;
+const MAX_ASSET_PAGE_SIZE = 100;
 const MIME_BY_FORMAT = {
     jpeg: 'image/jpeg',
     png: 'image/png',
@@ -28,6 +31,10 @@ function createAssetId() {
         : crypto.randomBytes(20).toString('hex');
 }
 
+function sha256(buffer) {
+    return crypto.createHash('sha256').update(buffer).digest('hex');
+}
+
 function responseAsset(metadata) {
     const id = metadata.id;
     return {
@@ -36,14 +43,39 @@ function responseAsset(metadata) {
         name: metadata.name,
         type: metadata.type,
         size: metadata.size,
-        previewUrl: `/api/assets/${id}/preview`,
+        kind: metadata.kind || 'image',
+        createdAt: Number(metadata.createdAt) || null,
+        previewUrl: metadata.previewType ? `/api/assets/${id}/preview` : null,
         originalUrl: `/api/assets/${id}/original`,
         downloadUrl: `/api/assets/${id}/download`
     };
 }
 
-function registerAssetRoutes(app, { storage, originValidationMiddleware }) {
+function compareAssets(left, right) {
+    return Number(right?.createdAt || 0) - Number(left?.createdAt || 0)
+        || String(right?.id || '').localeCompare(String(left?.id || ''));
+}
+
+function encodeAssetCursor(asset) {
+    return Buffer.from(JSON.stringify({
+        createdAt: Number(asset?.createdAt || 0),
+        id: String(asset?.id || '')
+    })).toString('base64url');
+}
+
+function decodeAssetCursor(value) {
+    try {
+        const decoded = JSON.parse(Buffer.from(String(value || ''), 'base64url').toString('utf8'));
+        if (!Number.isFinite(Number(decoded?.createdAt)) || !safeAssetId(decoded?.id)) return null;
+        return { createdAt: Number(decoded.createdAt), id: String(decoded.id) };
+    } catch {
+        return null;
+    }
+}
+
+function registerAssetRoutes(app, { storage, originValidationMiddleware, maxFileBytes }) {
     const assets = createAssetStorage(storage);
+    const fileByteLimit = getMaxFileBytes(maxFileBytes);
 
     app.post(
         '/api/assets/images',
@@ -54,6 +86,13 @@ function registerAssetRoutes(app, { storage, originValidationMiddleware }) {
             if (!input?.length) return res.status(400).json({ error: 'Image body is required' });
 
             try {
+                // Dedupe identical bytes against an already-stored image so a
+                // re-upload from the UI/API reuses the existing asset instead of
+                // creating a second copy (and skips the expensive re-encode).
+                const hash = sha256(input);
+                const duplicate = await assets.findByHash(hash, 'image');
+                if (duplicate) return res.status(200).json(responseAsset(duplicate));
+
                 const image = sharp(input, { animated: false, limitInputPixels: MAX_IMAGE_PIXELS });
                 const info = await image.metadata();
                 const type = MIME_BY_FORMAT[info.format];
@@ -73,6 +112,7 @@ function registerAssetRoutes(app, { storage, originValidationMiddleware }) {
                     name: requestedName || `image.${ext}`,
                     type,
                     size: input.length,
+                    hash,
                     previewType: 'image/webp',
                     previewSize: previewBuffer.length,
                     width: Number(info.width || 0),
@@ -97,6 +137,121 @@ function registerAssetRoutes(app, { storage, originValidationMiddleware }) {
         }
     );
 
+    app.post(
+        '/api/assets/files',
+        originValidationMiddleware,
+        express.raw({ type: 'application/octet-stream', limit: fileByteLimit }),
+        async (req, res) => {
+            const input = Buffer.isBuffer(req.body) ? req.body : null;
+            const requestedName = decodeAssetName(req.get('x-asset-name'));
+            const validation = validateFileAssetUpload({
+                name: requestedName,
+                type: req.get('x-asset-type'),
+                size: input?.length || 0,
+                maxBytes: fileByteLimit
+            });
+            if (!validation.ok) return res.status(validation.status || 415).json({ error: validation.error });
+
+            try {
+                // Dedupe identical bytes against an already-stored file so a
+                // re-upload reuses the existing asset instead of duplicating it.
+                const hash = sha256(input);
+                const duplicate = await assets.findByHash(hash, 'file');
+                if (duplicate) return res.status(200).json(responseAsset(duplicate));
+
+                const id = createAssetId();
+                const metadata = {
+                    version: 1,
+                    kind: 'file',
+                    id,
+                    name: requestedName,
+                    type: validation.type,
+                    size: input.length,
+                    hash,
+                    createdAt: Date.now()
+                };
+                await assets.writeAsset({
+                    id,
+                    metadata,
+                    original: { buffer: input, contentType: validation.type }
+                });
+                res.status(201).json(responseAsset(metadata));
+            } catch (error) {
+                console.error('Failed to store file asset:', error);
+                res.status(500).json({ error: 'Unable to store file asset' });
+            }
+        }
+    );
+
+    app.get('/api/assets', async (req, res) => {
+        const kind = req.query.kind === undefined ? '' : String(req.query.kind).toLowerCase();
+        if (kind && !['image', 'file'].includes(kind)) {
+            return res.status(400).json({ error: 'kind must be image or file', code: 'INVALID_ASSET_KIND' });
+        }
+        const hasPageRequest = req.query.limit !== undefined || req.query.cursor !== undefined;
+        const rawLimit = req.query.limit === undefined ? DEFAULT_ASSET_PAGE_SIZE : Number.parseInt(req.query.limit, 10);
+        if (hasPageRequest && (!Number.isFinite(rawLimit) || rawLimit < 1)) {
+            return res.status(400).json({ error: 'limit must be a positive integer', code: 'INVALID_ASSET_LIMIT' });
+        }
+        const cursor = req.query.cursor === undefined ? null : decodeAssetCursor(req.query.cursor);
+        if (req.query.cursor !== undefined && !cursor) {
+            return res.status(400).json({ error: 'cursor is invalid', code: 'INVALID_ASSET_CURSOR' });
+        }
+        try {
+            let list = await assets.listAssets();
+            list = list
+                .filter(asset => !kind || String(asset?.kind || 'image') === kind)
+                .sort(compareAssets);
+            if (cursor) {
+                list = list.filter(asset => Number(asset?.createdAt || 0) < cursor.createdAt
+                    || (Number(asset?.createdAt || 0) === cursor.createdAt && String(asset?.id || '').localeCompare(cursor.id) < 0));
+            }
+            if (!hasPageRequest) return res.json({ assets: list.map(responseAsset) });
+
+            const limit = Math.min(rawLimit, MAX_ASSET_PAGE_SIZE);
+            const hasMore = list.length > limit;
+            const page = list.slice(0, limit);
+            res.json({
+                assets: page.map(responseAsset),
+                hasMore,
+                nextCursor: hasMore && page.length ? encodeAssetCursor(page[page.length - 1]) : null
+            });
+        } catch (error) {
+            console.error('Failed to list assets:', error);
+            res.status(500).json({ error: 'Unable to list assets' });
+        }
+    });
+
+    app.post('/api/assets/bulk-delete', originValidationMiddleware, express.json({ limit: '256kb' }), async (req, res) => {
+        const rawIds = Array.isArray(req.body?.ids) ? req.body.ids : null;
+        if (!rawIds || rawIds.length === 0) {
+            return res.status(400).json({ error: 'An ids array is required' });
+        }
+        if (rawIds.length > 1000) {
+            return res.status(413).json({ error: 'Too many assets requested for deletion' });
+        }
+        try {
+            const result = await assets.deleteAssets(rawIds);
+            res.json({ success: true, deleted: result.deleted, missing: result.missing });
+        } catch (error) {
+            console.error('Failed to bulk delete assets:', error);
+            res.status(500).json({ error: 'Unable to delete assets' });
+        }
+    });
+
+    app.delete('/api/assets/:id', originValidationMiddleware, async (req, res) => {
+        const id = safeAssetId(req.params.id);
+        if (!id) return res.status(404).json({ error: 'Asset not found' });
+        try {
+            const deleted = await assets.deleteAsset(id);
+            if (!deleted) return res.status(404).json({ error: 'Asset not found' });
+            res.json({ success: true, id });
+        } catch (error) {
+            console.error('Failed to delete asset:', error);
+            res.status(500).json({ error: 'Unable to delete asset' });
+        }
+    });
+
     app.get('/api/assets/:id/:variant', async (req, res) => {
         const id = safeAssetId(req.params.id);
         if (!id) return res.status(404).json({ error: 'Asset not found' });
@@ -110,7 +265,7 @@ function registerAssetRoutes(app, { storage, originValidationMiddleware }) {
             if (!asset) return res.status(404).json({ error: 'Asset not found' });
             res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
             res.type(asset.contentType);
-            if (req.params.variant === 'download') {
+            if (req.params.variant === 'download' || asset.metadata?.kind === 'file') {
                 res.attachment(asset.filename);
             } else {
                 res.setHeader('Content-Disposition', 'inline');
@@ -123,4 +278,4 @@ function registerAssetRoutes(app, { storage, originValidationMiddleware }) {
     });
 }
 
-module.exports = { MAX_IMAGE_BYTES, registerAssetRoutes, responseAsset };
+module.exports = { MAX_IMAGE_BYTES, MAX_ASSET_PAGE_SIZE, registerAssetRoutes, responseAsset };

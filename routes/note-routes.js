@@ -2,6 +2,7 @@ const fs = require('fs').promises;
 const path = require('path');
 const crypto = require('crypto');
 const { sanitizeFilename } = require('../scripts/notepad-migration');
+const { applyNoteEdit, applyNoteEdits, statusForEditError, buildOutline } = require('../scripts/note-edits');
 
 function hashContent(content) {
     return crypto.createHash('sha256').update(String(content || '')).digest('hex');
@@ -45,6 +46,23 @@ function registerNoteRoutes(app, context) {
             res.json({ content: notes, version: notepad?.version || 1 });
         } catch (err) {
             res.status(500).json({ error: 'Error reading notes' });
+        }
+    });
+
+    // Structure-aware read: return the Markdown heading outline so an agent can
+    // target a section by slug (see replace_section / append_to_section) without
+    // downloading and parsing the whole document itself.
+    app.get('/api/notes/:id/outline', async (req, res) => {
+        try {
+            const { id } = req.params;
+            const { notepad } = await findNotepadById(id);
+            if (!notepad) {
+                return res.status(404).json({ error: 'Notepad not found' });
+            }
+            const content = await storage.readNoteContent(notepad);
+            res.json({ version: notepad.version || 1, outline: buildOutline(content) });
+        } catch (err) {
+            res.status(500).json({ error: 'Error reading outline' });
         }
     });
 
@@ -120,7 +138,7 @@ function registerNoteRoutes(app, context) {
     app.patch('/api/notes/:id', async (req, res) => {
         try {
             const { id } = req.params;
-            const { action, text, target, replacement, userId, baseVersion } = req.body;
+            const { userId, baseVersion } = req.body;
             const senderId = userId || 'api';
 
             const result = await storage.withNotepadWriteLock(async () => {
@@ -138,61 +156,25 @@ function registerNoteRoutes(app, context) {
                     };
                 }
 
-                let content = await storage.readNoteContent(notepad);
-                let modified = false;
-                let badRequest = null;
+                const currentContent = await storage.readNoteContent(notepad);
+                const edit = applyNoteEdit(currentContent, req.body);
 
-                switch (action) {
-                    case 'append':
-                        if (text !== undefined) {
-                            content += text;
-                            modified = true;
-                        }
-                        break;
-                    case 'prepend':
-                        if (text !== undefined) {
-                            content = text + content;
-                            modified = true;
-                        }
-                        break;
-                    case 'replace':
-                        if (target) {
-                            if (content.includes(target)) {
-                                content = content.split(target).join(replacement || '');
-                                modified = true;
-                            } else {
-                                badRequest = { success: false, error: 'Target text not found in document', target };
-                            }
-                        } else {
-                            badRequest = { success: false, error: 'Replace action requires a non-empty target' };
-                        }
-                        break;
-                    case 'replace_first':
-                        if (target) {
-                            if (content.includes(target)) {
-                                content = content.replace(target, replacement || '');
-                                modified = true;
-                            } else {
-                                badRequest = { success: false, error: 'Target text not found' };
-                            }
-                        }
-                        break;
-                    case 'overwrite':
-                        content = text || '';
-                        modified = true;
-                        break;
-                    default:
-                        badRequest = { error: 'Invalid action' };
-                }
-                if (badRequest) {
-                    return { errorStatus: 400, errorBody: badRequest };
+                if (!edit.ok) {
+                    const errorBody = { error: edit.error };
+                    // Preserve the historical { success: false, ... } shape for
+                    // content-matching failures; a bare invalid action stays { error }.
+                    if (edit.errorCode !== 'invalid_action') errorBody.success = false;
+                    if (edit.target !== undefined) errorBody.target = edit.target;
+                    if (edit.section !== undefined) errorBody.section = edit.section;
+                    if (edit.matchCount !== undefined) errorBody.matchCount = edit.matchCount;
+                    return { errorStatus: statusForEditError(edit.errorCode), errorBody };
                 }
 
-                if (!modified) {
-                    return { content, modified: false, version: notepad.version || 1 };
+                if (!edit.modified) {
+                    return { content: edit.content, modified: false, version: notepad.version || 1 };
                 }
 
-                await storage.writeNoteContent(notepad, content);
+                await storage.writeNoteContent(notepad, edit.content);
 
                 const data = await storage.readNotepadsMeta();
                 const targetNotepad = data.notepads.find(n => n.id === id);
@@ -203,7 +185,14 @@ function registerNoteRoutes(app, context) {
                     savedVersion = targetNotepad.version;
                     await storage.saveNotepadsMeta(data);
                 }
-                return { content, modified: true, version: savedVersion };
+                return {
+                    content: edit.content,
+                    modified: true,
+                    version: savedVersion,
+                    matchCount: edit.matchCount,
+                    replaced: edit.replaced,
+                    section: edit.section
+                };
             });
 
             if (result.errorStatus) {
@@ -215,12 +204,88 @@ function registerNoteRoutes(app, context) {
             if (result.modified) {
                 broadcastUpdate(id, result.content, senderId, result.version, { contentHash: hashContent(result.content) });
                 scheduleIndexNotepads();
-                return res.json({ success: true, content: result.content, modified: true, version: result.version });
+                const body = { success: true, content: result.content, modified: true, version: result.version };
+                if (result.matchCount !== undefined) body.matchCount = result.matchCount;
+                if (result.replaced !== undefined) body.replaced = result.replaced;
+                if (result.section !== undefined) body.section = result.section;
+                return res.json(body);
             }
             res.json({ success: true, content: result.content, modified: false, version: result.version });
         } catch (err) {
             console.error('Error patching notes:', err);
             res.status(500).json({ error: 'Error patching notes' });
+        }
+    });
+
+    // Batch atomic editing: apply an ordered list of edits under a single write
+    // lock and a single version bump. Each edit sees the result of the previous
+    // one, and if any edit fails the whole request is rejected without writing,
+    // so an agent never leaves the note half-edited.
+    app.post('/api/notes/:id/edits', async (req, res) => {
+        try {
+            const { id } = req.params;
+            const { userId, baseVersion, edits } = req.body;
+            const senderId = userId || 'api';
+
+            const result = await storage.withNotepadWriteLock(async () => {
+                const { notepad } = await findNotepadById(id);
+                if (!notepad) {
+                    return { errorStatus: 404, error: 'Notepad not found' };
+                }
+
+                const clientVersion = Number(baseVersion);
+                if (Number.isFinite(clientVersion) && (notepad.version || 1) > clientVersion) {
+                    return {
+                        errorStatus: 409,
+                        error: 'Notepad has been updated on another device',
+                        currentVersion: notepad.version || 1
+                    };
+                }
+
+                const currentContent = await storage.readNoteContent(notepad);
+                const batch = applyNoteEdits(currentContent, edits);
+                if (!batch.ok) {
+                    const errorBody = { success: false, error: batch.error };
+                    if (batch.index !== undefined) errorBody.index = batch.index;
+                    if (batch.target !== undefined) errorBody.target = batch.target;
+                    if (batch.section !== undefined) errorBody.section = batch.section;
+                    if (batch.matchCount !== undefined) errorBody.matchCount = batch.matchCount;
+                    return { errorStatus: 400, errorBody };
+                }
+
+                if (!batch.modified) {
+                    return { content: batch.content, modified: false, version: notepad.version || 1, results: batch.results };
+                }
+
+                await storage.writeNoteContent(notepad, batch.content);
+
+                const data = await storage.readNotepadsMeta();
+                const targetNotepad = data.notepads.find(n => n.id === id);
+                let savedVersion = notepad.version || 1;
+                if (targetNotepad) {
+                    targetNotepad.updatedAt = Date.now();
+                    targetNotepad.version = (targetNotepad.version || 1) + 1;
+                    savedVersion = targetNotepad.version;
+                    await storage.saveNotepadsMeta(data);
+                }
+                return { content: batch.content, modified: true, version: savedVersion, results: batch.results };
+            });
+
+            if (result.errorStatus) {
+                if (result.errorStatus === 400) return res.status(400).json(result.errorBody);
+                if (result.errorStatus === 404) return res.status(404).json({ error: result.error });
+                return res.status(409).json({ error: result.error, currentVersion: result.currentVersion });
+            }
+
+            if (result.modified) {
+                broadcastUpdate(id, result.content, senderId, result.version, { contentHash: hashContent(result.content) });
+                scheduleIndexNotepads();
+                return res.json({ success: true, content: result.content, modified: true, version: result.version, results: result.results });
+            }
+            res.json({ success: true, content: result.content, modified: false, version: result.version, results: result.results });
+        } catch (err) {
+            console.error('Error applying note edits:', err);
+            res.status(500).json({ error: 'Error applying note edits' });
         }
     });
 }

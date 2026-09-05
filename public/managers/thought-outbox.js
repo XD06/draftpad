@@ -154,6 +154,42 @@ export default class ThoughtOutbox {
         return next.find(item => item.kind === 'patch' && item.thoughtId === thoughtId) || null;
     }
 
+    // Give a conflicted patch an exit so the queue never dead-locks.
+    // "Keep local": rebase the pending overwrite onto the current remote version
+    // and clear the conflict/attempts so the next retry resends and wins.
+    rebaseConflict(thoughtId, currentVersion) {
+        const items = this.load();
+        let updated = null;
+        const next = items.map(item => {
+            if (item.kind !== 'patch' || item.thoughtId !== thoughtId || item.state !== 'conflict') return item;
+            const remoteVersion = Number(currentVersion);
+            const fallbackVersion = Number(item.conflict?.currentVersion);
+            const nextBaseVersion = Number.isFinite(remoteVersion)
+                ? remoteVersion
+                : (Number.isFinite(fallbackVersion) ? fallbackVersion : item.body?.baseVersion);
+            updated = {
+                ...item,
+                state: undefined,
+                attempts: 0,
+                lastError: undefined,
+                conflict: undefined,
+                body: { ...item.body, baseVersion: nextBaseVersion }
+            };
+            return updated;
+        });
+        if (updated) this.save(next);
+        return updated;
+    }
+
+    // "Discard local": drop the conflicted patch entirely so the remote version wins.
+    discardConflict(thoughtId) {
+        const items = this.load();
+        const next = items.filter(item => !(item.kind === 'patch' && item.thoughtId === thoughtId && item.state === 'conflict'));
+        const removed = next.length !== items.length;
+        if (removed) this.save(next);
+        return removed;
+    }
+
     enqueueCreate({ text, tags = [], subItems = [], completed = false, tempThought }) {
         return this.enqueue({
             kind: 'create',
@@ -223,6 +259,11 @@ export default class ThoughtOutbox {
         let changed = false;
         const created = [];
         const conflicts = [];
+        // A patch/relation/delete that answers 404 means the Thought no longer
+        // exists remotely (deleted on another device, or a pending temp id that
+        // never made it to the server). Retrying it can never succeed, so the
+        // item is dropped here and the caller removes the stale local copy.
+        const dropped404 = [];
 
         for (const item of items) {
             if (item.state === 'conflict') {
@@ -251,6 +292,11 @@ export default class ThoughtOutbox {
                     conflicts.push(conflict);
                     continue;
                 }
+                if (Number(err?.status) === 404 && item.kind !== 'create') {
+                    changed = true;
+                    dropped404.push(item);
+                    continue;
+                }
                 failedUpdates.set(item.id, {
                     ...item,
                     attempts: Number(item.attempts || 0) + 1,
@@ -264,10 +310,11 @@ export default class ThoughtOutbox {
         // drop the succeeded ones, and update the failed ones in place —
         // otherwise this.save(remaining) would overwrite storage and silently
         // delete anything queued while retry was running.
+        const droppedIds = new Set(dropped404.map(item => item.id));
         const latest = this.load();
         const remaining = [];
         for (const item of latest) {
-            if (succeededIds.has(item.id)) continue;
+            if (succeededIds.has(item.id) || droppedIds.has(item.id)) continue;
             if (failedUpdates.has(item.id)) {
                 const failed = failedUpdates.get(item.id);
                 // Dead-letter: give up on permanently failing items (>10 attempts)
@@ -282,6 +329,6 @@ export default class ThoughtOutbox {
             }
         }
         this.save(remaining);
-        return { changed, remaining, created, conflicts };
+        return { changed, remaining, created, conflicts, dropped404 };
     }
 }

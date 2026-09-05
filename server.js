@@ -26,15 +26,26 @@ const s3PrefixTools = require('./scripts/s3-prefix-tools');
 const localToS3Migration = require('./scripts/migrate-local-to-s3');
 const s3Service = require('./scripts/s3-service');
 const { registerAuthRoutes } = require('./routes/auth-routes');
+const { createAuthServiceFromEnv } = require('./scripts/security/auth-service');
+const { AuditLogger } = require('./scripts/security/audit-log');
 const { registerAssetRoutes } = require('./routes/asset-routes');
+const { registerAgentRoutes } = require('./routes/agent-routes');
 const { registerDataManagementRoutes } = require('./routes/data-management-routes');
 const { registerNoteRoutes } = require('./routes/note-routes');
 const { registerNotepadRoutes } = require('./routes/notepad-routes');
+const { registerMetaRoutes } = require('./routes/meta-routes');
 const { registerSearchRoutes } = require('./routes/search-routes');
 const { registerShareRoutes } = require('./routes/share-routes');
 const { registerStaticRoutes } = require('./routes/static-routes');
 const { registerThoughtRoutes } = require('./routes/thought-routes');
+const { registerTodayDraftRoutes } = require('./routes/today-drafts-routes');
 const { registerTrashRoutes } = require('./routes/trash-routes');
+const { createAgentContextService } = require('./scripts/agent/agent-context-service');
+const { createAgentModelClient } = require('./scripts/agent/agent-model-client');
+const { createAgentRunService } = require('./scripts/agent/agent-run-service');
+const { createAgentToolRegistry } = require('./scripts/agent/agent-tool-registry');
+const { createAgentWorkflowRegistry } = require('./scripts/agent/agent-workflow-registry');
+const { getMaxFileBytes } = require('./scripts/file-asset-policy');
 const ipaddr = require('ipaddr.js');
 
 function getAvailableHighlightLanguages() {
@@ -65,19 +76,31 @@ const NOTEPADS_FILE = path.join(DATA_DIR, 'notepads.json');
 const THOUGHTS_FILE = path.join(DATA_DIR, 'thoughts.json');
 const SITE_TITLE = process.env.SITE_TITLE || 'DumbPad';
 const PIN = process.env.DUMBPAD_PIN;
+const ASSET_MAX_FILE_BYTES = getMaxFileBytes();
 
 const COOKIE_NAME = 'dumbpad_auth';
-const COOKIE_MAX_AGE = process.env.COOKIE_MAX_AGE || 24; // default 24 in hours
-const cookieMaxAge = COOKIE_MAX_AGE * 60 * 60 * 1000; // in hours
+const COOKIE_MAX_AGE = process.env.COOKIE_MAX_AGE || 720; // default 720 hours (30 days); the legacy PIN cookie is sliding-renewed on activity
+const cookieMaxAge = COOKIE_MAX_AGE * 60 * 60 * 1000; // hours -> ms
+const authService = createAuthServiceFromEnv();
+const auditLogger = authService
+    ? new AuditLogger({ directory: process.env.AUTH_AUDIT_DIR || path.join(process.env.AUTH_STATE_DIR, 'audit'), key: authService.masterKey })
+    : null;
 const BASE_URL = process.env.BASE_URL || `http://localhost:${PORT}`;
 const PAGE_HISTORY_COOKIE = 'dumbpad_page_history';
 const PAGE_HISTORY_COOKIE_AGE = process.env.PAGE_HISTORY_COOKIE_AGE || 365; // defaults to 1 Year in days
 const pageHistoryCookieAge = PAGE_HISTORY_COOKIE_AGE * 24 * 60 * 60 * 1000;
 const MAX_FILENAME_COLLISION_ATTEMPTS = 100; // Maximum attempts to resolve filename collisions
 const DEBUG_WS = process.env.DEBUG_WS === 'true';
-const SHARE_SECRET = process.env.SHARE_SECRET || PIN || 'dumbpad_default_secret_9988';
+// Never fall back to a world-known constant: a hardcoded default lets anyone
+// who has read the source forge valid share tokens for any notepad id. When no
+// dedicated secret and no PIN are configured we generate a random per-boot
+// secret instead. Share links are only guaranteed stable when SHARE_SECRET is
+// set (see .env.example), so this is a strict security improvement.
+const SHARE_SECRET = process.env.SHARE_SECRET || PIN || crypto.randomBytes(32).toString('hex');
 if (!process.env.SHARE_SECRET) {
-    console.warn('SECURITY: SHARE_SECRET is not set — falling back to PIN or a hardcoded default. Set a dedicated high-entropy SHARE_SECRET env var in production so share tokens cannot be derived from the PIN.');
+    console.warn(PIN
+        ? 'SECURITY: SHARE_SECRET is not set — deriving share tokens from DUMBPAD_PIN. Set a dedicated high-entropy SHARE_SECRET so tokens cannot be derived from the PIN.'
+        : 'SECURITY: SHARE_SECRET is not set — using a random per-boot secret, so existing share links will break on restart. Set a stable SHARE_SECRET if you rely on shared links.');
 }
 
 function getShareToken(id) {
@@ -311,6 +334,8 @@ const { broadcastWebSocketMessage, broadcastUpdate } = createWebSocketHub({
     validateOrigin,
     pin: PIN,
     cookieName: COOKIE_NAME,
+    authService,
+    authSessionCookieName: `${COOKIE_NAME}_session`,
     debug: DEBUG_WS
 });
 
@@ -326,12 +351,15 @@ registerAuthRoutes(app, {
     publicDir: PUBLIC_DIR,
     pin: PIN,
     cookieName: COOKIE_NAME,
+    authService,
+    auditLogger,
     cookieMaxAge,
     baseUrl: BASE_URL,
     nodeEnv: NODE_ENV,
     siteTitle: SITE_TITLE,
     buildVersion: BUILD_VERSION,
-    highlightLanguages: HIGHLIGHT_LANGUAGES
+    highlightLanguages: HIGHLIGHT_LANGUAGES,
+    assetMaxFileBytes: ASSET_MAX_FILE_BYTES
 });
 
 registerShareRoutes(app, {
@@ -540,12 +568,37 @@ const {
     indexNotepads,
     scheduleIndexNotepads,
     searchNotepads,
+    searchNotepadsIfReady,
     watchSearchDocuments
 } = createSearchIndex({
     storage,
     dataDir: DATA_DIR,
     notepadsFile: NOTEPADS_FILE
 });
+
+// Interactive Agent runs deliberately live beside, not inside, the existing
+// background aiQueue. They use only read-only context tools in phase A and
+// persist derived run state through storage without touching Thought content.
+const agentContextService = createAgentContextService({
+    storage,
+    // Agent candidate retrieval must never trigger the search index's lazy
+    // full-content bootstrap. If indexing is not ready yet, context service
+    // simply keeps relation/Thought candidates and marks search unavailable.
+    searchNotepads: searchNotepadsIfReady
+});
+const agentToolRegistry = createAgentToolRegistry({
+    contextService: agentContextService
+});
+const agentWorkflowRegistry = createAgentWorkflowRegistry();
+const agentModelClient = createAgentModelClient();
+const agentRunService = createAgentRunService({
+    storage,
+    contextService: agentContextService,
+    toolRegistry: agentToolRegistry,
+    workflowRegistry: agentWorkflowRegistry,
+    modelClient: agentModelClient
+});
+agentRunService.init();
 
 // Migrate existing ID-based files to name-based files
 (async () => {
@@ -563,12 +616,14 @@ registerDataManagementRoutes(app, {
     storage,
     s3PrefixTools,
     localToS3Migration,
-    s3Service
+    s3Service,
+    auditLogger
 });
 
 registerAssetRoutes(app, {
     storage,
-    originValidationMiddleware
+    originValidationMiddleware,
+    maxFileBytes: ASSET_MAX_FILE_BYTES
 });
 
 registerThoughtRoutes(app, {
@@ -576,6 +631,15 @@ registerThoughtRoutes(app, {
     aiQueue,
     scheduleIndexNotepads,
     broadcastWebSocketMessage
+});
+
+registerTodayDraftRoutes(app, {
+    storage,
+    broadcastWebSocketMessage
+});
+
+registerAgentRoutes(app, {
+    agentRunService
 });
 
 registerTrashRoutes(app, {
@@ -610,7 +674,17 @@ registerNotepadRoutes(app, {
 });
 
 registerSearchRoutes(app, {
-    searchNotepads
+    searchNotepads,
+    storage
+});
+
+registerMetaRoutes(app, {
+    storage,
+    authService,
+    aiQueue,
+    agentModelClient,
+    buildVersion: BUILD_VERSION,
+    assetMaxFileBytes: ASSET_MAX_FILE_BYTES
 });
 
 // Helper function to find a notepad by ID

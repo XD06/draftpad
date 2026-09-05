@@ -187,6 +187,15 @@ export function renderAIStatusDetail({ detail = {}, escapeHtml, renderedInsightH
             <div class="thought-ai-detail-counts">${escapeHtml(counts)}</div>
             <div class="thought-ai-stage-list">${stageRows}</div>
             ${renderAIInsightSection({ insight: detail.insight, escapeHtml, renderedMarkdownHtml: renderedInsightHtml, isStale })}
+            <section class="thought-agent-disclosure">
+                <button type="button" class="thought-agent-disclosure-toggle" data-agent-toggle title="找回相关内容" aria-label="找回相关内容" aria-expanded="false">
+                    <svg class="thought-agent-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <circle cx="11" cy="11" r="6"></circle><path d="m20 20-4.2-4.2"></path><path d="M11 8v3l2 1"></path>
+                    </svg>
+                    <span>找回相关内容</span>
+                </button>
+                <div class="thought-agent-panel-container" data-agent-panel-host hidden></div>
+            </section>
             ${error}
         `;
 }

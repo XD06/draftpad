@@ -24,12 +24,23 @@ function safeEqual(a, b) {
     }
 }
 
-function createWebSocketHub({ server, validateOrigin, pin, cookieName, debug = false, maxClients = 100 }) {
+function createWebSocketHub({ server, validateOrigin, pin, cookieName, authService = null, authSessionCookieName = '', debug = false, maxClients = 100, maxPayloadBytes = 50 * 1024 * 1024 }) {
     const clients = new Map();
 
     const wss = new WebSocket.Server({
         server,
+        // Bound each frame so a single connection cannot exhaust memory. The ws
+        // default is 100 MiB; cap it to the same 50 MiB ceiling as HTTP uploads
+        // (live-editing frames only carry markdown text, far below this).
+        maxPayload: Math.max(1024, Number(maxPayloadBytes) || 50 * 1024 * 1024),
         verifyClient: (info, done) => {
+            const finishVerification = () => {
+                if (clients.size >= maxClients) {
+                    console.warn('WebSocket connection rejected: max clients reached', clients.size);
+                    return done(false, 503, 'Too many connections');
+                }
+                done(true);
+            };
             const origin = info.req.headers.origin;
             if (!validateOrigin(origin)) {
                 console.warn('Blocked connection from origin:', { origin });
@@ -38,17 +49,20 @@ function createWebSocketHub({ server, validateOrigin, pin, cookieName, debug = f
             // Require a valid PIN cookie: without this, any same-origin client
             // (e.g. an XSS payload, or a browser left on the login screen) could
             // connect and inject forged update events to all other clients.
+            if (authService && authSessionCookieName) {
+                const cookies = parseCookies(info.req.headers.cookie);
+                authService.authorizeSession(cookies[authSessionCookieName])
+                    .then(() => finishVerification())
+                    .catch(() => done(false, 401, 'Unauthorized'));
+                return;
+            }
             if (pin && cookieName) {
                 const cookies = parseCookies(info.req.headers.cookie);
                 if (!safeEqual(cookies[cookieName], pin)) {
                     return done(false, 401, 'Unauthorized');
                 }
             }
-            if (clients.size >= maxClients) {
-                console.warn('WebSocket connection rejected: max clients reached', clients.size);
-                return done(false, 503, 'Too many connections');
-            }
-            done(true);
+            finishVerification();
         }
     });
 

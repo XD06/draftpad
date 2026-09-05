@@ -8,21 +8,24 @@
 - 前端：Vanilla JS ES modules、CSS、Vditor、Marked。
 - 存储：本地 JSON/txt 文件或 S3 兼容对象存储。
 - 搜索：服务端 Fuse.js，数据由 `storage.getSearchDocuments()` 汇总。
-- AI：OpenAI-compatible chat、embedding、可选 rerank、手动 Thought insight；无 key 时使用 noop provider。
+- AI：OpenAI-compatible chat、embedding、可选 rerank、手动 Thought insight，以及默认关闭的独立交互 Agent；无 key 时后台 pipeline 使用 noop provider。
 - PWA：运行时生成 manifest 和 asset manifest，service worker 负责缓存静态资源。
 
 ## 2. 后端边界
 
-`server.js` 是当前后端入口，仍集中注册静态资源、鉴权、WebSocket、分享页、Notepad API、Thought API、Trash API 和搜索 API。数据管理 API 已拆到 `routes/data-management-routes.js`，Trash API 已拆到 `routes/trash-routes.js`，都由 `server.js` 通过显式 context 注册。后续继续拆分 route 时应保持 URL、HTTP status、response body 和 WebSocket 副作用不变。
+`server.js` 是当前后端入口，仍集中注册静态资源、鉴权、WebSocket、分享页、Notepad API、Thought API、Today Draft API、Trash API 和搜索 API。数据管理 API 已拆到 `routes/data-management-routes.js`，Trash API 已拆到 `routes/trash-routes.js`，都由 `server.js` 通过显式 context 注册。后续继续拆分 route 时应保持 URL、HTTP status、response body 和 WebSocket 副作用不变。
 
 关键模块：
 
-- `scripts/storage.js`：唯一的用户数据读写边界。调用方通过同一套方法读写 Notepad、Thought、Trash、AI meta、relations、indexes，不直接关心 local/S3 或 legacy/split layout。
+- `scripts/storage.js`：唯一的用户数据读写边界。调用方通过同一套方法读写 Notepad、Thought、Today Draft、Trash、AI meta、relations、indexes，不直接关心 local/S3 或 legacy/split layout。
 - `scripts/ai-provider.js`：封装 AI provider。关系分析使用 chat/embedding/rerank；手动 Thought insight 使用独立 `AI_INSIGHT_MODEL`，没有可用配置时降级为 noop provider。
 - `scripts/ai-queue.js`：负责后台 AI 队列、pending meta、extract、embedding、relations、rebuild 和状态广播；同时提供手动 insight 生成函数，但 insight 不进入自动队列。
+- `scripts/agent/`：交互 Agent 的独立边界。`agent-run-service.js` 维护可取消运行和 SSE 事件；`agent-context-service.js`/`agent-tool-registry.js` 限制只读来源与上下文预算；`agent-model-client.js` 只读取显式 `AI_AGENT_*` 配置；这些模块不调用 `ai-queue` 或用户内容写入路由。
+- `routes/agent-routes.js`：负责 `/api/agent/*` 的 HTTP 参数、主体边界和 SSE 适配；阶段 A 只允许 Thought 的 `recall_context`。
 - `scripts/s3-service.js`、`scripts/s3-prefix-tools.js`：负责 S3 对象操作、prefix inventory、backup、delete 和 data space 列表。
 - `routes/data-management-routes.js`：负责 `/api/data-management/*` 路由，包含状态读取、数据空间列表/切换、inventory、backup、delete、本地导入 S3、双向覆盖。
 - `routes/trash-routes.js`：负责 `/api/trash/*` 路由，恢复和永久删除都只调用 storage 边界，不在 route 层拼接本地路径或 S3 key。
+- `routes/today-drafts-routes.js`：负责 `/api/today-drafts/*` 路由；在独立写锁内按服务端当前日期过滤并清理过期草稿，对单条 PUT/DELETE 校验 `baseVersion`，完成后广播 `today_drafts_update`。
 
 ## 3. 前端边界
 
@@ -36,7 +39,9 @@ Thought 前端 helper 拆分模块有聚合测试入口：`npm run test:thought-
 - `public/managers/thoughts.js`：Thought UI 协调层。负责 DOM 插入、每卡事件绑定、乐观更新、toast、筛选、AI/relations 面板入口；全局事件初始化按 Quick Add、视图切换、搜索筛选、outbox、socket 分段，`render()` 负责列表生成，单卡交互集中在 `bindThoughtCardEvents()`，relation panel 事件分发集中在 `handleRelationsPanelClick()`，inline 子任务编辑的输入替换和提交协调分开维护。
 - `public/managers/thought-api-client.js`：Thought HTTP client。负责 URL 拼接、`encodeURIComponent`、JSON 请求和带 `status` 的错误。
 - `public/managers/thought-outbox.js`：Thought 本地 outbox。负责 localStorage key、队列合并、create/patch/delete/relation 队列项构造、服务端列表合并和 retry。
+- `public/managers/today-drafts/`：日期草稿的独立前端模块。store 只保留当天的本机缓存，API client 与 outbox 负责按条重试和版本更新，manager 协调编辑、当天切换、WebSocket 合并与转 Thought 手势。
 - `public/managers/thought-ai-status.js`：Thought AI 状态边界。负责 AI 状态/阶段归一化、pending 最短显示时间计算、socket detail 应用到 Thought 对象、标签文案、按钮图标、状态详情 HTML、手动 insight 区块、loading/error 片段；`ThoughtsManager` 保留 timer 调度、点击、拉取状态、Markdown hydrate、重试和 insight 触发协调。
+- `public/managers/agent-api-client.js`、`thought-agent-state.js`、`thought-agent-panel.js`、`thought-agent-controller.js`：交互 Agent 的 API、纯状态、纯视图和 SSE 生命周期边界；Thought 卡片只提供明确入口和局部面板，不混入后台 AI 状态面板。
 - `public/managers/thought-card-renderer.js`：Thought 卡片纯 HTML 渲染边界。负责正文、legacy checkbox 子任务、标签、AI 状态入口、关系计数和折叠子任务摘要；`ThoughtsManager` 只保留 DOM 插入、复制文本和交互事件绑定。
 - `public/managers/thought-attachments.js`：Thought 附件纯逻辑边界。负责统一的 4 MB 校验、文件读取结果归一化、附件对象构造和图片附件筛选；Quick Add、编辑态和卡片浏览态复用同一流程。
 - `public/managers/thought-relations-panel.js`：关系面板纯渲染 helper。负责关系列表、推荐列表、手动关联输入控件、候选摘要截断/高亮和空状态 HTML；保留事件、防抖、API 协调在 `ThoughtsManager`。
@@ -48,9 +53,25 @@ Thought 前端 helper 拆分模块有聚合测试入口：`npm run test:thought-
 - `public/managers/time-command.js`：`/time` 快捷命令边界。负责本地时间格式化、光标前 `/time` 替换、`[[time:create:...]]` / `[[time:update:...]]` 标记渲染，以及旧 `[[time:...]]` 标记兼容；文章编辑器和 Thought 输入共同复用。
 - `public/managers/thought-relations-state.js`：Thought 关系本地状态 helper。负责关系计数归一化、手动关联成功/失败和删除成功/失败时的本地 relation count/localPending/ready 状态变更；API、panel 刷新和 outbox 协调仍保留在 `ThoughtsManager`。
 - `public/managers/thought-swipe.js`：Thought 滑动删除视觉状态 helper。把手势距离归一化为位移、进度、动作层透明度和删除阈值状态，DOM 手势与确认流程仍由 `ThoughtsManager` 协调。
-- `public/managers/note-sync-controller.js`：启动缓存与 Note cache 读写控制器，避免缓存细节继续散落在 `app.js`。
+- `public/managers/note-sync-controller.js`：启动缓存与 Note cache 读写控制器，避免缓存细节继续散落在 `app.js`。目录只筛选文章标题；选择已有文章时 `app.js` 先以 `loadNotes(..., { deferRemote: true })` 渲染缓存、再后台校验远端版本。非目录调用仍同步确认，避免该性能优化扩散到保存和冲突处理边界。
 - `public/managers/settings-data-panel.js`：设置页数据空间、垃圾桶和云端维护 API adapter。
 - `public/managers/ws-client.js`：轻量 WebSocket 客户端，把服务端事件转成浏览器 `CustomEvent`。
+
+### 严重 bug 记录：文章输入时光标乱跳与特殊样式闪烁
+
+**记录日期：2026-09-05。状态：修复已通过独立浏览器回归，用户初步反馈可用；完整真机验收尚未完成。**
+
+症状：在时间标记、高亮前输入，或在已完成/未完成待办项中进行中文组合输入时，特殊样式可能退回源码、闪烁，光标可能跳到其他列表项；此前曾出现“先跳走，再被拉回来”的短暂纠正过程。用户同时报告图片上方输入时视口跳动。此问题按严重编辑体验 bug 记录，因为错误光标位置可能导致后续文字插入错误位置；本次没有确认持久化数据丢失。
+
+根因证据：当前安装的 Vditor 在 `src/ts/wysiwyg/input.ts` 中通过 `SpinVditorDOM` 重新解析输入块，列表场景会重建整个顶层列表及相邻列表，然后利用 `<wbr>` 恢复光标。应用层对同一 DOM 的自定义装饰和光标纠正与该流程产生竞争。独立 Chrome 测试在第二个待办项输入 `abc` 后，修复前两项时间标记均消失并暴露源码，修复后逐帧检查保持标记与当前列表项光标。历史说明中的“约 90ms 异步重建”不是本次确认的固定时序，不应作为设计依据。
+
+失败方案与教训：旧方案使用块文本指纹和偏移定位，在 IME 提交后微任务及 120/280ms 定时器中恢复光标，用户仍能看到跳动后纠正。随后尝试在每次 `MutationObserver` 回调中套用旧快照，用户反馈乱跳加重；该修改已撤掉。不能把任何 DOM 变化都视为需要回放旧光标的位置恢复事件，也不能仅用源码包含某段恢复逻辑的断言证明交互稳定。
+
+文章输入解析通过 `HybridMarkdownEditor.installInputRenderAdapter()` 包装当前 Vditor 实例的 `lute.SpinVditorDOM`。已渲染的时间标记、高亮、批注、划线和上传卡片在脱离页面的 HTML 中临时替换为占位文本，Lute 完成块解析后原样还原，随后由 Vditor 写入 DOM 并使用自己的 `<wbr>` 定位光标。占位符或光标锚点不能完整还原时回退原始解析，不允许临时文本进入正文。适配器启用时不再执行 IME 指纹光标恢复和 120/280ms 定时纠正；不支持该内部接口时保留旧兼容路径。升级 Vditor 时必须重跑浏览器回归。
+
+`npm run test:editor-input-browser` 使用临时静态服务器和独立 Chrome 页面，不访问用户数据。测试需要可导入的 `playwright` 和本机 Chrome；也可用 `DUMBPAD_PLAYWRIGHT_MODULE` 指定已安装 Playwright 模块的绝对路径。覆盖逐帧标记/光标检查、CDP 中文组合输入、提交后主动移动光标、高亮编辑、撤销/重做及图片附近视口检查。CDP 组合输入不替代真实系统输入法验收；该浏览器测试不包含在 `npm test` 中。
+
+本次已通过 `npm run check`、`test:hybrid-editor-time-command`、`test:hybrid-editor-caret-stability`、`test:source-mode-roundtrip`、`test:editor-noop-save-guard` 和 `test:editor-input-browser`；没有运行全量 `npm test`。图片跳动未在独立样例中复现，相关视口检查通过不能代表原复杂文档的问题已解决，本次未修改滚动逻辑。移动端系统输入法、复杂嵌套列表和原图片场景仍保留为后续验收项；本次先固化稳定点，不继续扩展修复或更换编辑器内核。
 
 ### 普通 Enter 的兼容性边界
 
@@ -69,6 +90,10 @@ Thought 前端 helper 拆分模块有聚合测试入口：`npm run test:thought-
 7. 服务端成功写入 Thought 后，AI 队列异步生成 meta 和 relation；前端通过 WebSocket 刷新状态。
 
 这个流程要求快速记录不等待 AI，不等待 S3 之外的额外流程，也不因为离线而丢失本地输入。
+
+## 4.1 今日草稿写入流程
+
+今日草稿是日期范围内的一行用户数据，存放在独立的 `today-drafts.json`（S3 同名 key）中，不进入 Thought 的 AI、标签、关系或垃圾桶流程。服务端以自己的本地日期为准：每次读写先清理过期项，再在 Today Draft 写锁内创建、更新或删除当前日单条记录。前端先保存本机当天缓存并写入 outbox；联网后按 id 回放 PUT/DELETE，服务端成功后以返回版本更新本机项。`today_drafts_update` 只携带受影响记录，收到后对未处于本地待同步状态的单条记录做局部合并。
 
 ### Thought 时间线分页与局部更新
 

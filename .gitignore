@@ -130,6 +130,10 @@ dist
 .yarn/install-state.gz
 .pnp.*
 
+# pnpm (project uses npm; ignore accidental pnpm artifacts)
+pnpm-lock.yaml
+pnpm-workspace.yaml
+
 # Data directory
 data/
 !data/.gitkeep
@@ -148,6 +152,7 @@ Thumbs.db
 
 # Local browser/test artifacts
 .playwright-cli/
+.superpowers/
 .tmp/
 scratch/
 .docker-update.override.yml

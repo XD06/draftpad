@@ -1,4 +1,16 @@
 const { createAnalysisSourceSignature } = require('../scripts/thought-ai-source');
+const { createAssetStorage, safeAssetId } = require('../scripts/asset-storage');
+
+// Timeline surfaces Thoughts being actively worked through (some subtasks
+// done, some pending) above idle ones. Cursor entries precompute the flag as
+// `subtaskPartial`; live Thought objects derive it from `subItems`.
+function thoughtPartialProgress(entry) {
+    if (typeof entry?.subtaskPartial === 'boolean') return entry.subtaskPartial;
+    const items = Array.isArray(entry?.subItems) ? entry.subItems : [];
+    if (items.length < 2) return false;
+    const done = items.filter(item => item?.completed === true).length;
+    return done > 0 && done < items.length;
+}
 
 function registerThoughtRoutes(app, context) {
     const {
@@ -7,13 +19,47 @@ function registerThoughtRoutes(app, context) {
         scheduleIndexNotepads,
         broadcastWebSocketMessage
     } = context;
+    const assets = createAssetStorage(storage);
+
+    async function hydrateAttachments(input) {
+        if (input === undefined) return { attachments: [] };
+        if (!Array.isArray(input)) return { error: 'attachments must be an array', code: 'INVALID_THOUGHT_ATTACHMENT' };
+        const attachments = [];
+        for (const item of input) {
+            if (!item || typeof item !== 'object') {
+                return { error: 'attachments must contain objects', code: 'INVALID_THOUGHT_ATTACHMENT' };
+            }
+            const assetId = item.assetId === undefined ? '' : String(item.assetId);
+            if (!assetId) {
+                attachments.push({ ...item });
+                continue;
+            }
+            if (!safeAssetId(assetId)) {
+                return { error: 'attachment assetId is invalid', code: 'INVALID_ASSET_ID', assetId };
+            }
+            const metadata = await assets.readMetadata(assetId);
+            if (!metadata) {
+                return { error: 'attachment asset was not found', code: 'ASSET_NOT_FOUND', assetId };
+            }
+            const hydrated = {
+                ...item,
+                assetId: metadata.id,
+                name: metadata.name,
+                type: metadata.type,
+                size: metadata.size,
+                kind: metadata.kind || 'image',
+                previewUrl: metadata.previewType ? `/api/assets/${metadata.id}/preview` : null,
+                originalUrl: `/api/assets/${metadata.id}/original`,
+                downloadUrl: `/api/assets/${metadata.id}/download`
+            };
+            if (!hydrated.id) hydrated.id = metadata.id;
+            attachments.push(hydrated);
+        }
+        return { attachments };
+    }
 
     async function readThoughts() {
         return storage.readThoughts();
-    }
-
-    async function saveThoughts(thoughts) {
-        await storage.saveThoughts(thoughts);
     }
 
     async function withThoughtWriteLock(task) {
@@ -90,12 +136,11 @@ function registerThoughtRoutes(app, context) {
         };
     }
 
-    function createThoughtId(existingThoughts = []) {
-        const existingIds = new Set(existingThoughts.map(thought => String(thought.id)));
+    async function createThoughtId() {
         let id = '';
         do {
             id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-        } while (existingIds.has(id));
+        } while (await storage.readThought(id));
         return id;
     }
 
@@ -381,6 +426,22 @@ function registerThoughtRoutes(app, context) {
         }
     });
 
+    // Lightweight index-backed keyword search for UI quick-pickers (manual
+    // relation search). Registered before '/api/thoughts/:id'.
+    app.get('/api/thoughts/search', async (req, res) => {
+        try {
+            const q = String(req.query.q ?? req.query.query ?? '').trim();
+            if (!q) return res.json({ items: [] });
+            const rawLimit = Number.parseInt(req.query.limit, 10);
+            const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, 20) : 8;
+            const items = await storage.searchThoughtsLight({ query: q, limit });
+            res.json({ items });
+        } catch (err) {
+            console.error('Error searching thoughts:', err);
+            res.status(500).json({ error: 'Error searching thoughts' });
+        }
+    });
+
     app.get('/api/thoughts/:id', async (req, res) => {
         try {
             const { id } = req.params;
@@ -421,6 +482,11 @@ function registerThoughtRoutes(app, context) {
                     if ((left.completed === true) !== (right.completed === true)) {
                         return left.completed === true ? 1 : -1;
                     }
+                    // Thoughts being worked through (some subtasks done, some
+                    // pending) surface above idle ones so users see them first.
+                    const leftPartial = thoughtPartialProgress(left);
+                    const rightPartial = thoughtPartialProgress(right);
+                    if (leftPartial !== rightPartial) return leftPartial ? -1 : 1;
                     return Number(right.createdAt || 0) - Number(left.createdAt || 0)
                         || String(right.id).localeCompare(String(left.id));
                 }
@@ -441,12 +507,15 @@ function registerThoughtRoutes(app, context) {
                             || typeof decoded?.id !== 'string') {
                             throw new Error('invalid timeline cursor');
                         }
+                        // `subtaskPartial` is optional: cursors issued before
+                        // the progress-aware ordering still stay valid.
                         cursor = {
                             pinned: decoded.pinned,
                             pinnedAt: Number(decoded.pinnedAt),
                             completed: decoded.completed,
                             createdAt: Number(decoded.createdAt),
-                            id: decoded.id
+                            id: decoded.id,
+                            subtaskPartial: decoded.subtaskPartial === true
                         };
                     } else {
                         if (!Number.isFinite(Number(decoded?.updatedAt)) || typeof decoded?.id !== 'string') throw new Error('invalid cursor');
@@ -534,7 +603,8 @@ function registerThoughtRoutes(app, context) {
                         pinnedAt: Number(last.pinnedAt || 0),
                         completed: last.completed === true,
                         createdAt: Number(last.createdAt || 0),
-                        id: String(last.id)
+                        id: String(last.id),
+                        subtaskPartial: thoughtPartialProgress(last)
                     }
                     : {
                         updatedAt: Number(last.updatedAt || last.createdAt || 0),
@@ -609,18 +679,25 @@ function registerThoughtRoutes(app, context) {
         try {
             const { text, subItems, tags, completed } = req.body;
             if (!text) return res.status(400).json({ error: 'Text is required' });
+            const attachmentResult = await hydrateAttachments(req.body.attachments);
+            if (attachmentResult.error) {
+                return res.status(400).json({
+                    error: attachmentResult.error,
+                    code: attachmentResult.code,
+                    details: { assetId: attachmentResult.assetId }
+                });
+            }
 
             const newThought = await withThoughtWriteLock(async () => {
-                const thoughts = await readThoughts();
                 const now = Date.now();
                 const thought = {
-                    id: createThoughtId(thoughts),
+                    id: await createThoughtId(),
                     text,
                     subItems: subItems || [],
                     tags: tags || [],
                     completed: completed === true,
                     pinned: false,
-                    attachments: Array.isArray(req.body.attachments) ? req.body.attachments : [],
+                    attachments: attachmentResult.attachments,
                     relationCount: 0,
                     aiStatus: 'pending',
                     version: 1,
@@ -628,8 +705,7 @@ function registerThoughtRoutes(app, context) {
                     updatedAt: now
                 };
 
-                thoughts.unshift(thought);
-                await saveThoughts(thoughts);
+                await storage.writeThought(thought);
                 return thought;
             });
 
@@ -687,14 +763,22 @@ function registerThoughtRoutes(app, context) {
         try {
             const { id } = req.params;
             const { action, text, target, replacement, baseVersion } = req.body;
+            const attachmentResult = req.body.attachments === undefined
+                ? null
+                : await hydrateAttachments(req.body.attachments);
+            if (attachmentResult?.error) {
+                return res.status(400).json({
+                    error: attachmentResult.error,
+                    code: attachmentResult.code,
+                    details: { assetId: attachmentResult.assetId }
+                });
+            }
 
             const result = await withThoughtWriteLock(async () => {
-                const thoughts = await readThoughts();
-                const index = thoughts.findIndex(t => t.id === id);
+                const thought = await storage.readThought(id);
 
-                if (index === -1) return { status: 404, body: { error: 'Thought not found' } };
+                if (!thought) return { status: 404, body: { error: 'Thought not found' } };
 
-                const thought = thoughts[index];
                 const sourceBefore = createAnalysisSourceSignature(thought);
                 const clientVersion = Number(baseVersion);
                 if (Number.isFinite(clientVersion) && (thought.version || 1) > clientVersion) {
@@ -740,7 +824,7 @@ function registerThoughtRoutes(app, context) {
                         if (req.body.tags !== undefined) { thought.tags = req.body.tags; modified = true; }
                         if (req.body.completed !== undefined) { thought.completed = req.body.completed === true; modified = true; }
                         if (req.body.pinned !== undefined) { thought.pinned = req.body.pinned === true; modified = true; }
-                        if (req.body.attachments !== undefined) { thought.attachments = req.body.attachments; modified = true; }
+                        if (attachmentResult) { thought.attachments = attachmentResult.attachments; modified = true; }
                         break;
                     case 'add_subitem':
                         if (!text) return { status: 400, body: { error: 'Subitem text is required' } };
@@ -788,7 +872,7 @@ function registerThoughtRoutes(app, context) {
                     thought.aiStatus = visibleAIStatus(thought.id, meta, thought.aiStatus || 'missing');
                     thought.aiError = meta?.error || null;
                     thought.relationCount = await storage.readRelationCount(thought.id);
-                    await saveThoughts(thoughts);
+                    await storage.writeThought(thought);
                 }
 
                 return { status: 200, body: { success: true, thought }, thought, modified };
@@ -813,15 +897,11 @@ function registerThoughtRoutes(app, context) {
             const { id } = req.params;
 
             const result = await withThoughtWriteLock(async () => {
-                let thoughts = await readThoughts();
-                const thoughtToDelete = thoughts.find(t => t.id === id);
-                const initialLen = thoughts.length;
-                thoughts = thoughts.filter(t => t.id !== id);
-
-                if (thoughts.length === initialLen) return null;
+                const thoughtToDelete = await storage.readThought(id);
+                if (!thoughtToDelete) return null;
 
                 const trashItem = await storage.moveThoughtToTrash(thoughtToDelete);
-                await saveThoughts(thoughts);
+                await storage.deleteThought(id);
                 return { trashItem, thoughtToDelete };
             });
 
