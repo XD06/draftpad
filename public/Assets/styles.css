@@ -4795,7 +4795,8 @@ body.reading-mode-active .editor-main {
 }
 
 .conf-btn-secondary,
-.danger-btn {
+.danger-btn,
+.primary-btn {
     padding: 10px 18px;
     border-radius: 10px;
     font-size: 14px;
@@ -4813,6 +4814,15 @@ body.reading-mode-active .editor-main {
 .danger-btn {
     background: #f3f4f6 !important;
     color: red;
+}
+
+.primary-btn {
+    background: var(--primary-color, #2563eb) !important;
+    color: #ffffff !important;
+}
+
+.primary-btn:hover {
+    background: color-mix(in srgb, var(--primary-color, #2563eb) 86%, #000) !important;
 }
 
 [data-theme="dark"] .conf-btn-secondary {
