@@ -55,6 +55,14 @@ import { buildTimeMarker, buildUpdatedTimeMarker, deleteTimeMarker, handleTimeCo
 
 const THOUGHTS_CACHE_KEY = 'dumbpad_thoughts_cache_v1';
 
+function resetSubtaskSwipe(row) {
+    row.classList.remove('swiping', 'swipe-ready', 'swipe-deleting');
+    row.style.removeProperty('--swipe-x');
+    row.style.removeProperty('transform');
+    row.style.removeProperty('--swipe-progress');
+    row.style.removeProperty('--swipe-action-opacity');
+}
+
 export class ThoughtsManager {
     constructor(app) {
         this.app = app;
@@ -1284,6 +1292,24 @@ export class ThoughtsManager {
         this._renderScheduled = true;
         requestAnimationFrame(() => {
             this._renderScheduled = false;
+            // The focus check ran at schedule time; between then and this
+            // frame the flow may have re-created and refocused an editable
+            // field (e.g. the chained inline subtask input after Enter).
+            // Re-check at flush time or the pending render would destroy the
+            // freshly focused field mid-frame.
+            if (holdsFocus(document.activeElement)) {
+                if (!this._focusHoldFlushBound) {
+                    this._focusHoldFlushBound = true;
+                    const flushWhenFocusFree = () => {
+                        if (holdsFocus(document.activeElement)) return;
+                        document.removeEventListener('blur', flushWhenFocusFree, true);
+                        this._focusHoldFlushBound = false;
+                        this.scheduleRender();
+                    };
+                    document.addEventListener('blur', flushWhenFocusFree, true);
+                }
+                return;
+            }
             this.render();
         });
     }
@@ -1647,6 +1673,14 @@ export class ThoughtsManager {
                     const text = subtaskEl.querySelector('.subtask-text').textContent;
                     this.copyTextWithFeedback(copyBtn, text);
                 });
+            }
+        });
+
+        card.querySelectorAll('.subtask[data-subid]').forEach((row) => {
+            // Legacy ids are re-parsed from text on every render and cannot be
+            // deleted through the subitem API — keep them on dblclick editing.
+            if (!row.dataset.subid.startsWith('legacy_')) {
+                this.bindSubtaskSwipeDelete(row, thought);
             }
         });
 
@@ -3474,6 +3508,13 @@ export class ThoughtsManager {
     }
 
     async quickAddSubtask(card, thought) {
+        // On a collapsed card everything past the second subtask sits in the
+        // hidden .subtask-extra zone, so a committed subtask would land out
+        // of sight and the chained Enter input would look dead. Expand first
+        // to keep the whole add flow visible.
+        if (card.classList.contains('can-expand') && !card.classList.contains('expanded')) {
+            this.setThoughtCardExpanded(card, thought.id, true, { collapseOthers: true });
+        }
         const { sublist, createdSublist } = this.ensureSubtaskList(card);
         const addBtn = sublist.querySelector('.subtask-add-inline');
         const footerAddBtn = card.querySelector('.subtask-add-footer');
@@ -3638,16 +3679,181 @@ export class ThoughtsManager {
             return;
         }
 
-        // Optimistic update
+        // Optimistic update — refresh only this card's rows in place; a full
+        // timeline rebuild per checkbox tap is what made collapsed cards with
+        // many subtasks feel laggy.
         if (!toggleLocalSubItemCompletion(thought, subId)) return;
-        this.render();
+        this.refreshThoughtSubtaskView(thought);
 
         try {
             this.beginThoughtSync();
             await this.mutateThought(thought, () => this.apiClient.toggleSubitem(id, subId, thought.version));
-            this.render();
+            this.refreshThoughtSubtaskView(thought);
+            this.reorderTimelineInPlace();
         } catch (err) {
             console.error('Failed to toggle subtask:', err);
+            this.enqueueThoughtOverwrite(thought, err);
+            this.render();
+        }
+    }
+
+    // In-place refresh of one card's subtask rows and progress summary.
+    // Keeps checkbox state, row styling and the collapsed-card progress ring
+    // in sync with the model without rebuilding the timeline.
+    refreshThoughtSubtaskView(thought) {
+        const card = this.timeline?.querySelector(`.thought-card[data-id="${CSS.escape(String(thought.id))}"]`);
+        if (!card) return;
+        const items = Array.isArray(thought.subItems) ? thought.subItems : [];
+        card.querySelectorAll('.subtask[data-subid]').forEach((row) => {
+            const item = items.find(candidate => String(candidate.id) === row.dataset.subid);
+            if (!item) return;
+            row.classList.toggle('completed', item.completed === true);
+            const check = row.querySelector('.subtask-check');
+            if (check) check.checked = item.completed === true;
+        });
+        if (items.length <= 2) {
+            // The summary row only exists while more than two subtasks are
+            // hidden; once the count drops back, show every row again.
+            card.querySelector('.subtasks-summary-row')?.remove();
+            card.querySelectorAll('.subtask.subtask-extra').forEach(row => row.classList.remove('subtask-extra'));
+            return;
+        }
+        const done = items.filter(item => item.completed === true).length;
+        const ring = card.querySelector('.progress-ring-fg');
+        if (ring) {
+            const dash = parseFloat(ring.getAttribute('stroke-dasharray'));
+            if (Number.isFinite(dash) && dash > 0) {
+                ring.setAttribute('stroke-dashoffset', String(dash - (done / items.length) * dash));
+            }
+        }
+        const moreNum = card.querySelector('.summary-more-num');
+        if (moreNum) moreNum.textContent = `+${items.length - 2}`;
+    }
+
+    // Move the already-rendered cards into the current sort order without
+    // rebuilding them (open panels, swipe state and focus survive). Falls
+    // back to the regular scheduled render whenever the DOM does not hold
+    // the complete filtered set — lazy batches, empty states, stale ids —
+    // so behavior stays identical to render().
+    reorderTimelineInPlace() {
+        if (!this.timeline) return;
+        const buffered = Array.isArray(this._lastFilteredIds)
+            && Number.isInteger(this._renderedCount)
+            && this._renderedCount < this._lastFilteredIds.length;
+        if (buffered) { this.scheduleRender(); return; }
+        const sorted = this.getFilteredThoughts();
+        const cards = Array.from(this.timeline.querySelectorAll('.thought-card[data-id]'));
+        if (cards.length !== sorted.length) { this.scheduleRender(); return; }
+        const byId = new Map(cards.map(card => [String(card.dataset.id), card]));
+        const ordered = [];
+        for (const thought of sorted) {
+            const card = byId.get(String(thought.id));
+            if (!card) { this.scheduleRender(); return; }
+            ordered.push(card);
+        }
+        const before = cards.map(card => String(card.dataset.id)).join('\u0000');
+        const after = ordered.map(card => String(card.dataset.id)).join('\u0000');
+        if (before === after) return;
+        const fragment = document.createDocumentFragment();
+        ordered.forEach(card => fragment.appendChild(card));
+        this.timeline.insertBefore(fragment, this.timeline.querySelector('.thoughts-load-more'));
+    }
+
+    // Row-level swipe-to-delete: mirrors the card gesture on a smaller
+    // scale. Touch/pen only — the mouse keeps dblclick-to-edit, and rows
+    // already opt out of text selection so a drag cannot start a selection.
+    bindSubtaskSwipeDelete(row, thought) {
+        const subId = row.dataset.subid;
+        let startX = 0;
+        let startY = 0;
+        let deltaX = 0;
+        let tracking = false;
+        let isDragging = false;
+        let threshold = 0;
+        let wasReady = false;
+        let suppressNextClick = false;
+
+        const reset = () => {
+            resetSubtaskSwipe(row);
+            tracking = false;
+            isDragging = false;
+            deltaX = 0;
+            wasReady = false;
+            suppressNextClick = false;
+        };
+
+        row.addEventListener('pointerdown', (event) => {
+            if (event.target.closest('button, input, textarea, a')) return;
+            if (this.hasActiveThoughtSelection()) this.clearThoughtSelectionForSwipe();
+            startX = event.clientX;
+            startY = event.clientY;
+            deltaX = 0;
+            wasReady = false;
+            threshold = Math.max(48, row.offsetWidth * 0.5);
+            tracking = true;
+            // Keep the card-level swipe handler out of row drags.
+            event.stopPropagation();
+            try { row.setPointerCapture?.(event.pointerId); } catch { /* capture is best-effort */ }
+        });
+
+        row.addEventListener('pointermove', (event) => {
+            if (!tracking) return;
+            deltaX = event.clientX - startX;
+            const deltaY = Math.abs(event.clientY - startY);
+            if (!isDragging && deltaX > 10 && deltaX > deltaY * 1.4) {
+                isDragging = true;
+                row.classList.add('swiping');
+            }
+            if (!isDragging) return;
+            event.preventDefault();
+            const state = getThoughtSwipeState(deltaX, threshold, threshold + 18);
+            row.style.setProperty('--swipe-x', `${state.swipeX}px`);
+            row.style.transform = `translate3d(${state.swipeX}px, 0, 0)`;
+            row.style.setProperty('--swipe-progress', String(state.progress));
+            row.style.setProperty('--swipe-action-opacity', String(state.actionOpacity));
+            row.classList.toggle('swipe-ready', state.ready);
+            if (state.ready && !wasReady) navigator.vibrate?.(8);
+            wasReady = state.ready;
+        });
+
+        const finish = (event) => {
+            if (!tracking) return;
+            const shouldDelete = isDragging && deltaX >= threshold;
+            if (isDragging) suppressNextClick = true;
+            try {
+                if (row.hasPointerCapture?.(event.pointerId)) row.releasePointerCapture(event.pointerId);
+            } catch { /* capture can already be gone */ }
+            if (!shouldDelete) { reset(); return; }
+            this.deleteSubtaskBySwipe(row, thought, subId);
+        };
+
+        row.addEventListener('pointerup', finish);
+        row.addEventListener('pointercancel', reset);
+
+        row.addEventListener('click', (event) => {
+            if (!suppressNextClick) return;
+            suppressNextClick = false;
+            event.preventDefault();
+            event.stopPropagation();
+        }, true);
+    }
+
+    async deleteSubtaskBySwipe(row, thought, subId) {
+        const edit = applyLocalSubItemTextEdit(thought, subId, '');
+        if (edit.action !== 'delete') {
+            resetSubtaskSwipe(row);
+            return;
+        }
+        row.classList.add('swipe-deleting');
+        await new Promise(resolve => setTimeout(resolve, 180));
+        row.remove();
+        this.refreshThoughtSubtaskView(thought);
+        try {
+            this.beginThoughtSync();
+            await this.mutateThought(thought, () => this.apiClient.deleteSubitem(thought.id, subId, thought.version), { rebase: false });
+            this.reorderTimelineInPlace();
+        } catch (err) {
+            console.error('Failed to delete subtask:', err);
             this.enqueueThoughtOverwrite(thought, err);
             this.render();
         }

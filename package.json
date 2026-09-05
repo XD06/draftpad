@@ -38,6 +38,7 @@
     "test:thought-tags": "node test/test_thought_tags.js",
     "test:thought-text-formatting": "node test/test_thought_text_formatting.js",
     "test:thought-swipe": "node test/test_thought_swipe.js",
+    "test:thought-subtasks": "node test/test_thought_subtask_interactions.js",
     "test:thought-motion": "node test/test_thought_motion_policy.js",
     "test:time-command": "node test/test_time_command.js",
     "test:hybrid-editor-time-command": "node test/test_hybrid_editor_time_command.js",

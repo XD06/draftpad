@@ -194,6 +194,11 @@ function renderSubtasks({ sortedSubItems, query, linkify, highlightSearch }) {
         const isExtra = sortedSubItems.length > 2 && index >= 2;
         const extraClass = isExtra ? 'subtask-extra' : '';
         subtasksHtml += `<div class="subtask ${item.completed ? 'completed' : ''} ${extraClass}" data-subid="${item.id}">
+                        <span class="subtask-swipe-action" aria-hidden="true">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M3 6h18"></path><path d="M8 6V4h8v2"></path><path d="M19 6l-1 15H6L5 6"></path><path d="M10 11v6"></path><path d="M14 11v6"></path>
+                            </svg>
+                        </span>
                         <input type="checkbox" class="subtask-check" ${item.completed ? 'checked' : ''}>
                         <span class="subtask-text">${label}</span>
                         <button class="subtask-copy-btn" title="复制">

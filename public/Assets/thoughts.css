@@ -2299,6 +2299,58 @@ color: var(--primary-color);
     color: var(--muted-text);
 }
 
+/* Subtask row swipe-to-delete — a compact version of the card affordance.
+   The row slides right via --swipe-x while the action counter-translates so
+   it stays put and is revealed in the vacated space. */
+.subtask.swiping {
+    transition: none;
+    will-change: transform;
+    transform: translate3d(var(--swipe-x, 0), 0, 0);
+    background: var(--header-bg);
+    box-shadow: inset 2px 0 0 rgba(217, 71, 67, 0.28);
+}
+
+.subtask-swipe-action {
+    position: absolute;
+    left: 2px;
+    top: 50%;
+    z-index: 1;
+    display: grid;
+    place-items: center;
+    width: 24px;
+    height: 24px;
+    color: #d94743;
+    transform: translate3d(calc(-1 * var(--swipe-x, 0px)), -50%, 0);
+    opacity: var(--swipe-action-opacity, 0);
+    pointer-events: none;
+    transition: none;
+}
+
+.subtask-swipe-action svg {
+    width: 14px;
+    height: 14px;
+}
+
+.subtask.swipe-ready .subtask-swipe-action {
+    color: #fff;
+    background: #d94743;
+    border-radius: 7px;
+    box-shadow: 0 4px 10px rgba(217, 71, 67, 0.28);
+}
+
+.subtask.swipe-deleting {
+    transform: translate3d(60%, 0, 0);
+    opacity: 0;
+    max-height: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+    margin-top: 0;
+    margin-bottom: 0;
+    overflow: hidden;
+    border-top-width: 0;
+    transition: transform 0.18s ease, opacity 0.15s ease, max-height 0.18s ease, padding 0.18s ease, margin 0.18s ease;
+}
+
 .subtask-check {
     cursor: pointer;
     width: 15px;
@@ -3835,9 +3887,11 @@ body.thought-lightbox-open { overflow: hidden; }
     .thought-card,
     .thought-swipe-action,
     .thought-swipe-action-icon,
+    .subtask-swipe-action,
     .thought-attachment,
     .thought-lightbox-download,
     .thought-lightbox-close,
     .thought-lightbox-nav { transition-duration: 0.01ms !important; }
     .thought-card.swipe-deleting { transform: none; opacity: 0; }
+    .subtask.swipe-deleting { transform: none; opacity: 0; }
 }
