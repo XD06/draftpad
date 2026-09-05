@@ -2468,6 +2468,8 @@ export class ThoughtsManager {
         let suppressNextClick = false;
         let wasReady = false;
         let swipePointerType = '';
+        let pendingSwipeState = null;
+        let swipeFrameScheduled = false;
 
         const captureSwipePointer = (event) => {
             capturedPointerId = event.pointerId;
@@ -2493,10 +2495,11 @@ export class ThoughtsManager {
 
         const resetSwipe = (event) => {
             releaseSwipePointer(event);
+            pendingSwipeState = null;
+            swipeFrameScheduled = false;
             card.classList.remove('swiping', 'swipe-ready');
             card.style.removeProperty('--swipe-x');
             card.style.removeProperty('transform');
-            card.style.removeProperty('--swipe-progress');
             card.style.removeProperty('--swipe-action-opacity');
             tracking = false;
             isDragging = false;
@@ -2531,20 +2534,33 @@ export class ThoughtsManager {
             }
             if (!isDragging) return;
             event.preventDefault();
-            const state = getThoughtSwipeState(deltaX, threshold, maxSwipe);
-            card.style.setProperty('--swipe-x', `${state.swipeX}px`);
-            card.style.transform = `translate3d(${state.swipeX}px, 0, 0)`;
-            card.style.setProperty('--swipe-progress', String(state.progress));
-            card.style.setProperty('--swipe-action-opacity', String(state.actionOpacity));
-            card.classList.toggle('swipe-ready', state.ready);
-            if (state.ready && !wasReady && (swipePointerType === 'touch' || swipePointerType === 'pen')) {
-                navigator.vibrate?.(10);
-            }
-            wasReady = state.ready;
+            // Custom property writes invalidate style for the whole card
+            // subtree, which is expensive on cards with many subtask rows —
+            // and pointermove can fire twice per frame on high-refresh
+            // screens. Coalesce the writes into one rAF per frame; the card
+            // transform itself is driven by the --swipe-x CSS variable, so
+            // no inline transform write is needed here.
+            pendingSwipeState = getThoughtSwipeState(deltaX, threshold, maxSwipe);
+            if (swipeFrameScheduled) return;
+            swipeFrameScheduled = true;
+            requestAnimationFrame(() => {
+                swipeFrameScheduled = false;
+                const state = pendingSwipeState;
+                pendingSwipeState = null;
+                if (!tracking || !isDragging || !state) return;
+                card.style.setProperty('--swipe-x', `${state.swipeX}px`);
+                card.style.setProperty('--swipe-action-opacity', String(state.actionOpacity));
+                card.classList.toggle('swipe-ready', state.ready);
+                if (state.ready && !wasReady && (swipePointerType === 'touch' || swipePointerType === 'pen')) {
+                    navigator.vibrate?.(10);
+                }
+                wasReady = state.ready;
+            });
         });
 
         const finishSwipe = async (event) => {
             if (!tracking) return;
+            pendingSwipeState = null;
             const shouldDelete = isDragging && deltaX >= threshold;
             if (isDragging) suppressNextClick = true;
             releaseSwipePointer(event);
@@ -2555,8 +2571,6 @@ export class ThoughtsManager {
 
             card.classList.add('swipe-ready');
             card.style.setProperty('--swipe-x', `${threshold}px`);
-            card.style.transform = `translate3d(${threshold}px, 0, 0)`;
-            card.style.setProperty('--swipe-progress', '1');
             card.style.setProperty('--swipe-action-opacity', '1');
             const confirmed = await this.app.confirmationManager.show('确认移入垃圾桶吗？');
             if (!confirmed) {

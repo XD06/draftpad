@@ -425,8 +425,11 @@ function assertThoughtsFrontendRegressions() {
         thoughtsSource.includes('threshold = card.offsetWidth * 0.5') &&
         thoughtsSource.includes('deltaX >= threshold') &&
         thoughtsSource.includes('getThoughtSwipeState(deltaX, threshold, maxSwipe)') &&
-        thoughtsSource.includes('card.style.transform = `translate3d(${state.swipeX}px, 0, 0)`') &&
+        thoughtsSource.includes('if (swipeFrameScheduled) return;') &&
+        thoughtsSource.includes("card.style.setProperty('--swipe-x'") &&
         thoughtsSource.includes("card.style.setProperty('--swipe-action-opacity'") &&
+        !thoughtsSource.includes('card.style.transform = `translate3d(${state.swipeX}px, 0, 0)`') &&
+        !thoughtsSource.includes("'--swipe-progress'") &&
         !thoughtsSource.includes('const threshold = 88') &&
         thoughtsSource.includes('confirmAndDeleteThought(thought.id, { skipConfirm: true })') &&
         thoughtsCss.includes('translate3d(var(--swipe-x, 0), 0, 0)') &&
