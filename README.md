@@ -69,27 +69,6 @@ DumbPad 是一款专注于速度、美感与跨端体验的极简 Markdown 编�
 - **PWA 支持**：可作为应用安装到手机或桌面，支持离线查看及沉浸式全屏体验。Service Worker 会缓存核心静态资源；字体和编辑器运行时资源在实际使用后写入缓存，避免首次安装额外下载大文件。
 - **移动端视口优化**：支持 `100dvh` 动态视口高度，降低手机浏览器地址栏收起、键盘弹出时造成的布局跳动。
 
-## 🧱 架构边界
-
-DumbPad 当前保持无构建工具的 Vanilla JS 前端和 Express 后端。重构原则是小步提取高内聚模块，不改变 API、数据结构和用户可见行为。
-
-- `server.js` 仍是后端入口，负责静态资源、鉴权、WebSocket、Notepad/Thought/Today Draft API、搜索和数据管理。
-- `scripts/storage.js` 是本地/S3、legacy/split layout 的统一存储边界；split 模式的 Thought 分页复用索引，只读取当前页对象，关键词搜索和 legacy 模式保留完整读取回退。
-- `routes/today-drafts-routes.js` 和 `public/managers/today-drafts/` 组成独立的日期草稿模块：服务端按日清理并发出单条同步事件，前端负责本地缓存、离线 outbox 与手势交互。
-- `scripts/ai-queue.js` 和 `scripts/ai-provider.js` 负责后端 AI pipeline；AI、S3、WebSocket 都不能阻塞 Thought 快速写入。
-- `scripts/agent/` 是交互 Agent 的独立运行线：工作流、只读上下文工具、运行状态、SSE 和模型适配各自隔离，不复用后台队列。
-- `public/managers/thought-api-client.js` 封装 Thought HTTP 细节，统一 URL 编码和非 `ok` 错误。
-- `public/managers/thought-outbox.js` 管理 Thought 浏览器本地 outbox 的持久化、合并和重试。
-- `public/managers/thought-*` 拆分 Thought 前端高变化逻辑：API client、outbox、卡片渲染、标签、AI 状态、关系面板、关系本地状态、Quick Add 数据构造、编辑 helper、文本格式化、过滤排序等。
-- `public/managers/note-sync-controller.js` 管理启动缓存和 Note cache 读写，`app.js` 继续协调编辑器和设置页 DOM。
-- `public/managers/settings-data-panel.js` 封装设置页数据空间和云端维护 API，前端不直接散落数据管理 URL。
-- `routes/data-management-routes.js` 承接后端数据管理 route，`server.js` 只负责注册。
-- `routes/auth-routes.js`、`routes/note-routes.js`、`routes/notepad-routes.js`、`routes/search-routes.js`、`routes/share-routes.js`、`routes/static-routes.js`、`routes/thought-routes.js` 承接主要 HTTP route，降低 `server.js` 的耦合度。
-- `public/managers/thoughts.js` 保留 Thought UI 协调职责：游标分页、批量卡片插入、局部卡片更新、事件绑定、toast、乐观更新和调用 API/outbox 模块。
-- `public/app.js` 的 Thought 视图与 Marked 渲染器采用延迟加载：首屏进入 Notepad 编辑时不再立即解析 Thought 大模块和 Markdown 渲染库。
-
-更详细的模块说明见 [项目技术介绍](docs/technical-overview.md)。
-
 ## 🚀 快速开始
 
 1. **安装依赖**：
@@ -106,7 +85,25 @@ DumbPad 当前保持无构建工具的 Vanilla JS 前端和 Express 后端。重
    ```
 
 4. **访问**：
-   默认地址为 `http://localhost:3000`
+   默认地址为 `http://localhost:3000`（端口由 `PORT` 控制，默认 `3000`）
+
+## 🧱 项目结构
+
+无构建步骤：浏览器直接加载原生 ES module，服务端一个 Express 进程同时提供 HTTP API、静态资源和 WebSocket。
+
+```
+server.js            后端入口，注册 13 个 route 模块
+routes/              HTTP 边界（auth/note/notepad/thought/today-drafts/trash/...）
+scripts/storage.js   ★ 唯一的用户数据读写出口，收敛 local/S3 与 legacy/split
+scripts/ai-*.js      后台 AI 管线（异步，不阻塞写入）
+scripts/agent/       交互 Agent 独立运行线（只读 recall_context + SSE）
+public/              前端：app.js、hybrid-editor.js、managers/、service-worker.js
+data/                运行时数据（已 gitignore）
+test/                全部回归测试 test/test_*.js
+docs/                文档；docs/archive/ 为本地历史存档（不推送）
+```
+
+模块边界、依赖规则与已知取舍见 [ARCHITECTURE.md](ARCHITECTURE.md)。
 
 ## 🐳 Docker 一键更新
 
@@ -232,7 +229,7 @@ npm run seed:demo
 - Thought 的置顶、子任务、附件、手动关联、完成筛选、分页加载和离线 outbox 重试。
 - `baseVersion` 的乐观并发、`409` 冲突、Thought 的 `light=1`、`format=page`、`sort=timeline` 和 `updatedSince` API。
 
-固定测试 ID 见“开发者 API 指南”演示文章；完整 HTTP 契约见 [api.md](api.md) 与 [`/openapi.json`](/openapi.json)。
+固定测试 ID 见“开发者 API 指南”演示文章；完整 HTTP 契约见 [docs/api.md](docs/api.md) 与 [`/openapi.json`](/openapi.json)。
 
 ## 🧷 编辑器回归记录
 
@@ -248,30 +245,17 @@ npm run seed:demo
 
 ## ✅ 验证命令
 
-所有测试文件位于 `test/` 目录（`test/test_*.js`），不再散落在项目根目录。一次性运行语法检查与完整测试套件：
+所有测试文件位于 `test/` 目录（`test/test_*.js`），不再散落在项目根目录。
 
 ```bash
-npm run check   # 语法检查 + 服务器启动冒烟
-npm test        # 运行 test/ 下的完整测试套件（排除需要真实 S3 的 smoke）
+npm run check   # 全量 node --check + 服务器启动冒烟
+npm test        # test/ 下的完整回归套件（排除需要真实 S3 的 smoke）
+npm run test:<name>   # 单个测试，脚本定义见 package.json
 ```
 
-也可以单独运行某个测试（脚本定义见 `package.json`，或直接 `node test/test_<name>.js`）：
+常用单项：`test:api`、`test:thought-modules`、`test:agent`、`test:safety`、`test:today-drafts`、`test:pwa-cache`、`test:hybrid-editor-time-command`、`test:s3-storage`。完整对照表与"改哪里跑哪个"见 [AGENTS.md](AGENTS.md)。
 
-```bash
-npm run test:hybrid-editor-time-command
-npm run test:api
-npm run test:ai-provider
-npm run test:ai-queue
-npm run test:relations
-npm run test:thought-modules
-npm run test:note-sync
-npm run test:pwa-cache
-npm run test:s3-storage
-npm run test:s3-migration
-npm run test:s3-prefix
-```
-
-真实 S3 smoke 需要先配置 S3 环境变量和唯一 `S3_PREFIX`：
+真实 S3 smoke 会删除目标 `S3_PREFIX` 下的对象，需要先配置 S3 环境变量、唯一 `S3_PREFIX`，并额外设置完全相同的 `DUMBPAD_REAL_S3_SMOKE_CONFIRM_PREFIX`：
 
 ```bash
 npm run test:s3-real
@@ -288,16 +272,24 @@ npm run test:s3-real
 
 ## 📚 文档
 
-- [Agent Context](AGENT_CONTEXT.md) — 新开 AI 会话时优先阅读的项目入口
-- [DumbPad API Agent Skill](SKILL.md) — 供 AI Agent 选择文章、Thought 或今日草稿并执行高频 API 操作
-- [文档索引](docs/README.md) — 当前文档、归档文档和维护规则
-- [API 文档](api.md) — 完整的 REST API 参考
-- [项目技术介绍](docs/technical-overview.md) — 当前模块边界、数据流和后续重构顺序
+根目录只保留四份入口文档，其余全部在 `docs/`。
+
+- [架构说明](ARCHITECTURE.md) — 系统全景、模块边界、关键数据流与技术债务
+- [更新日志](CHANGELOG.md) — 版本演进与破坏性变更
+- [AI 协作规范](AGENTS.md) — AI Agent 的行为宪章、命令与目录职责（**仅本地，不提交推送**）
+- [文档索引](docs/README.md) — 当前文档、历史存档和维护规则
+
+按用途深入：
+
+- [API 文档](docs/api.md) — 完整的 REST API 参考（`/openapi.json` 为机器可读版本）
+- [DumbPad API Agent Skill](docs/SKILL.md) — 供 AI Agent 选择文章、Thought 或今日草稿并执行高频 API 操作
+- [项目技术介绍](docs/technical-overview.md) — 模块级实现细节、数据流与重构顺序
 - [Storage Interface](docs/storage-interface.md) — 本地/S3 存储接口约束
 - [AI Pipeline Interface](docs/ai-pipeline-interface.md) — AI 队列、provider 与 relation 写入约束
 - [AI 流程与 Agent 框架设计](docs/ai-agent-framework.md) — 交互 Agent 的工作流、工具、引用和渐进实施约束
 - [数据安全 V1 设计](docs/superpowers/specs/2026-07-16-data-safety-v1-design.md) — 登录、备份、恢复、审计与部署隔离的执行边界
 - [同步边界说明](docs/sync-boundaries.md) — Notepad、Thought、AI、S3 和 WebSocket 的同步职责
+- [Cloudflare 部署](docs/cloudflare-deployment.md) — 面向 Cloudflare 的部署说明
 
 ## 🛠️ 技术栈
 - **后端**：Node.js + Express
