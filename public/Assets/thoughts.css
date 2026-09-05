@@ -2300,12 +2300,15 @@ color: var(--primary-color);
 }
 
 /* Subtask row swipe-to-delete — a compact version of the card affordance.
-   The row slides right via --swipe-x while the action counter-translates so
-   it stays put and is revealed in the vacated space. */
+   The row slides right via --subtask-swipe-x while the action counter-
+   translates so it stays put and is revealed in the vacated space. Row
+   vars are deliberately separate from the card's --swipe-* names: custom
+   properties inherit, and card swipes would otherwise light up every
+   row's trash icon. */
 .subtask.swiping {
     transition: none;
     will-change: transform;
-    transform: translate3d(var(--swipe-x, 0), 0, 0);
+    transform: translate3d(var(--subtask-swipe-x, 0), 0, 0);
     background: var(--header-bg);
     box-shadow: inset 2px 0 0 rgba(217, 71, 67, 0.28);
 }
@@ -2320,8 +2323,8 @@ color: var(--primary-color);
     width: 24px;
     height: 24px;
     color: #d94743;
-    transform: translate3d(calc(-1 * var(--swipe-x, 0px)), -50%, 0);
-    opacity: var(--swipe-action-opacity, 0);
+    transform: translate3d(calc(-1 * var(--subtask-swipe-x, 0px)), -50%, 0);
+    opacity: var(--subtask-swipe-opacity, 0);
     pointer-events: none;
     transition: none;
 }

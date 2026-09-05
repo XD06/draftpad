@@ -57,10 +57,10 @@ const THOUGHTS_CACHE_KEY = 'dumbpad_thoughts_cache_v1';
 
 function resetSubtaskSwipe(row) {
     row.classList.remove('swiping', 'swipe-ready', 'swipe-deleting');
-    row.style.removeProperty('--swipe-x');
+    row.style.removeProperty('--subtask-swipe-x');
     row.style.removeProperty('transform');
-    row.style.removeProperty('--swipe-progress');
-    row.style.removeProperty('--swipe-action-opacity');
+    row.style.removeProperty('--subtask-swipe-progress');
+    row.style.removeProperty('--subtask-swipe-opacity');
 }
 
 export class ThoughtsManager {
@@ -1580,6 +1580,11 @@ export class ThoughtsManager {
 
         let lastTap = 0;
         let tapTimeout;
+        // Mouse clicks don't need the touch double-tap disambiguation wait:
+        // track the pointer type so desktop clicks expand instantly while the
+        // second click of a double-click still lands in the edit branch.
+        let lastPointerType = '';
+        card.addEventListener('pointerdown', (e) => { lastPointerType = e.pointerType || ''; });
         const handleGesture = (e) => {
             if (this.shouldIgnoreCardGesture(e, card)) return;
 
@@ -1592,6 +1597,13 @@ export class ThoughtsManager {
                 lastTap = 0;
             } else {
                 lastTap = now;
+                if (lastPointerType === 'mouse') {
+                    if (this.scrollFirstSearchHighlight(card)) return;
+                    if (isLong) {
+                        this.setThoughtCardExpanded(card, thought.id, !card.classList.contains('expanded'), { collapseOthers: true });
+                    }
+                    return;
+                }
                 tapTimeout = setTimeout(() => {
                     if (this.scrollFirstSearchHighlight(card)) return;
                     if (isLong) {
@@ -3807,10 +3819,10 @@ export class ThoughtsManager {
             if (!isDragging) return;
             event.preventDefault();
             const state = getThoughtSwipeState(deltaX, threshold, threshold + 18);
-            row.style.setProperty('--swipe-x', `${state.swipeX}px`);
+            row.style.setProperty('--subtask-swipe-x', `${state.swipeX}px`);
             row.style.transform = `translate3d(${state.swipeX}px, 0, 0)`;
-            row.style.setProperty('--swipe-progress', String(state.progress));
-            row.style.setProperty('--swipe-action-opacity', String(state.actionOpacity));
+            row.style.setProperty('--subtask-swipe-progress', String(state.progress));
+            row.style.setProperty('--subtask-swipe-opacity', String(state.actionOpacity));
             row.classList.toggle('swipe-ready', state.ready);
             if (state.ready && !wasReady) navigator.vibrate?.(8);
             wasReady = state.ready;

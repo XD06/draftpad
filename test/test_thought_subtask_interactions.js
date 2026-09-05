@@ -85,6 +85,22 @@ function run() {
             thoughtsCss.includes('.subtask.swipe-deleting'),
         'row swipe styling should cover dragging, the delete affordance and the exit animation'
     );
+    // Row swipe must use its own custom-property names: card swipes set
+    // --swipe-x/--swipe-action-opacity on the card and those inherit into
+    // every row, which would light up all row trash icons mid-card-swipe.
+    assert(
+        !/\.subtask-swipe-action\s*{[^}]*--swipe-x/.test(thoughtsCss) &&
+            !/\.subtask-swipe-action\s*{[^}]*--swipe-action-opacity/.test(thoughtsCss) &&
+            thoughtsCss.includes('var(--subtask-swipe-x') &&
+            thoughtsCss.includes('var(--subtask-swipe-opacity'),
+        'row swipe styles must read only --subtask-swipe-* vars, never the inherited card vars'
+    );
+    assert(
+        thoughtsSource.includes("setProperty('--subtask-swipe-x'") &&
+            thoughtsSource.includes("setProperty('--subtask-swipe-opacity'") &&
+            thoughtsSource.includes("removeProperty('--subtask-swipe-x'"),
+        'row swipe JS should write and clear only the row-scoped custom properties'
+    );
 
     // The row gesture reuses the shared swipe state helper.
     assert(
