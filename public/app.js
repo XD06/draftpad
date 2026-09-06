@@ -20,6 +20,7 @@ import {
     trackRecentFile,
     updateSidebarSelection
 } from './sidebar.js';
+import { ArticleMetaFooter } from './managers/article-meta-footer.js';
 
 // Global 401 handler: any /api 401 means the PIN session is gone — redirect to login.
 // This catches the case where the cookie expires while the app is open (the SW
@@ -106,6 +107,16 @@ document.addEventListener('DOMContentLoaded', async () => {
     const bootEditor = document.getElementById('boot-editor');
     let bootEditorActive = false;
     let bootEditorWired = false;
+
+    // Article record watermark (创建/更新/修改次数): a detached overlay on
+    // .editor-main, deliberately outside the Vditor scroll container so it can
+    // never shift article layout, scroll geometry, or the boot handoff. It
+    // tracks the card's bottom edge and is clipped until the reader gets there.
+    const articleMetaFooter = new ArticleMetaFooter({
+        host: document.getElementById('editor-main'),
+        getCard: () => document.querySelector('#hybrid-editor .vditor-wysiwyg pre.vditor-reset')
+    });
+    articleMetaFooter.attach();
 
     const editor = {
         get value() {
@@ -575,6 +586,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (noteContentMatches(detail, editor.value)) {
                 hasUnsavedChanges = false;
                 setCurrentNoteVersion(currentNotepadId, remoteVersion);
+                touchNotepadUpdatedAt(currentNotepadId);
                 cacheSyncedNote(currentNotepadId, editor.value, { version: remoteVersion });
                 dirtyConflictNotepadIds.delete(currentNotepadId);
                 hideNoteConflictToast();
@@ -595,6 +607,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 });
             if (merge.ok) {
                 setCurrentNoteVersion(currentNotepadId, remoteVersion);
+                touchNotepadUpdatedAt(currentNotepadId);
                 dirtyConflictNotepadIds.delete(currentNotepadId);
                 hideNoteConflictToast();
                 if (merge.content === remoteContent) {
@@ -634,6 +647,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         editor.applyRemoteValue(detail.content || '');
         isApplyingRemoteUpdate = false;
         setCurrentNoteVersion(currentNotepadId, remoteVersion);
+        touchNotepadUpdatedAt(currentNotepadId);
         cacheSyncedNote(currentNotepadId, detail.content || '', { version: remoteVersion });
         dirtyConflictNotepadIds.delete(currentNotepadId);
         setStartupSyncStatus('synced', '已同步');
@@ -1361,6 +1375,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const name = getCurrentNotepadName();
         if (updateLocation) updateUrlWithNotepad(name);
         applyCurrentNotepadTitle();
+        updateArticleMeta();
         return true;
     }
 
@@ -1435,6 +1450,24 @@ document.addEventListener('DOMContentLoaded', async () => {
         return getCurrentNotepad().name || 'Untitled';
     }
 
+    // Feed the article meta watermark from the current notepad entry.
+    function updateArticleMeta() {
+        const notepad = currentNotepads.find(n => n.id === currentNotepadId);
+        articleMetaFooter.setMeta({
+            createdAt: Number(notepad?.createdAt) || 0,
+            updatedAt: Number(notepad?.updatedAt) || 0,
+            revision: Number(notepad?.version) || 1
+        });
+    }
+
+    // The server stamps updatedAt on every save; mirror it locally so the
+    // watermark stays honest between list reloads.
+    function touchNotepadUpdatedAt(notepadId) {
+        const notepad = currentNotepads.find(n => n.id === notepadId);
+        if (notepad) notepad.updatedAt = Date.now();
+        updateArticleMeta();
+    }
+
     function setCurrentNoteVersion(notepadId, version) {
         const nextVersion = Number(version);
         if (!Number.isFinite(nextVersion)) return;
@@ -1503,6 +1536,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             const data = await response.json();
             currentNotepads = Array.isArray(data.notepads_list) ? data.notepads_list : [];
             renderSidebar(currentNotepads, currentNotepadId, selectNotepad, deleteNotepadById, renameNotepadById, toggleNotepadPin, directorySearchQuery);
+            updateArticleMeta();
             
             currentNotepadId = handleQueryParameterSelection(currentNotepads, data['note_history']);
             cacheNotepads(data['note_history']);
@@ -1590,6 +1624,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 setStartupSyncStatus('error', '服务器不可用，本地可读');
             } finally {
                 if (loadingNotepadId === notepadId) loadingNotepadId = null;
+                updateArticleMeta();
             }
         };
 
@@ -2206,6 +2241,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             saveRetryTimeout = null;
             lastSaveTime = Date.now();
             setCurrentNoteVersion(targetNotepadId, result.version);
+            touchNotepadUpdatedAt(targetNotepadId);
             const savedContentStillCurrent = currentNotepadId === targetNotepadId && editor.value === content;
             if (showStatus) {
                 if (isAutoSave && savedContentStillCurrent) {
@@ -2244,6 +2280,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     if (merge.ok && currentNotepadId === targetNotepadId && editor.value === currentContent) {
                         const nextVersion = Number(remoteNote.version);
                         setCurrentNoteVersion(targetNotepadId, nextVersion);
+                        touchNotepadUpdatedAt(targetNotepadId);
                         dirtyConflictNotepadIds.delete(targetNotepadId);
                         hideNoteConflictToast();
 
