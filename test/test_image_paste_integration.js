@@ -188,8 +188,12 @@ const regularVditorInputContext = {
 };
 handleVditorInput.call(regularVditorInputContext);
 assert.strictEqual(regularVditorInputState.handled, 1, 'the next real Vditor input should continue through the normal save path');
-assert.strictEqual(regularVditorInputState.junkNormalized, 1, 'every real Vditor input should normalize invisible list junk so list exit stays reliable');
+assert.strictEqual(regularVditorInputState.junkNormalized, 0, 'the per-input hot path must not normalize list junk; touching the live caret node made the browser re-anchor it');
 assert.strictEqual(regularVditorInputContext.preferLastValueUntilInput, false, 'a real edit should release the exact-value pin before normal serialization resumes');
+assert(
+    /if \(event\.key === 'Enter'\) \{[\s\S]*?this\.normalizeInvisibleListJunk\(\);[\s\S]*?this\.restoreCaretToNewTaskParagraph\(\);[\s\S]*?queueMicrotask\(restore\);[\s\S]*?requestAnimationFrame\(restore\);[\s\S]*?setTimeout\(restore, 140\);[\s\S]*?setTimeout\(restore, 280\);/.test(hybrid),
+    'the Enter repair pass must normalize invisible list junk and restore the caret through bounded async retries so list exit stays reliable'
+);
 assert(
     renderAfterMutationBlock?.[0].includes('this.decorateArticleImages({ decorateCode: false });') &&
         renderAfterMutationBlock?.[0].includes('this.scheduleArticleDecorationPass(120);'),
