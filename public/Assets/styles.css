@@ -1945,6 +1945,77 @@ main {
     scroll-behavior: smooth;
 }
 
+/* Article record watermark (文章记录): created / updated / revision count,
+   anchored just below the article card's bottom edge. It is an overlay child
+   of .editor-main -- deliberately NOT inside the .vditor-wysiwyg scroll
+   container, so it can never change the article's scroll geometry, caret
+   anchoring, or the boot->vditor card handoff. Its top follows the card via
+   scroll/ResizeObserver (see managers/article-meta-footer.js); editor-main's
+   overflow:hidden clips it until the reader reaches the article end.
+   pointer-events: none keeps it fully inert to the editor. */
+.article-meta {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 5;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 9px;
+    pointer-events: none;
+    opacity: 0.78;
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+.article-meta[hidden] {
+    display: none;
+}
+
+.article-meta-divider {
+    width: min(200px, 45%);
+    height: 1px;
+    background: linear-gradient(90deg, transparent, var(--border-color) 22%, var(--border-color) 78%, transparent);
+}
+
+.article-meta-line {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    column-gap: 9px;
+    row-gap: 3px;
+    padding: 0 16px;
+    font-size: 11.5px;
+    line-height: 1.5;
+    letter-spacing: 0.04em;
+    color: var(--muted-text);
+    font-variant-numeric: tabular-nums;
+}
+
+.article-meta-label {
+    margin-right: 4px;
+    font-size: 10.5px;
+    letter-spacing: 0.08em;
+    opacity: 0.8;
+}
+
+.article-meta-dot {
+    opacity: 0.55;
+}
+
+@media (max-width: 980px) {
+    .article-meta-line {
+        font-size: 11px;
+    }
+}
+
+@media print {
+    .article-meta {
+        display: none;
+    }
+}
+
 /* Typography Polish */
 .hybrid-line {
     font-size: 16px;

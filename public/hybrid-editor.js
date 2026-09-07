@@ -362,7 +362,6 @@ export class HybridMarkdownEditor {
         }
         this.scheduleMissingCodeBlockDecoration();
         this.preferLastValueUntilInput = false;
-        this.normalizeInvisibleListJunk();
         if (this.isDecorating || this.suppressInput || this.isComposing) return;
         if (this.handlePendingCodeFenceInput()) return;
         this.handleWysiwygInput();
@@ -397,29 +396,57 @@ export class HybridMarkdownEditor {
         const selection = window.getSelection();
         const caretNode = selection && selection.rangeCount > 0 ? selection.getRangeAt(0).startContainer : null;
         root.querySelectorAll('li').forEach(li => {
-            if (String(li.textContent || '').replace(/[\u200B\uFEFF]/g, '').trim() !== '') return;
-            let caretWasInside = false;
-            Array.from(li.childNodes).forEach(node => {
-                if (node.nodeType !== Node.TEXT_NODE) return;
-                if (node === caretNode || node.contains(caretNode)) caretWasInside = true;
-                const cleaned = String(node.nodeValue || '').replace(/[\u200B\uFEFF]/g, '');
-                if (cleaned.trim() === '') node.remove();
-                else node.nodeValue = cleaned;
-            });
-            if (caretWasInside || !li.childNodes.length) {
+            // Vditor can materialize a freshly split task as the literal
+            // markdown marker (for example "7. [ ]"). Treat it as empty
+            // content before the browser anchors the caret to the checkbox.
+            if (li.matches('.vditor-task')) {
+                const taskText = Array.from(li.childNodes)
+                    .filter(node => node.nodeType === Node.TEXT_NODE)
+                    .map(node => String(node.nodeValue || '').replace(/[\u200B\uFEFF]/g, ''))
+                    .join('');
+                if (/^\s*\d+\.\s*\[\s*\]\s*$/.test(taskText)) {
+                    const textNode = Array.from(li.childNodes).find(node => node.nodeType === Node.TEXT_NODE);
+                    if (textNode) textNode.nodeValue = '';
+                }
+            }
+            const editableText = Array.from(li.childNodes)
+                .filter(node => node.nodeType === Node.TEXT_NODE && !node.parentElement?.closest('.md-time-marker'))
+                .map(node => String(node.nodeValue || '').replace(/[\u200B\uFEFF]/g, ''))
+                .join('').trim();
+            const carried = Array.from(li.querySelectorAll(':scope > .md-time-marker, :scope > img.dumbpad-article-image'));
+            if (!editableText && carried.length && li.previousElementSibling?.matches?.('li')) {
+                const previous = li.previousElementSibling;
+                carried.forEach(node => previous.appendChild(node));
                 const caretHolder = document.createTextNode('');
                 li.appendChild(caretHolder);
-                if (caretWasInside) {
+                if (li.contains(caretNode)) {
                     try {
                         const range = document.createRange();
                         range.setStart(caretHolder, 0);
                         range.collapse(true);
                         selection.removeAllRanges();
                         selection.addRange(range);
-                    } catch (_error) {
-                        // Caret restore is best-effort; the junk is gone either way.
-                    }
+                    } catch (_error) {}
                 }
+                return;
+            }
+            if (String(li.textContent || '').replace(/[\u200B\uFEFF]/g, '').trim() !== '') return;
+            let caretWasInside = false;
+            Array.from(li.childNodes).forEach(node => {
+                if (node.nodeType !== Node.TEXT_NODE) return;
+                if (node === caretNode || node.contains(caretNode)) caretWasInside = true;
+                const cleaned = String(node.nodeValue || '').replace(/[\u200B\uFEFF]/g, '');
+                if (cleaned.trim() === '') {
+                    // Keep the live text node that owns the caret. Removing it
+                    // makes Vditor/browser re-anchor at the checkbox edge.
+                    if (caretWasInside) node.nodeValue = '';
+                    else node.remove();
+                }
+                else node.nodeValue = cleaned;
+            });
+            if (!caretWasInside && !li.childNodes.length) {
+                const caretHolder = document.createTextNode('');
+                li.appendChild(caretHolder);
             }
         });
     }
@@ -1303,7 +1330,10 @@ export class HybridMarkdownEditor {
         input.content.querySelectorAll('.md-time-marker, mark.md-mark, .has-annotation, [data-draw], .article-upload-card, img.dumbpad-article-image').forEach(node => {
             if (!input.content.contains(node) || node.closest('code, pre:not(.vditor-reset)')) return;
             const token = `${prefix}${saved.length}END`;
-            saved.push({ token, node });
+            // Never move the live node into the detached template: doing so
+            // briefly removes images/checkbox-adjacent markers from the live
+            // editor and lets the browser re-anchor the caret or scroll.
+            saved.push({ token, node: node.cloneNode(true) });
             node.replaceWith(document.createTextNode(token));
         });
         if (!saved.length) return spin(html);
@@ -5071,8 +5101,23 @@ export class HybridMarkdownEditor {
             if (this.handlePendingCodeFenceTyping(event)) return;
             if (this.handlePendingCodeFenceEnter(event)) return;
             if (this.handleWysiwygFileCommand(event)) return;
+            if (this.handleEmptyTaskBackspace(event)) return;
+            if (this.handleTaskEnter(event)) return;
             if (this.handleWysiwygTimeCommand(event)) return;
+            if (this.handleSingleHyphenInput(event)) return;
             this.handleWysiwygSoftEnter(event);
+            if (event.key === 'Enter') {
+                const restore = () => {
+                    this.normalizeInvisibleListJunk();
+                    this.restoreCaretToNewTaskParagraph();
+                };
+                queueMicrotask(restore);
+                requestAnimationFrame(restore);
+                // Vditor may rebuild the list asynchronously after the first
+                // two passes; use bounded retries without observing our own DOM edits.
+                setTimeout(restore, 140);
+                setTimeout(restore, 280);
+            }
         };
         this.container.addEventListener('keydown', this.timeCommandKeydownHandler, true);
         this.pendingCodeFenceBeforeInputHandler = (event) => {
@@ -5080,6 +5125,114 @@ export class HybridMarkdownEditor {
             this.handlePendingCodeFenceTyping(event);
         };
         this.container.addEventListener('beforeinput', this.pendingCodeFenceBeforeInputHandler, true);
+    }
+
+    handleEmptyTaskBackspace(event) {
+        if (!event || event.key !== 'Backspace' || event.ctrlKey || event.metaKey || event.altKey || event.isComposing) return false;
+        const selection = window.getSelection();
+        const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
+        const task = range ? this.closestElement(range.startContainer, 'li.vditor-task') : null;
+        if (!task || !range?.collapsed) return false;
+        const text = Array.from(task.childNodes)
+            .filter(node => node.nodeType === Node.TEXT_NODE)
+            .map(node => String(node.nodeValue || '').replace(/[\u200B\uFEFF]/g, ''))
+            .join('');
+        if (text.trim() !== '') return false;
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation?.();
+        const list = task.parentElement;
+        const followingList = list?.cloneNode(false);
+        while (task.nextSibling && followingList) followingList.append(task.nextSibling);
+        const paragraph = document.createElement('p');
+        paragraph.setAttribute('data-block', '0');
+        paragraph.append(document.createElement('br'));
+        if (list?.parentElement) list.after(paragraph);
+        else this.container.querySelector('.vditor-wysiwyg .vditor-reset')?.append(paragraph);
+        if (followingList?.children.length) paragraph.after(followingList);
+        task.remove();
+        if (list && !list.children.length) list.remove();
+        const nextRange = document.createRange();
+        nextRange.setStart(paragraph, 0);
+        nextRange.collapse(true);
+        selection.removeAllRanges();
+        selection.addRange(nextRange);
+        return true;
+    }
+
+    handleTaskEnter(event) {
+        if (!event || event.key !== 'Enter' || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey || event.isComposing) return false;
+        const selection = window.getSelection();
+        const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
+        const task = range ? this.closestElement(range.startContainer, 'li.vditor-task') : null;
+        if (!task || !range?.collapsed || !task.parentElement) return false;
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation?.();
+
+        const next = document.createElement('li');
+        next.className = task.className;
+        next.setAttribute('data-marker', task.getAttribute('data-marker') || '-');
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        const text = document.createTextNode(' ');
+        next.append(checkbox, text);
+        task.after(next);
+        this.placeCaretInTextNode(text);
+        this.notifyEditorValueChanged();
+        return true;
+    }
+
+    handleSingleHyphenInput(event) {
+        if (!event || event.key !== '-' || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey || event.isComposing) return false;
+        const root = this.container.querySelector('.vditor-wysiwyg .vditor-reset');
+        const selection = window.getSelection();
+        const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
+        const paragraph = range ? this.closestElement(range.startContainer, 'p') : null;
+        const task = range ? this.closestElement(range.startContainer, 'li.vditor-task') : null;
+        const target = paragraph && paragraph.parentElement === root ? paragraph : task;
+        if (!root || !range?.collapsed || !target) return false;
+        const beforeCaret = range.cloneRange();
+        const targetStart = document.createRange();
+        targetStart.selectNodeContents(target);
+        targetStart.setEnd(beforeCaret.startContainer, beforeCaret.startOffset);
+        if (targetStart.toString().replace(/[\u200B\uFEFF]/g, '').trim() !== '') return false;
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation?.();
+        const text = document.createTextNode('-');
+        range.deleteContents();
+        range.insertNode(text);
+        const next = document.createRange();
+        next.setStart(text, 1);
+        next.collapse(true);
+        selection.removeAllRanges();
+        selection.addRange(next);
+        this.notifyEditorValueChanged();
+        return true;
+    }
+
+    restoreCaretToNewTaskParagraph() {
+        const selection = window.getSelection();
+        const current = selection?.rangeCount ? selection.getRangeAt(0).startContainer : null;
+        const task = current ? this.closestElement(current, 'li.vditor-task') : null;
+        if (!task) return false;
+        const paragraphs = Array.from(task.querySelectorAll(':scope > p'));
+        const paragraph = paragraphs.find(item =>
+            String(item.textContent || '').replace(/[\u200B\uFEFF]/g, '').trim() === ''
+        );
+        if (!paragraph) return false;
+        let text = Array.from(paragraph.childNodes).find(node => node.nodeType === Node.TEXT_NODE);
+        if (!text) {
+            text = document.createTextNode('');
+            paragraph.appendChild(text);
+        }
+        const range = document.createRange();
+        range.setStart(text, text.nodeValue.length);
+        range.collapse(true);
+        selection.removeAllRanges();
+        selection.addRange(range);
+        return true;
     }
 
     handlePendingCodeFenceTyping(event) {
