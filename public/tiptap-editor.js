@@ -168,7 +168,7 @@ export class HybridMarkdownEditor {
         const code = document.createElement('code');
         code.textContent = this.frontmatterSource;
         block.appendChild(code);
-        this.scroller?.before(block);
+        this.scroller?.querySelector('.tiptap')?.before(block);
     }
 
     setValue(value, emit = true) {
