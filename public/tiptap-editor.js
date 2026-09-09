@@ -24,6 +24,7 @@ import {
     TimeMarkerNode,
 } from './managers/tiptap-extensions.js';
 import { buildMarkdownHeadingIndex } from './managers/heading-index.js';
+import { buildCodeBlockNodeView } from './managers/tiptap-code-block-view.js';
 
 export class HybridMarkdownEditor {
     constructor(container, { input, performanceMonitor = null, onCaretChange = null } = {}) {
@@ -46,7 +47,6 @@ export class HybridMarkdownEditor {
         this.sourceMode = false;
         this.assetMaxFileBytes = null;
         this.isComposing = false;
-        this.frontmatterSource = '';
 
         this.readyPromise = new Promise((resolve) => { this._resolveReady = resolve; });
 
@@ -63,6 +63,11 @@ export class HybridMarkdownEditor {
                 // 复用旧 vditor 的全部内容区样式（styles.css 117 条规则），
                 // 保证切换内核后视觉零变化。
                 attributes: { class: 'tiptap ProseMirror vditor-reset' },
+                // 代码块复刻旧 vditor 块 DOM（.vditor-wysiwyg__block 结构），
+                // 头部/徽章/复制/行号规则全部原样生效。
+                nodeViews: {
+                    codeBlock: buildCodeBlockNodeView(),
+                },
             },
             extensions: [
                 Markdown.configure({
@@ -140,44 +145,41 @@ export class HybridMarkdownEditor {
         if (this.sourceMode) {
             return this.getSourceTextarea()?.value ?? this._lastValue;
         }
-        const markdown = this.editor.storage.markdown.getMarkdown();
-        return this.frontmatterSource
-            ? `${this.frontmatterSource}\n\n${markdown}`
-            : markdown;
+        return this.fenceToFrontmatter(this.editor.storage.markdown.getMarkdown());
     }
 
     /**
-     * YAML frontmatter（--- 包裹的文档头）不进 ProseMirror 文档：拆分后单独
-     * 保存并静态展示，getValue 时原样回填。与旧编辑器"frontmatter 不重排"
-     * 的行为一致，避免默认解析把它拆成 hr + setext 标题造成保存即数据损坏。
+     * YAML frontmatter 在文档内以 language=dumbpad-frontmatter 的代码块呈现
+     * （与旧编辑器一致：WYSIWYG 可见可编辑，作为卡片内的代码块渲染），
+     * 序列化时映射回 --- 包裹的原文形态。只处理文档最前方的块，
+     * 字节级还原由 test/test_tiptap_roundtrip.js 固化。
      */
-    splitFrontmatter(value) {
-        const FRONTMATTER_LEAD_RE = /^---\n[\s\S]*?\n---(?:\n|$)/;
+    frontmatterToFence(value) {
+        const FRONTMATTER_LEAD_RE = /^---\n([\s\S]*?)\n---(?:\n|$)/;
         const match = String(value ?? '').match(FRONTMATTER_LEAD_RE);
-        if (!match) return { frontmatter: '', body: String(value ?? '') };
-        const frontmatter = match[0].replace(/\n$/, '');
-        return { frontmatter, body: String(value ?? '').slice(match[0].length).replace(/^\n+/, '') };
+        if (!match) return String(value ?? '');
+        const inner = match[0].slice(4, match[0].length - 4);
+        return '```dumbpad-frontmatter\n' + inner + '```\n' + String(value ?? '').slice(match[0].length);
     }
 
-    renderFrontmatterPlaceholder() {
-        this.container.querySelector('.dumbpad-frontmatter-static')?.remove();
-        if (!this.frontmatterSource) return;
-        const block = document.createElement('pre');
-        block.className = 'dumbpad-frontmatter-static';
-        block.setAttribute('data-dumbpad-frontmatter', 'true');
-        const code = document.createElement('code');
-        code.textContent = this.frontmatterSource;
-        block.appendChild(code);
-        this.scroller?.querySelector('.tiptap')?.before(block);
+    fenceToFrontmatter(markdown) {
+        const FENCE_RE = /^```dumbpad-frontmatter\n([\s\S]*?)\n?```(?:\n|$)/;
+        const match = String(markdown ?? '').match(FENCE_RE);
+        if (!match) return markdown;
+        return '---\n' + match[1] + '\n---\n' + markdown.slice(match[0].length);
+    }
+
+    fenceToFrontmatter(markdown) {
+        const FENCE_RE = /^```dumbpad-frontmatter\n([\s\S]*?)\n?```(?:\n|$)/;
+        const match = String(markdown ?? '').match(FENCE_RE);
+        if (!match) return markdown;
+        return '---\n' + match[1] + '\n---\n' + markdown.slice(match[0].length);
     }
 
     setValue(value, emit = true) {
         const nextValue = String(value ?? '');
         this._lastValue = nextValue;
-        const { frontmatter, body } = this.splitFrontmatter(nextValue);
-        this.frontmatterSource = frontmatter;
-        this.renderFrontmatterPlaceholder();
-        this.editor.commands.setContent(body, { emitUpdate: false });
+        this.editor.commands.setContent(this.frontmatterToFence(nextValue), { emitUpdate: false });
         if (emit) {
             this.notifyEditorValueChanged(this.getValue());
         } else {
