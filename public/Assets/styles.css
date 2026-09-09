@@ -5604,20 +5604,20 @@ body.article-image-lightbox-open {
 }
 
 /* Tiptap 适配器：YAML frontmatter 外挂展示块（不进编辑器文档，原样保存）。
- * 视觉上与卡片一体：占位块承担 64px 顶部让位，卡片自身 margin-top 归零。 */
+ * 视觉上与卡片一体：占位块承担 64px 顶部让位，卡片自身 margin-top 归零；
+ * 内部观感对齐 .vditor-reset pre > code（--code-bg 灰底），与正文同框。 */
 .dumbpad-frontmatter-static {
     width: 100%;
     max-width: 800px;
     margin: 64px auto 0;
     padding: 14px 16px;
     border-bottom: 0;
-    border-radius: 8px 8px 0 0;
-    background: var(--textarea-bg);
+    background: var(--code-bg, var(--textarea-bg));
     border: 1px solid var(--border-color);
-    border-radius: 6px;
+    border-radius: 8px 8px 0 0;
     box-sizing: border-box;
     color: var(--text-color);
-    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-family: var(--font-code, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
     font-size: 14px;
     line-height: 1.6;
     white-space: pre-wrap;
