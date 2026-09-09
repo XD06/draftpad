@@ -50,9 +50,11 @@
     <!-- Warm the editor engine in parallel with the CSS and app.js so the rich
          editor is ready sooner; the app types into an instant boot editor first
          and hands off seamlessly once this finishes loading. -->
-    <link rel="modulepreload" href="hybrid-editor.js">
-    <link rel="preload" href="/vendor/vditor/index.min.js" as="script">
-    <link rel="preload" href="/vendor/vditor/index.css" as="style">
+    <!-- Warm the editor engine in parallel with the CSS and app.js so the rich
+         editor is ready sooner; the app types into an instant boot editor first
+         and hands off seamlessly once this finishes loading. -->
+    <link rel="modulepreload" href="tiptap-editor.js">
+    <link rel="preload" href="/vendor/tiptap/tiptap.bundle.js" as="script">
     <!-- Preload the reading webfont so the instant boot editor and the vditor
          surface both paint in "DumbPad Reading" from the very first frame. Without
          this the boot textarea flashes its system fallback (which renders ~5.5%

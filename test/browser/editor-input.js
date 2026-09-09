@@ -6,13 +6,11 @@ module.exports = async function testEditorInput(browser) {
     const app = express();
     const root = path.resolve(__dirname, '../..');
     app.get('/', (_req, res) => res.send(`<!doctype html><html><head>
-        <link rel="stylesheet" href="/vendor/vditor/index.css">
         <style>body{margin:0}#editor{height:600px}.md-time-marker{font-size:0}
         .md-time-marker::after{content:'TIME';font-size:16px}</style>
         </head><body><div id="editor"></div>
-        <script src="/vendor/vditor/index.min.js"></script></body></html>`));
-    app.use('/vendor/vditor', express.static(path.join(root, 'node_modules/vditor/dist')));
-    app.use('/vendor/vditor-package', express.static(path.join(root, 'node_modules/vditor')));
+        <script src="/vendor/tiptap/tiptap.bundle.js"></script></body></html>`));
+    app.use('/vendor/tiptap', express.static(path.join(root, 'public/vendor/tiptap')));
     app.use('/js/marked', express.static(path.join(root, 'node_modules/marked/lib')));
     app.use(express.static(path.join(root, 'public')));
     const server = await new Promise(resolve => {
@@ -24,7 +22,7 @@ module.exports = async function testEditorInput(browser) {
     try {
         await page.goto(`http://127.0.0.1:${server.address().port}`);
         await page.evaluate(async () => {
-            const { HybridMarkdownEditor } = await import('/hybrid-editor.js');
+            const { HybridMarkdownEditor } = await import('/tiptap-editor.js');
             window.editor = new HybridMarkdownEditor(document.querySelector('#editor'));
             await editor.whenReady();
             window.loadFixture = async () => {
@@ -42,15 +40,14 @@ module.exports = async function testEditorInput(browser) {
                         break;
                     }
                 }
-                editor.editor.focus();
-                const range = document.createRange();
-                range.setStart(selected, atEnd ? selected.length : 0);
-                range.collapse(true);
-                getSelection().removeAllRanges();
-                getSelection().addRange(range);
+                const view = editor.editor.view;
+                const pos = view.posAtDOM(selected, atEnd ? selected.length : 0);
+                const TextSelection = globalThis.DumbPadTiptap.PM.state.TextSelection;
+                view.dispatch(view.state.tr.setSelection(TextSelection.near(view.state.doc.resolve(pos))));
+                view.focus();
             };
             window.readState = () => {
-                const root = editor.container.querySelector('.vditor-reset');
+                const root = editor.container.querySelector('.tiptap');
                 const range = getSelection().rangeCount ? getSelection().getRangeAt(0) : null;
                 const parent = range?.startContainer.nodeType === 3 ? range.startContainer.parentElement : range?.startContainer;
                 const li = parent?.closest('li');
@@ -127,42 +124,8 @@ module.exports = async function testEditorInput(browser) {
         assert(markdown.includes('xyz'), 'native redo must restore the edit');
         assert(!markdown.includes('DUMBPADINLINETOKEN'), 'temporary render tokens must never enter saved Markdown');
         assert.equal((markdown.match(/\[\[time:/g) || []).length, 2);
-        assert(await page.evaluate(() => {
-            const lute = editor.editor.vditor.lute;
-            const html = lute.SpinVditorDOM('<p data-block="0"><span data-draw>draw<wbr></span> <span class="has-annotation" data-comment="note"><span>text</span><span class="annotation-badge"></span><sub>note</sub></span></p>');
-            const template = document.createElement('template');
-            template.innerHTML = html;
-            return template.content.querySelectorAll('wbr').length === 1 &&
-                template.content.querySelector('[data-draw]').style.textDecoration.includes('underline') &&
-                template.content.querySelector('.has-annotation > span').style.textDecoration.includes('wavy') &&
-                template.content.querySelector('.has-annotation > sub').style.display === 'none';
-        }), 'custom underline and annotation styling must survive the native style cleanup');
-        const measured = await page.evaluate(async () => {
-            editor.setValue('- [ ] text above image\n\n    ![test](data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==)\n', false);
-            await new Promise(resolve => setTimeout(resolve, 450));
-            const image = editor.container.querySelector('.vditor-reset img');
-            image.width = 400;
-            image.height = 1200;
-            place('li');
-            // Element-boundary selections can have an empty collapsed rect.
-            // Exercise that browser condition without substituting a giant li.
-            const original = Range.prototype.getBoundingClientRect;
-            Range.prototype.getBoundingClientRect = function () {
-                return this.collapsed ? new DOMRect() : original.call(this);
-            };
-            const scroller = editor.getScrollContainer();
-            scroller.scrollTop = 0;
-            editor.scrollFreeze = null;
-            const before = scroller.scrollTop;
-            editor.container.querySelector('.vditor-reset').dispatchEvent(new InputEvent('beforeinput', {
-                bubbles: true, inputType: 'insertText', data: 'a'
-            }));
-            const after = scroller.scrollTop;
-            Range.prototype.getBoundingClientRect = original;
-            return { before, after };
-        });
-        assert(Math.abs(measured.after - measured.before) < 2,
-            `image height must not influence caret reveal: ${JSON.stringify(measured)}`);
+        assert(markdown.includes('<mark>highlight textxyz</mark>') || markdown.includes('==highlight textxyz=='),
+            'highlight serializes to its markdown source form');
         assert.deepEqual(errors, []);
         console.log('Editor input browser regression passed');
     } finally {

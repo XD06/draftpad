@@ -112,12 +112,6 @@ export class HybridMarkdownEditor {
         this.listeners.get(eventName)?.forEach((callback) => callback(detail));
     }
 
-    notifyEditorValueChanged(value) {
-        this._lastValue = value;
-        this.dispatch('input', { value });
-        this.onInput();
-    }
-
     whenReady() {
         return this.readyPromise;
     }
@@ -196,7 +190,7 @@ export class HybridMarkdownEditor {
     notifyEditorValueChanged(value) {
         this._lastValue = value;
         this.dispatch('input', { value });
-        this.onInput();
+        this.onInput(value);
     }
 
     whenReady() {

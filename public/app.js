@@ -1922,13 +1922,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (editorInstance) return editorInstance;
         if (!editorLoader) {
             editorLoader = (async () => {
-                const vditorStyles = loadStylesheetOnce('vditor-editor-css', '/vendor/vditor/index.css');
-                const vditorScript = loadScriptOnce('vditor-editor-js', '/vendor/vditor/index.min.js');
-                const hybridEditorModule = import('./hybrid-editor.js');
+                // Tiptap 内核：预打包单文件 bundle（PWA 按需缓存），随后加载黑盒适配器。
+                const tiptapRuntime = loadScriptOnce('tiptap-editor-js', '/vendor/tiptap/tiptap.bundle.js');
+                const tiptapEditorModule = import('./tiptap-editor.js');
                 const [{ HybridMarkdownEditor }] = await Promise.all([
-                    hybridEditorModule,
-                    vditorStyles,
-                    vditorScript
+                    tiptapEditorModule,
+                    tiptapRuntime
                 ]);
                 editorInstance = new HybridMarkdownEditor(document.getElementById('hybrid-editor'), {
                     performanceMonitor: editorPerformanceMonitor.enabled ? editorPerformanceMonitor : null,
