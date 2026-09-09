@@ -2229,6 +2229,70 @@ main {
     box-sizing: border-box;
 }
 
+/* Tiptap 适配器（public/tiptap-editor.js）的编辑面：视觉上复刻
+ * pre.vditor-reset 的卡片形态，避免切流后编辑区裸奔。 */
+.typora-editor-shell .tiptap {
+    width: 100%;
+    max-width: 800px;
+    min-height: 60vh;
+    margin: 0 auto;
+    padding: 38px 40px 110px;
+    outline: none;
+    background: var(--textarea-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    box-shadow: 0 10px 30px rgba(15, 23, 42, 0.05);
+    box-sizing: border-box;
+    color: var(--text-color);
+    font-family: var(--font-reading);
+    font-size: 16.5px;
+    line-height: 1.68;
+    white-space: pre-wrap;
+}
+
+.typora-editor-shell .tiptap p {
+    margin: 0 0 1em;
+}
+
+.typora-editor-shell .tiptap mark.md-mark {
+    background: rgba(255, 214, 10, 0.35);
+    color: inherit;
+    padding: 0 1px;
+    border-radius: 2px;
+}
+
+.typora-editor-shell .tiptap .article-search-hit {
+    background: rgba(59, 130, 246, 0.35);
+    border-radius: 3px;
+}
+
+.typora-editor-shell .tiptap img {
+    max-width: 100%;
+    border-radius: 6px;
+}
+
+.tiptap-source-textarea {
+    width: 100%;
+    min-height: 60vh;
+    padding: 24px;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    background: var(--textarea-bg);
+    color: var(--text-color);
+    font-family: var(--font-code, monospace);
+    font-size: 14px;
+    line-height: 1.6;
+    resize: none;
+    outline: none;
+    box-sizing: border-box;
+}
+
+/* 搜索关键词命中的临时高亮（1.6s 后自动摘除） */
+.tiptap .article-search-hit {
+    background: rgba(250, 204, 21, 0.55);
+    border-radius: 3px;
+}
+
 .typora-source-editor {
     display: none;
     width: 100%;
