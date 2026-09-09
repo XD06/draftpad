@@ -50,12 +50,19 @@ export class HybridMarkdownEditor {
 
         this.readyPromise = new Promise((resolve) => { this._resolveReady = resolve; });
 
+        // 滚动层：旧编辑器的 DOM 形状是 #hybrid-editor > .vditor-wysiwyg(滚动) >
+        // pre.vditor-reset(内容)。styles/ios-theme 的滚动与高度规则全部挂在
+        // .vditor-wysiwyg 上，缺了这层页面会无法滚动。
+        this.scroller = document.createElement('div');
+        this.scroller.className = 'vditor-wysiwyg';
+        container.appendChild(this.scroller);
+
         this.editor = new Editor({
-            element: container,
+            element: this.scroller,
             editorProps: {
                 // 复用旧 vditor 的全部内容区样式（styles.css 117 条规则），
                 // 保证切换内核后视觉零变化。
-                attributes: { class: 'tiptap ProseMirror vditor-wysiwyg-content vditor-reset' },
+                attributes: { class: 'tiptap ProseMirror vditor-reset' },
             },
             extensions: [
                 Markdown.configure({
@@ -91,7 +98,11 @@ export class HybridMarkdownEditor {
             this._resolveReady();
         });
 
-        this.editor.on('update', () => {
+        this.editor.on('update', ({ transaction }) => {
+            // Tiptap v3 的 setEditable（阅读模式切换）也会 emit update，
+            // 必须过滤掉未改变文档的事务，否则启动即上报空变更、
+            // 触发脏笔记保存与 409 冲突（"内容已在其他设备更新"）。
+            if (transaction && !transaction.docChanged) return;
             this.notifyEditorValueChanged(this.getValue());
         });
 
@@ -157,7 +168,7 @@ export class HybridMarkdownEditor {
         const code = document.createElement('code');
         code.textContent = this.frontmatterSource;
         block.appendChild(code);
-        this.container.querySelector('.tiptap')?.before(block);
+        this.scroller?.before(block);
     }
 
     setValue(value, emit = true) {
@@ -312,7 +323,7 @@ export class HybridMarkdownEditor {
             mode: 'wysiwyg',
             offset: snapshot,
             visibleOffset: snapshot,
-            scrollTop: Number(this.container.scrollTop || 0),
+            scrollTop: Number(this.scroller.scrollTop || 0),
         };
     }
 
@@ -341,8 +352,8 @@ export class HybridMarkdownEditor {
             } catch (_error) {
                 // 光标恢复是尽力而为，绝不打断编辑。
             }
-            if (this.container && Number.isFinite(Number(snapshot.scrollTop))) {
-                this.container.scrollTop = Number(snapshot.scrollTop);
+            if (this.scroller && Number.isFinite(Number(snapshot.scrollTop))) {
+                this.scroller.scrollTop = Number(snapshot.scrollTop);
             }
         });
         return true;
@@ -370,11 +381,11 @@ export class HybridMarkdownEditor {
             }
             textarea.value = this._lastValue;
             textarea.style.display = 'block';
-            this.container.querySelector('.tiptap')?.style.setProperty('display', 'none');
+            this.scroller.style.setProperty('display', 'none');
         } else if (textarea) {
             const nextValue = textarea.value;
             textarea.style.display = 'none';
-            this.container.querySelector('.tiptap')?.style.removeProperty('display');
+            this.scroller.style.removeProperty('display');
             this.setValue(nextValue, false);
         }
     }
