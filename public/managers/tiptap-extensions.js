@@ -4,7 +4,7 @@
  * restoreAllRenderedMarks / renderInlineMarks 与 time-command.js），
  * roundtrip 兼容由 test/test_tiptap_roundtrip.js 固化，改动前先读它。
  */
-import { Mark, Node, Extension } from './tiptap-runtime.js';
+import { Mark, Node, Extension, TaskList, InputRule, findParentNode } from './tiptap-runtime.js';
 import { TIME_COMMAND, parseTimeMarkerText, buildTimeMarker } from './time-command.js';
 
 export const ANNOTATION_SPAN_STYLE = 'text-decoration:underline wavy #e74c3c;text-decoration-thickness:2.5px;';
@@ -553,55 +553,45 @@ export const SoftEnterShortcut = Extension.create({
     },
 });
 
-/** 待办输入（Typora 方式）：无序列表项（或普通段落）内输入 "[ ]"/"[x]"
- * 后按空格，把当前列表项/段落转成任务项并去掉前导括号。"- " 本身仍是无序
- * 列表，不会误转。用空格 keydown 拦截（handleTextInput 期间 dispatch 的
- * 事务会被挂起的 DOM 输入覆盖，见 1a249c0 的教训）。 */
-export const TaskInputShortcut = Extension.create({
-    name: 'taskInputShortcut',
+/** tiptap-markdown 的 MarkdownTightLists 只给 bulletList/orderedList 声明
+ * 全局 tight 属性，taskList 没有声明。序列化时 renderList 对没有 tight
+ * 属性的节点回退到 options.tightLists（未传 → 宽松列表），保存会在任务
+ * 项之间插入空行，破坏与旧编辑器逐字节一致的契约。补同形态的 tight 属性
+ * （解析沿用 data-tight / 无段落判定，渲染不输出任何 DOM 属性）。 */
+export const DumbPadTaskList = TaskList.extend({
+    addAttributes() {
+        return {
+            tight: {
+                default: true,
+                parseHTML: element =>
+                    element.getAttribute('data-tight') === 'true' || !element.querySelector('p'),
+                renderHTML: () => ({}),
+            },
+        };
+    },
+});
 
-    priority: 10000,
+/** 待办输入（Typora 流程，列表内）：无序列表项里输入 "[ ]"/"[x]" 再按
+ * 空格，把当前列表转成任务列表。官方 TaskItem 的 input rule 只覆盖顶层
+ * 普通段落（listItem 的 contentMatch 无法 findWrapping 到 taskItem），
+ * 这里只接管列表内场景：删除括号文本后完全交给框架命令
+ * toggleList('taskList', 'taskItem') 完成转换，不手写节点构造与光标计算。 */
+export const TaskListInputShortcut = Extension.create({
+    name: 'taskListInputShortcut',
 
-    addProseMirrorPlugins() {
+    addInputRules() {
         return [
-            new globalThis.DumbPadTiptap.PM.state.Plugin({
-                props: {
-                    handleKeyDown: (view, event) => {
-                        if (event.key !== ' ') return false;
-                        const { state } = view;
-                        const { $from } = state.selection;
-                        if (!state.selection.empty) return false;
-                        if ($from.parent.type.name !== 'paragraph') return false;
-                        const textBefore = $from.parent.textBetween(0, $from.parentOffset, undefined, '￼');
-                        let checked = false;
-                        let removeLength = 0;
-                        if (textBefore === '[]') removeLength = 2;
-                        else if (textBefore === '[ ]') removeLength = 3;
-                        else if (textBefore === '[x]' || textBefore === '[X]') { removeLength = 3; checked = true; }
-                        else return false;
-                        const { schema } = state;
-                        if (!schema.nodes.taskList || !schema.nodes.taskItem) return false;
-                        try {
-                            const paragraph = $from.parent;
-                            const rest = paragraph.cut(removeLength, paragraph.content.size);
-                            const innerParagraph = schema.nodes.paragraph.create(null, rest.content);
-                            const item = schema.nodes.taskItem.create({ checked }, innerParagraph);
-                            const list = schema.nodes.taskList.create(null, [item]);
-                            // 列表层与顶层普通段落同在 depth 1，整块替换；
-                            // 光标显式落回新任务项的段落内（默认选区会掉到
-                            // TrailingNode 的尾段上）。
-                            const replaceTr = state.tr.replaceWith($from.before(1), $from.after(1), list);
-                            const caretPos = Math.min($from.before(1) + 3, replaceTr.doc.content.size - 1);
-                            const TextSelection = globalThis.DumbPadTiptap.PM.state.TextSelection;
-                            replaceTr.setSelection(TextSelection.near(replaceTr.doc.resolve(caretPos)));
-                            view.dispatch(replaceTr.scrollIntoView());
-                            event.preventDefault();
-                            return true;
-                        } catch (error) {
-                            console.log('TASKINPUT ERROR:', error.message);
-                            return false;
-                        }
-                    },
+            new InputRule({
+                find: /\[([ xX])?\]\s$/,
+                handler: ({ state, range, chain, match }) => {
+                    const listItem = findParentNode(node => node.type.name === 'listItem')(state.selection);
+                    if (!listItem) return;
+                    const checked = (match[1] || '').toLowerCase() === 'x';
+                    chain()
+                        .deleteRange(range)
+                        .toggleList('taskList', 'taskItem', false)
+                        .updateAttributes('taskItem', { checked })
+                        .run();
                 },
             }),
         ];

@@ -13,6 +13,7 @@ export const Editor = runtime.Editor;
 export const Extension = runtime.Extension;
 export const Node = runtime.Node;
 export const Mark = runtime.Mark;
+export const InputRule = runtime.InputRule;
 export const mergeAttributes = runtime.mergeAttributes;
 export const findChildren = runtime.findChildren;
 export const findParentNode = runtime.findParentNode;

@@ -2352,6 +2352,45 @@ main {
     color: var(--text-color);
 }
 
+/* 待办列表（Tiptap 官方 TaskItem 渲染的 ul[data-type=taskList]）：
+   去掉普通列表的圆点/序号与 2em 缩进，checkbox 与文字同行。 */
+.typora-editor-shell .vditor-reset ul[data-type="taskList"] {
+    list-style: none;
+    padding-left: 0.6em;
+}
+
+.typora-editor-shell .vditor-reset ul[data-type="taskList"] li {
+    display: flex;
+    align-items: flex-start;
+    list-style: none;
+}
+
+.typora-editor-shell .vditor-reset ul[data-type="taskList"] li > label {
+    flex: 0 0 auto;
+    margin-right: 0.35em;
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+.typora-editor-shell .vditor-reset ul[data-type="taskList"] li > label input {
+    margin: 0 0.2em 0.25em 0;
+    font-size: 12px;
+    vertical-align: middle;
+}
+
+.typora-editor-shell .vditor-reset ul[data-type="taskList"] li > div {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.typora-editor-shell .vditor-reset ul[data-type="taskList"] li > div > p:first-child {
+    margin-top: 0;
+}
+
+.typora-editor-shell .vditor-reset ul[data-type="taskList"] li > div > p:last-child {
+    margin-bottom: 0;
+}
+
 .typora-editor-shell .vditor-reset a {
     color: var(--primary-color);
 }

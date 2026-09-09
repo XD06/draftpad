@@ -24,6 +24,7 @@ export const {
   Extension,
   Node,
   Mark,
+  InputRule,
   mergeAttributes,
   findChildren,
   findParentNode,

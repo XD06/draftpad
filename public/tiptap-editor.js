@@ -12,7 +12,6 @@ import {
     TableRow,
     TableCell,
     TableHeader,
-    TaskList,
     TaskItem,
 } from './managers/tiptap-runtime.js';
 import {
@@ -21,7 +20,8 @@ import {
     MdHighlight,
     MdSoftBreak,
     SoftEnterShortcut,
-    TaskInputShortcut,
+    TaskListInputShortcut,
+    DumbPadTaskList,
     TimeCommandShortcut,
     TimeMarkerNode,
 } from './managers/tiptap-extensions.js';
@@ -73,7 +73,7 @@ export class HybridMarkdownEditor {
             },
             extensions: [
                 SoftEnterShortcut,
-                TaskInputShortcut,
+                TaskListInputShortcut,
                 Markdown.configure({
                     html: true,
                     linkify: false,
@@ -95,7 +95,7 @@ export class HybridMarkdownEditor {
                 TableRow,
                 TableHeader,
                 TableCell,
-                TaskList,
+                DumbPadTaskList,
                 TaskItem.configure({ nested: true }),
             ],
             content: '',
