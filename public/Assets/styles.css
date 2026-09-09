@@ -2387,8 +2387,19 @@ main {
     margin-top: 0;
 }
 
+.typora-editor-shell .vditor-reset ul[data-type="taskList"] li > div > p:first-child {
+    margin-top: 0;
+}
+
 .typora-editor-shell .vditor-reset ul[data-type="taskList"] li > div > p:last-child {
     margin-bottom: 0;
+}
+
+/* 勾选完成的待办：文字删除线 + 淡灰，与旧 vditor 待办视觉一致 */
+.typora-editor-shell .vditor-reset ul[data-type="taskList"] li[data-checked="true"] > div {
+    color: var(--text-color-disabled, #9aa4ae);
+    text-decoration: line-through;
+    text-decoration-color: color-mix(in srgb, var(--text-color) 45%, transparent);
 }
 
 .typora-editor-shell .vditor-reset a {

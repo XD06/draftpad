@@ -27,6 +27,7 @@ import {
 } from './managers/tiptap-extensions.js';
 import { buildMarkdownHeadingIndex } from './managers/heading-index.js';
 import { buildCodeBlockNodeView } from './managers/tiptap-code-block-view.js';
+import { buildTaskItemNodeView } from './managers/tiptap-task-item-view.js';
 
 export class HybridMarkdownEditor {
     constructor(container, { input, performanceMonitor = null, onCaretChange = null } = {}) {
@@ -67,8 +68,11 @@ export class HybridMarkdownEditor {
                 attributes: { class: 'tiptap ProseMirror vditor-reset' },
                 // 代码块复刻旧 vditor 块 DOM（.vditor-wysiwyg__block 结构），
                 // 头部/徽章/复制/行号规则全部原样生效。
+                // taskItem 复刻官方 DOM 但自管勾选（官方 change 处理器的
+                // getPos 在真实应用中返回 undefined，勾选会静默丢失）。
                 nodeViews: {
                     codeBlock: buildCodeBlockNodeView(),
+                    taskItem: buildTaskItemNodeView(),
                 },
             },
             extensions: [
