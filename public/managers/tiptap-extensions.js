@@ -553,31 +553,54 @@ export const SoftEnterShortcut = Extension.create({
     },
 });
 
-/** 待办输入：空段落输入 "- " 直接转成任务项（勾选框），优先于无序列表规则。 */
+/** 待办输入（Typora 方式）：无序列表项（或普通段落）内输入 "[ ]"/"[x]"
+ * 后按空格，把当前列表项/段落转成任务项并去掉前导括号。"- " 本身仍是无序
+ * 列表，不会误转。用空格 keydown 拦截（handleTextInput 期间 dispatch 的
+ * 事务会被挂起的 DOM 输入覆盖，见 1a249c0 的教训）。 */
 export const TaskInputShortcut = Extension.create({
     name: 'taskInputShortcut',
+
+    priority: 10000,
 
     addProseMirrorPlugins() {
         return [
             new globalThis.DumbPadTiptap.PM.state.Plugin({
                 props: {
-                    handleTextInput: (view, from, to, text) => {
-                        if (text !== ' ') return false;
+                    handleKeyDown: (view, event) => {
+                        if (event.key !== ' ') return false;
                         const { state } = view;
                         const { $from } = state.selection;
                         if (!state.selection.empty) return false;
                         if ($from.parent.type.name !== 'paragraph') return false;
-                        if ($from.parentOffset !== 1) return false;
-                        if ($from.parent.textBetween(0, 1) !== '-') return false;
+                        const textBefore = $from.parent.textBetween(0, $from.parentOffset, undefined, '￼');
+                        let checked = false;
+                        let removeLength = 0;
+                        if (textBefore === '[]') removeLength = 2;
+                        else if (textBefore === '[ ]') removeLength = 3;
+                        else if (textBefore === '[x]' || textBefore === '[X]') { removeLength = 3; checked = true; }
+                        else return false;
                         const { schema } = state;
                         if (!schema.nodes.taskList || !schema.nodes.taskItem) return false;
-                        const paragraph = $from.parent;
-                        const rest = paragraph.cut($from.parentOffset + 1);
-                        const innerParagraph = schema.nodes.paragraph.create(null, rest.content);
-                        const item = schema.nodes.taskItem.create({ checked: false }, innerParagraph);
-                        const list = schema.nodes.taskList.create(null, [item]);
-                        view.dispatch(state.tr.replaceWith($from.before(), $from.after(), list).scrollIntoView());
-                        return true;
+                        try {
+                            const paragraph = $from.parent;
+                            const rest = paragraph.cut(removeLength, paragraph.content.size);
+                            const innerParagraph = schema.nodes.paragraph.create(null, rest.content);
+                            const item = schema.nodes.taskItem.create({ checked }, innerParagraph);
+                            const list = schema.nodes.taskList.create(null, [item]);
+                            // 列表层与顶层普通段落同在 depth 1，整块替换；
+                            // 光标显式落回新任务项的段落内（默认选区会掉到
+                            // TrailingNode 的尾段上）。
+                            const replaceTr = state.tr.replaceWith($from.before(1), $from.after(1), list);
+                            const caretPos = Math.min($from.before(1) + 3, replaceTr.doc.content.size - 1);
+                            const TextSelection = globalThis.DumbPadTiptap.PM.state.TextSelection;
+                            replaceTr.setSelection(TextSelection.near(replaceTr.doc.resolve(caretPos)));
+                            view.dispatch(replaceTr.scrollIntoView());
+                            event.preventDefault();
+                            return true;
+                        } catch (error) {
+                            console.log('TASKINPUT ERROR:', error.message);
+                            return false;
+                        }
                     },
                 },
             }),
