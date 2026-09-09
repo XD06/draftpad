@@ -421,9 +421,13 @@ export class HybridMarkdownEditor {
         const headings = this.container.querySelectorAll('.tiptap h1, .tiptap h2, .tiptap h3, .tiptap h4, .tiptap h5, .tiptap h6');
         headings.forEach((heading, index) => {
             const entry = toc[index];
-            if (entry?.id) {
-                heading.id = `heading-${entry.id}`;
-            } else {
+            const nextId = entry?.id ? `heading-${entry.id}` : '';
+            // 必须幂等：app.js 的滚动高亮每帧都会调用本方法；在 PM 管辖的
+            // DOM 上重复写属性会触发 MutationObserver -> dispatch -> update
+            // 回环，进而造成保存风暴与 409 冲突。
+            if (nextId && heading.id !== nextId) {
+                heading.id = nextId;
+            } else if (!nextId && heading.hasAttribute('id')) {
                 heading.removeAttribute('id');
             }
         });
