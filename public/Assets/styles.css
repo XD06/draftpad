@@ -5648,3 +5648,34 @@ body.article-image-lightbox-open {
 .typora-editor-shell .tiptap h6 {
     scroll-margin-top: 90px;
 }
+
+/* Tiptap 适配器：代码块样式与旧 vditor 块共享同一份视觉基准。
+ * 旧选择器挂在 .vditor-wysiwyg__block 结构上；这里为 Tiptap 的
+ * pre > code 直载 DOM 追加等价规则（背景/边框/字体/内边距一致，
+ * 便于后续徽章/复制按钮/行号 UI 无缝接入）。 */
+.typora-editor-shell .tiptap pre {
+    position: relative;
+    margin: 0.8em 0;
+    padding: 29px 16px 12px 54px;
+    background: var(--code-bg);
+    border: 1px solid color-mix(in srgb, var(--border-color) 80%, transparent);
+    border-radius: 8px;
+    box-sizing: border-box;
+    font-family: "DumbPad Code", "Fira Code", "SF Mono", SFMono-Regular, "JetBrains Mono", monospace;
+    font-size: 16.5px;
+    line-height: 1.55;
+    white-space: pre;
+    overflow-x: auto;
+    tab-size: 4;
+}
+
+.typora-editor-shell .tiptap pre code {
+    background: transparent;
+    background-image: none !important;
+    padding: 0;
+    font-family: inherit;
+    font-size: inherit;
+    color: inherit;
+    display: block;
+    white-space: pre;
+}
