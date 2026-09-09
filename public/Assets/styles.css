@@ -2235,7 +2235,8 @@ main {
     width: 100%;
     max-width: 800px;
     min-height: 60vh;
-    margin: 0 auto;
+    /* 顶部让位：与移动端 margin: 64px auto 0 一致，避免卡片滑到 sticky 顶栏下面 */
+    margin: 64px auto 0;
     padding: 38px 40px 110px;
     outline: none;
     background: var(--textarea-bg);
