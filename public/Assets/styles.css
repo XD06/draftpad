@@ -5623,3 +5623,18 @@ body.article-image-lightbox-open {
 .typora-editor-shell.is-source-mode .dumbpad-frontmatter-static {
     display: none;
 }
+
+/* Tiptap 适配器：滚动层顶部补偿——sticky 顶栏高度让内容起点与锚点
+ * 落点都在工具栏下方，避免第一条标题被盖住（旧 DOM 由 vditor 自带）。 */
+.typora-editor-shell .vditor-wysiwyg {
+    scroll-padding-top: 78px;
+}
+
+.typora-editor-shell .tiptap h1,
+.typora-editor-shell .tiptap h2,
+.typora-editor-shell .tiptap h3,
+.typora-editor-shell .tiptap h4,
+.typora-editor-shell .tiptap h5,
+.typora-editor-shell .tiptap h6 {
+    scroll-margin-top: 90px;
+}
