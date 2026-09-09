@@ -5601,3 +5601,25 @@ body.article-image-lightbox-open {
         left: 12px;
     }
 }
+
+/* Tiptap 适配器：YAML frontmatter 外挂展示块（不进编辑器文档，原样保存） */
+.dumbpad-frontmatter-static {
+    width: 100%;
+    max-width: 800px;
+    margin: 0 auto 12px;
+    padding: 14px 16px;
+    background: var(--textarea-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    box-sizing: border-box;
+    color: var(--text-color);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 14px;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    overflow-x: auto;
+}
+
+.typora-editor-shell.is-source-mode .dumbpad-frontmatter-static {
+    display: none;
+}

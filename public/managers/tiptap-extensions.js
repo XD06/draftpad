@@ -443,3 +443,81 @@ export const TimeCommandShortcut = Extension.create({
         ];
     },
 });
+
+/**
+ * YAML frontmatter（--- 包裹的文档头）：解析为独立节点原样保存。
+ * 旧 Vditor/Lute 把 frontmatter 渲染为代码块且序列化时不改写；Tiptap
+ * 默认会把它拆成 thematic break + setext 标题，保存即破坏数据。
+ */
+export const FrontmatterNode = Node.create({
+    name: 'frontmatter',
+
+    priority: 1000,
+
+    content: 'text*',
+    marks: '',
+    code: true,
+    defining: true,
+    atom: false,
+
+    parseHTML() {
+        return [{ tag: 'pre[data-dumbpad-frontmatter]', contentElement: 'code' }];
+    },
+
+    renderHTML() {
+        return ['pre', {
+            'data-dumbpad-frontmatter': 'true',
+            class: 'dumbpad-frontmatter',
+        }, ['code', 0]];
+    },
+
+    addStorage() {
+        return {
+            markdown: {
+                serialize(state, node) {
+                    state.write('---\n');
+                    state.text(node.textContent || '', false);
+                    state.ensureNewLine();
+                    state.write('---');
+                    state.closeBlock(node);
+                },
+                parse: {
+                    setup(markdownit) {
+                        markdownit.block.ruler.before('hr', 'dumbpad_frontmatter', frontmatterRule);
+                    },
+                    updateDOM(element) {
+                        element.querySelectorAll('code.language-dumbpad-frontmatter').forEach((code) => {
+                            const pre = code.closest('pre');
+                            if (pre) pre.setAttribute('data-dumbpad-frontmatter', 'true');
+                        });
+                    },
+                },
+            },
+        };
+    },
+});
+
+/** 首个块若为 --- 包裹的 YAML 头，转成 fence token（language-dumbpad-frontmatter）。 */
+function frontmatterRule(state, startLine, endLine, silent) {
+    if (startLine !== 0) return false;
+    const firstLine = state.getLines(startLine, 1, 0).trim();
+    if (firstLine !== '---') return false;
+    let closing = -1;
+    for (let line = startLine + 1; line < endLine; line += 1) {
+        const lineStart = state.bMarks[line] + state.tShift[line];
+        const lineEnd = state.eMarks[line];
+        if (state.src.slice(lineStart, lineEnd).trim() === '---') {
+            closing = line;
+            break;
+        }
+    }
+    if (closing === -1) return false;
+    if (silent) return true;
+    const token = state.push('fence', 'code', 0);
+    token.info = 'dumbpad-frontmatter';
+    token.markup = '---';
+    token.content = state.getLines(startLine + 1, closing, 0, true);
+    token.map = [startLine, closing + 1];
+    state.line = closing + 1;
+    return true;
+}

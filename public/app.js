@@ -1923,11 +1923,15 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (!editorLoader) {
             editorLoader = (async () => {
                 // Tiptap 内核：预打包单文件 bundle（PWA 按需缓存），随后加载黑盒适配器。
+                // vditor 的 index.css 继续提供 .vditor-reset 的 Markdown 元素样式（表格、
+                // 代码块、引用等），与内核无关，保持视觉零变化。
                 const tiptapRuntime = loadScriptOnce('tiptap-editor-js', '/vendor/tiptap/tiptap.bundle.js');
+                const vditorStyles = loadStylesheetOnce('vditor-editor-css', '/vendor/vditor/index.css');
                 const tiptapEditorModule = import('./tiptap-editor.js');
                 const [{ HybridMarkdownEditor }] = await Promise.all([
                     tiptapEditorModule,
-                    tiptapRuntime
+                    tiptapRuntime,
+                    vditorStyles
                 ]);
                 editorInstance = new HybridMarkdownEditor(document.getElementById('hybrid-editor'), {
                     performanceMonitor: editorPerformanceMonitor.enabled ? editorPerformanceMonitor : null,

@@ -32,6 +32,7 @@ export class HybridMarkdownEditor {
         }
 
         this.container = container;
+        this.container.classList.add('typora-editor-shell', 'vditor');
         this.onInput = input || (() => {});
         this.onCaretChange = typeof onCaretChange === 'function' ? onCaretChange : (() => {});
         this.performanceMonitor = performanceMonitor;
@@ -45,11 +46,17 @@ export class HybridMarkdownEditor {
         this.sourceMode = false;
         this.assetMaxFileBytes = null;
         this.isComposing = false;
+        this.frontmatterSource = '';
 
         this.readyPromise = new Promise((resolve) => { this._resolveReady = resolve; });
 
         this.editor = new Editor({
             element: container,
+            editorProps: {
+                // 复用旧 vditor 的全部内容区样式（styles.css 117 条规则），
+                // 保证切换内核后视觉零变化。
+                attributes: { class: 'tiptap ProseMirror vditor-wysiwyg-content vditor-reset' },
+            },
             extensions: [
                 Markdown.configure({
                     html: true,
@@ -122,13 +129,44 @@ export class HybridMarkdownEditor {
         if (this.sourceMode) {
             return this.getSourceTextarea()?.value ?? this._lastValue;
         }
-        return this.editor.storage.markdown.getMarkdown();
+        const markdown = this.editor.storage.markdown.getMarkdown();
+        return this.frontmatterSource
+            ? `${this.frontmatterSource}\n\n${markdown}`
+            : markdown;
+    }
+
+    /**
+     * YAML frontmatter（--- 包裹的文档头）不进 ProseMirror 文档：拆分后单独
+     * 保存并静态展示，getValue 时原样回填。与旧编辑器"frontmatter 不重排"
+     * 的行为一致，避免默认解析把它拆成 hr + setext 标题造成保存即数据损坏。
+     */
+    splitFrontmatter(value) {
+        const FRONTMATTER_LEAD_RE = /^---\n[\s\S]*?\n---(?:\n|$)/;
+        const match = String(value ?? '').match(FRONTMATTER_LEAD_RE);
+        if (!match) return { frontmatter: '', body: String(value ?? '') };
+        const frontmatter = match[0].replace(/\n$/, '');
+        return { frontmatter, body: String(value ?? '').slice(match[0].length).replace(/^\n+/, '') };
+    }
+
+    renderFrontmatterPlaceholder() {
+        this.container.querySelector('.dumbpad-frontmatter-static')?.remove();
+        if (!this.frontmatterSource) return;
+        const block = document.createElement('pre');
+        block.className = 'dumbpad-frontmatter-static';
+        block.setAttribute('data-dumbpad-frontmatter', 'true');
+        const code = document.createElement('code');
+        code.textContent = this.frontmatterSource;
+        block.appendChild(code);
+        this.container.querySelector('.tiptap')?.before(block);
     }
 
     setValue(value, emit = true) {
         const nextValue = String(value ?? '');
         this._lastValue = nextValue;
-        this.editor.commands.setContent(nextValue, { emitUpdate: false });
+        const { frontmatter, body } = this.splitFrontmatter(nextValue);
+        this.frontmatterSource = frontmatter;
+        this.renderFrontmatterPlaceholder();
+        this.editor.commands.setContent(body, { emitUpdate: false });
         if (emit) {
             this.notifyEditorValueChanged(this.getValue());
         } else {
@@ -157,7 +195,7 @@ export class HybridMarkdownEditor {
     setReadingMode(enabled) {
         this.isReadingMode = Boolean(enabled);
         this.editor.setEditable(!this.isReadingMode);
-        this.container.classList.toggle('article-reading-mode', this.isReadingMode);
+        this.container.classList.toggle('is-reading-mode', this.isReadingMode);
         if (this.isReadingMode) {
             this.renderMermaidDiagrams();
         }
