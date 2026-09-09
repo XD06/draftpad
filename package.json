@@ -43,6 +43,7 @@
     "test:time-command": "node test/test_time_command.js",
     "test:tiptap-roundtrip": "node test/test_tiptap_roundtrip.js",
     "test:tiptap-caret": "node test/test_tiptap_caret_navigation.js",
+    "test:tiptap-time-command": "node test/test_tiptap_time_command.js",
     "test:hybrid-editor-time-command": "node test/test_hybrid_editor_time_command.js",
     "test:hybrid-editor-caret-stability": "node test/test_hybrid_editor_caret_stability.js",
     "test:editor-input-browser": "node test/browser/editor-input.js",

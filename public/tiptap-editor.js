@@ -20,6 +20,7 @@ import {
     DrawMark,
     MdHighlight,
     MdSoftBreak,
+    TimeCommandShortcut,
     TimeMarkerNode,
 } from './managers/tiptap-extensions.js';
 import { buildMarkdownHeadingIndex } from './managers/heading-index.js';
@@ -64,6 +65,7 @@ export class HybridMarkdownEditor {
                 DrawMark,
                 MdHighlight,
                 MdSoftBreak,
+                TimeCommandShortcut,
                 TimeMarkerNode,
                 Image,
                 Table.configure({ resizable: false }),
@@ -162,6 +164,9 @@ export class HybridMarkdownEditor {
         this.isReadingMode = Boolean(enabled);
         this.editor.setEditable(!this.isReadingMode);
         this.container.classList.toggle('article-reading-mode', this.isReadingMode);
+        if (this.isReadingMode) {
+            this.renderMermaidDiagrams();
+        }
     }
 
     focus() {
@@ -459,5 +464,68 @@ export class HybridMarkdownEditor {
         this.editor.commands.insertContentAt(this.editor.state.selection.from, markdown);
         this.notifyEditorValueChanged(this.getValue());
         return true;
+    }
+
+    /* ---------------- Mermaid 阅读模式隔离渲染 ---------------- */
+
+    loadMermaidRuntime() {
+        if (!this.mermaidRuntimePromise) {
+            this.mermaidRuntimePromise = new Promise((resolve, reject) => {
+                if (globalThis.DumbPadMermaid) {
+                    resolve(globalThis.DumbPadMermaid);
+                    return;
+                }
+                const script = document.createElement("script");
+                script.src = "/vendor/tiptap/tiptap-mermaid.bundle.js";
+                script.onload = () => resolve(globalThis.DumbPadMermaid);
+                script.onerror = () => {
+                    script.remove();
+                    this.mermaidRuntimePromise = null;
+                    reject(new Error("Mermaid runtime failed to load."));
+                };
+                document.head.appendChild(script);
+            });
+        }
+        return this.mermaidRuntimePromise;
+    }
+
+    async renderMermaidDiagrams() {
+        const codeBlocks = this.container.querySelectorAll(".tiptap pre code.language-mermaid");
+        if (!codeBlocks.length) return;
+        let mermaidRuntime = null;
+        try {
+            mermaidRuntime = await this.loadMermaidRuntime();
+        } catch (_error) {
+            Array.from(codeBlocks).forEach((code) => this.showMermaidError(code));
+            return;
+        }
+        const mermaid = mermaidRuntime && (mermaidRuntime.default || mermaidRuntime);
+        if (!mermaid || typeof mermaid.render !== "function") return;
+        mermaid.initialize({ startOnLoad: false, securityLevel: "strict" });
+        const blocks = Array.from(codeBlocks);
+        for (let index = 0; index < blocks.length; index += 1) {
+            const code = blocks[index];
+            const source = code.textContent || "";
+            try {
+                const renderId = `dumbpad-mermaid-${Date.now()}-${index}`;
+                const { svg } = await mermaid.render(renderId, source);
+                code.innerHTML = svg;
+                code.classList.add("mermaid-rendered");
+            } catch (_error) {
+                this.showMermaidError(code);
+            }
+        }
+    }
+
+    showMermaidError(code) {
+        const pre = code.closest("pre");
+        if (!pre) return;
+        pre.classList.add("dumbpad-mermaid-error");
+        if (!pre.querySelector(".mermaid-error-hint")) {
+            const hint = document.createElement("div");
+            hint.className = "mermaid-error-hint";
+            hint.textContent = "Mermaid 图表语法有误，已保留源码，不影响其他内容编辑。";
+            pre.appendChild(hint);
+        }
     }
 }

@@ -4,7 +4,8 @@
  * restoreAllRenderedMarks / renderInlineMarks 与 time-command.js），
  * roundtrip 兼容由 test/test_tiptap_roundtrip.js 固化，改动前先读它。
  */
-import { Mark, Node } from './tiptap-runtime.js';
+import { Mark, Node, Extension } from './tiptap-runtime.js';
+import { TIME_COMMAND, parseTimeMarkerText, buildTimeMarker } from './time-command.js';
 
 export const ANNOTATION_SPAN_STYLE = 'text-decoration:underline wavy #e74c3c;text-decoration-thickness:2.5px;';
 export const DRAW_SPAN_STYLE = 'text-decoration:underline blue;text-decoration-thickness:2px;';
@@ -400,5 +401,45 @@ export const MdSoftBreak = Node.create({
                 parse: {},
             },
         };
+    },
+});
+
+/** /time 命令：普通段落内光标前恰为 "/time" 时，Enter 替换为时间标记节点。 */
+export const TimeCommandShortcut = Extension.create({
+    name: 'timeCommandShortcut',
+
+    addProseMirrorPlugins() {
+        return [
+            new globalThis.DumbPadTiptap.PM.state.Plugin({
+                props: {
+                    handleKeyDown: (view, event) => {
+                        if (event.key !== 'Enter' || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey || event.isComposing) {
+                            return false;
+                        }
+                        const { state } = view;
+                        const selection = state.selection;
+                        if (!selection.empty || selection.$from.parent.type.name !== 'paragraph') return false;
+                        const commandLength = TIME_COMMAND.length;
+                        const textBefore = selection.$from.parent.textBetween(
+                            Math.max(0, selection.$from.parentOffset - TIME_COMMAND.length),
+                            selection.$from.parentOffset
+                        );
+                        if (textBefore !== TIME_COMMAND) return false;
+                        const markerSource = buildTimeMarker(new Date(), 'create', 1);
+                        const parsed = parseTimeMarkerText(markerSource);
+                        if (!parsed) return false;
+                        const node = state.schema.nodes.timeMarker.create({
+                            source: parsed.source,
+                            kind: parsed.kind,
+                            level: parsed.level,
+                            stamp: parsed.stamp,
+                            label: parsed.label,
+                        });
+                        view.dispatch(state.tr.replaceWith(selection.from - TIME_COMMAND.length, selection.from, node));
+                        return true;
+                    },
+                },
+            }),
+        ];
     },
 });
