@@ -5603,12 +5603,15 @@ body.article-image-lightbox-open {
     }
 }
 
-/* Tiptap 适配器：YAML frontmatter 外挂展示块（不进编辑器文档，原样保存） */
+/* Tiptap 适配器：YAML frontmatter 外挂展示块（不进编辑器文档，原样保存）。
+ * 视觉上与卡片一体：占位块承担 64px 顶部让位，卡片自身 margin-top 归零。 */
 .dumbpad-frontmatter-static {
     width: 100%;
     max-width: 800px;
-    margin: 0 auto 12px;
+    margin: 64px auto 0;
     padding: 14px 16px;
+    border-bottom: 0;
+    border-radius: 8px 8px 0 0;
     background: var(--textarea-bg);
     border: 1px solid var(--border-color);
     border-radius: 6px;
@@ -5623,6 +5626,12 @@ body.article-image-lightbox-open {
 
 .typora-editor-shell.is-source-mode .dumbpad-frontmatter-static {
     display: none;
+}
+
+.typora-editor-shell:has(.dumbpad-frontmatter-static) .tiptap {
+    margin-top: 0;
+    border-top-left-radius: 0;
+    border-top-right-radius: 0;
 }
 
 /* Tiptap 适配器：滚动层顶部补偿——sticky 顶栏高度让内容起点与锚点
