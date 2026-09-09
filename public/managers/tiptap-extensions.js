@@ -521,3 +521,66 @@ function frontmatterRule(state, startLine, endLine, silent) {
     state.line = closing + 1;
     return true;
 }
+
+/** 普通段落回车=软换行：与旧 handleWysiwygSoftEnter 行为一致——
+ * 仅拦截"doc > paragraph"的顶层普通段落且非空时，Enter 插入段内换行
+ * 而非拆分段落；标题/列表/引用/代码保持各自默认回车行为。 */
+export const SoftEnterShortcut = Extension.create({
+    name: 'softEnterShortcut',
+
+    addProseMirrorPlugins() {
+        return [
+            new globalThis.DumbPadTiptap.PM.state.Plugin({
+                props: {
+                    handleKeyDown: (view, event) => {
+                        if (event.key !== 'Enter' || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey || event.isComposing) {
+                            return false;
+                        }
+                        const { state } = view;
+                        const selection = state.selection;
+                        if (!selection.empty || selection.$from.parent.type.name !== 'paragraph') return false;
+                        if (selection.$from.depth !== 1) return false;
+                        const paragraph = selection.$from.parent;
+                        if (!paragraph.textContent.replace(/[\u200B\uFEFF]/g, '').trim()) return false;
+                        const { hardBreak } = state.schema.nodes;
+                        if (!hardBreak) return false;
+                        view.dispatch(state.tr.replaceSelectionWith(hardBreak.create()).scrollIntoView());
+                        return true;
+                    },
+                },
+            }),
+        ];
+    },
+});
+
+/** 待办输入：空段落输入 "- " 直接转成任务项（勾选框），优先于无序列表规则。 */
+export const TaskInputShortcut = Extension.create({
+    name: 'taskInputShortcut',
+
+    addProseMirrorPlugins() {
+        return [
+            new globalThis.DumbPadTiptap.PM.state.Plugin({
+                props: {
+                    handleTextInput: (view, from, to, text) => {
+                        if (text !== ' ') return false;
+                        const { state } = view;
+                        const { $from } = state.selection;
+                        if (!state.selection.empty) return false;
+                        if ($from.parent.type.name !== 'paragraph') return false;
+                        if ($from.parentOffset !== 1) return false;
+                        if ($from.parent.textBetween(0, 1) !== '-') return false;
+                        const { schema } = state;
+                        if (!schema.nodes.taskList || !schema.nodes.taskItem) return false;
+                        const paragraph = $from.parent;
+                        const rest = paragraph.cut($from.parentOffset + 1);
+                        const innerParagraph = schema.nodes.paragraph.create(null, rest.content);
+                        const item = schema.nodes.taskItem.create({ checked: false }, innerParagraph);
+                        const list = schema.nodes.taskList.create(null, [item]);
+                        view.dispatch(state.tr.replaceWith($from.before(), $from.after(), list).scrollIntoView());
+                        return true;
+                    },
+                },
+            }),
+        ];
+    },
+});

@@ -20,6 +20,8 @@ import {
     DrawMark,
     MdHighlight,
     MdSoftBreak,
+    SoftEnterShortcut,
+    TaskInputShortcut,
     TimeCommandShortcut,
     TimeMarkerNode,
 } from './managers/tiptap-extensions.js';
@@ -70,6 +72,8 @@ export class HybridMarkdownEditor {
                 },
             },
             extensions: [
+                SoftEnterShortcut,
+                TaskInputShortcut,
                 Markdown.configure({
                     html: true,
                     linkify: false,

@@ -97,7 +97,8 @@ export function buildCodeBlockNodeView({ onToast } = {}) {
         let currentLanguage = null;
 
         const renderChrome = (updatedNode) => {
-            const language = String(updatedNode.attrs.language || 'plaintext').trim().toLowerCase() || 'plaintext';
+            let language = String(updatedNode.attrs.language || 'plaintext').trim().toLowerCase() || 'plaintext';
+            if (language === 'dumbpad-frontmatter') language = 'frontmatter';
             if (currentLanguage !== language) {
                 currentLanguage = language;
                 renderBadge(badge, language);
