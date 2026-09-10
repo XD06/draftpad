@@ -2373,12 +2373,36 @@ main {
 }
 
 .typora-editor-shell .vditor-reset ul[data-type="taskList"] li > label input {
+    appearance: none;
+    -webkit-appearance: none;
     width: 16px;
     height: 16px;
-    margin: 0 0.3em 0.15em 0;
+    margin: 2px 0.3em 0.15em 0;
     vertical-align: middle;
-    accent-color: #ffd84a;
+    border: 1.5px solid #c9ced6;
+    border-radius: 4px;
+    background: transparent;
     cursor: pointer;
+    position: relative;
+    flex: none;
+}
+
+.typora-editor-shell .vditor-reset ul[data-type="taskList"] li > label input:checked {
+    background: #ecb015;
+    border-color: #ecb015;
+}
+
+/* 白色对勾：自定义绘制，覆盖原生 accent 勾（原生勾在浅底上不是白色） */
+.typora-editor-shell .vditor-reset ul[data-type="taskList"] li > label input:checked::after {
+    content: '';
+    position: absolute;
+    left: 4.5px;
+    top: 1px;
+    width: 5px;
+    height: 9px;
+    border: solid #fff;
+    border-width: 0 2px 2px 0;
+    transform: rotate(45deg);
 }
 
 .typora-editor-shell .vditor-reset ul[data-type="taskList"] li > div {
@@ -2390,17 +2414,15 @@ main {
     margin-top: 0;
 }
 
-.typora-editor-shell .vditor-reset ul[data-type="taskList"] li > div > p:first-child {
-    margin-top: 0;
-}
-
 .typora-editor-shell .vditor-reset ul[data-type="taskList"] li > div > p:last-child {
     margin-bottom: 0;
 }
 
-/* 勾选完成的待办：文字删除线 + 淡灰，删除线与文字同色（对齐旧 vditor） */
-.typora-editor-shell .vditor-reset ul[data-type="taskList"] li[data-checked="true"] > div {
-    color: var(--text-color-disabled, #9aa4ae);
+/* 勾选完成的待办：文字删除线 + 淡灰（直接命中 div 与内部 p，
+   否则 .vditor-reset p 的直接颜色规则会把继承的灰色顶掉） */
+.typora-editor-shell .vditor-reset ul[data-type="taskList"] li[data-checked="true"] > div,
+.typora-editor-shell .vditor-reset ul[data-type="taskList"] li[data-checked="true"] > div p {
+    color: #9aa4ae;
     text-decoration: line-through;
     text-decoration-color: currentColor;
 }
