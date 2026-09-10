@@ -1936,6 +1936,15 @@ main {
     [data-theme="dark"] .boot-editor {
         border-color: #141414;
     }
+
+    /* 活编辑卡片（旧 vditor 的 pre / Tiptap 的 .tiptap）在移动端同样回到
+       实测几何：桌面那段 64px margin / 24px padding 的规则不适用（容器
+       padding-top 已给浮动工具条让位），10px 内边距让文字近乎平铺。 */
+    body:not(.thoughts-mode) .typora-editor-shell .vditor-wysiwyg pre.vditor-reset,
+    body:not(.thoughts-mode) .typora-editor-shell .vditor-wysiwyg .tiptap {
+        margin: 0 auto;
+        padding: 10px 10px 64px;
+    }
 }
 
 .hybrid-editor-scroller {

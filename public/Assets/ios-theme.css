@@ -1544,7 +1544,8 @@ main {
         padding-bottom: 80px;
     }
 
-    body:not(.thoughts-mode) .typora-editor-shell .vditor-wysiwyg pre.vditor-reset {
+    body:not(.thoughts-mode) .typora-editor-shell .vditor-wysiwyg pre.vditor-reset,
+    body:not(.thoughts-mode) .typora-editor-shell .vditor-wysiwyg .tiptap {
         margin: 64px auto 0 !important;
         padding-top: 24px !important;
         /* Balance the card internally against its 24px top padding; the bottom
