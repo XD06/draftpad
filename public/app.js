@@ -2268,7 +2268,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             saveRetryTimeout = null;
             lastSaveTime = Date.now();
             setCurrentNoteVersion(targetNotepadId, result.version);
-            touchNotepadUpdatedAt(targetNotepadId);
+            // 服务端对内容未变化的保存返回 unchanged 且不刷 updatedAt，
+            // 本地镜像保持一致，水印的更新时间才不会虚高。
+            if (!result.unchanged) touchNotepadUpdatedAt(targetNotepadId);
             const savedContentStillCurrent = currentNotepadId === targetNotepadId && editor.value === content;
             if (showStatus) {
                 if (isAutoSave && savedContentStillCurrent) {

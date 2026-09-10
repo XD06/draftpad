@@ -339,6 +339,8 @@ Note 是某个 Notepad 的正文内容。保存接口使用 `baseVersion` 做乐
 }
 ```
 
+内容与已存正文完全一致时不视为一次修改：不写存储，`version` 与 `updatedAt` 保持不变、不广播，响应附带 `"unchanged": true`（幂等，重复保存 / 失败重试不会推高版本与修改次数）。
+
 **错误：**
 
 - `400` — Notepad id 非法。
