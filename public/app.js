@@ -1650,6 +1650,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         setupTocScrollSync();
         if (!currentNotepadId) {
             tocList.innerHTML = '<div class="article-toc-empty">打开文章后显示目录</div>';
+            tocMarkRefs = [];
             updateActiveTocItem();
             return;
         }
@@ -1658,6 +1659,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const toc = editorInstance.generateToC(pendingEditorValue || undefined);
         if (toc.length === 0) {
             tocList.innerHTML = '<div class="article-toc-empty">本文暂无标题目录</div>';
+            tocMarkRefs = [];
             return;
         }
 
@@ -1686,6 +1688,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             });
         });
         tocList.innerHTML = markHtml;
+        tocMarkRefs = markRefs;
 
         tocList.querySelectorAll('.mark-entry').forEach(el => {
             el.onclick = () => {
@@ -1809,6 +1812,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     // of the editor viewport. Bound once to the editor scroll container.
     let tocScrollSyncBound = false;
     let lastGeneratedToc = [];
+    // 当前目录渲染持有的片段目标元素（与 .mark-entry 的 data-mark-ref 对应），
+    // 供滚动高亮把加粗/划线/高亮/批注子条目也纳入"我正在哪里"的判定。
+    let tocMarkRefs = [];
     function setupTocScrollSync() {
         if (tocScrollSyncBound) return;
         const scroller = document.querySelector('.vditor-wysiwyg');
@@ -1829,34 +1835,50 @@ document.addEventListener('DOMContentLoaded', async () => {
         const scroller = document.querySelector('.vditor-wysiwyg');
         const root = scroller?.querySelector('.vditor-reset');
         if (!tocList || !root) return;
-        const items = Array.from(tocList.querySelectorAll('.toc-item[data-heading-id]'));
+        const items = Array.from(tocList.querySelectorAll('.toc-item'));
         if (items.length === 0) return;
+        const headingItems = items.filter(item => item.dataset.headingId !== undefined);
 
         // Vditor's setValue pipeline rebuilds heading nodes and drops the
         // synced anchor ids; re-apply them from the last generated TOC and
         // fall back to positional matching (rendered headings and TOC entries
         // derive from the same ATX sequence) so scroll tracking survives.
         const headingEls = Array.from(root.querySelectorAll('h1, h2, h3, h4, h5, h6'));
-        if (items.some(item => !root.querySelector(`#${CSS.escape(item.dataset.headingId)}`))) {
+        if (headingItems.some(item => !root.querySelector(`#${CSS.escape(item.dataset.headingId)}`))) {
             editorInstance?.syncRenderedHeadingIds(lastGeneratedToc);
         }
-        const resolveHeading = (item, index) => root.querySelector(`#${CSS.escape(item.dataset.headingId)}`)
-            || headingEls[index]
-            || null;
 
         const scrollerRect = scroller.getBoundingClientRect();
-        const probeLine = scrollerRect.top + Math.min(scrollerRect.height * 0.25, 160);
-        let activeId = items[0].dataset.headingId;
-        for (let i = 0; i < items.length; i += 1) {
-            const heading = resolveHeading(items[i], i);
-            if (!heading) continue;
-            if (heading.getBoundingClientRect().top <= probeLine) {
-                activeId = items[i].dataset.headingId;
-            } else {
+        // 探针线与跳转落点（scrollRenderedElementIntoView 的 18% 锚点）一致：
+        // 这样点击目录跳转后，被点击的条目（含加粗/批注等片段子条目）正好
+        // 成为高亮项，而不是它的父标题。
+        const probeLine = scrollerRect.top + Math.max(24, scrollerRect.height * 0.18) + 2;
+        let headingOrdinal = 0;
+        const resolveTarget = (item) => {
+            if (item.dataset.markRef !== undefined) {
+                const target = tocMarkRefs[Number(item.dataset.markRef)];
+                return target && target.isConnected ? target : null;
+            }
+            const heading = root.querySelector(`#${CSS.escape(item.dataset.headingId)}`)
+                || headingEls[headingOrdinal]
+                || null;
+            headingOrdinal += 1;
+            return heading;
+        };
+
+        // 条目按 DOM 顺序即文档顺序；高亮 = 探针线之上最近的条目。
+        // 片段子条目解析失败（目标已断开）时跳过，回退到标题粒度。
+        let activeItem = headingItems[0] || null;
+        for (const item of items) {
+            const target = resolveTarget(item);
+            if (!target) continue;
+            if (target.getBoundingClientRect().top <= probeLine) {
+                activeItem = item;
+            } else if (item.dataset.headingId !== undefined) {
                 break;
             }
         }
-        items.forEach(item => item.classList.toggle('active', item.dataset.headingId === activeId));
+        items.forEach(item => item.classList.toggle('active', item === activeItem));
     }
 
     // Mobile: the right sidebar doubles as a TOC drawer opened from the
