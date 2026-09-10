@@ -2377,7 +2377,7 @@ main {
     height: 16px;
     margin: 0 0.3em 0.15em 0;
     vertical-align: middle;
-    accent-color: color-mix(in srgb, var(--primary-color) 72%, #ffd84a);
+    accent-color: #ffd84a;
     cursor: pointer;
 }
 
