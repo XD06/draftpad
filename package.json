@@ -41,6 +41,9 @@
     "test:thought-subtasks": "node test/test_thought_subtask_interactions.js",
     "test:thought-motion": "node test/test_thought_motion_policy.js",
     "test:time-command": "node test/test_time_command.js",
+    "test:tiptap-roundtrip": "node test/test_tiptap_roundtrip.js",
+    "test:tiptap-caret": "node test/test_tiptap_caret_navigation.js",
+    "test:tiptap-time-command": "node test/test_tiptap_time_command.js",
     "test:hybrid-editor-time-command": "node test/test_hybrid_editor_time_command.js",
     "test:hybrid-editor-caret-stability": "node test/test_hybrid_editor_caret_stability.js",
     "test:editor-input-browser": "node test/browser/editor-input.js",
@@ -91,6 +94,7 @@
     "test:s3-real": "node test/test_s3_real_smoke.js",
     "ai:backfill-prefix": "node scripts/ai-backfill-prefix.js",
     "generate-icons": "node scripts/generate-png.js",
+    "build:tiptap": "node scripts/build-tiptap-bundle.js",
     "docker:update": "node scripts/update-docker-container.js",
     "seed:demo": "node scripts/seed-demo-data.js --reset",
     "seed:demo:merge": "node scripts/seed-demo-data.js --merge"
@@ -99,6 +103,14 @@
     "@aws-sdk/client-s3": "^3.1055.0",
     "@aws-sdk/s3-request-presigner": "^3.1055.0",
     "@highlightjs/cdn-assets": "^11.11.1",
+    "@tiptap/core": "^3.31.3",
+    "@tiptap/extension-code-block-lowlight": "^3.31.3",
+    "@tiptap/extension-highlight": "^3.31.3",
+    "@tiptap/extension-image": "^3.31.3",
+    "@tiptap/extension-table": "^3.31.3",
+    "@tiptap/extension-task-item": "^3.31.3",
+    "@tiptap/extension-task-list": "^3.31.3",
+    "@tiptap/starter-kit": "^3.31.3",
     "compression": "^1.8.1",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
@@ -106,15 +118,20 @@
     "express": "^5.1.0",
     "fuse.js": "^7.1.0",
     "ipaddr.js": "^2.2.0",
+    "lowlight": "^3.3.0",
     "marked": "^15.0.11",
     "marked-alert": "^2.1.2",
     "marked-extended-tables": "^2.0.1",
     "marked-highlight": "^2.2.2",
+    "mermaid": "^11.17.2",
     "sharp": "^0.33.2",
+    "tiptap-markdown": "^0.9.0",
     "vditor": "^3.11.2",
     "ws": "^8.18.2"
   },
   "devDependencies": {
+    "esbuild": "^0.28.2",
+    "jsdom": "^30.0.1",
     "nodemon": "^3.0.3"
   }
 }

@@ -1,4 +1,7 @@
 const DEFAULT_STARTUP_CACHE_KEY = 'dumbpad_startup_cache_v1';
+// 缓存格式版本：2。升版一次性作废 v1 缓存（含编辑器内核切换期间
+// 写入的假脏笔记），loadStartupCache 对旧版本返回 null 即完成迁移。
+const STARTUP_CACHE_VERSION = 2;
 
 export default class NoteSyncController {
     constructor({ storageManager, key = DEFAULT_STARTUP_CACHE_KEY } = {}) {
@@ -9,7 +12,7 @@ export default class NoteSyncController {
 
     loadStartupCache() {
         const cache = this.storageManager.load(this.key);
-        if (!cache || cache.version !== 1 || !Array.isArray(cache.notepads)) return null;
+        if (!cache || cache.version !== STARTUP_CACHE_VERSION || !Array.isArray(cache.notepads)) return null;
         return {
             ...cache,
             notes: cache.notes && typeof cache.notes === 'object' ? cache.notes : {}
@@ -17,11 +20,11 @@ export default class NoteSyncController {
     }
 
     saveStartupCache(patch = {}) {
-        const previous = this.loadStartupCache() || { version: 1, notes: {}, notepads: [] };
+        const previous = this.loadStartupCache() || { version: STARTUP_CACHE_VERSION, notes: {}, notepads: [] };
         const next = {
             ...previous,
             ...patch,
-            version: 1,
+            version: STARTUP_CACHE_VERSION,
             notes: {
                 ...(previous.notes || {}),
                 ...(patch.notes || {})
@@ -48,7 +51,7 @@ export default class NoteSyncController {
     }
 
     cacheNote(notepadId, content, options = {}, { notepads = [] } = {}) {
-        const previous = this.loadStartupCache() || { version: 1, notes: {}, notepads };
+        const previous = this.loadStartupCache() || { version: STARTUP_CACHE_VERSION, notes: {}, notepads };
         const previousNote = previous.notes?.[notepadId] || {};
         const dirty = !!options.dirty;
         const nextNote = {

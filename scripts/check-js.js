@@ -27,8 +27,28 @@ function collectJsFiles(dir, files = []) {
 const files = collectJsFiles(ROOT).sort();
 let failed = false;
 
+// node --check 以 CJS 规则解析无 type:module 的 .js，会放过部分 ESM 语法错误
+// （Chrome 加载时才炸）。追加 esbuild 的 ESM 解析兜底（构建期仅在存在
+// node_modules 时启用，Docker 运行时不含 devDependencies 则跳过该步）。
+let esbuild = null;
+try {
+    esbuild = require('esbuild');
+} catch (_error) {
+    console.warn('esbuild not available; skipping ESM parse check (run npm install in dev to enable)');
+}
+
 for (const file of files) {
     const relative = path.relative(ROOT, file);
+    if (esbuild) {
+        try {
+            esbuild.transformSync(fs.readFileSync(file, 'utf8'), { loader: 'js' });
+        } catch (error) {
+            const location = error.errors?.[0]?.location;
+            failed = true;
+            console.error(`ESM parse check failed: ${relative} @ ${location ? `${location.line}:${location.column}` : ''}`);
+            if (location?.lineText) console.error(`  ${location.lineText}`);
+        }
+    }
     const result = spawnSync(process.execPath, ['--check', file], {
         cwd: ROOT,
         encoding: 'utf8'

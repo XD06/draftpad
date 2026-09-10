@@ -1936,6 +1936,15 @@ main {
     [data-theme="dark"] .boot-editor {
         border-color: #141414;
     }
+
+    /* 活编辑卡片（旧 vditor 的 pre / Tiptap 的 .tiptap）在移动端同样回到
+       实测几何：桌面那段 64px margin / 24px padding 的规则不适用（容器
+       padding-top 已给浮动工具条让位），10px 内边距让文字近乎平铺。 */
+    body:not(.thoughts-mode) .typora-editor-shell .vditor-wysiwyg pre.vditor-reset,
+    body:not(.thoughts-mode) .typora-editor-shell .vditor-wysiwyg .tiptap {
+        margin: 0 auto;
+        padding: 10px 10px 64px;
+    }
 }
 
 .hybrid-editor-scroller {
@@ -2229,6 +2238,71 @@ main {
     box-sizing: border-box;
 }
 
+/* Tiptap 适配器（public/tiptap-editor.js）的编辑面：视觉上复刻
+ * pre.vditor-reset 的卡片形态，避免切流后编辑区裸奔。 */
+.typora-editor-shell .tiptap {
+    width: 100%;
+    max-width: 800px;
+    min-height: 60vh;
+    /* 顶部让位：与移动端 margin: 64px auto 0 一致，避免卡片滑到 sticky 顶栏下面 */
+    margin: 64px auto 0;
+    padding: 38px 40px 110px;
+    outline: none;
+    background: var(--textarea-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    box-shadow: 0 10px 30px rgba(15, 23, 42, 0.05);
+    box-sizing: border-box;
+    color: var(--text-color);
+    font-family: var(--font-reading);
+    font-size: 16.5px;
+    line-height: 1.68;
+    white-space: pre-wrap;
+}
+
+.typora-editor-shell .tiptap p {
+    margin: 0 0 1em;
+}
+
+.typora-editor-shell .tiptap mark.md-mark {
+    background: rgba(255, 214, 10, 0.35);
+    color: inherit;
+    padding: 0 1px;
+    border-radius: 2px;
+}
+
+.typora-editor-shell .tiptap .article-search-hit {
+    background: rgba(59, 130, 246, 0.35);
+    border-radius: 3px;
+}
+
+.typora-editor-shell .tiptap img {
+    max-width: 100%;
+    border-radius: 6px;
+}
+
+.tiptap-source-textarea {
+    width: 100%;
+    min-height: 60vh;
+    padding: 24px;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    background: var(--textarea-bg);
+    color: var(--text-color);
+    font-family: var(--font-code, monospace);
+    font-size: 14px;
+    line-height: 1.6;
+    resize: none;
+    outline: none;
+    box-sizing: border-box;
+}
+
+/* 搜索关键词命中的临时高亮（1.6s 后自动摘除） */
+.tiptap .article-search-hit {
+    background: rgba(250, 204, 21, 0.55);
+    border-radius: 3px;
+}
+
 .typora-source-editor {
     display: none;
     width: 100%;
@@ -2285,6 +2359,81 @@ main {
 .typora-editor-shell .vditor-reset p,
 .typora-editor-shell .vditor-reset li {
     color: var(--text-color);
+}
+
+/* 待办列表（Tiptap 官方 TaskItem 渲染的 ul[data-type=taskList]）：
+   去掉普通列表的圆点/序号与 2em 缩进，checkbox 与文字同行。 */
+.typora-editor-shell .vditor-reset ul[data-type="taskList"] {
+    list-style: none;
+    padding-left: 0.6em;
+}
+
+.typora-editor-shell .vditor-reset ul[data-type="taskList"] li {
+    display: flex;
+    align-items: flex-start;
+    list-style: none;
+}
+
+.typora-editor-shell .vditor-reset ul[data-type="taskList"] li > label {
+    flex: 0 0 auto;
+    margin-right: 0.35em;
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+.typora-editor-shell .vditor-reset ul[data-type="taskList"] li > label input {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 16px;
+    height: 16px;
+    margin: 2px 0.3em 0.15em 0;
+    vertical-align: middle;
+    border: 1.5px solid #c9ced6;
+    border-radius: 4px;
+    background: transparent;
+    cursor: pointer;
+    position: relative;
+    flex: none;
+}
+
+.typora-editor-shell .vditor-reset ul[data-type="taskList"] li > label input:checked {
+    background: #ecb015;
+    border-color: #ecb015;
+}
+
+/* 白色对勾：自定义绘制并整体居中，覆盖原生 accent 勾 */
+.typora-editor-shell .vditor-reset ul[data-type="taskList"] li > label input:checked::after {
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: 40%;
+    width: 4.5px;
+    height: 8.5px;
+    border: solid #fff;
+    border-width: 0 2px 2px 0;
+    transform: translate(-50%, -52%) rotate(45deg);
+}
+
+.typora-editor-shell .vditor-reset ul[data-type="taskList"] li > div {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.typora-editor-shell .vditor-reset ul[data-type="taskList"] li > div > p:first-child {
+    margin-top: 0;
+}
+
+.typora-editor-shell .vditor-reset ul[data-type="taskList"] li > div > p:last-child {
+    margin-bottom: 0;
+}
+
+/* 勾选完成的待办：文字删除线 + 淡灰（直接命中 div 与内部 p，
+   否则 .vditor-reset p 的直接颜色规则会把继承的灰色顶掉） */
+.typora-editor-shell .vditor-reset ul[data-type="taskList"] li[data-checked="true"] > div,
+.typora-editor-shell .vditor-reset ul[data-type="taskList"] li[data-checked="true"] > div p {
+    color: #9aa4ae;
+    text-decoration: line-through;
+    text-decoration-color: currentColor;
 }
 
 .typora-editor-shell .vditor-reset a {
@@ -5536,4 +5685,81 @@ body.article-image-lightbox-open {
         right: 12px;
         left: 12px;
     }
+}
+
+/* Tiptap 适配器：YAML frontmatter 外挂展示块（不进编辑器文档，原样保存）。
+ * 视觉上与卡片一体：占位块承担 64px 顶部让位，卡片自身 margin-top 归零；
+ * 内部观感对齐 .vditor-reset pre > code（--code-bg 灰底），与正文同框。 */
+.dumbpad-frontmatter-static {
+    width: 100%;
+    max-width: 800px;
+    margin: 64px auto 0;
+    padding: 14px 16px;
+    border-bottom: 0;
+    background: var(--code-bg, var(--textarea-bg));
+    border: 1px solid var(--border-color);
+    border-radius: 8px 8px 0 0;
+    box-sizing: border-box;
+    color: var(--text-color);
+    font-family: var(--font-code, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+    font-size: 14px;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    overflow-x: auto;
+}
+
+.typora-editor-shell.is-source-mode .dumbpad-frontmatter-static {
+    display: none;
+}
+
+.typora-editor-shell:has(.dumbpad-frontmatter-static) .tiptap {
+    margin-top: 0;
+    border-top-left-radius: 0;
+    border-top-right-radius: 0;
+}
+
+/* Tiptap 适配器：滚动层顶部补偿——sticky 顶栏高度让内容起点与锚点
+ * 落点都在工具栏下方，避免第一条标题被盖住（旧 DOM 由 vditor 自带）。 */
+.typora-editor-shell .vditor-wysiwyg {
+    scroll-padding-top: 78px;
+}
+
+.typora-editor-shell .tiptap h1,
+.typora-editor-shell .tiptap h2,
+.typora-editor-shell .tiptap h3,
+.typora-editor-shell .tiptap h4,
+.typora-editor-shell .tiptap h5,
+.typora-editor-shell .tiptap h6 {
+    scroll-margin-top: 90px;
+}
+
+/* Tiptap 适配器：代码块样式与旧 vditor 块共享同一份视觉基准。
+ * 旧选择器挂在 .vditor-wysiwyg__block 结构上；这里为 Tiptap 的
+ * pre > code 直载 DOM 追加等价规则（背景/边框/字体/内边距一致，
+ * 便于后续徽章/复制按钮/行号 UI 无缝接入）。 */
+.typora-editor-shell .tiptap pre {
+    position: relative;
+    margin: 0.8em 0;
+    padding: 29px 16px 12px 54px;
+    background: var(--code-bg);
+    border: 1px solid color-mix(in srgb, var(--border-color) 80%, transparent);
+    border-radius: 8px;
+    box-sizing: border-box;
+    font-family: "DumbPad Code", "Fira Code", "SF Mono", SFMono-Regular, "JetBrains Mono", monospace;
+    font-size: 16.5px;
+    line-height: 1.55;
+    white-space: pre;
+    overflow-x: auto;
+    tab-size: 4;
+}
+
+.typora-editor-shell .tiptap pre code {
+    background: transparent;
+    background-image: none !important;
+    padding: 0;
+    font-family: inherit;
+    font-size: inherit;
+    color: inherit;
+    display: block;
+    white-space: pre;
 }

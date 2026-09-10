@@ -44,6 +44,12 @@ const crlf = buildMarkdownHeadingIndex('# Alpha #\r\n###### Zeta ######\r\n');
 assert.deepStrictEqual(Array.from(crlf.toc, item => [item.text, item.line]), [['Alpha', 0], ['Zeta', 1]]);
 
 const fenced = buildMarkdownHeadingIndex('```md\n# Inside fence\n```\n# Outside');
-assert.deepStrictEqual(Array.from(fenced.toc, item => item.text), ['Inside fence', 'Outside'], 'preserve existing fence scanning semantics');
+assert.deepStrictEqual(Array.from(fenced.toc, item => item.text), ['Outside'], 'headings inside fenced code blocks are not real headings');
+
+const fencedTilde = buildMarkdownHeadingIndex('~~~\n## 示例文本\n~~~\n\n### Real');
+assert.deepStrictEqual(Array.from(fencedTilde.toc, item => item.text), ['Real'], 'tilde fences are skipped too');
+
+const unterminated = buildMarkdownHeadingIndex('```js\nconst a = "# not a heading";\n');
+assert.strictEqual(unterminated.toc.length, 0, 'unterminated fence swallows the rest');
 
 console.log('Heading index checks passed');

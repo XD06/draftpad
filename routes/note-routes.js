@@ -83,12 +83,18 @@ function registerNoteRoutes(app, context) {
             const result = await storage.withNotepadWriteLock(async () => {
                 const { notepad } = await findNotepadById(id);
 
-                if (notepad && Number.isFinite(clientVersion) && (notepad.version || 1) > clientVersion) {
+                if (notepad) {
                     const currentContent = await storage.readNoteContent(notepad);
+                    // 内容与已存内容完全一致就不是一次修改：不计版本、不刷新
+                    // updatedAt（文章水印的"更新时间/修改次数"只反映真实保
+                    // 存），也不再广播。这同时覆盖 stale 重试与 baseVersion
+                    // 跟手时的 noop 保存（打字后又在防抖窗口内撤销等）。
                     if (currentContent === content) {
                         return { unchanged: true, version: notepad.version || 1 };
                     }
-                    return { conflict: true, currentVersion: notepad.version || 1 };
+                    if (Number.isFinite(clientVersion) && (notepad.version || 1) > clientVersion) {
+                        return { conflict: true, currentVersion: notepad.version || 1 };
+                    }
                 }
 
                 if (!notepad) {

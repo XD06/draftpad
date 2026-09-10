@@ -809,22 +809,56 @@ async function run() {
         assert(result.response.status === 409, 'stale note patch should return 409');
         assert(result.body.currentVersion === 2, 'note conflict should report current version');
 
-        result = await request(`/api/notes/${notepadId}`, {
-            method: 'POST',
-            body: JSON.stringify({ content: 'hello world', baseVersion: 2, userId: 'api-regression-save', saveId: 'api-regression-save-1' })
-        });
-        assert(result.response.ok, 'POST /api/notes/:id save should succeed');
-        assert(result.body.version === 3, 'note save should increment version');
-        assert(result.body.saveId === 'api-regression-save-1', 'note save should echo saveId for client acknowledgement');
-        assert(typeof result.body.contentHash === 'string' && result.body.contentHash.length >= 16, 'note save should return a content hash');
-
+        // Noop 保存去重：内容与已存内容一致时不计版本、不刷 updatedAt，
+        // 无论 baseVersion 跟手、落后还是缺失（重复计数修复的契约）。
+        // 此刻已存内容即 'hello world'（PATCH append 后未再变更），版本 2。
         result = await request(`/api/notes/${notepadId}`, {
             method: 'POST',
             body: JSON.stringify({ content: 'hello world', baseVersion: 2, userId: 'api-regression-save', saveId: 'api-regression-save-2' })
         });
+        assert(result.response.ok, 'same-content current-version note save should be accepted');
+        assert(result.body.version === 2, 'same-content current-version note save should not increment version');
+        assert(result.body.unchanged === true, 'same-content current-version note save should report unchanged');
+
+        result = await request(`/api/notes/${notepadId}`, {
+            method: 'POST',
+            body: JSON.stringify({ content: 'hello world', baseVersion: 1, userId: 'api-regression-save', saveId: 'api-regression-save-3' })
+        });
         assert(result.response.ok, 'same-content stale note save should be accepted as already synced');
-        assert(result.body.version === 3, 'same-content stale note save should not increment version');
+        assert(result.body.version === 2, 'same-content stale note save should not increment version');
         assert(result.body.unchanged === true, 'same-content stale note save should report unchanged');
+
+        result = await request(`/api/notes/${notepadId}`, {
+            method: 'POST',
+            body: JSON.stringify({ content: 'hello world', userId: 'api-regression-save', saveId: 'api-regression-save-4' })
+        });
+        assert(result.response.ok, 'same-content save without baseVersion should be accepted');
+        assert(result.body.version === 2, 'same-content save without baseVersion should not increment version');
+        assert(result.body.unchanged === true, 'same-content save without baseVersion should report unchanged');
+
+        // 真实内容变化才计一次修改。
+        result = await request(`/api/notes/${notepadId}`, {
+            method: 'POST',
+            body: JSON.stringify({ content: 'hello world!', baseVersion: 2, userId: 'api-regression-save', saveId: 'api-regression-save-5' })
+        });
+        assert(result.response.ok, 'POST /api/notes/:id save should succeed');
+        assert(result.body.version === 3, 'note save with new content should increment version');
+        assert(result.body.saveId === 'api-regression-save-5', 'note save should echo saveId for client acknowledgement');
+        assert(typeof result.body.contentHash === 'string' && result.body.contentHash.length >= 16, 'note save should return a content hash');
+
+        result = await request(`/api/notes/${notepadId}`, {
+            method: 'POST',
+            body: JSON.stringify({ content: 'hello world', baseVersion: 2, userId: 'api-regression-save', saveId: 'api-regression-save-6' })
+        });
+        assert(result.response.status === 409, 'stale save with different content should return 409');
+        assert(result.body.currentVersion === 3, 'stale conflicting save should report current version');
+
+        // 恢复内容供后续 rename 段断言使用（真实变化 → 版本 4）。
+        result = await request(`/api/notes/${notepadId}`, {
+            method: 'POST',
+            body: JSON.stringify({ content: 'hello world', baseVersion: 3, userId: 'api-regression-save', saveId: 'api-regression-save-7' })
+        });
+        assert(result.response.ok && result.body.version === 4, 'restoring content should increment version');
 
         // Fine-grained note editing (#1 phase 1): an agent can make a targeted
         // change with an occurrence guard instead of rewriting the whole note.
@@ -980,7 +1014,7 @@ async function run() {
 
         result = await request('/api/notepads');
         const renamedNotepad = result.body.notepads_list.find(item => item.id === notepadId);
-        assert(renamedNotepad?.version === 4, 'renamed notepad should expose the latest version before pinning');
+        assert(renamedNotepad?.version === 5, 'renamed notepad should expose the latest version before pinning');
 
         result = await request(`/api/notepads/${notepadId}`, {
             method: 'PATCH',

@@ -37,7 +37,7 @@ assert(
 );
 
 // --- the card itself must hug its content, not carry a big internal pad ------
-const cardSelector = 'body:not(.thoughts-mode) .typora-editor-shell .vditor-wysiwyg pre.vditor-reset {';
+const cardSelector = 'body:not(.thoughts-mode) .typora-editor-shell .vditor-wysiwyg pre.vditor-reset,';
 const cardIdx = css.indexOf(cardSelector);
 assert(cardIdx !== -1, 'the desktop WYSIWYG content rule (pre.vditor-reset) must exist');
 

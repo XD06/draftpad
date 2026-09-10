@@ -1544,7 +1544,8 @@ main {
         padding-bottom: 80px;
     }
 
-    body:not(.thoughts-mode) .typora-editor-shell .vditor-wysiwyg pre.vditor-reset {
+    body:not(.thoughts-mode) .typora-editor-shell .vditor-wysiwyg pre.vditor-reset,
+    body:not(.thoughts-mode) .typora-editor-shell .vditor-wysiwyg .tiptap {
         margin: 64px auto 0 !important;
         padding-top: 24px !important;
         /* Balance the card internally against its 24px top padding; the bottom
@@ -2096,15 +2097,49 @@ main {
 }
 
 @media (max-width: 980px) {
+    /* 移动端表格：与代码块同策略——单元格不折行，整表横向滑动查看，
+       行高保持单行紧凑。内联 code 自带 pre-wrap/break-word（vditor 遗留
+       规则），会让单词被逐字符拆行，这里让它继承单元格的 nowrap。 */
     .vditor-wysiwyg .vditor-reset table {
-        word-break: break-word;
-        overflow-wrap: break-word;
+        white-space: nowrap;
+        overflow-wrap: normal;
+        word-break: normal;
     }
 
     .vditor-wysiwyg .vditor-reset table th,
-    .vditor-wysiwyg .vditor-reset table td {
-        white-space: normal;
-        word-break: break-word;
-        overflow-wrap: break-word;
+    .vditor-wysiwyg .vditor-reset table td,
+    .vditor-wysiwyg .vditor-reset table th code,
+    .vditor-wysiwyg .vditor-reset table td code {
+        white-space: nowrap !important;
+        overflow-wrap: normal !important;
+        word-break: normal !important;
+    }
+
+    /* 单元格内段落去掉卡片式 1em 下边距，行高才真正紧凑；vditor 遗留的
+       th:first-child::after 空占位（min-height 24px 的 inline-block）会在
+       每行多撑出一个行盒，一并清掉。 */
+    .vditor-wysiwyg .vditor-reset table th > p,
+    .vditor-wysiwyg .vditor-reset table td > p {
+        margin: 0 !important;
+        font-size: 13.5px;
+        line-height: 1.55;
+    }
+
+    .vditor-wysiwyg .vditor-reset table th::before,
+    .vditor-wysiwyg .vditor-reset table th::after,
+    .vditor-wysiwyg .vditor-reset table td::before,
+    .vditor-wysiwyg .vditor-reset table td::after {
+        content: none !important;
+        display: none !important;
+    }
+
+    /* 移动端代码块：长行不折行，横向滑动查看（左右滑条）。行号栏是
+       pre 上的绝对定位 ::before，不随 code 横向滚动。编辑与阅读模式
+       共用该 DOM，规则对两者同时生效。 */
+    .typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] > pre > code {
+        white-space: pre;
+        overflow-wrap: normal;
+        word-break: normal;
+        overflow-x: auto;
     }
 }

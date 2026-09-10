@@ -114,7 +114,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     // tracks the card's bottom edge and is clipped until the reader gets there.
     const articleMetaFooter = new ArticleMetaFooter({
         host: document.getElementById('editor-main'),
-        getCard: () => document.querySelector('#hybrid-editor .vditor-wysiwyg pre.vditor-reset')
+        // 卡片本体：旧 vditor 是 pre.vditor-reset，Tiptap 适配器是
+        // div.tiptap.vditor-reset（白底/圆角/边框都在它身上），两者都是
+        // .vditor-wysiwyg 下第一个 .vditor-reset，用类选择器同时命中。
+        getCard: () => document.querySelector('#hybrid-editor .vditor-wysiwyg .vditor-reset')
     });
     articleMetaFooter.attach();
 
@@ -293,6 +296,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     let saveTimeout;
     let saveRetryTimeout;
+    // 输入停止多久后才真正同步（本地缓存每击即写，POST 只在静默后发生）。
+    const NOTE_SAVE_DEBOUNCE_MS = 5000;
     // Monotonically increasing local edit revision.  Retry callbacks capture
     // the revision they were created for and must never replay stale content
     // after the editor has changed.
@@ -1650,6 +1655,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         setupTocScrollSync();
         if (!currentNotepadId) {
             tocList.innerHTML = '<div class="article-toc-empty">打开文章后显示目录</div>';
+            tocMarkRefs = [];
             updateActiveTocItem();
             return;
         }
@@ -1658,6 +1664,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const toc = editorInstance.generateToC(pendingEditorValue || undefined);
         if (toc.length === 0) {
             tocList.innerHTML = '<div class="article-toc-empty">本文暂无标题目录</div>';
+            tocMarkRefs = [];
             return;
         }
 
@@ -1686,6 +1693,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             });
         });
         tocList.innerHTML = markHtml;
+        tocMarkRefs = markRefs;
 
         tocList.querySelectorAll('.mark-entry').forEach(el => {
             el.onclick = () => {
@@ -1809,6 +1817,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     // of the editor viewport. Bound once to the editor scroll container.
     let tocScrollSyncBound = false;
     let lastGeneratedToc = [];
+    // 当前目录渲染持有的片段目标元素（与 .mark-entry 的 data-mark-ref 对应），
+    // 供滚动高亮把加粗/划线/高亮/批注子条目也纳入"我正在哪里"的判定。
+    let tocMarkRefs = [];
     function setupTocScrollSync() {
         if (tocScrollSyncBound) return;
         const scroller = document.querySelector('.vditor-wysiwyg');
@@ -1829,34 +1840,50 @@ document.addEventListener('DOMContentLoaded', async () => {
         const scroller = document.querySelector('.vditor-wysiwyg');
         const root = scroller?.querySelector('.vditor-reset');
         if (!tocList || !root) return;
-        const items = Array.from(tocList.querySelectorAll('.toc-item[data-heading-id]'));
+        const items = Array.from(tocList.querySelectorAll('.toc-item'));
         if (items.length === 0) return;
+        const headingItems = items.filter(item => item.dataset.headingId !== undefined);
 
         // Vditor's setValue pipeline rebuilds heading nodes and drops the
         // synced anchor ids; re-apply them from the last generated TOC and
         // fall back to positional matching (rendered headings and TOC entries
         // derive from the same ATX sequence) so scroll tracking survives.
         const headingEls = Array.from(root.querySelectorAll('h1, h2, h3, h4, h5, h6'));
-        if (items.some(item => !root.querySelector(`#${CSS.escape(item.dataset.headingId)}`))) {
+        if (headingItems.some(item => !root.querySelector(`#${CSS.escape(item.dataset.headingId)}`))) {
             editorInstance?.syncRenderedHeadingIds(lastGeneratedToc);
         }
-        const resolveHeading = (item, index) => root.querySelector(`#${CSS.escape(item.dataset.headingId)}`)
-            || headingEls[index]
-            || null;
 
         const scrollerRect = scroller.getBoundingClientRect();
-        const probeLine = scrollerRect.top + Math.min(scrollerRect.height * 0.25, 160);
-        let activeId = items[0].dataset.headingId;
-        for (let i = 0; i < items.length; i += 1) {
-            const heading = resolveHeading(items[i], i);
-            if (!heading) continue;
-            if (heading.getBoundingClientRect().top <= probeLine) {
-                activeId = items[i].dataset.headingId;
-            } else {
+        // 探针线与跳转落点（scrollRenderedElementIntoView 的 18% 锚点）一致：
+        // 这样点击目录跳转后，被点击的条目（含加粗/批注等片段子条目）正好
+        // 成为高亮项，而不是它的父标题。
+        const probeLine = scrollerRect.top + Math.max(24, scrollerRect.height * 0.18) + 2;
+        let headingOrdinal = 0;
+        const resolveTarget = (item) => {
+            if (item.dataset.markRef !== undefined) {
+                const target = tocMarkRefs[Number(item.dataset.markRef)];
+                return target && target.isConnected ? target : null;
+            }
+            const heading = root.querySelector(`#${CSS.escape(item.dataset.headingId)}`)
+                || headingEls[headingOrdinal]
+                || null;
+            headingOrdinal += 1;
+            return heading;
+        };
+
+        // 条目按 DOM 顺序即文档顺序；高亮 = 探针线之上最近的条目。
+        // 片段子条目解析失败（目标已断开）时跳过，回退到标题粒度。
+        let activeItem = headingItems[0] || null;
+        for (const item of items) {
+            const target = resolveTarget(item);
+            if (!target) continue;
+            if (target.getBoundingClientRect().top <= probeLine) {
+                activeItem = item;
+            } else if (item.dataset.headingId !== undefined) {
                 break;
             }
         }
-        items.forEach(item => item.classList.toggle('active', item.dataset.headingId === activeId));
+        items.forEach(item => item.classList.toggle('active', item === activeItem));
     }
 
     // Mobile: the right sidebar doubles as a TOC drawer opened from the
@@ -1922,13 +1949,18 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (editorInstance) return editorInstance;
         if (!editorLoader) {
             editorLoader = (async () => {
+                // Tiptap 内核：预打包单文件 bundle（PWA 按需缓存），随后加载黑盒适配器。
+                // vditor 的 index.css 继续提供 .vditor-reset 的 Markdown 元素样式（表格、
+                // 代码块、引用等），与内核无关，保持视觉零变化。
+                const tiptapScript = loadScriptOnce('tiptap-editor-js', '/vendor/tiptap/tiptap.bundle.js');
                 const vditorStyles = loadStylesheetOnce('vditor-editor-css', '/vendor/vditor/index.css');
-                const vditorScript = loadScriptOnce('vditor-editor-js', '/vendor/vditor/index.min.js');
-                const hybridEditorModule = import('./hybrid-editor.js');
+                // 必须先等 bundle 挂上全局再执行适配器模块（其 import 阶段读取
+                // window.DumbPadTiptap），否则弱网/慢盘下 import 抢跑直接报
+                // "Tiptap bundle is not loaded"。
+                await tiptapScript;
+                await vditorStyles;
                 const [{ HybridMarkdownEditor }] = await Promise.all([
-                    hybridEditorModule,
-                    vditorStyles,
-                    vditorScript
+                    import('./tiptap-editor.js')
                 ]);
                 editorInstance = new HybridMarkdownEditor(document.getElementById('hybrid-editor'), {
                     performanceMonitor: editorPerformanceMonitor.enabled ? editorPerformanceMonitor : null,
@@ -2188,12 +2220,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     }
 
-    async function saveNotes(content, isAutoSave, showStatus = true, retryCount = 0, targetNotepadId = currentNotepadId, expectedRevision = null) {
+    async function saveNotes(content, isAutoSave, showStatus = true, retryCount = 0, targetNotepadId = currentNotepadId, expectedRevision = null, options = null) {
         const queueKey = isValidNotepadId(targetNotepadId) ? targetNotepadId : currentNotepadId;
         const previousSave = saveNotesInFlight.get(queueKey) || Promise.resolve();
         const queuedSave = previousSave
             .catch(() => undefined)
-            .then(() => performSaveNotes(content, isAutoSave, showStatus, retryCount, targetNotepadId, expectedRevision));
+            .then(() => performSaveNotes(content, isAutoSave, showStatus, retryCount, targetNotepadId, expectedRevision, options));
         saveNotesInFlight.set(queueKey, queuedSave);
         try {
             return await queuedSave;
@@ -2204,7 +2236,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     }
 
-    async function performSaveNotes(content, isAutoSave, showStatus = true, retryCount = 0, targetNotepadId = currentNotepadId, expectedRevision = null) {
+    async function performSaveNotes(content, isAutoSave, showStatus = true, retryCount = 0, targetNotepadId = currentNotepadId, expectedRevision = null, options = {}) {
         let baseVersion;
         let saveId;
         try {
@@ -2224,10 +2256,16 @@ document.addEventListener('DOMContentLoaded', async () => {
             pendingNoteSaveIds.add(saveId);
             const payload = { content, userId, saveId };
             if (Number.isFinite(baseVersion)) payload.baseVersion = baseVersion;
+            const payloadText = JSON.stringify(payload);
+            // 卸载兜底 flush 的请求要带 keepalive 才能在页面关闭后送达；
+            // keepalive 超过 64KB 会直接抛错，超限时报文走常规路径（本地
+            // 脏缓存 + 下次启动同步兜底）。
+            const keepalive = Boolean(options?.keepalive) && payloadText.length < 60 * 1024;
             const response = await fetchWithPin(`/api/notes/${targetNotepadId}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload),
+                body: payloadText,
+                keepalive,
             });
             const result = await response.json().catch(() => ({}));
             if (!response?.ok) {
@@ -2241,7 +2279,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             saveRetryTimeout = null;
             lastSaveTime = Date.now();
             setCurrentNoteVersion(targetNotepadId, result.version);
-            touchNotepadUpdatedAt(targetNotepadId);
+            // 服务端对内容未变化的保存返回 unchanged 且不刷 updatedAt，
+            // 本地镜像保持一致，水印的更新时间才不会虚高。
+            if (!result.unchanged) touchNotepadUpdatedAt(targetNotepadId);
             const savedContentStillCurrent = currentNotepadId === targetNotepadId && editor.value === content;
             if (showStatus) {
                 if (isAutoSave && savedContentStillCurrent) {
@@ -2537,11 +2577,23 @@ document.addEventListener('DOMContentLoaded', async () => {
         saveTimeout = setTimeout(async () => {
             // Capture targetNotepadId at debounce time: saveNotes defaults to
             // currentNotepadId which may have changed if the user switched
-            // notepads during the 300ms delay — that would write the old
+            // notepads during the idle delay — that would write the old
             // notepad's content into the new one.
             if (currentNotepadId !== targetNotepadId || editor.value !== content || editorRevision !== revision) return;
             await saveNotes(content, true, true, 0, targetNotepadId, revision);
-        }, 300);
+        }, NOTE_SAVE_DEBOUNCE_MS);
+    }
+
+    // 兜底 flush：切换笔记/页面隐藏时，把还在防抖窗口里的内容立即发出去。
+    // 内容此刻就是编辑器现值；即使与已存内容一致，服务端也会按 unchanged
+    // 幂等处理，不会推高版本。
+    function flushPendingNoteSave() {
+        if (!saveTimeout || !currentNotepadId) return;
+        clearTimeout(saveTimeout);
+        saveTimeout = null;
+        const pendingContent = editor.value;
+        if (pendingContent == null) return;
+        saveNotes(pendingContent, true, false, 0, currentNotepadId, editorRevision, { keepalive: true }).catch(() => {});
     }
 
     async function deleteNotepad() {
@@ -2767,14 +2819,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         // switching. performSaveNotes guards on currentNotepadId ===
         // targetNotepadId, so once currentNotepadId changes the pending save
         // would be skipped — leaving the old notepad with unsynced content.
-        if (saveTimeout && currentNotepadId) {
-            clearTimeout(saveTimeout);
-            saveTimeout = null;
-            const pendingContent = editor.value;
-            if (pendingContent != null) {
-                saveNotes(pendingContent, true, false).catch(() => {});
-            }
-        }
+        flushPendingNoteSave();
         saveEditorCaretForNotepad(currentNotepadId, editorInstance?.getPersistentCaretSnapshot?.());
         currentNotepadId = selectedNotepad.id;
         cacheNotepads(null, currentNotepadId);
@@ -3319,6 +3364,10 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         window.addEventListener('pagehide', () => {
             saveEditorCaretForNotepad(currentNotepadId, editorInstance?.getPersistentCaretSnapshot?.());
+            // 防抖加长后，关闭/切后台时把还在窗口内的输入立即送出
+            // （keepalive 让请求在页面卸载后仍能完成；失败由本地脏缓存
+            // + 下次启动同步兜底）。
+            flushPendingNoteSave();
         });
 
         window.addEventListener('popstate', (e) => {

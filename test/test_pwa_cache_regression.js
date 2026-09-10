@@ -32,6 +32,7 @@ const deferredAssets = [
     '/font/changerwencai.woff2',
     '/font/FiraCode-Regular.ttf',
     '/hybrid-editor.js',
+    '/vendor/tiptap/tiptap.bundle.js',
     '/vendor/vditor/index.css',
     '/vendor/vditor/index.min.js',
     '/vendor/vditor-package/dist/js/lute/lute.min.js'
