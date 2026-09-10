@@ -2108,4 +2108,14 @@ main {
         word-break: break-word;
         overflow-wrap: break-word;
     }
+
+    /* 移动端代码块：长行不折行，横向滑动查看（左右滑条）。行号栏是
+       pre 上的绝对定位 ::before，不随 code 横向滚动。编辑与阅读模式
+       共用该 DOM，规则对两者同时生效。 */
+    .typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] > pre > code {
+        white-space: pre;
+        overflow-wrap: normal;
+        word-break: normal;
+        overflow-x: auto;
+    }
 }
