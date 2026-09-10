@@ -5,7 +5,7 @@
 ## 1. 技术栈
 
 - 后端：Node.js、Express、WebSocket。
-- 前端：Vanilla JS ES modules、CSS、Vditor、Marked。
+- 前端：Vanilla JS ES modules、CSS、Tiptap/ProseMirror（编辑器内核，离线 bundle）、Marked。
 - 存储：本地 JSON/txt 文件或 S3 兼容对象存储。
 - 搜索：服务端 Fuse.js，数据由 `storage.getSearchDocuments()` 汇总。
 - AI：OpenAI-compatible chat、embedding、可选 rerank、手动 Thought insight，以及默认关闭的独立交互 Agent；无 key 时后台 pipeline 使用 noop provider。
@@ -35,7 +35,8 @@ Thought 前端 helper 拆分模块有聚合测试入口：`npm run test:thought-
 核心模块：
 
 - `public/app.js`：应用启动、Notepad 编辑与保存、设置页、同步状态、全局快捷键和主视图协调。
-- `public/hybrid-editor.js`：Vditor 封装，负责混合编辑、源码模式、阅读模式、目录索引、批注和高亮装饰。
+- `public/tiptap-editor.js` + `public/managers/tiptap-*.js`：Tiptap/ProseMirror 编辑器适配层，负责混合编辑、源码模式、阅读模式、目录索引、批注和高亮装饰。导出与旧 Vditor 封装同名的 `HybridMarkdownEditor` 类，`app.js` 契约不变；序列化与旧编辑器逐字节对齐（`test/test_tiptap_roundtrip.js` 固化）。编辑内核打包为离线单文件 `public/vendor/tiptap/tiptap.bundle.js`（`scripts/build-tiptap-bundle.js` 生成，含 tiptap-markdown、lowlight/highlight.js 常用语言）。
+- `public/hybrid-editor.js`：旧 Vditor 封装，已被 Tiptap 适配层取代，运行时不再加载，文件待删除（保留期间仅作行为对照）。
 - `public/managers/thoughts.js`：Thought UI 协调层。负责 DOM 插入、每卡事件绑定、乐观更新、toast、筛选、AI/relations 面板入口；全局事件初始化按 Quick Add、视图切换、搜索筛选、outbox、socket 分段，`render()` 负责列表生成，单卡交互集中在 `bindThoughtCardEvents()`，relation panel 事件分发集中在 `handleRelationsPanelClick()`，inline 子任务编辑的输入替换和提交协调分开维护。
 - `public/managers/thought-api-client.js`：Thought HTTP client。负责 URL 拼接、`encodeURIComponent`、JSON 请求和带 `status` 的错误。
 - `public/managers/thought-outbox.js`：Thought 本地 outbox。负责 localStorage key、队列合并、create/patch/delete/relation 队列项构造、服务端列表合并和 retry。
@@ -57,7 +58,7 @@ Thought 前端 helper 拆分模块有聚合测试入口：`npm run test:thought-
 - `public/managers/settings-data-panel.js`：设置页数据空间、垃圾桶和云端维护 API adapter。
 - `public/managers/ws-client.js`：轻量 WebSocket 客户端，把服务端事件转成浏览器 `CustomEvent`。
 
-### 严重 bug 记录：文章输入时光标乱跳与特殊样式闪烁
+### 严重 bug 记录：文章输入时光标乱跳与特殊样式闪烁（Vditor 内核时期，记录保留）
 
 **记录日期：2026-09-05。状态：修复已通过独立浏览器回归，用户初步反馈可用；完整真机验收尚未完成。**
 
@@ -73,11 +74,21 @@ Thought 前端 helper 拆分模块有聚合测试入口：`npm run test:thought-
 
 本次已通过 `npm run check`、`test:hybrid-editor-time-command`、`test:hybrid-editor-caret-stability`、`test:source-mode-roundtrip`、`test:editor-noop-save-guard` 和 `test:editor-input-browser`；没有运行全量 `npm test`。图片跳动未在独立样例中复现，相关视口检查通过不能代表原复杂文档的问题已解决，本次未修改滚动逻辑。移动端系统输入法、复杂嵌套列表和原图片场景仍保留为后续验收项；本次先固化稳定点，不继续扩展修复或更换编辑器内核。
 
-### 普通 Enter 的兼容性边界
+### 普通 Enter 的兼容性边界（Tiptap 适配器）
 
-`HybridMarkdownEditor` 不把所有 Enter 交给 Vditor。顶层普通段落使用 `handleWysiwygSoftEnter()`：它仅在无修饰键、非组合输入、同一顶层 `p` 且不在内联代码时拦截事件，插入软换行和零宽光标保护字符，再异步走 `notifyEditorValueChanged()`。这样源码模式不会产生额外的可编辑空段。
+`HybridMarkdownEditor`（Tiptap 适配器）不把所有 Enter 交给内核。`SoftEnterShortcut`（`public/managers/tiptap-extensions.js`）仅在无修饰键、非组合输入、同一顶层普通段落且不在内联代码时拦截事件，用框架命令插入软换行并异步同步编辑器值；标题、列表、引用、代码块继续走 Tiptap 原生键位。不要把它改写为“完全交给内核”或“直接清理 Markdown 空行”：Vditor 时期这些改法曾分别导致首次 Enter 被吞、块模型错乱或源码出现空段。行为基线是 `refactor-ai-s3-thoughts` 分支（Vditor 时期）；回归检查为 `npm run test:tiptap-roundtrip`、`npm run test:tiptap-caret`，任何调整还必须做一次真实编辑器手动回归。
 
-标题、列表、引用、代码块和其他非普通段落必须继续由 Vditor 的原生块模型处理。不要把这一分支改写为 `editor.insertValue('\n')`、`execCommand('insertLineBreak')` 或“完全不拦截普通 Enter”：这些看似简单的改动曾分别导致首次 Enter 被吞、块模型错乱或源码出现空段。行为基线是 `refactor-ai-s3-thoughts` 分支；对应结构回归检查为 `npm run test:hybrid-editor-time-command`，任何调整还必须做一次真实编辑器手动回归。
+> 历史（Vditor 内核时期）：对应实现为 `public/hybrid-editor.js` 的 `handleWysiwygSoftEnter()`，拦截条件与现在一致，插入零宽光标保护字符并异步走 `notifyEditorValueChanged()`；结构回归检查为 `npm run test:hybrid-editor-time-command`。
+
+### Tiptap 适配器要点
+
+- **bundle 与运行时转发**：`scripts/tiptap/entry.js` 把 `@tiptap/core`、StarterKit、tiptap-markdown、扩展与 lowlight 打包为 IIFE（`window.DumbPadTiptap`）；`public/managers/tiptap-runtime.js` 以 ESM 形式转发。改依赖后必须 `npm run build:tiptap` 重建并提交产物。
+- **自定义 NodeView 必须挂扩展 `addNodeView`**：Tiptap v3 的 `createView` 只认 `extensionManager.nodeViews`；`editorProps.nodeViews` 会在首次 `setEditable` 前被整体忽略（此前仅靠阅读模式切换间接触发生效）。现挂载点：`DumbPadCodeBlock`、`DumbPadTaskItem`（`public/managers/tiptap-extensions.js`）。
+- **代码块高亮走官方 `CodeBlockLowlight`**：PM Decoration 给文本加 `hljs-*` 类，不动 DOM；lowlight 常用语言随 bundle 分发，frontmatter 假代码块通过 YAML 别名高亮。浅色 token 配色来自 `index.html` 直接加载的 `github.min.css`，暗色覆盖在 `styles.css`。
+- **标题锚点 id 用 PM 节点 Decoration 渲染（`HeadingAnchor`）**：直接改 PM 管辖 DOM 的属性会被 DOMObserver 在重绘时抹掉；id 同步经 meta 事务（不含步骤，不进历史、不触发保存），id 不带前缀，与 `app.js` 的目录查询契约一致。
+- **目录/跳转滚动**：目录跳转与关键词定位统一走 `scrollRenderedElementIntoView()`（手算偏移 + `scroller.scrollTo`）；`scrollIntoView({smooth})` 会在同一点击流程内被其他滚动/焦点处理取消。
+- **移动端卡片几何**：编辑卡片（`pre.vditor-reset` / `.tiptap`）的移动端实测几何（贴顶、10px 内边距）与桌面几何（64px margin / 24px 上下 padding）分别在 `styles.css` 与 `ios-theme.css` 的对应 media 块内，两代卡片元素必须同时写进选择器。
+- **保存语义**：前端输入即写本地脏缓存，静默 `NOTE_SAVE_DEBOUNCE_MS`（5s）后 POST；切换笔记与 `pagehide` 时由 `flushPendingNoteSave()` 兜底（keepalive，≤60KB）。服务端对内容未变化的保存返回 `unchanged` 且不计版本、不刷 `updatedAt`、不广播（契约见 `docs/api.md`）——只有真实内容变化才计入一次修改。
 
 ## 4. Thought 写入流程
 
@@ -131,7 +142,7 @@ PWA 缓存策略分为三层：
 - HTML 导航使用 network-first，离线或慢网时回退到缓存的 `index.html`。
 - JS/CSS/JSON 这类无 hash 的代码与样式资源使用 network-first，离线或慢网时回退缓存，避免普通刷新继续拿到旧样式或旧模块；图片、字体等稳定大资源仍使用 cache-first。
 
-Service Worker 的核心缓存包含入口页面、主 JS/CSS、Thought 拆分模块和图标。Vditor、Lute 和 `hybrid-editor.js` 从安装核心资源中移出，由文章模式按需加载并走运行时静态资源缓存，避免直接进入 `#thoughts` 时抢占移动端首屏网络。`WARM_ASSETS` 额外预热中文字体、代码字体和 highlight 主包；这些资源较大但变化很少，第一次安装或版本更新时缓存，后续打开直接复用。
+Service Worker 的核心缓存包含入口页面、主 JS/CSS、Thought 拆分模块和图标。Tiptap bundle（`/vendor/tiptap/tiptap.bundle.js`）和 `tiptap-editor.js` 从安装核心资源中移出，由文章模式按需加载并走运行时静态资源缓存，避免直接进入 `#thoughts` 时抢占移动端首屏网络。`WARM_ASSETS` 额外预热中文字体、代码字体和 highlight 主包；这些资源较大但变化很少，第一次安装或版本更新时缓存，后续打开直接复用。
 
 移动端 CSS 在支持 `100dvh` 的浏览器上覆盖主要容器高度，降低地址栏收起、虚拟键盘弹出时 `100vh` 导致的错位。PWA asset manifest 生成器会排除本地候选图片、临时图标和生成产物，避免把无关资源带进缓存清单。
 

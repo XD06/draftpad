@@ -90,7 +90,7 @@ graph TD
 | OpenAI-compatible chat / embedding / rerank | `scripts/ai-provider.js` | 无 key 时 noop provider，核心保存不受影响 |
 | 交互 Agent 模型 | `scripts/agent/agent-model-client.js` | 默认 `AI_AGENT_ENABLED=false` |
 | 备份桶 | `scripts/backup/s3-backup-repository.js` | 无参数时只跑只读 `health` |
-| Vditor / Lute（编辑器） | `public/hybrid-editor.js` | 延迟加载，不占首屏关键路径 |
+| Tiptap / ProseMirror（编辑器内核） | `public/tiptap-editor.js` + `public/managers/tiptap-*.js`（离线 bundle `public/vendor/tiptap/`） | bundle 按需加载，不占首屏关键路径；`hybrid-editor.js`（Vditor 版）已退役，文件待删除 |
 | Marked + 扩展 | `server.js` 与前端共用 | — |
 | Fuse.js（搜索） | `server/indexing.js` | 数据源来自 `storage.getSearchDocuments()` |
 
@@ -99,7 +99,7 @@ graph TD
 - **`server.js` 仍是约 28KB 的入口 + 注册中心**：已拆出 13 个 route 模块，但 Notepad 部分业务与中间件编排仍留在其中。继续拆的前提是保持 URL、HTTP 状态、响应体和 WebSocket 副作用完全不变。
 - **前端无构建步骤**：新增 `public/` 下的模块必须确认 service worker 的 asset manifest 能覆盖到，否则 PWA 离线会 404。
 - **无 hash 的静态资源走 network-first**：因为版本未内容哈希化，cache-first 会让普通刷新拿到旧样式/旧模块。回退窗口（导航 600ms / 静态 450ms）由 `test/test_pwa_cache_regression.js` 固化。要改缓存策略，必须先接受这个回归测试会红。
-- **编辑器 Enter 行为是行为基线，不是实现细节**：`handleWysiwygSoftEnter()` 只在顶层普通段落拦截。基线分支是 `refactor-ai-s3-thoughts`，`main` 与之**不等价**，排查时不能用 `main` 替代基线。
+- **编辑器 Enter 行为是行为基线，不是实现细节**：Tiptap 适配器的 `SoftEnterShortcut`（`public/managers/tiptap-extensions.js`）只在顶层普通段落拦截 Enter 插入软换行，标题/列表/引用/代码/组合输入继续交给 Tiptap 原生键位。行为等价基线是 Vditor 时期的 `refactor-ai-s3-thoughts` 分支，`main` 与之**不等价**，排查时不能用 `main` 替代基线；任何调整必须跑 `npm run test:tiptap-roundtrip`、`npm run test:tiptap-caret` 并做真实编辑器手动回归。
 - **Thought 分页游标不可混用**：`sort=timeline` 是页面专用排序（置顶 + 完成状态 + 创建时间），默认分页按 `updatedAt`，两者游标语义不同。
 - **`legacy` 布局的 `thoughts.json` 是单文件全量读写**：数据量大时是性能瓶颈，迁移到 `STORAGE_LAYOUT=split` 才能真正利用索引分页。
 - **备份 CLI 不自动加载项目 `.env`**：避免把运行桶凭证带进备份写路径；因此每次必须显式传参或依赖 root-only 的 `/etc/dumbpad/backup.env`。

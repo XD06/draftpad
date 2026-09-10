@@ -6,7 +6,8 @@ DumbPad 是一款专注于速度、美感与跨端体验的极简 Markdown 编�
 
 ### 1. 混合编辑体验 (Hybrid Editor)
 - **无缝切换**：点击即进入编辑模式，离开即自动渲染，无需手动切换预览。
-- **高性能渲染**：基于 Vditor 核心，支持完整的 Markdown 语法及实时代码高亮。
+- **高性能渲染**：基于 Tiptap / ProseMirror 内核（离线 bundle，黑盒适配器保持原编辑器 API 不变），支持完整的 Markdown 语法与代码语法高亮（highlight.js 常用语言内置）。
+- **本地优先的保存**：输入即写入浏览器本地缓存，停止输入 5 秒后才同步到服务器；内容未变化的保存不计入修改次数，多设备冲突自动合并。
 - **文章记录水印**：滚到文章末尾时，卡片正下方以淡灰小字显示创建时间、最近更新时间与修改次数（跟随卡底、不进入正文与打印，也不影响编辑器滚动与光标行为）。
 
 ### 2. 深度移动端优化
@@ -317,7 +318,7 @@ npm run test:s3-real
 ## 🛠️ 技术栈
 - **后端**：Node.js + Express
 - **前端**：Vanilla JS + CSS3 (Glassmorphism)
-- **渲染**：Vditor / Marked
+- **编辑器**：Tiptap / ProseMirror（离线 bundle）+ Marked
 - **存储**：本地 JSON / S3 兼容对象存储
 - **搜索**：服务端 Fuse.js，数据源来自 `storage.getSearchDocuments()`
 
