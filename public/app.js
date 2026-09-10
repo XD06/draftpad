@@ -293,6 +293,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     let saveTimeout;
     let saveRetryTimeout;
+    // 输入停止多久后才真正同步（本地缓存每击即写，POST 只在静默后发生）。
+    const NOTE_SAVE_DEBOUNCE_MS = 5000;
     // Monotonically increasing local edit revision.  Retry callbacks capture
     // the revision they were created for and must never replay stale content
     // after the editor has changed.
@@ -2215,12 +2217,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     }
 
-    async function saveNotes(content, isAutoSave, showStatus = true, retryCount = 0, targetNotepadId = currentNotepadId, expectedRevision = null) {
+    async function saveNotes(content, isAutoSave, showStatus = true, retryCount = 0, targetNotepadId = currentNotepadId, expectedRevision = null, options = null) {
         const queueKey = isValidNotepadId(targetNotepadId) ? targetNotepadId : currentNotepadId;
         const previousSave = saveNotesInFlight.get(queueKey) || Promise.resolve();
         const queuedSave = previousSave
             .catch(() => undefined)
-            .then(() => performSaveNotes(content, isAutoSave, showStatus, retryCount, targetNotepadId, expectedRevision));
+            .then(() => performSaveNotes(content, isAutoSave, showStatus, retryCount, targetNotepadId, expectedRevision, options));
         saveNotesInFlight.set(queueKey, queuedSave);
         try {
             return await queuedSave;
@@ -2231,7 +2233,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     }
 
-    async function performSaveNotes(content, isAutoSave, showStatus = true, retryCount = 0, targetNotepadId = currentNotepadId, expectedRevision = null) {
+    async function performSaveNotes(content, isAutoSave, showStatus = true, retryCount = 0, targetNotepadId = currentNotepadId, expectedRevision = null, options = {}) {
         let baseVersion;
         let saveId;
         try {
@@ -2251,10 +2253,16 @@ document.addEventListener('DOMContentLoaded', async () => {
             pendingNoteSaveIds.add(saveId);
             const payload = { content, userId, saveId };
             if (Number.isFinite(baseVersion)) payload.baseVersion = baseVersion;
+            const payloadText = JSON.stringify(payload);
+            // 卸载兜底 flush 的请求要带 keepalive 才能在页面关闭后送达；
+            // keepalive 超过 64KB 会直接抛错，超限时报文走常规路径（本地
+            // 脏缓存 + 下次启动同步兜底）。
+            const keepalive = Boolean(options?.keepalive) && payloadText.length < 60 * 1024;
             const response = await fetchWithPin(`/api/notes/${targetNotepadId}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload),
+                body: payloadText,
+                keepalive,
             });
             const result = await response.json().catch(() => ({}));
             if (!response?.ok) {
@@ -2566,11 +2574,23 @@ document.addEventListener('DOMContentLoaded', async () => {
         saveTimeout = setTimeout(async () => {
             // Capture targetNotepadId at debounce time: saveNotes defaults to
             // currentNotepadId which may have changed if the user switched
-            // notepads during the 300ms delay — that would write the old
+            // notepads during the idle delay — that would write the old
             // notepad's content into the new one.
             if (currentNotepadId !== targetNotepadId || editor.value !== content || editorRevision !== revision) return;
             await saveNotes(content, true, true, 0, targetNotepadId, revision);
-        }, 300);
+        }, NOTE_SAVE_DEBOUNCE_MS);
+    }
+
+    // 兜底 flush：切换笔记/页面隐藏时，把还在防抖窗口里的内容立即发出去。
+    // 内容此刻就是编辑器现值；即使与已存内容一致，服务端也会按 unchanged
+    // 幂等处理，不会推高版本。
+    function flushPendingNoteSave() {
+        if (!saveTimeout || !currentNotepadId) return;
+        clearTimeout(saveTimeout);
+        saveTimeout = null;
+        const pendingContent = editor.value;
+        if (pendingContent == null) return;
+        saveNotes(pendingContent, true, false, 0, currentNotepadId, editorRevision, { keepalive: true }).catch(() => {});
     }
 
     async function deleteNotepad() {
@@ -2796,14 +2816,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         // switching. performSaveNotes guards on currentNotepadId ===
         // targetNotepadId, so once currentNotepadId changes the pending save
         // would be skipped — leaving the old notepad with unsynced content.
-        if (saveTimeout && currentNotepadId) {
-            clearTimeout(saveTimeout);
-            saveTimeout = null;
-            const pendingContent = editor.value;
-            if (pendingContent != null) {
-                saveNotes(pendingContent, true, false).catch(() => {});
-            }
-        }
+        flushPendingNoteSave();
         saveEditorCaretForNotepad(currentNotepadId, editorInstance?.getPersistentCaretSnapshot?.());
         currentNotepadId = selectedNotepad.id;
         cacheNotepads(null, currentNotepadId);
@@ -3348,6 +3361,10 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         window.addEventListener('pagehide', () => {
             saveEditorCaretForNotepad(currentNotepadId, editorInstance?.getPersistentCaretSnapshot?.());
+            // 防抖加长后，关闭/切后台时把还在窗口内的输入立即送出
+            // （keepalive 让请求在页面卸载后仍能完成；失败由本地脏缓存
+            // + 下次启动同步兜底）。
+            flushPendingNoteSave();
         });
 
         window.addEventListener('popstate', (e) => {
