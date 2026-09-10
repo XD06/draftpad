@@ -21,6 +21,7 @@
 
 ### 修复
 
+- **目录把代码块里的 `# 注释` 当成标题**：`buildMarkdownHeadingIndex` 逐行匹配 ATX 标题、不感知围栏代码块，代码示例里的 `# 示例文本`、shell 注释等都会混进文章目录，还会让目录条目数与实际渲染的标题数错位、干扰锚点匹配。现在扫描时跟踪围栏开合（CommonMark 规则：闭合围栏需同字符、长度不小于开启行且不带围栏字符），围栏内的行不再计入目录；这是**行为变更**（旧测试基线明确固化了"围栏内标题进目录"的旧语义，已随用户要求更新）。新旧编辑器共用该模块，同时受益。
 - **Tiptap 编辑器代码块无语法高亮**：切换 Tiptap 后代码块一直是纯文本。现在接入 Tiptap 官方 `CodeBlockLowlight`（PM Decoration 机制给文本加 hljs 类，不动 DOM、零手写高亮逻辑），bundle 内置 lowlight 常用 37 种语言，frontmatter 假代码块按 YAML 别名高亮避免随机自动识别；浅色 token 配色复用既有 `github.min.css`（index.html 直接加载），暗色覆盖沿用 styles.css 既有规则。同时把自定义代码块/待办 NodeView 从 `editorProps.nodeViews` 迁到扩展 `addNodeView` 挂载（Tiptap v3 的 `createView` 只认扩展注册表，`editorProps.nodeViews` 会在首次 `setEditable` 前被整体忽略，此前仅靠阅读模式切换间接触发生效），并修复复制按钮取不到代码文本的问题。
 - **Tiptap 编辑器目录点击不跳转**：两个根因。其一，目录同步直接改 PM 管辖 DOM 的标题 id，会被 ProseMirror 的 DOMObserver 在重绘时抹掉（实测 ~50ms 内清空），跳转与滚动高亮全部失联；现在标题锚点 id 改由 `HeadingAnchor` 扩展以 PM 节点 Decoration 渲染，`syncRenderedHeadingIds` 经 meta 事务同步（不进撤销历史、不触发保存），id 去掉 `heading-` 前缀对齐旧编辑器与 app.js 的查询契约。其二，跳转滚动用的 `scrollIntoView({smooth})` 会在同一点击流程内被其他滚动/焦点处理取消（实测 scrollTop 纹丝不动），改回旧编辑器的机制：手算偏移后在真正承载滚动的容器上 `scrollTo`，并恢复跳转目标的 `is-jump-target` 高亮。
 - **带子任务的卡片滑动删除卡顿**：整卡滑动每次 pointermove 都往卡片写 4 个 CSS 自定义属性和 1 个冗余 inline transform，而自定义属性沿子树继承、每次写入都触发整卡子树的样式重算；有子任务的卡片子树大（几十个行节点），且高刷新率屏幕一帧会收到两次 pointermove，逐帧重算被放大成可见卡顿（无子任务卡片子树小、子任务行滑动只作用于行内，所以都流畅）。现在滑动样式写入合并到 requestAnimationFrame（一帧最多失效一次），并移除没有任何 CSS 消费者的 `--swipe-progress` 和冗余 inline transform（卡片位移本就由 `--swipe-x` 变量驱动）；滑动删除手势与确认/删除动画行为不变。
