@@ -9,6 +9,9 @@
     <link rel="apple-touch-icon"  href="Assets/dumbpad-192.png">
     <link rel="stylesheet" href="Assets/styles.css">
     <link rel="stylesheet" href="Assets/preview-styles.css">
+    <!-- 代码块浅色 token 配色（暗色覆盖在 styles.css [data-theme=dark] 规则内）。
+         旧 vditor 自带该样式，切换 Tiptap 后由页面直接加载。 -->
+    <link rel="stylesheet" href="/css/@highlightjs/github.min.css">
     <script>
         (function () { // Initialize theme immediately - Prevents theme flicker
             let theme = JSON.parse(localStorage.getItem('dumbpad_theme'))

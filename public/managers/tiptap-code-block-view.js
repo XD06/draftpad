@@ -40,7 +40,7 @@ function renderBadge(badge, language) {
 }
 
 export function buildCodeBlockNodeView({ onToast } = {}) {
-    return (node) => {
+    return ({ node, view }) => {
         const wrapper = document.createElement('div');
         wrapper.className = 'vditor-wysiwyg__block';
         wrapper.setAttribute('data-type', 'code-block');
@@ -74,7 +74,7 @@ export function buildCodeBlockNodeView({ onToast } = {}) {
             event.preventDefault();
             event.stopPropagation();
             try {
-                await navigator.clipboard.writeText(currentNode?.textContent || '');
+                await navigator.clipboard.writeText(currentCodeNode?.textContent || '');
                 copyButton.classList.add('is-copied');
                 copyButton.title = '已复制';
                 onToast?.('代码已复制', 1200);
@@ -90,11 +90,14 @@ export function buildCodeBlockNodeView({ onToast } = {}) {
         header.appendChild(copyButton);
 
         const code = document.createElement('code');
+        // 命中既有 hljs 配色规则（浅色 token 走 github.min.css，暗色覆盖在 styles.css）
+        code.className = 'hljs';
         pre.appendChild(header);
         pre.appendChild(code);
         wrapper.appendChild(pre);
 
         let currentLanguage = null;
+        let currentCodeNode = node;
 
         const renderChrome = (updatedNode) => {
             let language = String(updatedNode.attrs.language || 'plaintext').trim().toLowerCase() || 'plaintext';
@@ -117,6 +120,7 @@ export function buildCodeBlockNodeView({ onToast } = {}) {
             contentDOM: code,
             update(updatedNode) {
                 if (updatedNode.type !== node.type) return false;
+                currentCodeNode = updatedNode;
                 renderChrome(updatedNode);
                 return true;
             },

@@ -2,11 +2,11 @@
  * Tiptap TaskItem NodeView：复刻官方 DOM（li[data-type=taskItem] > label >
  * input + span、div 内容区）。change 处理不走官方节点的闭包 getPos（真实
  * 应用中其返回值不可靠导致勾选静默丢失），改用 PM view.posAtDOM 从节点
- * 自身 DOM 反查文档位置后 setNodeMarkup。PM 原生 nodeView 签名：
- * (node, view, getPos, decorations, innerDecorations)。
+ * 自身 DOM 反查文档位置后 setNodeMarkup。经扩展 addNodeView 挂载，
+ * Tiptap 对象参数签名：({ node, view, getPos, decorations, innerDecorations })。
  */
 export function buildTaskItemNodeView() {
-    return (node, view) => {
+    return ({ node, view }) => {
         const listItem = document.createElement('li');
         const checkboxWrapper = document.createElement('label');
         const checkboxStyler = document.createElement('span');

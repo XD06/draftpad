@@ -12,7 +12,7 @@ import {
     TableRow,
     TableCell,
     TableHeader,
-    TaskItem,
+    lowlight,
 } from './managers/tiptap-runtime.js';
 import {
     AnnotationMark,
@@ -22,12 +22,18 @@ import {
     SoftEnterShortcut,
     TaskListInputShortcut,
     DumbPadTaskList,
+    DumbPadCodeBlock,
+    DumbPadTaskItem,
+    HeadingAnchor,
+    headingAnchorPluginKey,
     TimeCommandShortcut,
     TimeMarkerNode,
 } from './managers/tiptap-extensions.js';
 import { buildMarkdownHeadingIndex } from './managers/heading-index.js';
-import { buildCodeBlockNodeView } from './managers/tiptap-code-block-view.js';
-import { buildTaskItemNodeView } from './managers/tiptap-task-item-view.js';
+
+// frontmatter 假代码块按 YAML 高亮（官方插件对未注册语言会回退
+// highlightAuto，产生随机着色）。
+lowlight.registerAlias('yaml', 'dumbpad-frontmatter');
 
 export class HybridMarkdownEditor {
     constructor(container, { input, performanceMonitor = null, onCaretChange = null } = {}) {
@@ -66,14 +72,9 @@ export class HybridMarkdownEditor {
                 // 复用旧 vditor 的全部内容区样式（styles.css 117 条规则），
                 // 保证切换内核后视觉零变化。
                 attributes: { class: 'tiptap ProseMirror vditor-reset' },
-                // 代码块复刻旧 vditor 块 DOM（.vditor-wysiwyg__block 结构），
-                // 头部/徽章/复制/行号规则全部原样生效。
-                // taskItem 复刻官方 DOM 但自管勾选（官方 change 处理器的
-                // getPos 在真实应用中返回 undefined，勾选会静默丢失）。
-                nodeViews: {
-                    codeBlock: buildCodeBlockNodeView(),
-                    taskItem: buildTaskItemNodeView(),
-                },
+                // 自定义 NodeView 不在此处挂载：Tiptap v3 的 createView 只认
+                // 扩展 addNodeView（见 tiptap-extensions.js 的
+                // DumbPadCodeBlock / DumbPadTaskItem）。
             },
             extensions: [
                 SoftEnterShortcut,
@@ -87,11 +88,14 @@ export class HybridMarkdownEditor {
                 }),
                 StarterKit.configure({
                     hardBreak: false,
+                    // 代码块交给官方 CodeBlockLowlight（PM Decoration 高亮）
+                    codeBlock: false,
                 }),
                 AnnotationMark,
                 DrawMark,
                 MdHighlight,
                 MdSoftBreak,
+                HeadingAnchor,
                 TimeCommandShortcut,
                 TimeMarkerNode,
                 Image,
@@ -100,7 +104,12 @@ export class HybridMarkdownEditor {
                 TableHeader,
                 TableCell,
                 DumbPadTaskList,
-                TaskItem.configure({ nested: true }),
+                DumbPadTaskItem.configure({ nested: true }),
+                // frontmatter 假代码块按 YAML 高亮，避免官方插件对未注册
+                // 语言回退 highlightAuto 产生的随机着色。
+                DumbPadCodeBlock.configure({
+                    lowlight,
+                }),
             ],
             content: '',
             autofocus: false,
@@ -168,13 +177,6 @@ export class HybridMarkdownEditor {
         if (!match) return String(value ?? '');
         const inner = match[0].slice(4, match[0].length - 4);
         return '```dumbpad-frontmatter\n' + inner + '```\n' + String(value ?? '').slice(match[0].length);
-    }
-
-    fenceToFrontmatter(markdown) {
-        const FENCE_RE = /^```dumbpad-frontmatter\n([\s\S]*?)\n?```(?:\n|$)/;
-        const match = String(markdown ?? '').match(FENCE_RE);
-        if (!match) return markdown;
-        return '---\n' + match[1] + '\n---\n' + markdown.slice(match[0].length);
     }
 
     fenceToFrontmatter(markdown) {
@@ -428,24 +430,26 @@ export class HybridMarkdownEditor {
     }
 
     syncRenderedHeadingIds(toc = []) {
-        const headings = this.container.querySelectorAll('.tiptap h1, .tiptap h2, .tiptap h3, .tiptap h4, .tiptap h5, .tiptap h6');
-        headings.forEach((heading, index) => {
-            const entry = toc[index];
-            const nextId = entry?.id ? `heading-${entry.id}` : '';
-            // 必须幂等：app.js 的滚动高亮每帧都会调用本方法；在 PM 管辖的
-            // DOM 上重复写属性会触发 MutationObserver -> dispatch -> update
-            // 回环，进而造成保存风暴与 409 冲突。
-            if (nextId && heading.id !== nextId) {
-                heading.id = nextId;
-            } else if (!nextId && heading.hasAttribute('id')) {
-                heading.removeAttribute('id');
-            }
-        });
+        // id 以 PM 节点 Decoration 渲染（HeadingAnchor 扩展）：直接改 PM
+        // 管辖 DOM 的属性会被 DOMObserver 在重绘时抹掉。meta 事务不含步骤，
+        // 不进撤销历史、docChanged=false 不会触发保存。id 与上次相同则跳过
+        // 派发（app.js 的滚动高亮每帧都会调用本方法，必须幂等）。
+        const ids = toc.map(entry => (entry?.id ? entry.id : ''));
+        if (ids.join('\u0001') === this._lastHeadingAnchorIds) return;
+        this._lastHeadingAnchorIds = ids.join('\u0001');
+        if (!this.ready) {
+            this.whenReady().then(() => {
+                this._lastHeadingAnchorIds = null;
+                this.syncRenderedHeadingIds(toc);
+            }).catch(() => {});
+            return;
+        }
+        this.editor.view.dispatch(this.editor.state.tr.setMeta(headingAnchorPluginKey, ids));
     }
 
     scrollToHeadingId(id) {
         if (!id) return false;
-        const heading = this.container.querySelector(`.tiptap h1[id="heading-${id}"], .tiptap h2[id="heading-${id}"], .tiptap h3[id="heading-${id}"], .tiptap h4[id="heading-${id}"], .tiptap h5[id="heading-${id}"], .tiptap h6[id="heading-${id}"]`);
+        const heading = this.container.querySelector(`.tiptap h1[id="${CSS.escape(id)}"], .tiptap h2[id="${CSS.escape(id)}"], .tiptap h3[id="${CSS.escape(id)}"], .tiptap h4[id="${CSS.escape(id)}"], .tiptap h5[id="${CSS.escape(id)}"], .tiptap h6[id="${CSS.escape(id)}"]`);
         if (!heading) return false;
         this.scrollRenderedElementIntoView(heading);
         return true;
@@ -465,8 +469,27 @@ export class HybridMarkdownEditor {
     }
 
     scrollRenderedElementIntoView(target) {
-        if (!target || !this.container.contains(target)) return;
-        target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        if (!target) return;
+        // 与旧 vditor 适配器同机制：手算偏移后在真正承载滚动的容器上
+        // scrollTo。不能用 target.scrollIntoView({smooth})——它会被点击
+        // 流程里紧随其后的其他滚动/焦点处理取消（实测跳转后 scrollTop
+        // 纹丝不动），而旧实现自算偏移量不受影响。桌面端在
+        // .vditor-wysiwyg 内滚动；移动端（ios-theme）整页滚动。
+        const scroller = this.getScrollContainer();
+        const isPageScroll = scroller === document.scrollingElement
+            || scroller === document.documentElement;
+        const viewTop = isPageScroll ? 0 : scroller.getBoundingClientRect().top;
+        const targetRect = target.getBoundingClientRect();
+        const nextTop = scroller.scrollTop + targetRect.top - viewTop - Math.max(24, scroller.clientHeight * 0.18);
+        scroller.scrollTo({ top: Math.max(0, nextTop), behavior: 'smooth' });
+        target.classList.add('is-jump-target');
+        setTimeout(() => target.classList.remove('is-jump-target'), 1600);
+    }
+
+    getScrollContainer() {
+        const wysiwyg = this.scroller || this.container.querySelector('.vditor-wysiwyg');
+        if (wysiwyg && wysiwyg.scrollHeight - wysiwyg.clientHeight > 1) return wysiwyg;
+        return document.scrollingElement || document.documentElement;
     }
 
     jumpToKeyword(keyword) {
@@ -490,7 +513,9 @@ export class HybridMarkdownEditor {
                 } catch (_error) {
                     // 跨元素关键词退化为滚动定位，不做包裹。
                 }
-                mark.scrollIntoView({ block: 'center' });
+                // 与旧实现一致：滚动统一走 scrollRenderedElementIntoView
+                // （scrollIntoView 会被同一点击流程内的其他滚动取消）。
+                this.scrollRenderedElementIntoView(mark);
                 setTimeout(() => {
                     const parent = mark.parentNode;
                     if (parent) {

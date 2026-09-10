@@ -4,8 +4,13 @@
  * restoreAllRenderedMarks / renderInlineMarks 与 time-command.js），
  * roundtrip 兼容由 test/test_tiptap_roundtrip.js 固化，改动前先读它。
  */
-import { Mark, Node, Extension, TaskList, InputRule, findParentNode } from './tiptap-runtime.js';
+import { Mark, Node, Extension, TaskList, TaskItem, InputRule, findParentNode, CodeBlockLowlight, PM } from './tiptap-runtime.js';
 import { TIME_COMMAND, parseTimeMarkerText, buildTimeMarker } from './time-command.js';
+import { buildCodeBlockNodeView } from './tiptap-code-block-view.js';
+import { buildTaskItemNodeView } from './tiptap-task-item-view.js';
+
+const { Plugin, PluginKey } = PM.state;
+const { Decoration, DecorationSet } = PM.view;
 
 export const ANNOTATION_SPAN_STYLE = 'text-decoration:underline wavy #e74c3c;text-decoration-thickness:2.5px;';
 export const DRAW_SPAN_STYLE = 'text-decoration:underline blue;text-decoration-thickness:2px;';
@@ -592,6 +597,75 @@ export const TaskListInputShortcut = Extension.create({
                         .toggleList('taskList', 'taskItem', false)
                         .updateAttributes('taskItem', { checked })
                         .run();
+                },
+            }),
+        ];
+    },
+});
+
+/** 自定义 NodeView 的框架级挂载：Tiptap v3 的 createView 只认
+ * extensionManager.nodeViews（扩展 addNodeView），editorProps.nodeViews
+ * 会被覆盖、仅在首次 setEditable 后经 setProps 间接生效——所以必须走
+ * addNodeView。这里用官方扩展 .extend 注入，未命中节点时回落官方行为。 */
+
+export const DumbPadCodeBlock = CodeBlockLowlight.extend({
+    addNodeView() {
+        return ({ node, view }) => buildCodeBlockNodeView()({ node, view });
+    },
+});
+
+// 官方 TaskItem 的 change 处理器闭包 getPos 在真实应用中返回 undefined，
+// 勾选会静默丢失；换成自管视图（posAtDOM 反查位置）。
+export const DumbPadTaskItem = TaskItem.extend({
+    addNodeView() {
+        return ({ node, view }) => buildTaskItemNodeView()({ node, view });
+    },
+});
+
+/** 标题锚点：目录同步的 id 以 PM 节点 Decoration 渲染，而不是直接改
+ * PM 管辖的 DOM 属性——PM 的 DOMObserver 会把外来属性视为脏区并在
+ * 重绘时抹掉（实测 ~50ms 内 id 被清空，目录跳转因此失效）。
+ * id 顺序由 syncRenderedHeadingIds 经 PluginKey meta 传入，按文档标题
+ * 顺序 zip；meta 事务不含步骤，不进撤销历史、不触发保存。id 不带
+ * heading- 前缀，与旧编辑器 syncRenderedHeadingIds 及 app.js 的
+ * focusEditorHeading/updateActiveTocItem 查询契约一致。 */
+export const headingAnchorPluginKey = new PluginKey('dumbpadHeadingAnchors');
+
+export const HeadingAnchor = Extension.create({
+    name: 'headingAnchor',
+
+    addProseMirrorPlugins() {
+        return [
+            new Plugin({
+                key: headingAnchorPluginKey,
+                state: {
+                    init: () => ({ ids: [], map: DecorationSet.empty }),
+                    apply: (tr, value) => {
+                        const ids = tr.getMeta(headingAnchorPluginKey);
+                        if (!Array.isArray(ids) && !tr.docChanged) return value;
+                        const nextIds = Array.isArray(ids) ? ids : value.ids;
+                        const anchors = [];
+                        tr.doc.descendants((node, pos) => {
+                            if (node.type.name !== 'heading') return true;
+                            anchors.push([pos, pos + node.nodeSize]);
+                            return false;
+                        });
+                        const decorations = [];
+                        nextIds.forEach((id, index) => {
+                            const anchor = anchors[index];
+                            if (!id || !anchor) return;
+                            decorations.push(Decoration.node(anchor[0], anchor[1], {
+                                id,
+                                'data-heading-id': id,
+                            }));
+                        });
+                        return { ids: nextIds, map: DecorationSet.create(tr.doc, decorations) };
+                    },
+                },
+                props: {
+                    decorations(state) {
+                        return headingAnchorPluginKey.getState(state)?.map || DecorationSet.empty;
+                    },
                 },
             }),
         ];

@@ -27,5 +27,7 @@ export const TableCell = runtime.TableCell;
 export const TableHeader = runtime.TableHeader;
 export const TaskList = runtime.TaskList;
 export const TaskItem = runtime.TaskItem;
+export const CodeBlockLowlight = runtime.CodeBlockLowlight;
+export const lowlight = runtime.lowlight;
 export const PM = runtime.PM;
 export default runtime;

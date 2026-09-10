@@ -18,6 +18,8 @@ import { Table, TableRow, TableCell, TableHeader } from '@tiptap/extension-table
 import { TaskList } from '@tiptap/extension-task-list';
 import { TaskItem } from '@tiptap/extension-task-item';
 import { Highlight } from '@tiptap/extension-highlight';
+import { CodeBlockLowlight } from '@tiptap/extension-code-block-lowlight';
+import { createLowlight, common } from 'lowlight';
 
 export const {
   Editor,
@@ -45,6 +47,11 @@ export {
   TaskList,
   TaskItem,
   Highlight,
+  CodeBlockLowlight,
 };
+
+// 代码块语法高亮走 Tiptap 官方 CodeBlockLowlight（PM Decoration 机制），
+// lowlight 实例在 bundle 层共享，编辑器侧只做别名注册。
+export const lowlight = createLowlight(common);
 
 export const PM = { state: PMState, model: PMModel, view: PMView, keymap: PMKeymap, commands: PMCommands, transform: PMTransform, schemaList: PMSchemaList };
