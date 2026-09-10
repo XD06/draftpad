@@ -114,7 +114,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     // tracks the card's bottom edge and is clipped until the reader gets there.
     const articleMetaFooter = new ArticleMetaFooter({
         host: document.getElementById('editor-main'),
-        getCard: () => document.querySelector('#hybrid-editor .vditor-wysiwyg pre.vditor-reset')
+        // 卡片本体：旧 vditor 是 pre.vditor-reset，Tiptap 适配器是
+        // div.tiptap.vditor-reset（白底/圆角/边框都在它身上），两者都是
+        // .vditor-wysiwyg 下第一个 .vditor-reset，用类选择器同时命中。
+        getCard: () => document.querySelector('#hybrid-editor .vditor-wysiwyg .vditor-reset')
     });
     articleMetaFooter.attach();
 
