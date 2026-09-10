@@ -2377,7 +2377,7 @@ main {
     height: 16px;
     margin: 0 0.3em 0.15em 0;
     vertical-align: middle;
-    accent-color: var(--primary-color);
+    accent-color: color-mix(in srgb, var(--primary-color) 72%, #ffd84a);
     cursor: pointer;
 }
 
@@ -2398,11 +2398,11 @@ main {
     margin-bottom: 0;
 }
 
-/* 勾选完成的待办：文字删除线 + 淡灰，删除线用主题色的暖调混色 */
+/* 勾选完成的待办：文字删除线 + 淡灰，删除线与文字同色（对齐旧 vditor） */
 .typora-editor-shell .vditor-reset ul[data-type="taskList"] li[data-checked="true"] > div {
     color: var(--text-color-disabled, #9aa4ae);
     text-decoration: line-through;
-    text-decoration-color: color-mix(in srgb, var(--primary-color) 72%, #ffd84a);
+    text-decoration-color: currentColor;
 }
 
 .typora-editor-shell .vditor-reset a {
