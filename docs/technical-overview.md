@@ -88,6 +88,7 @@ Thought 前端 helper 拆分模块有聚合测试入口：`npm run test:thought-
 - **标题锚点 id 用 PM 节点 Decoration 渲染（`HeadingAnchor`）**：直接改 PM 管辖 DOM 的属性会被 DOMObserver 在重绘时抹掉；id 同步经 meta 事务（不含步骤，不进历史、不触发保存），id 不带前缀，与 `app.js` 的目录查询契约一致。
 - **目录/跳转滚动**：目录跳转与关键词定位统一走 `scrollRenderedElementIntoView()`（手算偏移 + `scroller.scrollTo`）；`scrollIntoView({smooth})` 会在同一点击流程内被其他滚动/焦点处理取消。
 - **移动端卡片几何**：编辑卡片（`pre.vditor-reset` / `.tiptap`）的移动端实测几何（贴顶、10px 内边距）与桌面几何（64px margin / 24px 上下 padding）分别在 `styles.css` 与 `ios-theme.css` 的对应 media 块内，两代卡片元素必须同时写进选择器。
+- **选区浮动菜单（TiptapSelectionMenu）**：`public/managers/tiptap-selection-menu.js`，作为扩展挂进编辑器；插件 view 负责菜单 DOM 生命周期（不监听全局 selectionchange），定位用 PM `coordsAtPos`，jsdom 等无布局环境定位失败只跳过、不隐藏菜单。菜单只在**鼠标释放后**出现：mousedown 进入拖拽态拦住选区事务期间的显示，mouseup 宏任务后主动补一次显示判断（拖拽后没有新事务，不能只靠 update()）。动作必须走框架 mark 命令（`DrawMark` / `MdHighlight` / `AnnotationMark`），落标记/复制后光标折叠到标记起点；禁止回到 Markdown 源码做字符串查找 + `setValue` 全量重刷（旧 Vditor 时期的字符串手术路线，会重引入 IME/光标/撤销的补丁对抗）。点击已标记文字弹「取消」popover：直接在 `view.dom` 挂 click 监听（与旧 `bindAnnotationPopover` 同机制），**不要用 PM 的 `handleClick` prop**——它依赖 PM 鼠标管线（posAtCoords / view.mouseDown 状态机），无布局环境与部分真实场景不可靠；取消/编辑走 `removeMark` / mark attrs 更新（可撤销）。代码块、内联代码、时间标记选区不显示菜单（mark 禁区）；源码模式不显示（`setSourceMode` 切换容器 `is-source-mode` 类，与 `is-reading-mode` 同构）。回归：`npm run test:tiptap-selection-menu`。
 - **保存语义**：前端输入即写本地脏缓存，静默 `NOTE_SAVE_DEBOUNCE_MS`（5s）后 POST；切换笔记与 `pagehide` 时由 `flushPendingNoteSave()` 兜底（keepalive，≤60KB）。服务端对内容未变化的保存返回 `unchanged` 且不计版本、不刷 `updatedAt`、不广播（契约见 `docs/api.md`）——只有真实内容变化才计入一次修改。
 
 ## 4. Thought 写入流程
