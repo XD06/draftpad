@@ -18,6 +18,7 @@
 - **文章链接高亮可点击**：编辑器内的链接（Lute 渲染的裸 URL 与 `[text](url)`）有统一的高亮样式；裸 URL 点击直接打开，阅读模式全部链接可点击。
 - **API（面向 Agent 的细粒度编辑）**：新增受保护的笔记局部编辑能力，支持按段落结构定位的 section 编辑，以及原子批量编辑（一次请求内多步修改要么全部生效要么全部回滚）。配合新增的 notepad 元数据接口、能力发现与资产发现接口，Agent 不必再全量覆盖长文。
 - **资产去重与复用**：上传按内容哈希去重；文章中可直接引用已存在的资产而无需重复上传。
+- **Tiptap 编辑器选区浮动菜单**：选中文字段落、**释放鼠标后**出现「画线 / 高亮 / 批注 / 复制」浮动菜单（旧 Vditor 编辑器的能力，Tiptap 迁移后恢复）。实现为编辑器扩展 `TiptapSelectionMenu`（`public/managers/tiptap-selection-menu.js`）：ProseMirror 插件 view 负责菜单 DOM 生命周期，拖拽选字期间不显示（mousedown 进入拖拽态、mouseup 宏任务后主动补一次显示判断，等价旧实现的 mouseup → handleSelectionChange），按 `coordsAtPos` 定位（复用既有 `.selection-menu.typora-selection-menu` 样式，移动端仍为选中下方、桌面为选中上方）；**动作全部走框架 mark 命令**（`DrawMark` / `MdHighlight` / `AnnotationMark`），不再回到 Markdown 源码做字符串查找 + `setValue` 全量重刷（旧实现的字符串手术路线随 Vditor 一起退役）——事务进撤销历史（可 Undo）、自然触发保存、序列化与旧编辑器逐字节对齐；落标记/复制后光标折叠到标记起点，退出选中状态。**点击已标记文字弹「取消」popover**（取消画线 / 取消高亮，批注为编辑+取消，对应旧 mark-popover / removeInlineMark）：取消与编辑走框架 `removeMark` / mark attrs 更新，同样可撤销；popover 定位在标记元素上方，点击其他处收起。代码块/内联代码/时间标记选区不显示菜单（mark 禁区，对应旧受保护内容）；源码模式不显示（`setSourceMode` 现在同步切换容器 `is-source-mode` 类，与阅读模式同构）；批注输入框带 Enter 提交 / Escape 取消，输入期间焦点不会被编辑器抢走。回归：`npm run test:tiptap-selection-menu`（已加入 `npm test`）。
 
 ### 修复
 

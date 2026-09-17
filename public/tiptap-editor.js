@@ -29,6 +29,8 @@ import {
     TimeCommandShortcut,
     TimeMarkerNode,
 } from './managers/tiptap-extensions.js';
+import { TiptapSelectionMenu } from './managers/tiptap-selection-menu.js';
+import { createFileCommandController } from './managers/tiptap-file-command.js';
 import { buildMarkdownHeadingIndex } from './managers/heading-index.js';
 
 // frontmatter 假代码块按 YAML 高亮（官方插件对未注册语言会回退
@@ -55,7 +57,9 @@ export class HybridMarkdownEditor {
         this.pendingValue = '';
         this.sourceMode = false;
         this.assetMaxFileBytes = null;
+        this.assetApi = null;
         this.isComposing = false;
+        this.fileCommand = createFileCommandController(this);
 
         this.readyPromise = new Promise((resolve) => { this._resolveReady = resolve; });
 
@@ -75,6 +79,9 @@ export class HybridMarkdownEditor {
                 // 自定义 NodeView 不在此处挂载：Tiptap v3 的 createView 只认
                 // 扩展 addNodeView（见 tiptap-extensions.js 的
                 // DumbPadCodeBlock / DumbPadTaskItem）。
+                // /file 命令的 Enter 拦截走 directProps：优先级高于
+                // SoftEnterShortcut 等插件键位，/file 不会被软换行吃掉。
+                handleKeyDown: (view, event) => Boolean(this.fileCommand?.handleKeyDown(view, event)),
             },
             extensions: [
                 SoftEnterShortcut,
@@ -110,6 +117,7 @@ export class HybridMarkdownEditor {
                 DumbPadCodeBlock.configure({
                     lowlight,
                 }),
+                TiptapSelectionMenu,
             ],
             content: '',
             autofocus: false,
@@ -134,6 +142,8 @@ export class HybridMarkdownEditor {
 
         this.editor.on('transaction', ({ transaction }) => {
             this.isComposing = transaction.meta?.isComposing || this.isComposing;
+            // /file 挂起位置的随事务重映射（上传期间用户继续编辑）。
+            if (transaction?.docChanged) this.fileCommand?.handleTransaction(transaction);
         });
     }
 
@@ -380,6 +390,7 @@ export class HybridMarkdownEditor {
     setSourceMode(enabled) {
         if (Boolean(enabled) === this.sourceMode) return;
         this.sourceMode = Boolean(enabled);
+        this.container.classList.toggle('is-source-mode', this.sourceMode);
         let textarea = this.getSourceTextarea();
         if (this.sourceMode) {
             if (!textarea) {
@@ -389,6 +400,10 @@ export class HybridMarkdownEditor {
                 this.container.appendChild(textarea);
                 textarea.addEventListener('input', () => {
                     this.notifyEditorValueChanged(textarea.value);
+                });
+                // 源码模式下的 /file 命令（与旧 handleSourceFileCommand 对齐）。
+                textarea.addEventListener('keydown', (event) => {
+                    this.fileCommand?.handleSourceKeydown(event);
                 });
             }
             textarea.value = this._lastValue;
@@ -534,6 +549,8 @@ export class HybridMarkdownEditor {
 
     setAssetMaxFileBytes(value) {
         this.assetMaxFileBytes = value;
+        // /file 控制器可能已创建 AssetApiClient：同步限额。
+        this.assetApi?.setMaxFileBytes?.(value);
     }
 
     insertArticleAssetReference(asset) {
