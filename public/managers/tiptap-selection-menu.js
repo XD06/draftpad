@@ -14,8 +14,10 @@ const { Plugin, PluginKey, TextSelection } = PM.state;
 
 // 选区内出现这些节点时不显示菜单：代码块/内联代码/时间标记是
 // mark 的禁区（schema 对 code block 禁 mark，时间标记是原子节点，
-// 叠加 mark 会在 roundtrip 序列化里产生歧义）。
-const PROTECTED_NODE_TYPES = ['codeBlock', 'timeMarker'];
+// 叠加 mark 会在 roundtrip 序列化里产生歧义）；图片是原子块，点它会
+// 产生非空 NodeSelection（旧 Vditor 点图后文字选区是折叠的），
+// 文字菜单必须让位给图片自己的尺寸/大图菜单。
+const PROTECTED_NODE_TYPES = ['codeBlock', 'timeMarker', 'image'];
 
 // 已落标记的渲染元素：点击弹出「取消」popover（与旧
 // showAnnotationPopover / removeInlineMark 行为对齐）。
@@ -68,8 +70,14 @@ export const TiptapSelectionMenu = Extension.create({
                             // 延迟到宏任务，等浏览器把选区最终化）。
                             setTimeout(() => {
                                 const selection = view.state.selection;
-                                if (selection.empty || menuView.annotationInputOpen) return;
-                                if (!menuView.menuAllowed(view)) return;
+                                if (menuView.annotationInputOpen) return;
+                                if (selection.empty || !menuView.menuAllowed(view)) {
+                                    // 只能是「收起」：选区落到受保护节点（图片点按产生
+                                    // NodeSelection）或空选区时，早退会把上一次文字选区
+                                    // 的菜单留在图片上，看起来就是点了图片弹出文字菜单。
+                                    menuView.hide();
+                                    return;
+                                }
                                 menuView.show(selection);
                             }, 0);
                             return false;
