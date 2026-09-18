@@ -7,7 +7,6 @@ import {
     Editor,
     StarterKit,
     Markdown,
-    Image,
     Table,
     TableRow,
     TableCell,
@@ -31,6 +30,11 @@ import {
 } from './managers/tiptap-extensions.js';
 import { TiptapSelectionMenu } from './managers/tiptap-selection-menu.js';
 import { createFileCommandController } from './managers/tiptap-file-command.js';
+import {
+    DumbPadArticleFileLink,
+    DumbPadImage,
+    TiptapImageInteractions,
+} from './managers/tiptap-image-interactions.js';
 import { buildMarkdownHeadingIndex } from './managers/heading-index.js';
 
 // frontmatter 假代码块按 YAML 高亮（官方插件对未注册语言会回退
@@ -105,7 +109,9 @@ export class HybridMarkdownEditor {
                 HeadingAnchor,
                 TimeCommandShortcut,
                 TimeMarkerNode,
-                Image,
+                // 图片节点由 DumbPadImage 提供（关闭原生 draggable，换位走
+                // 指针拖拽事务）；宽度/类名由 PM Decoration 应用。
+                DumbPadImage,
                 Table.configure({ resizable: false }),
                 TableRow,
                 TableHeader,
@@ -118,6 +124,8 @@ export class HybridMarkdownEditor {
                     lowlight,
                 }),
                 TiptapSelectionMenu,
+                TiptapImageInteractions,
+                DumbPadArticleFileLink,
             ],
             content: '',
             autofocus: false,
