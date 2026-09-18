@@ -24,9 +24,10 @@
 ### 变更
 
 - **图片默认插入宽度改为 360（窄档）**：`/file` 插图与「设置 → 附件」的插入都改用共享常量 `DEFAULT_ARTICLE_IMAGE_WIDTH = 360`（旧默认 720 在窄屏上几乎占满纸面）；插入后仍可用图片尺寸菜单改成中 / 宽 / 自适应。
-- **附件 chip 样式重做**：附件链接换成与 Thoughts 附件卡同一套视觉语言（10px 圆角、细描边、悬停主色高亮、轻微上浮），图标由 `a.dumbpad-article-file::before` 的线稿文件 SVG（mask 着色，明暗主题分别取 `--muted-text` / `--primary-color`）提供，不再依赖 label 里的 emoji。附件 label 同步去掉 `📎` 前缀，旧 label 由解析期归一化（`stripLegacyFileLabelEmoji`）在载入时去掉该前缀——避免「主题图标 + 📎」双图标；改动过的旧文章会在下次保存时把 label 里的 `📎` 移除（文件名与大小信息不变）。附件判定只看 `title` 前缀，不再要求 href 形如 `/download`，旧数据里的 `/original`、带 query 等变体也会弹下载/删除菜单而不是直接下载。
+- **附件 chip 样式重做**：附件链接换成与 Thoughts 附件卡同一套视觉语言（10px 圆角、细描边、悬停主色高亮、轻微上浮），图标由 `a.dumbpad-article-file::before` 的线稿文件 SVG（mask 着色，明暗主题分别取 `--muted-text` / `--primary-color`）提供，不再依赖 label 里的 emoji。附件 label 同步去掉 `📎` 前缀，旧 label 由解析期归一化（`stripLegacyFileLabelEmoji`）在载入时去掉该前缀——避免「主题图标 + 📎」双图标；改动过的旧文章会在下次保存时把 label 里的 `📎` 移除（文件名与大小信息不变）。
 
 ### 修复
+- **Tiptap 编辑模式下点附件直接下载（菜单没出现）**：Tiptap 的 Link 扩展默认 `openOnClick: true`，它的 PM `handleClick`（挂在 `view.dom` 冒泡阶段、注册早于插件 view）会对链接调 `window.open(href, target="_blank")`——对 `/api/assets/<id>/download` 就是直接下载，因此先前挂在冒泡阶段的监听即使 `preventDefault()` 也已经晚了（事件早已被处理完）。现在附件与图片的点击监听改挂**捕获阶段**并 `stopPropagation()`：事件连 `<a>`/`<img>` 本身都到不了，PM 的处理器看不到这次点击，附件稳定弹「下载 / 删除」菜单（阅读模式不变，仍由浏览器直接下载）。附件判定同时放宽为「`title` 标了 `dumbpad-file=1` 或 `href` 就是资产下载 URL」，旧数据里 title 丢失的链接也会拿到 chip 样式与菜单。
 
 - **`/file` 选完文件后编辑器丢焦点**：原生文件对话框打开期间焦点落在隐藏 input 上，选择完成或取消后都没有交还编辑器——用户看不到插入点、要继续打字得先手动点一下编辑区。现在插入完成（WYSIWYG 与源码模式）与取消三条路径都会把焦点/光标交还编辑器。
 - **Tiptap 下点图片错误弹出文字选区菜单**：点击图片会产生非空 NodeSelection（旧 Vditor 点图片后文字选区是折叠的，所以不弹），而选区菜单的禁区只列了 `codeBlock` 与 `timeMarker`，图片不在其中——于是「画线 / 高亮 / 批注 / 复制」文字菜单出现在图片上，与图片自己的尺寸菜单抢位置。现在 `image` 也列入 `PROTECTED_NODE_TYPES`，图片让位给 `TiptapImageInteractions` 的尺寸 / 大图菜单。同时修掉这条路径的残留形态：文字选区的菜单**已经显示**后再点图片时，mouseup 的宏任务补判只做了早退（拖拽态已拦住 `update()` 的隐藏分支），旧菜单会连同上一次的选区一起留在图片上，此时点「画线 / 高亮 / 批注」会写到上一次选中的文字上——现在该分支改走 `hide()`。
