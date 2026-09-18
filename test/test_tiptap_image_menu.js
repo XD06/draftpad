@@ -53,11 +53,14 @@ const IMAGE_DOWNLOAD = `/api/assets/${ASSET_ID}/download`;
 const IMAGE_ORIGINAL = `/api/assets/${ASSET_ID}/original`;
 const IMAGE_ONLY = `![示意图](${IMAGE_SRC})`;
 const IMAGE_WITH_TEXT = `${IMAGE_ONLY}\n\n正文段落`;
-const FILE_ONLY = `[📎 报告.pdf · 1.2 MB](${IMAGE_DOWNLOAD} "dumbpad-file=1;size=1258291;type=application%2Fpdf")`;
 const IMAGE_A_SRC = '/api/assets/aaaa0123456789ab/preview';
 const IMAGE_B_SRC = '/api/assets/bbbb0123456789ab/preview';
 const TWO_IMAGES = `![图A](${IMAGE_A_SRC})\n\n![图B](${IMAGE_B_SRC})`;
 const LEGACY_BASE64 = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8AAAwAB/wD/AAf/AAAAAElFTkSuQmCC';
+const FILE_LABEL = '报告.pdf · 1.2 MB';
+const FILE_TITLE = 'dumbpad-file=1;size=1258291;type=application%2Fpdf';
+const FILE_ONLY = `[${FILE_LABEL}](${IMAGE_DOWNLOAD} "${FILE_TITLE}")`;
+const LEGACY_FILE_ONLY = `[📎 ${FILE_LABEL}](${IMAGE_DOWNLOAD} "${FILE_TITLE}")`;
 
 let failures = 0;
 function check(name, condition, detail) {
@@ -321,7 +324,11 @@ async function main() {
     check('attachment link renders dumbpad-article-file class', fileLink?.classList.contains('dumbpad-article-file') === true, fileLink?.outerHTML);
     check('attachment link serialization unchanged', editor.getValue() === FILE_ONLY, editor.getValue());
 
-    click(fileLink);
+    // 旧 label 的「📎 」前缀在解析期去掉（图标改由 CSS 提供），不再出现双图标。
+    editor.setValue(LEGACY_FILE_ONLY, false);
+    check('legacy emoji label normalized away', editor.getValue() === FILE_ONLY, editor.getValue());
+
+    click(container.querySelector('a'));
     await wait(30);
     check('attachment click opens file menu', fileMenu().hidden === false);
     const fileDownload = fileMenu().querySelector('[data-file-download]');
@@ -331,10 +338,10 @@ async function main() {
     await wait(600);
     click(fileMenu().querySelector('[data-file-delete]'));
     await wait(30);
-    check('file delete removes attachment link', !editor.getValue().includes('📎'), editor.getValue());
+    check('file delete removes attachment link', !editor.getValue().includes('报告.pdf'), editor.getValue());
     check('file delete closes file menu', fileMenu().hidden === true);
     editor.editor.commands.undo();
-    check('file delete is undoable', editor.getValue().includes('📎'), editor.getValue());
+    check('file delete is undoable', editor.getValue().includes('报告.pdf'), editor.getValue());
 
     /* ---- 8.5 宽度上限钳制（旧 max(240, floor(clientWidth || innerWidth-48))） ---- */
     Object.defineProperty(contentRoot(), 'clientWidth', { value: 300, configurable: true });

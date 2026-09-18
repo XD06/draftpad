@@ -1,5 +1,8 @@
 export const FILE_COMMAND = '/file';
 export const ARTICLE_FILE_TITLE_PREFIX = 'dumbpad-file=1';
+// 插入图片时的默认显示宽度（px）：与尺寸菜单的「窄」档一致。旧默认 720 在窄屏
+// 上几乎占满纸面，用户在插件菜单里再调小很麻烦，所以默认给一个小尺寸。
+export const DEFAULT_ARTICLE_IMAGE_WIDTH = 360;
 
 function clampOffset(value, offset) {
     return Math.max(0, Math.min(String(value || '').length, Number(offset) || 0));
@@ -83,5 +86,8 @@ export function buildArticleFileMarkdown(asset = {}) {
     const size = Math.max(0, Number(asset.size) || 0);
     const type = safeTitlePart(asset.type || 'application/octet-stream');
     const title = `${ARTICLE_FILE_TITLE_PREFIX};size=${size};type=${type}`;
-    return `[📎 ${name} · ${formatFileSize(size)}](${url} "${title}")`;
+    // label 不再带 📎 前缀：图标由 CSS（a.dumbpad-article-file::before 的主题图标）
+    // 提供，label 只放「文件名 · 大小」这类真实信息（旧 label 的 📎 由
+    // DumbPadArticleFileLink 的解析期归一化去掉）。
+    return `[${name} · ${formatFileSize(size)}](${url} "${title}")`;
 }

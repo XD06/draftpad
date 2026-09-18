@@ -126,6 +126,16 @@ async function main() {
         check(`image: idempotent second round (${label}…)`, second === first, `got ${JSON.stringify(second)}`);
     }
 
+    // 图片行紧贴下一个块（旧数据 / 旧 bug 的产物：图片 markdown 后面少了空行）。
+    // 载入必须补回块分隔，且下面的 markdown（`# 标题1`）不能被粘成同一段——粘进
+    // 段落会让标题退化成带转义的源码文本（`\# 标题1`），刷新后显示为源码。
+    const gluedHeading = `![图](${imageSrc})\n# 标题1`;
+    editor.setValue(gluedHeading, false);
+    const repaired = editor.getValue();
+    check('image: glued heading block separator restored', repaired === `![图](${imageSrc})\n\n# 标题1`, repaired);
+    editor.setValue(repaired, false);
+    check('image: repaired heading stays stable', editor.getValue() === repaired, editor.getValue());
+
     // 8. 幂等性：再走一轮必须稳定（结构化文档）
     editor.setValue(structuredOut, false);
     check('structured: idempotent second round', editor.getValue() === structuredOut, editor.getValue());

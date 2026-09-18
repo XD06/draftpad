@@ -30,6 +30,7 @@ import {
 } from './managers/tiptap-extensions.js';
 import { TiptapSelectionMenu } from './managers/tiptap-selection-menu.js';
 import { createFileCommandController } from './managers/tiptap-file-command.js';
+import { DEFAULT_ARTICLE_IMAGE_WIDTH } from './managers/article-file-command.js';
 import {
     DumbPadArticleFileLink,
     DumbPadImage,
@@ -567,7 +568,10 @@ export class HybridMarkdownEditor {
         if (!url) return false;
         const isImage = asset.kind === 'image' || /\.(png|jpe?g|gif|webp|svg|avif)$/i.test(url);
         const label = String(asset.name || asset.filename || (isImage ? 'image' : url));
-        const markdown = isImage ? `![${label}](${url})` : `[${label}](${url})`;
+        // 与 /file 插图保持一致：默认给一个小尺寸，避免新图一进来就占满纸面。
+        const markdown = isImage
+            ? `![${label}](${url} "dumbpad-width=${DEFAULT_ARTICLE_IMAGE_WIDTH}")`
+            : `[${label}](${url})`;
         this.editor.commands.insertContentAt(this.editor.state.selection.from, markdown);
         this.notifyEditorValueChanged(this.getValue());
         return true;

@@ -12,7 +12,6 @@ const { Plugin, PluginKey } = PM.state;
 const { Decoration, DecorationSet } = PM.view;
 
 const ASSET_URL_RE = /\/api\/assets\/([a-f0-9-]{16,64})\/(?:preview|original)(?:$|[?#])/i;
-const ASSET_DOWNLOAD_URL_RE = /^\/api\/assets\/[a-f0-9-]{16,64}\/download(?:$|[?#])/i;
 const IMAGE_WIDTH_RE = /dumbpad-width=(\d{2,4})/;
 const MIN_IMAGE_WIDTH = 160;
 const MIN_IMAGE_MAX_WIDTH = 240;
@@ -46,12 +45,29 @@ export function isArticleAssetImageSource(source) {
     return Boolean(articleAssetIdFromSource(source)) || isLegacyArticleImageSource(source);
 }
 
-/** 旧 decorateArticleFileLinks 的准入判定：附件链接 = dumbpad-file=1 title + 资产下载 URL。 */
+/**
+ * 旧 decorateArticleFileLinks 的准入判定：附件链接 = title 以 dumbpad-file=1 开头。
+ * href 不参与判定——旧数据里存在 `/original`、带 query 等变体，只要 title 标了附件就
+ * 该走「菜单」而不是直接下载（菜单用链接自身的 href 做下载地址）。
+ */
 export function isArticleFileLink(link) {
     if (!link?.getAttribute) return false;
-    const title = String(link.getAttribute('title') || '');
-    const href = String(link.getAttribute('href') || '');
-    return title.startsWith(ARTICLE_FILE_TITLE_PREFIX) && ASSET_DOWNLOAD_URL_RE.test(href);
+    return String(link.getAttribute('title') || '').startsWith(ARTICLE_FILE_TITLE_PREFIX);
+}
+
+/**
+ * 解析期归一化：旧附件 label 以「📎 」开头（图标已改由 CSS 提供），载入时把这段
+ * 装饰前缀从渲染 DOM 的文本节点里去掉，避免出现「主题图标 + 📎」双图标。
+ * 只动第一个文本节点，不 flatten 链接内部的其他元素。
+ */
+export function stripLegacyFileLabelEmoji(element) {
+    element.querySelectorAll('a[href]').forEach((link) => {
+        if (!String(link.getAttribute('title') || '').startsWith(ARTICLE_FILE_TITLE_PREFIX)) return;
+        const first = link.firstChild;
+        if (!first || first.nodeType !== 3) return;
+        const stripped = String(first.nodeValue || '').replace(/^\s*\u{1F4CE}\s*/u, '');
+        if (stripped !== first.nodeValue) first.nodeValue = stripped;
+    });
 }
 
 /** 元素矩形：方法缺失或返回 undefined 时都当作「拿不到」（无布局环境）。 */
@@ -131,6 +147,19 @@ export const DumbPadArticleFileLink = Extension.create({
                 },
             },
         ];
+    },
+
+    // 解析期归一化挂在这里（Extension 的 storage.markdown.parse 同样被
+    // tiptap-markdown 的解析器收集，与 tiptap-extensions.js 的 updateDOM 同机制）：
+    // 旧附件 label 的「📎 」前缀在载入时去掉，图标统一由 CSS 提供。
+    addStorage() {
+        return {
+            markdown: {
+                parse: {
+                    updateDOM: (element) => stripLegacyFileLabelEmoji(element),
+                },
+            },
+        };
     },
 });
 

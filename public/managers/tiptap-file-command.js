@@ -14,6 +14,7 @@ import {
 } from './asset-api-client.js';
 import {
     FILE_COMMAND,
+    DEFAULT_ARTICLE_IMAGE_WIDTH,
     findFileCommandBeforeCursor,
     buildArticleFileMarkdown,
     replaceFileCommand,
@@ -23,7 +24,7 @@ const FILE_COMMAND_LENGTH = FILE_COMMAND.length;
 
 function buildArticleImageMarkdown(asset = {}) {
     const alt = String(asset?.name || '图片').replace(/[[\]\\]/g, '\\$&');
-    return `![${alt}](${asset.previewUrl} "dumbpad-width=720")`;
+    return `![${alt}](${asset.previewUrl} "dumbpad-width=${DEFAULT_ARTICLE_IMAGE_WIDTH}")`;
 }
 
 export function createFileCommandController(adapter) {
@@ -99,10 +100,22 @@ export function createFileCommandController(adapter) {
             fileInput.addEventListener('cancel', () => {
                 pendingPos = null;
                 pendingSourceRange = null;
+                // 原生文件对话框拿走焦点后要还给编辑器，否则用户取消后看不到光标、
+                // 也直接打不了字（必须手动点一下编辑区）。
+                restoreEditorFocus();
             });
             adapter.container.appendChild(fileInput);
         }
         fileInput.click();
+    }
+
+    /** 上传/取消之后把焦点与光标交还编辑器（对话框期间焦点在隐藏 input 上）。 */
+    function restoreEditorFocus() {
+        if (adapter.sourceMode) {
+            adapter.getSourceTextarea()?.focus();
+            return;
+        }
+        adapter.focus?.();
     }
 
     function deletePendingCommand() {
@@ -187,6 +200,7 @@ export function createFileCommandController(adapter) {
             anchor = adapter.editor.state.selection.from;
         });
         adapter.notifyEditorValueChanged(adapter.getValue());
+        restoreEditorFocus();
     }
 
     function insertIntoSourceMode(markdowns) {
@@ -200,6 +214,7 @@ export function createFileCommandController(adapter) {
         textarea.value = replaced.value;
         textarea.setSelectionRange(replaced.selectionStart, replaced.selectionEnd);
         adapter.notifyEditorValueChanged(textarea.value);
+        textarea.focus();
     }
 
     /* ---------------- 源码模式：textarea Enter 拦截 ---------------- */
