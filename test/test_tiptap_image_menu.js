@@ -299,6 +299,22 @@ async function main() {
     await wait(30);
     check('external image opens no size menu', sizeMenu().hidden === true);
 
+    /* ---- 7.5 遗留 Base64 内联图片：不再被 schema 丢弃，且参与装饰与菜单 ---- */
+    editor.setValue(`![旧图](${LEGACY_BASE64})`, false);
+    check('legacy base64 image survives parsing',
+        Boolean(imageEl()) && String(imageNode()?.node.attrs.src || '').startsWith('data:image/'),
+        editor.getValue());
+    check('legacy base64 image gets article image class',
+        contentRoot().querySelector('img')?.classList.contains('dumbpad-article-image') === true);
+    check('legacy base64 markdown roundtrips byte-exact',
+        editor.getValue() === `![旧图](${LEGACY_BASE64})`, editor.getValue());
+    click(imageEl());
+    await wait(30);
+    check('legacy base64 image opens size menu',
+        sizeMenu().hidden === false
+        && sizeMenu().querySelector('[data-image-download]').getAttribute('href') === LEGACY_BASE64,
+        sizeMenu().querySelector('[data-image-download]').getAttribute('href'));
+
     /* ---- 8. 附件链接：类名渲染 + 下载/删除菜单 ---- */
     editor.setValue(FILE_ONLY, false);
     const fileLink = container.querySelector('a');

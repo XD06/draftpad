@@ -76,10 +76,36 @@ export function buildArticleImageDecorations(state) {
 }
 
 /**
- * 图片节点：不作为原生 draggable（HTML5 拖拽在触屏不可用，且与 contenteditable
- * 选区模型冲突）。换位统一由插件 view 的指针流程完成，落到单个框架事务。
+ * 图片节点：
+ * - 不作为原生 draggable（HTML5 拖拽在触屏不可用，且与 contenteditable 选区
+ *   模型冲突）。换位统一由插件 view 的指针流程完成，落到单个框架事务。
+ * - `allowBase64`：旧笔记里的内联 Base64 图片必须继续可读（内核默认
+ *   `allowBase64: false`，`img[src^="data:"]` 会被 schema 直接丢掉，等于静默
+ *   删除用户内容）。
+ * - markdown 序列化：内核自带的 image 序列化不回 `closeBlock`，块级图片后面
+ *   的下一个块会粘在图片 markdown 后面（`![图](url)\n\n段落` → `![图](url)段落`，
+ *   重新解析后图文合并）。这里逐字节复刻内核实现并补上块分隔。
  */
-export const DumbPadImage = Image.extend({ draggable: false });
+export const DumbPadImage = Image.configure({ allowBase64: true }).extend({
+    draggable: false,
+
+    addStorage() {
+        return {
+            markdown: {
+                serialize(state, node) {
+                    const src = String(node.attrs.src || '').replace(/[()]/g, '\\$&');
+                    const alt = state.esc(String(node.attrs.alt || ''));
+                    const title = node.attrs.title
+                        ? ` "${String(node.attrs.title).replace(/"/g, '\\"')}"`
+                        : '';
+                    state.write(`![${alt}](${src}${title})`);
+                    state.closeBlock(node);
+                },
+            },
+        };
+    },
+});
+
 /**
  * 附件链接：给 link mark 加一个只渲染不存储的全局属性——title 以
  * dumbpad-file=1 开头时在 <a> 上输出 dumbpad-article-file 类（styles.css 的

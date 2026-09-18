@@ -101,7 +101,32 @@ async function main() {
     check('task-list: checkboxes kept', structuredOut.includes('[ ]') && structuredOut.includes('[x]'), structuredOut);
     check('table: cells kept', structuredOut.includes('| 列A | 列B |') || (structuredOut.includes('列A') && structuredOut.includes('列B')), structuredOut);
 
-    // 7. 幂等性：再走一轮必须稳定
+    // 7. 图片：块级图片必须有块分隔（内核自带的 image 序列化不回 closeBlock，
+    // 会把下一个块粘在图片 markdown 后面，重新解析后图文合并）；宽度写在
+    // title="dumbpad-width=N"；旧笔记的内联 Base64 图片不能被 schema 丢掉
+    // （内核默认 allowBase64:false 会静默删除 img[src^="data:"]）。
+    const imageSrc = '/api/assets/abcdef0123456789/preview';
+    const secondImageSrc = '/api/assets/bbbb0123456789ab/preview';
+    const legacyBase64 = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8AAAwAB/wD/AAf/AAAAAElFTkSuQmCC';
+    const imageCases = [
+        `![图](${imageSrc})`,
+        `![图](${imageSrc} "dumbpad-width=360")`,
+        `![图](${imageSrc} "dumbpad-width=720")\n\n正文段落`,
+        `正文段落\n\n![图](${imageSrc})`,
+        `![图](${imageSrc})\n\n![第二张](${secondImageSrc})`,
+        `![旧图](${legacyBase64})\n\n正文段落`,
+    ];
+    for (const value of imageCases) {
+        editor.setValue(value, false);
+        const first = editor.getValue();
+        editor.setValue(first, false);
+        const second = editor.getValue();
+        const label = value.replace(/\n/g, '\\n').slice(0, 46);
+        check(`image: byte-exact roundtrip (${label}…)`, first === value, `got ${JSON.stringify(first)}`);
+        check(`image: idempotent second round (${label}…)`, second === first, `got ${JSON.stringify(second)}`);
+    }
+
+    // 8. 幂等性：再走一轮必须稳定（结构化文档）
     editor.setValue(structuredOut, false);
     check('structured: idempotent second round', editor.getValue() === structuredOut, editor.getValue());
 
