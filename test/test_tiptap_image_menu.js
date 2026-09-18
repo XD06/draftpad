@@ -335,6 +335,46 @@ async function main() {
     check('file menu download uses link href', fileDownload.getAttribute('href') === IMAGE_DOWNLOAD, fileDownload.outerHTML);
     check('file menu download filename derived from label', fileDownload.download === '报告.pdf', fileDownload.getAttribute('download'));
 
+    // 根因回归：Tiptap 的 Link 扩展默认 openOnClick=true，它的 PM handleClick（挂在
+    // view.dom 冒泡阶段、且注册早于插件 view）会对链接调 window.open(href, target="_blank")
+    // ——对 /api/assets/<id>/download 就是直接下载。附件点击必须在 PM 看到之前
+    // （捕获阶段）被拦下，判据是「事件连 <a> 本身都没到达」：只有捕获阶段拦截 + 
+    // stopPropagation 才能做到，冒泡阶段拦截时目标元素早已收到事件。
+    {
+        const link = container.querySelector('a');
+        let targetReached = false;
+        let bubbleReached = false;
+        const onTargetClick = () => { targetReached = true; };
+        const onBubbleClick = () => { bubbleReached = true; };
+        link.addEventListener('click', onTargetClick);
+        editor.editor.view.dom.addEventListener('click', onBubbleClick);
+        click(link);
+        await wait(30);
+        check('attachment click stopped before reaching the link itself', targetReached === false);
+        check('attachment click never reaches bubble-phase handlers', bubbleReached === false);
+        check('attachment click opened the menu instead', fileMenu().hidden === false);
+        // 对照组：普通文本点击不该被拦，目标与冒泡探针都要收到
+        const paragraph = container.querySelector('.tiptap p');
+        paragraph.addEventListener('click', onTargetClick);
+        click(paragraph);
+        await wait(10);
+        check('control: plain text click reaches target and bubble handlers', targetReached === true && bubbleReached === true);
+        link.removeEventListener('click', onTargetClick);
+        paragraph.removeEventListener('click', onTargetClick);
+        editor.editor.view.dom.removeEventListener('click', onBubbleClick);
+    }
+
+    // title 丢失、只有资产下载 URL 的旧附件链接同样走菜单（而不是被 Link 扩展下载）
+    {
+        editor.setValue(`[报告.pdf](${IMAGE_DOWNLOAD})`, false);
+        const bareLink = container.querySelector('a');
+        check('title-less asset link still gets the attachment chip', bareLink?.classList.contains('dumbpad-article-file') === true, bareLink?.outerHTML);
+        click(bareLink);
+        await wait(30);
+        check('title-less asset link opens the file menu', fileMenu().hidden === false);
+        check('title-less asset link download uses its href', fileMenu().querySelector('[data-file-download]').getAttribute('href') === IMAGE_DOWNLOAD);
+    }
+
     await wait(600);
     click(fileMenu().querySelector('[data-file-delete]'));
     await wait(30);

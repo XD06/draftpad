@@ -12,6 +12,7 @@ const { Plugin, PluginKey } = PM.state;
 const { Decoration, DecorationSet } = PM.view;
 
 const ASSET_URL_RE = /\/api\/assets\/([a-f0-9-]{16,64})\/(?:preview|original)(?:$|[?#])/i;
+const ASSET_DOWNLOAD_URL_RE = /\/api\/assets\/[a-f0-9-]{16,64}\/download(?:$|[?#])/i;
 const IMAGE_WIDTH_RE = /dumbpad-width=(\d{2,4})/;
 const MIN_IMAGE_WIDTH = 160;
 const MIN_IMAGE_MAX_WIDTH = 240;
@@ -46,13 +47,15 @@ export function isArticleAssetImageSource(source) {
 }
 
 /**
- * 旧 decorateArticleFileLinks 的准入判定：附件链接 = title 以 dumbpad-file=1 开头。
- * href 不参与判定——旧数据里存在 `/original`、带 query 等变体，只要 title 标了附件就
- * 该走「菜单」而不是直接下载（菜单用链接自身的 href 做下载地址）。
+/**
+ * 附件链接判定：title 以 dumbpad-file=1 开头（/file 与设置里插入的形态），或 href 就是
+ * 资产下载 URL（更早的旧数据、或 title 丢失的形态）。命中就走「菜单」而不是交给
+ * Tiptap 的 Link 扩展去 window.open（对 /download 就是直接下载）。
  */
 export function isArticleFileLink(link) {
     if (!link?.getAttribute) return false;
-    return String(link.getAttribute('title') || '').startsWith(ARTICLE_FILE_TITLE_PREFIX);
+    if (String(link.getAttribute('title') || '').startsWith(ARTICLE_FILE_TITLE_PREFIX)) return true;
+    return ASSET_DOWNLOAD_URL_RE.test(String(link.getAttribute('href') || ''));
 }
 
 /**
@@ -62,7 +65,7 @@ export function isArticleFileLink(link) {
  */
 export function stripLegacyFileLabelEmoji(element) {
     element.querySelectorAll('a[href]').forEach((link) => {
-        if (!String(link.getAttribute('title') || '').startsWith(ARTICLE_FILE_TITLE_PREFIX)) return;
+        if (!isArticleFileLink(link)) return;
         const first = link.firstChild;
         if (!first || first.nodeType !== 3) return;
         const stripped = String(first.nodeValue || '').replace(/^\s*\u{1F4CE}\s*/u, '');
@@ -138,11 +141,15 @@ export const DumbPadArticleFileLink = Extension.create({
                     articleFileClass: {
                         default: null,
                         parseHTML: () => null,
-                        renderHTML: (attributes) => (
-                            String(attributes.title || '').startsWith(ARTICLE_FILE_TITLE_PREFIX)
-                                ? { class: 'dumbpad-article-file', download: '' }
-                                : {}
-                        ),
+                        // 与 isArticleFileLink 同一套判定：title 标了附件，或 href 就是资产
+                        // 下载 URL（旧数据 / title 丢失的形态）都要拿到 chip 样式与 download。
+                        renderHTML: (attributes) => {
+                            const title = String(attributes.title || '');
+                            const href = String(attributes.href || '');
+                            const isFile = title.startsWith(ARTICLE_FILE_TITLE_PREFIX)
+                                || ASSET_DOWNLOAD_URL_RE.test(href);
+                            return isFile ? { class: 'dumbpad-article-file', download: '' } : {};
+                        },
                     },
                 },
             },
@@ -241,7 +248,11 @@ class ArticleImageInteractionView {
         // 与旧 bindArticleImageInteractions 同机制：直接在 view.dom 挂 DOM 监听。
         // 不用 PM 的 handleClick prop——它依赖 PM 鼠标管线（posAtCoords /
         // view.mouseDown 状态机），无布局环境不可靠。
-        view.dom.addEventListener('click', this.handleClick);
+        // click 必须挂**捕获阶段**：Tiptap 的 Link 扩展默认 openOnClick=true，它的 PM
+        // handleClick（冒泡阶段）会对链接调 window.open(href, target="_blank")——对
+        // /api/assets/<id>/download 就是直接下载，冒泡阶段的 preventDefault 已经来不及。
+        // 捕获阶段先拦下再 stopPropagation，PM 的处理器就看不到这次点击（图片同理）。
+        view.dom.addEventListener('click', this.handleClick, true);
         view.dom.addEventListener('pointerdown', this.handlePointerDown);
         view.dom.addEventListener('pointermove', this.handlePointerMove);
         view.dom.addEventListener('pointerup', this.handlePointerUp);
@@ -601,8 +612,11 @@ class ArticleImageInteractionView {
         const target = event.target;
         const fileLink = target?.closest?.('a[href]');
         if (fileLink && this.view.dom.contains(fileLink) && this.view.editable && isArticleFileLink(fileLink)) {
+            // 捕获阶段拦下并阻断：否则 Tiptap 的 Link 扩展会把这次点击变成
+            // window.open('/api/assets/<id>/download')，也就是直接下载。
             event.preventDefault();
             event.stopPropagation();
+            event.stopImmediatePropagation?.();
             this.hideSizeMenu();
             this.openFileMenu(fileLink);
             return;
@@ -614,6 +628,7 @@ class ArticleImageInteractionView {
         if (Date.now() - this.lastTapAt < TAP_CLICK_GUARD_MS) return;
         event.preventDefault();
         event.stopPropagation();
+        event.stopImmediatePropagation?.();
         if (!this.view.editable) {
             this.hideSizeMenu();
             this.openLightbox(image);
@@ -744,7 +759,7 @@ class ArticleImageInteractionView {
 
     destroy() {
         this.cancelDrag();
-        this.view.dom.removeEventListener('click', this.handleClick);
+        this.view.dom.removeEventListener('click', this.handleClick, true);
         this.view.dom.removeEventListener('dragstart', this.handleDragStart);
         this.view.dom.removeEventListener('pointerdown', this.handlePointerDown);
         this.view.dom.removeEventListener('pointermove', this.handlePointerMove);
