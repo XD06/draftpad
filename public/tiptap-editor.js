@@ -102,6 +102,15 @@ export class HybridMarkdownEditor {
                     hardBreak: false,
                     // 代码块交给官方 CodeBlockLowlight（PM Decoration 高亮）
                     codeBlock: false,
+                    // 关掉 Link 的 openOnClick。Tiptap 的链接点击处理（PM handleClick，
+                    // PluginKey handleClickLink）由 prosemirror-view 在 **mouseup** 里派发
+                    // （LeftMouseDown.up → handleSingleClick → someProp('handleClick')），
+                    // 永远早于任何 click 事件——DOM 层面（连捕获阶段都）拦不住它。开着的后果：
+                    // 编辑模式点附件 chip 会先 window.open('/api/assets/<id>/download', '_blank')
+                    // 直接下载，菜单随后才出现。裸 URL「编辑模式可点开」改由
+                    // tiptap-image-interactions.js 按旧 Vditor 基线自己实现；阅读模式一直是
+                    // 浏览器原生行为，不经过这里。
+                    link: { openOnClick: false },
                 }),
                 AnnotationMark,
                 DrawMark,

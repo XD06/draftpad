@@ -47,10 +47,9 @@ export function isArticleAssetImageSource(source) {
 }
 
 /**
-/**
  * 附件链接判定：title 以 dumbpad-file=1 开头（/file 与设置里插入的形态），或 href 就是
- * 资产下载 URL（更早的旧数据、或 title 丢失的形态）。命中就走「菜单」而不是交给
- * Tiptap 的 Link 扩展去 window.open（对 /download 就是直接下载）。
+ * 资产下载 URL（更早的旧数据、或 title 丢失的形态）。命中就走「菜单」，不跟随链接——
+ * 附件的 /download 一旦被当成普通链接打开，就直接触发下载了。
  */
 export function isArticleFileLink(link) {
     if (!link?.getAttribute) return false;
@@ -248,10 +247,11 @@ class ArticleImageInteractionView {
         // 与旧 bindArticleImageInteractions 同机制：直接在 view.dom 挂 DOM 监听。
         // 不用 PM 的 handleClick prop——它依赖 PM 鼠标管线（posAtCoords /
         // view.mouseDown 状态机），无布局环境不可靠。
-        // click 必须挂**捕获阶段**：Tiptap 的 Link 扩展默认 openOnClick=true，它的 PM
-        // handleClick（冒泡阶段）会对链接调 window.open(href, target="_blank")——对
-        // /api/assets/<id>/download 就是直接下载，冒泡阶段的 preventDefault 已经来不及。
-        // 捕获阶段先拦下再 stopPropagation，PM 的处理器就看不到这次点击（图片同理）。
+        // click 挂在**捕获阶段**：抢在同节点其它冒泡监听（选区菜单等）之前拿到这次点击，
+        // 并对附件/裸链做 preventDefault + stopPropagation。注意这**不足以**对付 Tiptap 的
+        // Link 扩展：它的 PM handleClick 由 prosemirror-view 在 mouseup 里派发，早于 click
+        // 事件本身，任何 click 阶段的拦截都追不上，只能通过关掉 openOnClick 解决
+        // （见 public/tiptap-editor.js 的 StarterKit 配置）。
         view.dom.addEventListener('click', this.handleClick, true);
         view.dom.addEventListener('pointerdown', this.handlePointerDown);
         view.dom.addEventListener('pointermove', this.handlePointerMove);
@@ -607,19 +607,47 @@ class ArticleImageInteractionView {
 
     /* ---------------- 点击 ---------------- */
 
+    /**
+     * 编辑模式的裸 URL：只有「链接文本就是 URL」的链接才点开，判定与旧 Vditor 的
+     * bindArticleLinkInteractions 一致。Tiptap 的 Link 扩展不再代劳——openOnClick 已在
+     * public/tiptap-editor.js 关掉（它的 PM handleClick 在 mouseup 阶段派发，DOM 层面拦不
+     * 住），所以这里补回基线行为；`[文字](url)` 在编辑模式仍然不打开。
+     */
+    openBareLink(event, link) {
+        const href = String(link.getAttribute('href') || '');
+        if (!/^(https?:)?\/\//i.test(href)) return false;
+        const text = String(link.textContent || '').trim();
+        if (text !== href && text !== href.replace(/\/$/, '')) return false;
+        // 正在选中这条链接时不打开：拖选收尾的那一次点击不该变成跳转。
+        const selection = window.getSelection?.();
+        if (selection && !selection.isCollapsed && selection.rangeCount > 0
+            && selection.containsNode(link, true)) return false;
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation?.();
+        window.open(href, '_blank', 'noopener');
+        return true;
+    }
+
     onClick(event) {
         if (Date.now() - this.lastDragAt < DRAG_CLICK_GUARD_MS) return;
         const target = event.target;
-        const fileLink = target?.closest?.('a[href]');
-        if (fileLink && this.view.dom.contains(fileLink) && this.view.editable && isArticleFileLink(fileLink)) {
-            // 捕获阶段拦下并阻断：否则 Tiptap 的 Link 扩展会把这次点击变成
-            // window.open('/api/assets/<id>/download')，也就是直接下载。
-            event.preventDefault();
-            event.stopPropagation();
-            event.stopImmediatePropagation?.();
-            this.hideSizeMenu();
-            this.openFileMenu(fileLink);
-            return;
+        const link = target?.closest?.('a[href]');
+        // 阅读模式（!view.editable）整段跳过：附件与链接都交给浏览器原生行为。
+        if (link && this.view.dom.contains(link) && this.view.editable) {
+            if (isArticleFileLink(link)) {
+                // 附件只弹菜单，这里的 preventDefault 是给浏览器原生激活兜底。
+                // 真正造成「点击即下载」的是 Tiptap Link 的 PM handleClick：它在
+                // mouseup 阶段就 window.open 了 /download，任何 click 阶段（含捕获）的
+                // 拦截都晚于它，只能靠关掉 openOnClick 解决（见 public/tiptap-editor.js）。
+                event.preventDefault();
+                event.stopPropagation();
+                event.stopImmediatePropagation?.();
+                this.hideSizeMenu();
+                this.openFileMenu(link);
+                return;
+            }
+            if (!this.isSourceMode() && this.openBareLink(event, link)) return;
         }
         const image = target?.closest?.('img');
         if (!image || !this.view.dom.contains(image)) return;
