@@ -335,11 +335,11 @@ async function main() {
     check('file menu download uses link href', fileDownload.getAttribute('href') === IMAGE_DOWNLOAD, fileDownload.outerHTML);
     check('file menu download filename derived from label', fileDownload.download === '报告.pdf', fileDownload.getAttribute('download'));
 
-    // 根因回归：Tiptap 的 Link 扩展默认 openOnClick=true，它的 PM handleClick（挂在
-    // view.dom 冒泡阶段、且注册早于插件 view）会对链接调 window.open(href, target="_blank")
-    // ——对 /api/assets/<id>/download 就是直接下载。附件点击必须在 PM 看到之前
-    // （捕获阶段）被拦下，判据是「事件连 <a> 本身都没到达」：只有捕获阶段拦截 + 
-    // stopPropagation 才能做到，冒泡阶段拦截时目标元素早已收到事件。
+    // 这里只能验证「捕获阶段拦截」这个 DOM 机制本身（判据是事件连 <a> 都没到达，并有
+    // 普通文本点击作对照组）。它**证明不了** Tiptap Link 的 PM handleClick 行为——jsdom
+    // 里 PM 走不到 posAtCoords / view.mouseDown 鼠标管线。真正的下载路径（Link 的
+    // openOnClick 会在 mouseup 阶段 window.open 掉 /download，早于任何 click）由真实
+    // 浏览器回归覆盖：npm run test:tiptap-attachment-click-browser。
     {
         const link = container.querySelector('a');
         let targetReached = false;
