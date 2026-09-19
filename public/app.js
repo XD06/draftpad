@@ -21,6 +21,7 @@ import {
     updateSidebarSelection
 } from './sidebar.js';
 import { ArticleMetaFooter } from './managers/article-meta-footer.js';
+import { applyFloatingActionsVisibility } from './managers/floating-actions-config.js';
 
 // Global 401 handler: any /api 401 means the PIN session is gone — redirect to login.
 // This catches the case where the cookie expires while the app is open (the SW
@@ -3093,6 +3094,12 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
         }, { capture: true });
 
+        // 反思（placeholder）：目前没有页面，点击只提示开发中。按钮默认被配置隐藏，
+        // 把 DUMBPAD_HIDDEN_FLOATING_ACTIONS 置空就会露出来，不需要改这里的代码。
+        document.getElementById('toggle-reflections')?.addEventListener('click', () => {
+            toaster.show('反思功能开发中', 'info', false, 2200);
+        });
+
         copyAllBtn.addEventListener('click', async () => {
             const raw = editor.value;
             if (!raw) return toaster.show('Nothing to copy', 'info');
@@ -3718,6 +3725,12 @@ document.addEventListener('DOMContentLoaded', async () => {
             editorInstance?.setAssetMaxFileBytes(config.assetMaxFileBytes);
             _siteTitle = config.siteTitle;
             applyCurrentNotepadTitle();
+            // 悬浮按钮黑名单（DUMBPAD_HIDDEN_FLOATING_ACTIONS）：只切 hidden 属性，
+            // 节点和事件都保留，所以从配置里去掉按钮就回来了。
+            const floatingActionsVisibility = applyFloatingActionsVisibility(document, config.hiddenFloatingActions);
+            for (const item of floatingActionsVisibility.ignored) {
+                console.warn('Ignoring hidden floating action:', item.id, '(' + item.reason + ')');
+            }
         } catch (err) {
             console.warn('Error loading config:', err);
         }

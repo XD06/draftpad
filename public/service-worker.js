@@ -21,6 +21,7 @@ const CORE_ASSETS = [
   "/css/@highlightjs/github-dark.min.css",
   "/managers/confirmation.js",
   "/managers/clipboard-import-coordinator.js",
+  "/managers/floating-actions-config.js",
   "/managers/hybrid-display-sanitizer.js",
   "/managers/import-target-registry.js",
   "/managers/preview.js",

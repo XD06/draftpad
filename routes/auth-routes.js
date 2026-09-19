@@ -20,6 +20,7 @@ function registerAuthRoutes(app, context) {
         buildVersion: BUILD_VERSION,
         highlightLanguages: HIGHLIGHT_LANGUAGES,
         assetMaxFileBytes: ASSET_MAX_FILE_BYTES = 20 * 1024 * 1024,
+        hiddenFloatingActions: HIDDEN_FLOATING_ACTIONS = [],
         authService = null,
         auditLogger = null
     } = context;
@@ -434,6 +435,7 @@ function registerAuthRoutes(app, context) {
             version: BUILD_VERSION,
             highlightLanguages: HIGHLIGHT_LANGUAGES,
             assetMaxFileBytes: ASSET_MAX_FILE_BYTES,
+            hiddenFloatingActions: HIDDEN_FLOATING_ACTIONS,
             authMode: v2Enabled ? 'v2' : 'legacy'
         });
     });
