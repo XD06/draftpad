@@ -156,6 +156,38 @@ module.exports = async function testAttachmentClick(browser) {
         assert.deepEqual(downloads, [], 'touch tap on the attachment must not download');
         assert.deepEqual(afterTap.menus, ['article-file-menu'], 'touch tap opens the attachment menu');
 
+        // 6b) 光标落在 chip 文本里按回车：真实布局下胶囊不能被撑高，换行不能进 label。
+        // 先收掉上一步触屏点按留下的菜单，否则「Enter 不弹菜单」分不清新旧
+        await page.mouse.click(600, 700);
+        await page.waitForTimeout(200);
+        assert.deepEqual((await read()).menus, [], 'menu dismissed before the Enter step');
+        const chipHeight = () => page.evaluate(() => Math.round(
+            editor.container.querySelector('a.dumbpad-article-file').getBoundingClientRect().height));
+        const heightBefore = await chipHeight();
+        await page.evaluate(() => {
+            const anchor = editor.container.querySelector('a.dumbpad-article-file');
+            const view = editor.editor.view;
+            const { PM } = globalThis.DumbPadTiptap;
+            const pos = view.posAtDOM(anchor.firstChild, 3);
+            view.dispatch(view.state.tr.setSelection(PM.state.TextSelection.near(view.state.doc.resolve(pos))));
+            view.focus();
+        });
+        await page.keyboard.press('Enter');
+        await page.waitForTimeout(250);
+        const heightAfter = await chipHeight();
+        assert(Math.abs(heightAfter - heightBefore) <= 1,
+            `Enter inside the chip must not grow it (${heightBefore}px → ${heightAfter}px)`);
+        assert.equal(await page.evaluate(() => document.querySelector('a.dumbpad-article-file').querySelectorAll('br').length),
+            0, 'the soft break must never land inside the <a>');
+        await page.keyboard.type('X');
+        await page.waitForTimeout(250);
+        const afterEnter = await read();
+        assert.equal(afterEnter.value.includes(`${FILE_MD}\nX`), true,
+            `typing after Enter continues on the new line (${JSON.stringify(afterEnter.value.slice(0, 60))})`);
+        assert.deepEqual(afterEnter.menus, [], 'Enter opens no menu');
+        // 还原几何，后面的阅读模式步骤仍用同一组坐标
+        await page.evaluate((fixture) => { editor.setValue(fixture, false); }, FIXTURE);
+        await page.waitForTimeout(300);
         // 7) 阅读模式：浏览器原生下载，不弹菜单。
         // 先点编辑器外的空白把上一步留下的菜单收掉（「触发元素本身例外」会让点同一个
         // chip 不会关闭它），否则第 7 步的断言分不清是残留还是新开的。
