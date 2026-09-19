@@ -57,6 +57,7 @@ Thought 前端 helper 拆分模块有聚合测试入口：`npm run test:thought-
 - `public/managers/note-sync-controller.js`：启动缓存与 Note cache 读写控制器，避免缓存细节继续散落在 `app.js`。目录只筛选文章标题；选择已有文章时 `app.js` 先以 `loadNotes(..., { deferRemote: true })` 渲染缓存、再后台校验远端版本。非目录调用仍同步确认，避免该性能优化扩散到保存和冲突处理边界。
 - `public/managers/settings-data-panel.js`：设置页数据空间、垃圾桶和云端维护 API adapter。
 - `public/managers/ws-client.js`：轻量 WebSocket 客户端，把服务端事件转成浏览器 `CustomEvent`。
+- `public/managers/floating-actions-config.js`：悬浮功能按钮的显示配置边界。把 `/api/config` 的 `hiddenFloatingActions` 黑名单落到 DOM：只切按钮的 `hidden` 属性，不删节点、不解绑事件，因此配置里去掉 id 就恢复原状；本文件持有「可配置 id」与「外壳必需 id（`fab-toggle-group` / `scroll-helper`）」两份清单，被丢弃的条目按 `protected` / `unknown` / `missing-in-dom` 回报，由唯一调用点 `app.js` 的 `loadAppConfig()` 打 `console.warn`。`styles.css` 的 `.floating-btn[hidden]` 是它生效的前提（`.floating-btn` 自身是 `display: flex`）。回归：`npm run test:floating-actions-config`（jsdom + 配置解析）与 `npm run test:floating-actions-config-browser`（真实浏览器 computed display、图标 getBBox、移动端「更多」展开）。
 
 ### 严重 bug 记录：文章输入时光标乱跳与特殊样式闪烁（Vditor 内核时期，记录保留）
 
