@@ -3868,6 +3868,13 @@ blockquote {
     transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
+/* Floating action buttons are `display: flex`, so the `hidden` attribute alone
+   does not remove them. DUMBPAD_HIDDEN_FLOATING_ACTIONS toggles `hidden` on the
+   buttons via /api/config, which relies on this rule. */
+.floating-btn[hidden] {
+    display: none !important;
+}
+
 .dark-mode .floating-btn {
     background-color: rgba(30, 30, 30, 0.85);
     color: #e0e0e0;
