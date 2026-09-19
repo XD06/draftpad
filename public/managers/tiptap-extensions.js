@@ -9,7 +9,7 @@ import { TIME_COMMAND, parseTimeMarkerText, buildTimeMarker } from './time-comma
 import { buildCodeBlockNodeView } from './tiptap-code-block-view.js';
 import { buildTaskItemNodeView } from './tiptap-task-item-view.js';
 
-const { Plugin, PluginKey } = PM.state;
+const { Plugin, PluginKey, TextSelection } = PM.state;
 const { Decoration, DecorationSet } = PM.view;
 
 export const ANNOTATION_SPAN_STYLE = 'text-decoration:underline wavy #e74c3c;text-decoration-thickness:2.5px;';
@@ -362,6 +362,60 @@ export const TimeMarkerNode = Node.create({
     },
 });
 
+/**
+ * 光标与「链接文本」的位置关系（绝对位置）。link mark 是 inclusive 的，所以光标
+ * 落在链接内部、或贴在链接左右边界时，活跃 mark 里都带着 link。无链接则返回 null。
+ */
+function linkRunRelation(state) {
+    const linkType = state.schema.marks.link;
+    if (!linkType) return null;
+    const selection = state.selection;
+    if (!selection.empty) return null;
+    const $from = selection.$from;
+    const marks = selection.storedMarks || $from.marks();
+    if (!marks.some(mark => mark.type === linkType)) return null;
+    const base = $from.start();
+    const offset = $from.parentOffset;
+    let start = 0;
+    for (let index = 0; index < $from.parent.childCount; index += 1) {
+        const child = $from.parent.child(index);
+        const end = start + child.nodeSize;
+        if (linkType.isInSet(child.marks)) {
+            if (offset > start && offset < end) return { mode: 'inside', end: base + end };
+            if (offset === end) return { mode: 'edge', pos: base + end };
+            if (offset === start) return { mode: 'edge', pos: base + start };
+        }
+        start = end;
+    }
+    return { mode: 'outside' };
+}
+
+/**
+ * 插入段内软换行（Enter / Shift-Enter / Mod-Enter 共用）。光标与链接有关时必须特殊
+ * 处理：`replaceSelectionWith` 默认让插入的节点继承光标处的活跃 mark，链接里的活跃
+ * mark 就是 link——于是 `<br>` 落进 `<a>` 里（附件 chip 是 inline-flex，被撑成一整块
+ * 空白，多次回车越来越高），或者把链接劈成两个 `<a>`。两种都会把换行写进 markdown 的
+ * 链接 label（`[甲\n乙](url)`），重新解析后链接语法就坏了——是数据损坏，不只是视觉问题。
+ * 规则：光标在链接文本内部 → 换行放到整条链接之后、光标跟到换行后面（用户按回车想要
+ * 的是「下一行」，而不是把 label 剪开）；光标贴在链接边界 → 位置不变，但不继承 link mark。
+ */
+function insertSoftBreak(state, dispatch, nodeType) {
+    if (!nodeType) return false;
+    const relation = linkRunRelation(state);
+    if (!dispatch) return true;
+    if (relation?.mode === 'inside') {
+        const tr = state.tr.insert(relation.end, nodeType.create());
+        tr.setSelection(TextSelection.create(tr.doc, relation.end + 1));
+        dispatch(tr.scrollIntoView());
+        return true;
+    }
+    // 与链接无关时保持原行为（继承光标处的活跃 mark）；贴在链接边界时位置不变，
+    // 但不让 <br> 继承 link mark。
+    const inheritMarks = relation?.mode !== 'edge';
+    dispatch(state.tr.replaceSelectionWith(nodeType.create(), inheritMarks).scrollIntoView());
+    return true;
+}
+
 /** 软换行：存储为段内单个换行符（与旧编辑器一致），段尾换行序列化时丢弃。 */
 export const MdSoftBreak = Node.create({
     name: 'hardBreak',
@@ -388,7 +442,8 @@ export const MdSoftBreak = Node.create({
 
     addCommands() {
         return {
-            setHardBreak: () => ({ commands }) => commands.insertContent({ type: this.name }),
+            setHardBreak: () => ({ state, dispatch }) =>
+                insertSoftBreak(state, dispatch, state.schema.nodes.hardBreak),
         };
     },
 
@@ -549,7 +604,7 @@ export const SoftEnterShortcut = Extension.create({
                         if (!paragraph.textContent.replace(/[\u200B\uFEFF]/g, '').trim()) return false;
                         const { hardBreak } = state.schema.nodes;
                         if (!hardBreak) return false;
-                        view.dispatch(state.tr.replaceSelectionWith(hardBreak.create()).scrollIntoView());
+                        insertSoftBreak(state, (tr) => view.dispatch(tr), hardBreak);
                         return true;
                     },
                 },
