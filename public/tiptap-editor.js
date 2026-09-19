@@ -7,7 +7,6 @@ import {
     Editor,
     StarterKit,
     Markdown,
-    Image,
     Table,
     TableRow,
     TableCell,
@@ -31,6 +30,12 @@ import {
 } from './managers/tiptap-extensions.js';
 import { TiptapSelectionMenu } from './managers/tiptap-selection-menu.js';
 import { createFileCommandController } from './managers/tiptap-file-command.js';
+import { DEFAULT_ARTICLE_IMAGE_WIDTH } from './managers/article-file-command.js';
+import {
+    DumbPadArticleFileLink,
+    DumbPadImage,
+    TiptapImageInteractions,
+} from './managers/tiptap-image-interactions.js';
 import { buildMarkdownHeadingIndex } from './managers/heading-index.js';
 
 // frontmatter 假代码块按 YAML 高亮（官方插件对未注册语言会回退
@@ -97,6 +102,15 @@ export class HybridMarkdownEditor {
                     hardBreak: false,
                     // 代码块交给官方 CodeBlockLowlight（PM Decoration 高亮）
                     codeBlock: false,
+                    // 关掉 Link 的 openOnClick。Tiptap 的链接点击处理（PM handleClick，
+                    // PluginKey handleClickLink）由 prosemirror-view 在 **mouseup** 里派发
+                    // （LeftMouseDown.up → handleSingleClick → someProp('handleClick')），
+                    // 永远早于任何 click 事件——DOM 层面（连捕获阶段都）拦不住它。开着的后果：
+                    // 编辑模式点附件 chip 会先 window.open('/api/assets/<id>/download', '_blank')
+                    // 直接下载，菜单随后才出现。裸 URL「编辑模式可点开」改由
+                    // tiptap-image-interactions.js 按旧 Vditor 基线自己实现；阅读模式一直是
+                    // 浏览器原生行为，不经过这里。
+                    link: { openOnClick: false },
                 }),
                 AnnotationMark,
                 DrawMark,
@@ -105,7 +119,9 @@ export class HybridMarkdownEditor {
                 HeadingAnchor,
                 TimeCommandShortcut,
                 TimeMarkerNode,
-                Image,
+                // 图片节点由 DumbPadImage 提供（关闭原生 draggable，换位走
+                // 指针拖拽事务）；宽度/类名由 PM Decoration 应用。
+                DumbPadImage,
                 Table.configure({ resizable: false }),
                 TableRow,
                 TableHeader,
@@ -118,6 +134,8 @@ export class HybridMarkdownEditor {
                     lowlight,
                 }),
                 TiptapSelectionMenu,
+                TiptapImageInteractions,
+                DumbPadArticleFileLink,
             ],
             content: '',
             autofocus: false,
@@ -559,7 +577,10 @@ export class HybridMarkdownEditor {
         if (!url) return false;
         const isImage = asset.kind === 'image' || /\.(png|jpe?g|gif|webp|svg|avif)$/i.test(url);
         const label = String(asset.name || asset.filename || (isImage ? 'image' : url));
-        const markdown = isImage ? `![${label}](${url})` : `[${label}](${url})`;
+        // 与 /file 插图保持一致：默认给一个小尺寸，避免新图一进来就占满纸面。
+        const markdown = isImage
+            ? `![${label}](${url} "dumbpad-width=${DEFAULT_ARTICLE_IMAGE_WIDTH}")`
+            : `[${label}](${url})`;
         this.editor.commands.insertContentAt(this.editor.state.selection.from, markdown);
         this.notifyEditorValueChanged(this.getValue());
         return true;

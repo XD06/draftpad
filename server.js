@@ -16,7 +16,7 @@ const {
     migrateAllNotepadsToNameBasedFiles, 
     migrateDefaultNotepad 
 } = require('./scripts/notepad-migration');
-const { TRUST_PROXY, TRUSTED_PROXY_IPS } = require('./config');
+const { TRUST_PROXY, TRUSTED_PROXY_IPS, HIDDEN_FLOATING_ACTIONS } = require('./config');
 const { getClientIp } = require('./utils/ipExtractor');
 const { createSearchIndex } = require('./server/indexing');
 const { createWebSocketHub } = require('./server/websocket');
@@ -359,7 +359,8 @@ registerAuthRoutes(app, {
     siteTitle: SITE_TITLE,
     buildVersion: BUILD_VERSION,
     highlightLanguages: HIGHLIGHT_LANGUAGES,
-    assetMaxFileBytes: ASSET_MAX_FILE_BYTES
+    assetMaxFileBytes: ASSET_MAX_FILE_BYTES,
+    hiddenFloatingActions: HIDDEN_FLOATING_ACTIONS
 });
 
 registerShareRoutes(app, {

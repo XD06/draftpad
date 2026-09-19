@@ -85,10 +85,13 @@ function run() {
         type: 'application/pdf',
         downloadUrl: '/api/assets/a1/download'
     });
-    assert(markdown.includes('📎 计划\\[最终\\].pdf · 1.2 MB'), 'file labels should be safe Markdown text');
+    // label 不带 📎：图标改由 styles.css 的 a.dumbpad-article-file::before 提供。
+    const escapedLabel = `[${'计划[最终].pdf'.replace(/[[\]]/g, '\\$&')} · 1.2 MB]`;
+    assert(markdown.includes(escapedLabel), 'file labels should be safe Markdown text');
     assert(markdown.includes('/api/assets/a1/download'), 'file markdown should retain the download URL');
     assert(markdown.includes(`${ARTICLE_FILE_TITLE_PREFIX};size=1258291;type=application%2Fpdf`), 'file markdown should carry its controlled display marker');
     assert.strictEqual(buildArticleFileMarkdown({ name: 'missing URL' }), '', 'an asset without a download URL cannot produce Markdown');
+    assert(markdown.startsWith('[计划'), 'file labels should not carry the legacy emoji prefix');
     console.log('Article file command checks passed');
 }
 

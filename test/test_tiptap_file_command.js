@@ -131,12 +131,13 @@ async function main() {
     await new Promise((resolve) => setTimeout(resolve, 80));
     const finalValue = editor.getValue();
     check('/file replaced after upload', !finalValue.includes('：/file'), finalValue);
-    check('file reference markdown inserted', finalValue.includes('[📎 报告.pdf') && finalValue.includes('dumbpad-file=1'), finalValue);
-    check('image reference markdown inserted', finalValue.includes('![截图.png](/api/df/stub-image "dumbpad-width=720")'), finalValue);
-    // 顺序：图片在文件引用之前？不——按选择顺序：pdf 在前、图片在后
-    check('selection order preserved', finalValue.indexOf('📎 报告.pdf') < finalValue.indexOf('![截图.png]'), finalValue);
+    // label 不带 📎（图标由 CSS 提供）；图片默认宽度是「窄」档 360。
+    check('file reference markdown inserted', finalValue.includes('[报告.pdf') && finalValue.includes('dumbpad-file=1'), finalValue);
+    check('image markdown uses the small default width', finalValue.includes('![截图.png](/api/df/stub-image "dumbpad-width=360")'), finalValue);
+    // 顺序：按选择顺序：pdf 在前、图片在后
+    check('selection order preserved', finalValue.indexOf('报告.pdf') < finalValue.indexOf('![截图.png]'), finalValue);
     // 插入位置在上传期间编辑的文字之后（位置随事务映射）
-    check('insert position follows edits', finalValue.indexOf('📎 报告.pdf') > finalValue.indexOf('更多文字'), finalValue);
+    check('insert position follows edits', finalValue.indexOf('报告.pdf') > finalValue.indexOf('更多文字'), finalValue);
 
     // 6. 上传失败：响亮提示且不静默成功
     await setValueAndSelect('失败：/file', 9, 9);
@@ -151,7 +152,7 @@ async function main() {
     input2.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
     await new Promise((resolve) => setTimeout(resolve, 80));
     const failedValue = editor.getValue();
-    check('failed upload leaves doc without reference', !failedValue.includes('📎'), failedValue);
+    check('failed upload leaves doc without reference', !failedValue.includes('报告.pdf'), failedValue);
 
     console.log('');
     if (failures > 0) {

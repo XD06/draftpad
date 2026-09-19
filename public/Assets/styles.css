@@ -3868,6 +3868,13 @@ blockquote {
     transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
+/* Floating action buttons are `display: flex`, so the `hidden` attribute alone
+   does not remove them. DUMBPAD_HIDDEN_FLOATING_ACTIONS toggles `hidden` on the
+   buttons via /api/config, which relies on this rule. */
+.floating-btn[hidden] {
+    display: none !important;
+}
+
 .dark-mode .floating-btn {
     background-color: rgba(30, 30, 30, 0.85);
     color: #e0e0e0;
@@ -5327,30 +5334,59 @@ body.reading-mode-active .editor-main {
 .vditor-reset a.dumbpad-article-file {
     display: inline-flex;
     align-items: center;
-    max-width: min(100%, 560px);
-    min-height: 36px;
-    margin: 10px 0;
-    padding: 7px 11px;
+    gap: 8px;
+    max-width: min(100%, 460px);
+    min-height: 34px;
+    margin: 6px 0;
+    padding: 7px 12px 7px 10px;
     overflow: hidden;
-    border: 1px solid color-mix(in srgb, var(--border-color) 78%, var(--primary-color));
-    border-radius: 8px;
-    background: color-mix(in srgb, var(--surface-subtle) 82%, var(--textarea-bg));
+    border: 1px solid color-mix(in srgb, var(--border-color) 74%, transparent);
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--surface-subtle) 86%, var(--textarea-bg));
     color: var(--text-color);
     font-size: 13px;
+    font-weight: 500;
     line-height: 1.35;
     text-decoration: none;
     text-overflow: ellipsis;
     white-space: nowrap;
     vertical-align: middle;
     cursor: pointer;
+    transition: background 0.18s ease, border-color 0.18s ease, color 0.18s ease, transform 0.18s ease;
+}
+
+/* 附件图标：线稿文件图标用 mask 着色（随 currentColor 语义的 --muted-text /
+   --primary-color 变），与 Thoughts 附件卡共用一套视觉语言。label 里不再带
+   📎（见 buildArticleFileMarkdown 与 stripLegacyFileLabelEmoji），图标只由这里提供。 */
+.vditor-reset a.dumbpad-article-file::before {
+    content: '';
+    flex: 0 0 16px;
+    width: 16px;
+    height: 16px;
+    background-color: var(--muted-text);
+    -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z'/%3E%3Cpath d='M14 3v5h5'/%3E%3C/svg%3E");
+    mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z'/%3E%3Cpath d='M14 3v5h5'/%3E%3C/svg%3E");
+    -webkit-mask-repeat: no-repeat;
+    mask-repeat: no-repeat;
+    -webkit-mask-position: center;
+    mask-position: center;
+    -webkit-mask-size: contain;
+    mask-size: contain;
+    transition: background-color 0.18s ease;
 }
 
 .vditor-reset a.dumbpad-article-file:hover,
 .vditor-reset a.dumbpad-article-file:focus-visible {
     outline: none;
-    border-color: color-mix(in srgb, var(--primary-color) 62%, var(--border-color));
-    background: color-mix(in srgb, var(--primary-color) 11%, var(--textarea-bg));
+    border-color: color-mix(in srgb, var(--primary-color) 52%, var(--border-color));
+    background: color-mix(in srgb, var(--primary-color) 10%, var(--textarea-bg));
     color: var(--primary-color);
+    transform: translateY(-1px);
+}
+
+.vditor-reset a.dumbpad-article-file:hover::before,
+.vditor-reset a.dumbpad-article-file:focus-visible::before {
+    background-color: var(--primary-color);
 }
 
 .vditor-reset a.dumbpad-article-file:focus-visible {
@@ -5363,6 +5399,13 @@ body.reading-mode-active .editor-main {
     opacity: 0.58;
     user-select: none;
     -webkit-user-select: none;
+}
+
+@media (max-width: 768px) {
+    .vditor-reset a.dumbpad-article-file {
+        max-width: 100%;
+        font-size: 12.5px;
+    }
 }
 
 /* Links in the article editor — Lute already renders bare URLs (GFM

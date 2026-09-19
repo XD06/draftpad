@@ -41,6 +41,7 @@ function cookieHeader(response) {
         buildVersion: 'test',
         highlightLanguages: [],
         assetMaxFileBytes: 80 * 1024 * 1024,
+        hiddenFloatingActions: ['toggle-reflections', 'scroll-helper'],
         authService,
         auditLogger: {
             append(event) {
@@ -67,6 +68,10 @@ function cookieHeader(response) {
     try {
         let result = await request('/api/config');
         assert(result.body.assetMaxFileBytes === 80 * 1024 * 1024, 'public runtime config should expose the effective attachment limit');
+        assert(
+            JSON.stringify(result.body.hiddenFloatingActions) === JSON.stringify(['toggle-reflections', 'scroll-helper']),
+            'public runtime config should expose the floating action blacklist as a list'
+        );
         result = await request('/api/auth/status');
         assert(result.body.mode === 'setup', 'V2 auth should begin with one-time setup');
 

@@ -81,6 +81,7 @@ graph TD
 - **`S3_PREFIX` 是数据集隔离边界**：测试 / 真实 / 备份必须用不同 prefix。
 - **鉴权双轨**：Legacy PIN 与 Personal security V1（`AUTH_V2_ENABLED=true`）并存。V2 启用后旧 PIN Cookie 与 PIN Bearer 全部失效，API token 只带 `content:*` / `thoughts:*` scope，不能调用 `/api/auth/*` 和 `/api/data-management/*`。
 - **Cookie 用 `SameSite=Lax` 而非 Strict**：已安装 PWA 冷启动在部分移动端浏览器没有 same-site initiator，Strict 会丢 Cookie，导致每次完全退出都要重输 PIN/密码。
+- **界面开关只走 `/api/config`，且只切 `hidden`**：`DUMBPAD_HIDDEN_FLOATING_ACTIONS`（按钮 id 黑名单）由 `config/index.js` 解析、`GET /api/config` 下发，前端 `public/managers/floating-actions-config.js` 只翻按钮的 `hidden` 属性——不删节点、不解绑事件，所以从配置里去掉 id 功能就回来了，不需要改代码。`/api/config` 在鉴权豁免名单里（登录前就要能拿到），因此**只允许放 UI 开关这类非敏感字段**。`fab-toggle-group`（移动端「更多」）与 `scroll-helper` 属界面外壳，出现在黑名单里会被拒绝并回报 `protected`，防止把工具条藏成展不开。值在服务启动时求值，改配置需要重启。
 
 ## 5. 外部依赖与集成点
 
