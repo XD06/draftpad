@@ -209,6 +209,23 @@ export function normalizeMarkdownDom(element) {
     return element;
 }
 
+/**
+ * 批注气泡徽标的图形（与旧 Vditor hybrid-editor 注入的完全一致）。
+ * 徽标是**纯显示元素**：只存在于编辑器渲染态，Markdown 序列化走
+ * AnnotationMark 的 markdown.serialize open/close，不经过 renderHTML，
+ * 所以它永远不进正文（复制全文时 app.js 也有 .annotation-badge 的兜底清理）。
+ */
+export const ANNOTATION_BADGE_SVG = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>';
+
+/** 每次调用返回一个新节点：DOMOutputSpec 里的 Node 会被搬进 DOM，不能复用实例。 */
+export function createAnnotationBadge() {
+    const badge = document.createElement('span');
+    badge.className = 'annotation-badge';
+    badge.setAttribute('aria-hidden', 'true');
+    badge.innerHTML = ANNOTATION_BADGE_SVG;
+    return badge;
+}
+
 export const AnnotationMark = Mark.create({
     name: 'annotation',
 
@@ -231,12 +248,17 @@ export const AnnotationMark = Mark.create({
     },
 
     renderHTML({ mark }) {
+        // 渲染态结构（与旧 Vditor 的显示层一致）：外层 .has-annotation 负责定位与
+        // data-note/data-comment，内层 span 承担波浪线并持有内容洞，徽标作为它的兄弟
+        // 节点挂在末尾。PM 规定「内容洞必须是父节点的唯一的子节点」，所以徽标不能与
+        // 洞平级放在外层——必须包一层。Markdown 序列化不经过这里（见 addStorage），
+        // 徽标因此不会进正文。
         return ['span', {
             class: 'has-annotation',
             'data-note': mark.attrs.note,
             'data-comment': mark.attrs.note,
-            style: `display:inline;${ANNOTATION_SPAN_STYLE}`,
-        }, 0];
+            style: 'display:inline;',
+        }, ['span', { style: ANNOTATION_SPAN_STYLE }, 0], createAnnotationBadge()];
     },
 
     addStorage() {

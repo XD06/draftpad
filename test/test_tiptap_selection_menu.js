@@ -269,6 +269,57 @@ async function main() {
             check('time delete undoable', editor.getValue().includes('[[time:create:2026-01-01 00:00:00]]'), editor.getValue());
         }
     }
+    // 17. 批注徽标（显示层）+ 点徽标看批注内容（旧 Vditor 行为）
+    const annoSource = '前 <span data-note="测试批注" style="text-decoration:underline wavy #e74c3c;text-decoration-thickness:2.5px;">批注文字</span>后';
+    editor.setValue(annoSource, false);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    const annoEl = container.querySelector('.has-annotation');
+    const badgeEls = container.querySelectorAll('.has-annotation > .annotation-badge');
+    check('annotation renders one bubble badge', badgeEls.length === 1, `found ${badgeEls.length}`);
+    // 直接读属性而不是用 [viewBox=…] 选择器：jsdom 的属性名大小写处理与浏览器不同，
+    // 选择器会假失败；断言的真实对象是徽标里的 svg 本身。
+    const badgeSvg = badgeEls[0]?.querySelector('svg');
+    check('badge carries the bubble svg', badgeSvg?.getAttribute('viewBox') === '0 0 24 24'
+        && Boolean(badgeSvg?.querySelector('path')), badgeSvg?.outerHTML);
+    check('badge is display-only markup (aria-hidden)', badgeEls[0]?.getAttribute('aria-hidden') === 'true');
+    check('wavy underline lives on the inner span', /wavy/.test(annoEl?.querySelector(':scope > span')?.getAttribute('style') || ''), annoEl?.outerHTML);
+    const annoSerialized = editor.getValue();
+    check('badge never leaks into markdown', !/annotation-badge|<svg/.test(annoSerialized), annoSerialized);
+
+    if (badgeEls[0]) {
+        const badgeOpts = { bubbles: true, cancelable: true, view: dom.window };
+        badgeEls[0].dispatchEvent(new dom.window.MouseEvent('click', badgeOpts));
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        const annoPopover = document.body.querySelector('.mark-popover');
+        check('badge click opens the comment card', annoPopover.style.display === 'block'
+            && annoPopover.classList.contains('comment-only-popover'), annoPopover.className);
+        check('comment card shows the note text',
+            annoPopover.querySelector('.mark-popover-text')?.textContent === '测试批注',
+            annoPopover.querySelector('.mark-popover-text')?.textContent);
+        check('comment card shows the bubble icon', Boolean(annoPopover.querySelector('.mark-popover-icon-box svg')));
+        check('comment card has no action buttons', !annoPopover.querySelector('.mark-popover-actions'), annoPopover.innerHTML);
+        // 徽标在 contenteditable 内部，点它必然伴随编辑器 blur：只读卡不能被 blur 收掉。
+        editor.editor.view.dom.dispatchEvent(new dom.window.FocusEvent('blur', { bubbles: true }));
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        check('comment card survives editor blur', annoPopover.style.display === 'block', annoPopover.style.display);
+        document.body.dispatchEvent(new dom.window.MouseEvent('mousedown', { bubbles: true, cancelable: true, view: dom.window }));
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        check('comment card closes on outside mousedown', annoPopover.style.display === 'none', annoPopover.style.display);
+
+        // 点正文仍是「编辑 / 取消」（原有行为不被徽标抢走）
+        annoEl.querySelector('span').dispatchEvent(new dom.window.MouseEvent('click', badgeOpts));
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        const actionLabels = [...annoPopover.querySelectorAll('button')].map(b => b.textContent).join(',');
+        check('body click still shows edit/cancel actions', actionLabels === '编辑,取消', actionLabels);
+        check('body click popover is not the read-only card', !annoPopover.classList.contains('comment-only-popover'));
+    }
+
+    // 18. 多条批注各自一个徽标
+    editor.setValue('<span data-note="甲" style="text-decoration:underline wavy #e74c3c;">一</span>中<span data-note="乙" style="text-decoration:underline wavy #e74c3c;">二</span>', false);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    check('each annotation gets its own badge', container.querySelectorAll('.annotation-badge').length === 2,
+        `found ${container.querySelectorAll('.annotation-badge').length}`);
+
     console.log('');
     if (failures > 0) {
         console.error(`${failures} selection menu checks failed`);
