@@ -209,6 +209,23 @@ export function normalizeMarkdownDom(element) {
     return element;
 }
 
+/**
+ * 批注气泡徽标的图形（与旧 Vditor hybrid-editor 注入的完全一致）。
+ * 徽标是**纯显示元素**：只存在于编辑器渲染态，Markdown 序列化走
+ * AnnotationMark 的 markdown.serialize open/close，不经过 renderHTML，
+ * 所以它永远不进正文（复制全文时 app.js 也有 .annotation-badge 的兜底清理）。
+ */
+export const ANNOTATION_BADGE_SVG = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>';
+
+/** 每次调用返回一个新节点：DOMOutputSpec 里的 Node 会被搬进 DOM，不能复用实例。 */
+export function createAnnotationBadge() {
+    const badge = document.createElement('span');
+    badge.className = 'annotation-badge';
+    badge.setAttribute('aria-hidden', 'true');
+    badge.innerHTML = ANNOTATION_BADGE_SVG;
+    return badge;
+}
+
 export const AnnotationMark = Mark.create({
     name: 'annotation',
 
@@ -231,12 +248,17 @@ export const AnnotationMark = Mark.create({
     },
 
     renderHTML({ mark }) {
+        // 渲染态结构（与旧 Vditor 的显示层一致）：外层 .has-annotation 负责定位与
+        // data-note/data-comment，内层 span 承担波浪线并持有内容洞，徽标作为它的兄弟
+        // 节点挂在末尾。PM 规定「内容洞必须是父节点的唯一的子节点」，所以徽标不能与
+        // 洞平级放在外层——必须包一层。Markdown 序列化不经过这里（见 addStorage），
+        // 徽标因此不会进正文。
         return ['span', {
             class: 'has-annotation',
             'data-note': mark.attrs.note,
             'data-comment': mark.attrs.note,
-            style: `display:inline;${ANNOTATION_SPAN_STYLE}`,
-        }, 0];
+            style: 'display:inline;',
+        }, ['span', { style: ANNOTATION_SPAN_STYLE }, 0], createAnnotationBadge()];
     },
 
     addStorage() {
@@ -424,6 +446,28 @@ export const MdSoftBreak = Node.create({
     group: 'inline',
     selectable: false,
     linebreakReplacement: true,
+
+    /**
+     * 软换行在"文本视图"里就是一个换行符。不声明 leafText 的话，PM 的 textContent /
+     * textBetween 会把 <br> 塌缩成空串，两个后果：
+     * 1) Tiptap 的 input rule runner 取"光标前文本"时（L0 → node.textContent）拿不到
+     *    换行，改用 "%leaf%" 占位符拼串，并且和它自己的复核步骤（走 textBetween）对不上，
+     *    于是**软回车之后所有带"行首或空白"前提的内联规则全部失效**——`**粗体**`、`_斜体_`
+     *    会原样留在正文（实测：只有无前缀要求的 `` `code` `` 侥幸生效）。
+     * 2) 从编辑器复制纯文本时段内换行丢失。
+     *
+     * 为什么写在 extendNodeSchema 而不是顶层字段：Tiptap 组装 PM NodeSpec 时用的是
+     * 白名单（content/marks/group/inline/atom/selectable/draggable/code/whitespace/
+     * linebreakReplacement/defining/isolating/attrs/parseDOM/toDOM），顶层 leafText
+     * 会被直接丢弃（实测 schema.nodes.hardBreak.spec 里没有它）；而 extendNodeSchema
+     * 的返回值在白名单**之前**被展开，是官方留的透传口子。该 hook 对每个节点都会跑一次，
+     * 所以必须按 name 收窄，别把 leafText 塞给别的节点。
+     *
+     * 注意：Markdown 序列化不经过这里（见下面 addStorage.markdown.serialize），存储形态不变。
+     */
+    extendNodeSchema(node) {
+        return node.name === 'hardBreak' ? { leafText: () => '\n' } : {};
+    },
 
     parseHTML() {
         return [{ tag: 'br' }];

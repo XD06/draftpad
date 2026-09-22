@@ -9,6 +9,7 @@
  */
 import { Extension, getMarkRange, PM } from './tiptap-runtime.js';
 import { buildUpdatedTimeMarker, parseTimeMarkerText } from './time-command.js';
+import { ANNOTATION_BADGE_SVG } from './tiptap-extensions.js';
 
 const { Plugin, PluginKey, TextSelection } = PM.state;
 
@@ -167,6 +168,15 @@ class SelectionMenuView {
             }
             const marked = event.target?.closest?.(MARKED_ELEMENT_SELECTOR);
             if (!marked || !view.dom.contains(marked)) return;
+            // 点徽标 = 只看看批注写了什么（旧 showAnnotationPopover 的 clickedBadge
+            // 分支）；点正文 = 编辑/取消动作。徽标没有自己的可点区域可区分（它是
+            // 渲染层节点），靠 closest 判定即可。
+            if (event.target?.closest?.('.annotation-badge')) {
+                event.preventDefault();
+                event.stopPropagation();
+                this.showAnnotationContent(marked);
+                return;
+            }
             this.showMarkPopover(marked);
         };
         view.dom.addEventListener('click', this.handleEditorClick);
@@ -307,6 +317,8 @@ class SelectionMenuView {
         const type = comment || isAnnotation ? 'annotation' : (isMark ? 'highlight' : (isDraw ? 'draw' : null));
         if (!type) return;
 
+        this.popover.className = 'mark-popover';
+        this.popoverReadonly = false;
         this.popover.innerHTML = '';
         const actions = document.createElement('div');
         actions.className = 'mark-popover-actions';
@@ -336,12 +348,48 @@ class SelectionMenuView {
         this.popover.append(actions);
         this.popover.style.display = 'block';
         this.positionPopover(element);
-        // 点其他位置收起 popover（延迟挂载避免吞掉当前点击）。
+        this.installPopoverCloseHandler();
+    }
+
+    /**
+     * 点徽标看批注内容（旧 showAnnotationPopover 的 comment-only 形态）：气泡图标 +
+     * 批注正文，只读、没有动作按钮。复用既有 .comment-only-popover /
+     * .mark-popover-inline-content 样式，不新增视觉语言。
+     */
+    showAnnotationContent(element) {
+        const comment = element.getAttribute('data-note') || element.getAttribute('data-comment') || '';
+        if (!comment) return;
+        this.hide();
+        this.popover.innerHTML = '';
+        this.popover.className = 'mark-popover comment-only-popover';
+        // 只读展示卡要在编辑器 blur 后仍然存活（徽标在 contenteditable 内部），
+        // 收起只交给下面的 document mousedown，与旧实现一致。
+        this.popoverReadonly = true;
+
+        const content = document.createElement('div');
+        content.className = 'mark-popover-inline-content';
+        const iconBox = document.createElement('div');
+        iconBox.className = 'mark-popover-icon-box';
+        iconBox.innerHTML = ANNOTATION_BADGE_SVG.replace('width="12" height="12"', 'width="15" height="15"');
+        const text = document.createElement('div');
+        text.className = 'mark-popover-text';
+        text.textContent = comment;
+        content.append(iconBox, text);
+
+        this.popover.append(content);
+        this.popover.style.display = 'block';
+        this.positionPopover(element);
+        this.installPopoverCloseHandler();
+    }
+
+    /** 点其他位置收起 popover（延迟挂载避免吞掉当前点击）。 */
+    installPopoverCloseHandler() {
         clearTimeout(this.popoverCloseTimer);
         this.popoverCloseTimer = setTimeout(() => {
             const close = (event) => {
                 if (!this.popover.contains(event.target)) {
                     this.popover.style.display = 'none';
+                    this.popoverReadonly = false;
                     document.removeEventListener('mousedown', close);
                 }
             };
@@ -619,6 +667,10 @@ class SelectionMenuView {
 
     handleBlur() {
         if (this.annotationInputOpen) return;
+        // 批注内容卡是纯只读展示（旧 Vditor 也只有 document mousedown 才关），
+        // 编辑器 blur 不能把它收掉：徽标是 contenteditable 的子节点，点它必然
+        // 伴随 blur，否则「点徽标看批注」会闪一下就没了。动作 popover 照旧收起。
+        if (this.popoverReadonly) return;
         this.hide();
     }
 
