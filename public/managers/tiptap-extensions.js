@@ -447,6 +447,28 @@ export const MdSoftBreak = Node.create({
     selectable: false,
     linebreakReplacement: true,
 
+    /**
+     * 软换行在"文本视图"里就是一个换行符。不声明 leafText 的话，PM 的 textContent /
+     * textBetween 会把 <br> 塌缩成空串，两个后果：
+     * 1) Tiptap 的 input rule runner 取"光标前文本"时（L0 → node.textContent）拿不到
+     *    换行，改用 "%leaf%" 占位符拼串，并且和它自己的复核步骤（走 textBetween）对不上，
+     *    于是**软回车之后所有带"行首或空白"前提的内联规则全部失效**——`**粗体**`、`_斜体_`
+     *    会原样留在正文（实测：只有无前缀要求的 `` `code` `` 侥幸生效）。
+     * 2) 从编辑器复制纯文本时段内换行丢失。
+     *
+     * 为什么写在 extendNodeSchema 而不是顶层字段：Tiptap 组装 PM NodeSpec 时用的是
+     * 白名单（content/marks/group/inline/atom/selectable/draggable/code/whitespace/
+     * linebreakReplacement/defining/isolating/attrs/parseDOM/toDOM），顶层 leafText
+     * 会被直接丢弃（实测 schema.nodes.hardBreak.spec 里没有它）；而 extendNodeSchema
+     * 的返回值在白名单**之前**被展开，是官方留的透传口子。该 hook 对每个节点都会跑一次，
+     * 所以必须按 name 收窄，别把 leafText 塞给别的节点。
+     *
+     * 注意：Markdown 序列化不经过这里（见下面 addStorage.markdown.serialize），存储形态不变。
+     */
+    extendNodeSchema(node) {
+        return node.name === 'hardBreak' ? { leafText: () => '\n' } : {};
+    },
+
     parseHTML() {
         return [{ tag: 'br' }];
     },

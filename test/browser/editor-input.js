@@ -126,6 +126,47 @@ module.exports = async function testEditorInput(browser) {
         assert.equal((markdown.match(/\[\[time:/g) || []).length, 2);
         assert(markdown.includes('<mark>highlight textxyz</mark>') || markdown.includes('==highlight textxyz=='),
             'highlight serializes to its markdown source form');
+
+        // 软回车之后的 markdown 输入规则：hardBreak 必须被当成换行参与匹配。
+        // 回归点：Tiptap 的 input rule runner 用 node.textContent 取"光标前文本"，
+        // 而 PM 默认把 inline leaf 塌缩成空串（runner 自己填 "%leaf%" 占位符），
+        // 复核步骤又走 textBetween，两边对不上 → 所有"行首或空白"前提的内联规则
+        // 在软回车后静默失效。修法是给 hardBreak 声明 leafText = '\n'（经
+        // extendNodeSchema 透传，Tiptap 的顶层字段白名单会丢掉它）。
+        const inlineRuleCases = [
+            ['bold', '**粗体** ', 'strong', 'bold', '粗体'],
+            ['italic', '_斜体_ ', 'em', 'italic', '斜体'],
+            ['code', '`代码` ', 'code', 'code', '代码']
+        ];
+        for (const [label, typed, tag, markName, inner] of inlineRuleCases) {
+            await page.evaluate(() => editor.setValue('', false));
+            await page.waitForTimeout(150);
+            await page.evaluate(() => editor.editor.commands.focus('start'));
+            await page.keyboard.type('第一行');
+            await page.keyboard.press('Enter');
+            await page.waitForTimeout(200);
+            await page.keyboard.type(typed);
+            await page.waitForTimeout(350);
+            // 只看渲染 DOM 与 PM mark：getValue() 里 `**` 无论规则是否命中都会出现
+            // （mark 会重新序列化回 `**`），所以源码串无法区分这两种情况。
+            const observed = await page.evaluate(([t, m]) => {
+                const names = [];
+                editor.editor.state.doc.descendants(node => {
+                    if (node.isText) node.marks.forEach(k => names.push(k.type.name));
+                });
+                const el = document.querySelector(`#editor ${t}`);
+                return { marks: names, rendered: el ? el.textContent : null };
+            }, [tag, markName]);
+            assert(observed.marks.includes(markName),
+                `${label} must still apply after a soft break, marks=${JSON.stringify(observed.marks)}`);
+            assert.equal(observed.rendered, inner,
+                `${label}: ${tag} must wrap only the marked text (no leftover markers), got ${JSON.stringify(observed.rendered)}`);
+        }
+        // 段落内换行在纯文本视图里必须可见（复制/搜索依赖 textContent）。
+        await page.evaluate(() => editor.setValue('第一行\n第二行', false));
+        await page.waitForTimeout(200);
+        assert.equal(await page.evaluate(() => editor.editor.state.doc.textContent), '第一行\n第二行',
+            'a soft break must read as a newline in the text view');
         assert.deepEqual(errors, []);
         console.log('Editor input browser regression passed');
     } finally {
