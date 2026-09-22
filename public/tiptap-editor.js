@@ -19,6 +19,7 @@ import {
     MdHighlight,
     MdSoftBreak,
     SoftEnterShortcut,
+    SoftBreakBlockRules,
     TaskListInputShortcut,
     DumbPadTaskList,
     DumbPadCodeBlock,
@@ -116,6 +117,8 @@ export class HybridMarkdownEditor {
                 DrawMark,
                 MdHighlight,
                 MdSoftBreak,
+                // 软换行后的「视觉行首」输入块标记（# - 1. >）就地拆块，见 tiptap-extensions.js
+                SoftBreakBlockRules,
                 HeadingAnchor,
                 TimeCommandShortcut,
                 TimeMarkerNode,
