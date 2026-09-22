@@ -48,6 +48,7 @@
     "test:tiptap-file-command": "node test/test_tiptap_file_command.js",
     "test:tiptap-image-menu": "node test/test_tiptap_image_menu.js",
     "test:tiptap-soft-enter-link": "node test/test_tiptap_soft_enter_link.js",
+    "test:tiptap-soft-enter-block-rules": "node test/test_tiptap_soft_enter_block_rules.js",
     "test:hybrid-editor-time-command": "node test/test_hybrid_editor_time_command.js",
     "test:hybrid-editor-caret-stability": "node test/test_hybrid_editor_caret_stability.js",
     "test:editor-input-browser": "node test/browser/editor-input.js",
