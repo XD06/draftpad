@@ -100,7 +100,7 @@ graph TD
 - **`server.js` 仍是约 28KB 的入口 + 注册中心**：已拆出 13 个 route 模块，但 Notepad 部分业务与中间件编排仍留在其中。继续拆的前提是保持 URL、HTTP 状态、响应体和 WebSocket 副作用完全不变。
 - **前端无构建步骤**：新增 `public/` 下的模块必须确认 service worker 的 asset manifest 能覆盖到，否则 PWA 离线会 404。
 - **无 hash 的静态资源走 network-first**：因为版本未内容哈希化，cache-first 会让普通刷新拿到旧样式/旧模块。回退窗口（导航 600ms / 静态 450ms）由 `test/test_pwa_cache_regression.js` 固化。要改缓存策略，必须先接受这个回归测试会红。
-- **编辑器 Enter 行为是行为基线，不是实现细节**：Tiptap 适配器的 `SoftEnterShortcut`（`public/managers/tiptap-extensions.js`）只在顶层普通段落拦截 Enter 插入软换行，标题/列表/引用/代码/组合输入继续交给 Tiptap 原生键位。行为等价基线是 Vditor 时期的 `refactor-ai-s3-thoughts` 分支，`main` 与之**不等价**，排查时不能用 `main` 替代基线；任何调整必须跑 `npm run test:tiptap-roundtrip`、`npm run test:tiptap-caret` 并做真实编辑器手动回归。
+- **编辑器 Enter 行为是行为基线，不是实现细节**：Tiptap 适配器的 `SoftEnterShortcut`（`public/managers/tiptap-extensions.js`）只在顶层普通段落拦截 Enter 插入软换行，标题/列表/引用/代码/组合输入继续交给 Tiptap 原生键位。软换行出来的那一行，其**行首**输入 `# `/`- `/`1. `/`> ` 由 `SoftBreakBlockRules` 就地拆块并应用块类型，保证「打字时 == 刷新后」（存储格式与回车语义都不变）。行为等价基线是 Vditor 时期的 `refactor-ai-s3-thoughts` 分支，`main` 与之**不等价**，排查时不能用 `main` 替代基线；任何调整必须跑 `npm run test:tiptap-roundtrip`、`npm run test:tiptap-caret`、`npm run test:tiptap-soft-enter-block-rules`（外加真机 `npm run test:editor-input-browser`）并做真实编辑器手动回归。
 - **Thought 分页游标不可混用**：`sort=timeline` 是页面专用排序（置顶 + 完成状态 + 创建时间），默认分页按 `updatedAt`，两者游标语义不同。
 - **`legacy` 布局的 `thoughts.json` 是单文件全量读写**：数据量大时是性能瓶颈，迁移到 `STORAGE_LAYOUT=split` 才能真正利用索引分页。
 - **备份 CLI 不自动加载项目 `.env`**：避免把运行桶凭证带进备份写路径；因此每次必须显式传参或依赖 root-only 的 `/etc/dumbpad/backup.env`。
