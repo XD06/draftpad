@@ -4,7 +4,7 @@
  * restoreAllRenderedMarks / renderInlineMarks 与 time-command.js），
  * roundtrip 兼容由 test/test_tiptap_roundtrip.js 固化，改动前先读它。
  */
-import { Mark, Node, Extension, TaskList, TaskItem, InputRule, findParentNode, CodeBlockLowlight, PM } from './tiptap-runtime.js';
+import { Mark, Node, Extension, TaskList, TaskItem, InputRule, findParentNode, CodeBlockLowlight, Underline, PM } from './tiptap-runtime.js';
 import { TIME_COMMAND, parseTimeMarkerText, buildTimeMarker } from './time-command.js';
 import { buildCodeBlockNodeView } from './tiptap-code-block-view.js';
 import { buildTaskItemNodeView } from './tiptap-task-item-view.js';
@@ -301,6 +301,80 @@ export const DrawMark = Mark.create({
                 parse: {},
             },
         };
+    },
+});
+
+/**
+ * 「纯下划线」判定：只有 text-decoration 的值就是 underline 本身才算下划线格式。
+ *
+ * 为什么要自己收窄：Tiptap 的 Underline 用的是 `value.includes('underline')`，而 PM 的
+ * style 规则是**按规则名去查 inline style 的 getPropertyValue**（prosemirror-model 的
+ * matchingStyles，注释里明说简写属性在 style.item 里会被拆成长属性、所以直接查名字）。
+ * 浏览器查 `text-decoration` 时会把长属性重新序列化回简写：实测 Chrome 对批注的
+ * `text-decoration:underline wavy #e74c3c;text-decoration-thickness:2.5px` 返回
+ * ——两者都含 'underline'，于是被额外套上 underline mark。后果不只是多一条直线：
+ * **`<u>` 会被写回正文**（存进去是 `<span data-note=…>`，刷新一次再保存就变成
+ * `<u><span data-note=…></u>`）。
+ *
+ * 实测（Chrome 153）逐条形态：`underline` → `underline`；`underline solid` → `underline`；
+ * `underline wavy` → `underline wavy`；`underline solid red` → `underline red`；
+ * 只写长属性 `text-decoration-line: underline` → **空串**（查不到就不进规则）。
+ * 也就是说把存储样式改写成长属性能躲开这条规则，但那要换掉批注 / 划线的存储形态，
+ * 而且救不了已经被污染成 `<u>` 的老文章，所以仍然在解析判定上收窄。
+ *
+ * 因此带颜色 / 粗细 / 线型（wavy、dashed、dotted）的装饰一律不当作 underline：那是批注、
+ * 划线或外部富文本的语义，不是「正文加下划线」。`solid` 是初始值，允许显式写出来。
+ * 已知取舍：外部粘贴来的 `underline red` / `underline double` / `underline overline`
+ * 不再被识别为下划线（`<u>` 标签与纯 `underline` 照常）。
+ */
+function isPlainUnderlineStyle(value) {
+    const tokens = String(value).trim().toLowerCase().split(/\s+/)
+        .filter(token => token && token !== 'solid');
+    return tokens.length === 1 && tokens[0] === 'underline';
+}
+
+/**
+ * 识别上面那个 bug 在老文章里留下的 `<u>`：它自己没有正文文字，内容全是批注 / 划线的
+ * span（外加批注的 `<sub>` 说明标签，它在归一化时会被吃掉）。这种 `<u>` 是纯残留，
+ * 不再解析成 underline，下次保存自然消失——不需要迁移数据。
+ * 只要 `<u>` 里还有自己的文字，就按「用户真的给这段加了 下划线」处理，照常解析。
+ *
+ * 判定是**保守**的：只认这个 bug 实际产出的扁平形态。`<u><em><span data-note>…`、`<u>` 里夹
+ * `<br>` 或嵌套 `<u>` 时会放过（残留不清，那条直线还在），因为反向误判的代价是删掉用户真的
+ * 下划线，代价更大；放过的残留用户可以选中那段按 Mod+U 取消。边界由回归 §10 固化。
+ */
+function isDecorationArtifactUnderline(element) {
+    const children = element?.children;
+    if (!children || !children.length) return false;
+    const nodes = element.childNodes || [];
+    for (let index = 0; index < nodes.length; index += 1) {
+        if (nodes[index].nodeType === 3 && nodes[index].textContent.trim()) return false;
+    }
+    for (let index = 0; index < children.length; index += 1) {
+        if (!children[index].matches?.('span[data-note], span[data-draw], sub[data-note-label]')) {
+            return false;
+        }
+    }
+    return true;
+}
+
+/**
+ * 覆盖 StarterKit 的 Underline（tiptap-editor.js 里 `underline: false` 关掉原版），
+ * 只改 parseHTML，其余（renderHTML `<u>`、commands、Mod+U、markdown 位）全部继承。
+ * 两条规则都要：tag 规则负责清掉已被污染的老数据，style 规则负责不再制造新污染。
+ */
+export const DumbPadUnderline = Underline.extend({
+    parseHTML() {
+        return [
+            // PM 语义：getAttrs 返回 false 会跳过这条规则（元素内容照常解析，等于把 <u> 拆掉），
+            // 返回 null 则按无属性应用 mark。
+            { tag: 'u', getAttrs: (element) => (isDecorationArtifactUnderline(element) ? false : null) },
+            {
+                style: 'text-decoration',
+                consuming: false,
+                getAttrs: (value) => (isPlainUnderlineStyle(value) ? {} : false),
+            },
+        ];
     },
 });
 
@@ -653,6 +727,133 @@ export const SoftEnterShortcut = Extension.create({
                     },
                 },
             }),
+        ];
+    },
+});
+
+/**
+ * 校验 runner 给的匹配起点确实落在顶层普通段落的软换行上，返回拆块位置。
+ * 位置会再向前吞掉紧邻的其它软换行：连按两次 Enter 造出的空行本来就是靠 `<br>` 表示的，
+ * 拆块之后块与块之间自带间距，把游离换行留在上一块尾部只是脏状态（段尾换行本来也不写进源）。
+ * `range.from >= range.to` 是纯防御：命中串必然以换行开头，正常情况下不可能为空。
+ */
+function softBreakRulePosition(state, range) {
+    if (range.from >= range.to) return null;
+    const $caret = state.doc.resolve(range.to);
+    if ($caret.depth !== 1 || $caret.parent.type.name !== 'paragraph') return null;
+    if (state.doc.nodeAt(range.from)?.type.name !== 'hardBreak') return null;
+    let position = range.from;
+    const contentStart = $caret.start();
+    while (position > contentStart
+        && state.doc.nodeAt(position - 1)?.type.name === 'hardBreak') {
+        position -= 1;
+    }
+    return position;
+}
+
+/**
+ * 软换行之后的「视觉行首」也算行首：任何一行开头打 `# `/`- `/`1. `/`> `，当场在软换行处
+ * 拆块并应用块类型。目标只有一个——**打字时的结果与刷新后一致**。磁盘格式本来就已经是对的
+ * （`甲\n# 乙` 重新解析就是 paragraph + heading，`breaks: true` 下 Markdown 源里单个换行
+ * 后面跟块标记不要求空行），缺的只是编辑器在输入那一刻没把「视觉行首」当行首。
+ *
+ * 为什么不直接把官方规则放宽锚定：StarterKit 的块级规则全是 `^` 锚定（heading
+ * `^(#{1,6})\s$`、blockquote `^\s*>\s$`、bulletList `^\s*([-+*])\s$`、orderedList
+ * `^(\d+)\.\s$`），只在「PM 块首」触发，而软换行不是块首——整段只有一个块首。把 `^`
+ * 换成允许换行也不够用：官方 handler 的作用范围是**整个块**（`textblockTypeInputRule` 直接
+ * `setBlockType(块范围)`、`wrappingInputRule` 直接 `findWrapping(块范围)`），会把上一视觉行
+ * 一起变成标题/塞进列表，那是错的。所以这里自己拆：删掉「软换行 + 缩进 + 标记」→ 在软换行的
+ * 位置 `splitBlock()` → 只对拆出来的后半块跑框架命令（`setNode` / `toggle*`）。仍是单个事务，
+ * 走 input rule 的 undoable 元数据（可撤销）、自然触发保存，与 `TaskListInputShortcut` 同一套写法。
+ *
+ * 三条不显眼但承重的约束：
+ * 1. 前提是 `MdSoftBreak` 声明了 `leafText: () => '\n'`——runner 拼「光标前文本」和它自己的
+ *    textBetween 复核都用 '\n' 代表软换行，这些以 `\n` 开头的 find 才有机会命中。
+ * 2. 换行与标记之间只允许空格/制表符（`[ \t]`，**不是** `\s`）：一次匹配不能跨过两个视觉行，
+ *    `\n\s*` 会把夹在中间那一行的内容一起吞进拆块区间。与上面「向后吞连续换行」是两件事，
+ *    不能互相替代（实测 `甲<br><br><空格> - 乙` 在 `[ \t]*` 下得到 `甲` + 列表，内容不丢）。
+ * 3. `priority: 101`：段首正好就是软换行时（空段落按 Shift+Enter 会得到 paragraph(<br>)），
+ *    `- ` 会**同时**命中这里的 find 和官方的 `/^\s*([-+*])\s$/`（那里的 `\s*` 正好吃掉 `<br>`
+ *    的 '\n'），而官方 handler 会把整块包进列表。Tiptap 收集输入规则时把扩展数组反转后再按
+ *    priority 降序排，同 priority 就变成「后声明的先跑」——把正确性压在数组顺序上太脆，
+ *    显式高一级才与声明位置无关。
+ *
+ * 生效范围与 SoftEnterShortcut 造软换行的门槛一致：只有 `doc > paragraph`，且必须是空选区
+ * （SoftEnterShortcut 与 insertSoftBreak 都要求空选区，这里同样不让一次按键顺手改动选中的
+ * 内容）。标题/列表/引用/表格里确实可能出现 `<br>`（Shift+Enter 走 `setHardBreak`，它没有
+ * depth 守卫），那些块不接管，免得把块结构拆坏。
+ *
+ * 不覆盖 `---`/`___`/``` 围栏：`---` 紧跟在一行文字后面时，markdown 语义是 setext 标题下划线
+ * 而不是分隔线，就地拆块会与重新解析打架，属于另一个决策，不在这里顺手改。
+ */
+export const SoftBreakBlockRules = Extension.create({
+    name: 'softBreakBlockRules',
+
+    priority: 101,
+
+    addInputRules() {
+        // 标题档位以 Heading 扩展的 options.levels 为准（实测 addInputRules 时机
+        // editor.extensionManager 已就绪，能拿到真实配置：levels 设成 [1,2] 时 `### ` 不拆块）。
+        // 取不到才退回官方默认 1–6，并响亮提示一次——那种情况下「配置里禁用的档位」会被
+        // 当成允许，写出去的 level 与渲染的标签可能不一致。
+        const headingExtension = this.editor?.extensionManager?.extensions?.find(
+            extension => extension.name === 'heading',
+        );
+        const configuredLevels = headingExtension?.options?.levels;
+        const levels = Array.isArray(configuredLevels) && configuredLevels.length
+            ? configuredLevels
+            : [1, 2, 3, 4, 5, 6];
+        if (!Array.isArray(configuredLevels) || !configuredLevels.length) {
+            console.warn('[dumbpad] 没取到 Heading 的 levels，软换行块规则按官方默认 1–6 处理');
+        }
+
+        /**
+         * 命中后先确认「这块能变成目标块型」再动手：runner 只检查事务里有没有步骤
+         * （InputRule.run 的 `!tr.steps.length`），所以 `deleteRange` 之后框架命令若失败，
+         * 标记会被吃掉而块型没变——留下半截事务。用 runner 给的 can() 在动手前预检同一件事。
+         */
+        const blockRule = (find, apply, check) => new InputRule({
+            find,
+            handler: ({ state, range, match, chain, can }) => {
+                // 非空选区不接管：拆块的 deleteRange 会把用户选中的文本一起删掉。runner 的
+                // textBefore 只取到选区**起点**，所以够得着这条规则的形状正是「选区在标记右侧」。
+                if (!state.selection.empty) return null;
+                if (!check(match, can())) return null;
+                const brPos = softBreakRulePosition(state, range);
+                if (brPos === null) return null;
+                apply(
+                    chain()
+                        .deleteRange({ from: brPos, to: range.to })
+                        .splitBlock(),
+                    match,
+                ).run();
+            },
+        });
+
+        return [
+            blockRule(
+                /\n[ \t]*(#{1,6})[ \t]$/,
+                (chain, match) => chain.setNode('heading', { level: match[1].length }),
+                (match, can) => levels.includes(match[1].length)
+                    && can.setNode('heading', { level: match[1].length }),
+            ),
+            blockRule(
+                /\n[ \t]*([-+*])[ \t]$/,
+                chain => chain.toggleBulletList(),
+                (match, can) => can.toggleBulletList(),
+            ),
+            blockRule(
+                /\n[ \t]*(\d+)\.[ \t]$/,
+                (chain, match) => chain
+                    .toggleOrderedList()
+                    .updateAttributes('orderedList', { start: Number(match[1]) }),
+                (match, can) => can.toggleOrderedList(),
+            ),
+            blockRule(
+                /\n[ \t]*>[ \t]$/,
+                chain => chain.toggleBlockquote(),
+                (match, can) => can.toggleBlockquote(),
+            ),
         ];
     },
 });

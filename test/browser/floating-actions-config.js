@@ -159,16 +159,24 @@ module.exports = async function testFloatingActionsConfig() {
         started.child.kill();
     };
     try {
-        // 1) Default: only the reflections placeholder is hidden; Thoughts keeps the
-        //    filled feather icon and renders at the same box as its neighbours.
+        // 1) Default: the clipboard quick-record entry is collapsed and the reflections
+        //    button shows; Thoughts keeps the filled feather icon and renders at the same
+        //    box as its neighbours.
         let { port } = await boot(undefined);
         let warnings = [];
-        let page = await openEditorPage(browser, port, ['toggle-reflections'], warnings);
+        let page = await openEditorPage(browser, port, ['clipboard-import-trigger'], warnings);
         let config = await (await fetch(`http://127.0.0.1:${port}/api/config`)).json();
-        assert.deepEqual(config.hiddenFloatingActions, ['toggle-reflections'],
+        assert.deepEqual(config.hiddenFloatingActions, ['clipboard-import-trigger'],
             'an unset DUMBPAD_HIDDEN_FLOATING_ACTIONS should ship the documented default list');
         let s1 = await state(page);
-        assert.equal(s1['toggle-reflections'].display, 'none', 'the placeholder must be gone from the toolbar by default');
+        assert.equal(s1['clipboard-import-trigger'].display, 'none',
+            'the collapsed entry must be gone from the toolbar by default');
+        assert.equal(s1['clipboard-import-trigger'].hiddenAttr, true,
+            'hiding happens through the hidden attribute, the node stays in the DOM');
+        assert.equal(s1['clipboard-import-trigger'].paths, 3,
+            'the hidden button keeps its whole markup so the config stays reversible');
+        assert.equal(s1['toggle-reflections'].display, 'flex',
+            'the reflections button is part of the toolbar by default');
         assert.equal(s1['toggle-thoughts'].display, 'flex', 'thoughts must stay visible by default');
         assert.equal(s1['toggle-thoughts'].size, '34x34', 'thoughts keeps the shared button box');
         assert.equal(s1['toggle-thoughts'].viewBox, '0 0 1024 1024', 'thoughts should use the supplied filled icon');
@@ -180,12 +188,19 @@ module.exports = async function testFloatingActionsConfig() {
         assert.equal(s1['copy-all'].fill, 'none', 'the untouched stroke icons must not have been restyled');
         assert.ok(Number(s1['toggle-thoughts'].ink.split('x')[0]) > 100,
             'the icon must paint real geometry, got ' + s1['toggle-thoughts'].ink);
+
+        // The reflections button is part of the default toolbar now, and it is still a
+        // stub: clicking it must only toast and never navigate.
+        await page.click('#toggle-reflections');
+        await page.waitForFunction(() => [...document.querySelectorAll('.toast.info')]
+            .some(toast => toast.textContent.includes('反思功能开发中')), null, { timeout: 4000 });
+        assert.equal(await page.evaluate(() => location.hash), '', 'the reflections stub must not navigate yet');
         assert.deepEqual(warnings.filter(w => /pageerror/.test(w)), [], 'no page errors on the default boot');
         await close(page);
 
         // 2) Explicit blacklist: ids match case-insensitively, shell buttons are protected
-        //    and reported, and the placeholder returns because an explicit value replaces
-        //    the default list instead of extending it.
+        //    and reported, and the collapsed clipboard entry returns because an explicit
+        //    value replaces the default list instead of extending it.
         ({ port } = await boot('Toggle-Thoughts, scroll-helper, made-up-id'));
         warnings = [];
         page = await openEditorPage(browser, port, ['toggle-thoughts'], warnings);
@@ -198,18 +213,14 @@ module.exports = async function testFloatingActionsConfig() {
         assert.ok(s2['toggle-thoughts'] !== null, 'hiding must keep the DOM node, not remove it');
         assert.equal(s2['toggle-thoughts'].paths, 2, 'the hidden button keeps its markup so the config is reversible');
         assert.equal(s2['scroll-helper'].display, 'flex', 'scroll-helper is shell-critical and must stay visible');
-        assert.equal(s2['toggle-reflections'].display, 'flex', 'an explicit value replaces the default, so the placeholder shows again');
+        assert.equal(s2['clipboard-import-trigger'].display, 'flex',
+            'an explicit value replaces the default, so the collapsed entry shows again');
+        assert.equal(s2['toggle-reflections'].display, 'flex', 'the reflections button stays unless it is listed');
         assert.equal(s2['copy-all'].display, 'flex', 'unlisted buttons are untouched');
         assert.ok(warnings.some(w => /Ignoring hidden floating action: scroll-helper \(protected\)/.test(w)),
             'a protected id should be reported, got ' + JSON.stringify(warnings));
         assert.ok(warnings.some(w => /Ignoring hidden floating action: made-up-id \(unknown\)/.test(w)),
             'an unknown id should be reported, got ' + JSON.stringify(warnings));
-
-        // The placeholder is a stub: it must only toast and never navigate.
-        await page.click('#toggle-reflections');
-        await page.waitForFunction(() => [...document.querySelectorAll('.toast.info')]
-            .some(toast => toast.textContent.includes('反思功能开发中')), null, { timeout: 4000 });
-        assert.equal(await page.evaluate(() => location.hash), '', 'the reflections stub must not navigate yet');
         await close(page);
 
         // 3) Mobile: the collapse rules are media-scoped display toggles, so the

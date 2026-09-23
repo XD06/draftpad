@@ -167,6 +167,73 @@ module.exports = async function testEditorInput(browser) {
         await page.waitForTimeout(200);
         assert.equal(await page.evaluate(() => editor.editor.state.doc.textContent), '第一行\n第二行',
             'a soft break must read as a newline in the text view');
+        // 软换行之后的「视觉行首」输入块标记必须当场拆块。回归点：官方块级输入规则全是
+        // `^` 锚定，只认 PM 块首，而软换行不是块首——曾经 `# `/`- `/`1. `/`> ` 在软回车
+        // 之后只留字面文本，要刷新（重新解析）才变成标题/列表/引用。这里用真实按键验证
+        // 「打字时 == 刷新后」；规则的细节分支在 test/test_tiptap_soft_enter_block_rules.js。
+        const blockRuleCases = [
+            ['# ', 'heading', '第一行\n\n# 标题'],
+            ['- ', 'bulletList', '第一行\n\n- 项目'],
+            ['3. ', 'orderedList', '第一行\n\n3. 第三步'],
+            ['> ', 'blockquote', '第一行\n\n> 引用'],
+        ];
+        for (const [marker, blockType, expectedMarkdown] of blockRuleCases) {
+            const tail = expectedMarkdown.split('\n').pop().replace(/^[#>\d.\-\s]+/, '');
+            await page.evaluate(() => editor.setValue('第一行', false));
+            await page.waitForTimeout(150);
+            await page.evaluate(() => editor.editor.commands.focus('end'));
+            await page.keyboard.press('Enter');
+            await page.waitForTimeout(200);
+            await page.keyboard.type(`${marker}${tail}`);
+            await page.waitForTimeout(350);
+            const typed = await page.evaluate(() => {
+                const blocks = [];
+                editor.editor.state.doc.forEach(node => blocks.push({
+                    type: node.type.name,
+                    level: node.attrs?.level ?? null,
+                    text: node.textContent,
+                }));
+                let breaks = 0;
+                editor.editor.state.doc.descendants(node => {
+                    if (node.type.name === 'hardBreak') breaks += 1;
+                });
+                return { blocks, breaks, value: editor.getValue() };
+            });
+            assert.deepEqual(typed.blocks.slice(0, 2), [
+                { type: 'paragraph', level: null, text: '第一行' },
+                { type: blockType, level: blockType === 'heading' ? 1 : null, text: tail },
+            ], `${marker} after a soft break must split the line into a ${blockType}: ${JSON.stringify(typed.blocks)}`);
+            assert.equal(typed.breaks, 0, `${marker}: the soft break is consumed by the split, none left behind`);
+            assert.equal(typed.value, expectedMarkdown, `${marker}: saved markdown`);
+            // 打字结果与刷新（重新解析）结果必须一致——这正是用户报的「要刷新才渲染」
+            await page.evaluate(async (value) => {
+                editor.setValue(value, false);
+                await new Promise(resolve => setTimeout(resolve, 350));
+            }, expectedMarkdown);
+            const reloaded = await page.evaluate(() => {
+                const blocks = [];
+                editor.editor.state.doc.forEach(node => blocks.push({ type: node.type.name, text: node.textContent }));
+                return blocks;
+            });
+            assert.deepEqual(reloaded.slice(0, 2), typed.blocks.slice(0, 2).map(b => ({ type: b.type, text: b.text })),
+                `${marker}: typing must produce exactly what a reload produces`);
+        }
+        // 反向：标记打在视觉行中间（不是行首）不得拆块
+        await page.evaluate(() => editor.setValue('第一行', false));
+        await page.waitForTimeout(150);
+        await page.evaluate(() => editor.editor.commands.focus('end'));
+        await page.keyboard.press('Enter');
+        await page.waitForTimeout(200);
+        await page.keyboard.type('正文# 不是标题');
+        await page.waitForTimeout(350);
+        const midLine = await page.evaluate(() => {
+            const blocks = [];
+            editor.editor.state.doc.forEach(node => blocks.push({ type: node.type.name, text: node.textContent }));
+            return { blocks, value: editor.getValue() };
+        });
+        assert.equal(midLine.blocks.length, 1, `a marker mid-line must not split: ${JSON.stringify(midLine.blocks)}`);
+        assert.equal(midLine.blocks[0].type, 'paragraph');
+        assert.equal(midLine.blocks[0].text, '第一行\n正文# 不是标题');
         assert.deepEqual(errors, []);
         console.log('Editor input browser regression passed');
     } finally {

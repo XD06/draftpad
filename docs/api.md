@@ -118,12 +118,12 @@ Personal security V1 的初次设置用旧 PIN 或一次性 `AUTH_BOOTSTRAP_TOKE
   "version": "1.0.8-abcd1234",
   "highlightLanguages": ["javascript", "python"],
   "assetMaxFileBytes": 20971520,
-  "hiddenFloatingActions": ["toggle-reflections"],
+  "hiddenFloatingActions": ["clipboard-import-trigger"],
   "authMode": "legacy"
 }
 ```
 
-`hiddenFloatingActions` 是悬浮功能按钮的隐藏黑名单（服务端 `DUMBPAD_HIDDEN_FLOATING_ACTIONS`，默认 `["toggle-reflections"]`）。前端只切换对应按钮的 `hidden` 属性，不删除节点与事件绑定，因此从配置里去掉某个 id 即可恢复；`fab-toggle-group`（移动端「更多」）与 `scroll-helper` 属于界面外壳，不可隐藏。可配置 id 与校验规则见 `public/managers/floating-actions-config.js`。
+`hiddenFloatingActions` 是悬浮功能按钮的隐藏黑名单（服务端 `DUMBPAD_HIDDEN_FLOATING_ACTIONS`，默认 `["clipboard-import-trigger"]`）。前端只切换对应按钮的 `hidden` 属性，不删除节点与事件绑定，因此从配置里去掉某个 id 即可恢复；`fab-toggle-group`（移动端「更多」）与 `scroll-helper` 属于界面外壳，不可隐藏。可配置 id 与校验规则见 `public/managers/floating-actions-config.js`。
 
 ---
 

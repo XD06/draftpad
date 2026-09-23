@@ -16,9 +16,11 @@ import {
 import {
     AnnotationMark,
     DrawMark,
+    DumbPadUnderline,
     MdHighlight,
     MdSoftBreak,
     SoftEnterShortcut,
+    SoftBreakBlockRules,
     TaskListInputShortcut,
     DumbPadTaskList,
     DumbPadCodeBlock,
@@ -102,6 +104,11 @@ export class HybridMarkdownEditor {
                     hardBreak: false,
                     // 代码块交给官方 CodeBlockLowlight（PM Decoration 高亮）
                     codeBlock: false,
+                    // 下划线交给 DumbPadUnderline：上游 parseHTML 用 value.includes('underline')
+                    // 判定 style 规则，会把批注的 `text-decoration:underline wavy #e74c3c` 和划线
+                    // 的 `underline blue` 也算成下划线，于是刷新后多出一条直线下划线，并且 `<u>`
+                    // 被写回正文。这里关掉原版，只替换解析判定。
+                    underline: false,
                     // 关掉 Link 的 openOnClick。Tiptap 的链接点击处理（PM handleClick，
                     // PluginKey handleClickLink）由 prosemirror-view 在 **mouseup** 里派发
                     // （LeftMouseDown.up → handleSingleClick → someProp('handleClick')），
@@ -114,8 +121,12 @@ export class HybridMarkdownEditor {
                 }),
                 AnnotationMark,
                 DrawMark,
+                // 下划线 mark 的解析判定由 DumbPadUnderline 收窄（tiptap-extensions.js）
+                DumbPadUnderline,
                 MdHighlight,
                 MdSoftBreak,
+                // 软换行后的「视觉行首」输入块标记（# - 1. >）就地拆块，见 tiptap-extensions.js
+                SoftBreakBlockRules,
                 HeadingAnchor,
                 TimeCommandShortcut,
                 TimeMarkerNode,

@@ -55,12 +55,12 @@ function assertConfigParsing() {
     assert(
         Array.isArray(unset.HIDDEN_FLOATING_ACTIONS)
             && unset.HIDDEN_FLOATING_ACTIONS.length === 1
-            && unset.HIDDEN_FLOATING_ACTIONS[0] === 'toggle-reflections',
-        'without the env var the default list should hide only the reflections placeholder, got '
+            && unset.HIDDEN_FLOATING_ACTIONS[0] === 'clipboard-import-trigger',
+        'without the env var the default list should hide only the clipboard quick-record entry, got '
             + JSON.stringify(unset.HIDDEN_FLOATING_ACTIONS)
     );
     assert(
-        unset.DEFAULT_HIDDEN_FLOATING_ACTIONS === 'toggle-reflections',
+        unset.DEFAULT_HIDDEN_FLOATING_ACTIONS === 'clipboard-import-trigger',
         'the default list should stay exported so docs and tests can reference it'
     );
 
@@ -99,13 +99,17 @@ function assertVisibilityApplies() {
     for (const id of [...CONFIGURABLE_FLOATING_ACTIONS, ...ALWAYS_VISIBLE_FLOATING_ACTIONS]) {
         assert(markupIds.includes(id), `index.html should keep the floating button #${id} for config toggling`);
     }
-    assert(
-        doc.getElementById('toggle-reflections').hidden === true,
-        'the reflections placeholder should ship hidden so it never flashes before /api/config lands'
-    );
-    for (const id of CONFIGURABLE_FLOATING_ACTIONS.filter(item => item !== 'toggle-reflections')) {
-        assert(doc.getElementById(id).hidden === false, `#${id} should be visible by default in markup`);
+    // 标记里的初始 hidden 必须等于默认配置的效果：/api/config 到达前的那一帧，既不能闪出
+    // 本该隐藏的按钮，也不能缺了本该显示的按钮。写成从默认值推导，避免两边各自漂移。
+    const defaultHidden = loadConfigModule(undefined).HIDDEN_FLOATING_ACTIONS;
+    for (const id of CONFIGURABLE_FLOATING_ACTIONS) {
+        const button = doc.getElementById(id);
+        assert(button.hidden === defaultHidden.includes(id),
+            `#${id} ships hidden=${button.hidden} but the default config says ${defaultHidden.includes(id)}`);
     }
+    assert(defaultHidden.includes('clipboard-import-trigger')
+        && !defaultHidden.includes('toggle-reflections'),
+        'the shipped default should collapse the clipboard entry and show the reflections button');
 
     const applied = applyFloatingActionsVisibility(doc, ['Clipboard-Import-Trigger', 'toggle-reflections']);
     assert(
@@ -156,7 +160,8 @@ function assertVisibilityApplies() {
         );
         assert(
             doc2.getElementById('toggle-thoughts').hidden === false
-                && doc2.getElementById('toggle-reflections').hidden === true,
+                && doc2.getElementById('clipboard-import-trigger').hidden === true
+                && doc2.getElementById('toggle-reflections').hidden === false,
             'the no-op path should keep the markup defaults untouched'
         );
     }
