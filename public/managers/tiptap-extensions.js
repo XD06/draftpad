@@ -4,7 +4,7 @@
  * restoreAllRenderedMarks / renderInlineMarks 与 time-command.js），
  * roundtrip 兼容由 test/test_tiptap_roundtrip.js 固化，改动前先读它。
  */
-import { Mark, Node, Extension, TaskList, TaskItem, InputRule, findParentNode, CodeBlockLowlight, PM } from './tiptap-runtime.js';
+import { Mark, Node, Extension, TaskList, TaskItem, InputRule, findParentNode, CodeBlockLowlight, Underline, PM } from './tiptap-runtime.js';
 import { TIME_COMMAND, parseTimeMarkerText, buildTimeMarker } from './time-command.js';
 import { buildCodeBlockNodeView } from './tiptap-code-block-view.js';
 import { buildTaskItemNodeView } from './tiptap-task-item-view.js';
@@ -301,6 +301,69 @@ export const DrawMark = Mark.create({
                 parse: {},
             },
         };
+    },
+});
+
+/**
+ * 「纯下划线」判定：只有 text-decoration 的值就是 underline 本身才算下划线格式。
+ *
+ * 为什么要自己收窄：Tiptap 的 Underline 用的是 `value.includes('underline')`，而 PM 的
+ * style 规则是**按规则名去查 inline style 的 getPropertyValue**（prosemirror-model 的
+ * matchingStyles，注释里明说简写属性在 style.item 里会被拆成长属性、所以直接查名字）。
+ * 浏览器查 `text-decoration` 时会把长属性重新序列化回简写：实测 Chrome 对批注的
+ * `text-decoration:underline wavy #e74c3c;text-decoration-thickness:2.5px` 返回
+ * `underline 2.5px wavy rgb(231, 76, 60)`，对划线的 `underline blue` 返回 `underline 2px blue`
+ * ——两者都含 'underline'，于是被额外套上 underline mark。后果不只是多一条直线：
+ * **`<u>` 会被写回正文**（存进去是 `<span data-note=…>`，刷新一次再保存就变成
+ * `<u><span data-note=…></u>`）。改成只写长属性也躲不开，因为查的就是简写名。
+ *
+ * 因此带颜色 / 粗细 / 线型（wavy、dashed、dotted）的装饰一律不当作 underline：那是批注、
+ * 划线或外部富文本的语义，不是「正文加下划线」。`solid` 是初始值，允许显式写出来。
+ */
+function isPlainUnderlineStyle(value) {
+    const tokens = String(value).trim().toLowerCase().split(/\s+/)
+        .filter(token => token && token !== 'solid');
+    return tokens.length === 1 && tokens[0] === 'underline';
+}
+
+/**
+ * 识别上面那个 bug 在老文章里留下的 `<u>`：它自己没有正文文字，内容全是批注 / 划线的
+ * span（外加批注的 `<sub>` 说明标签，它在归一化时会被吃掉）。这种 `<u>` 是纯残留，
+ * 不再解析成 underline，下次保存自然消失——不需要迁移数据。
+ * 只要 `<u>` 里还有自己的文字，就按「用户真的给这段加了 下划线」处理，照常解析。
+ */
+function isDecorationArtifactUnderline(element) {
+    const children = element?.children;
+    if (!children || !children.length) return false;
+    const nodes = element.childNodes || [];
+    for (let index = 0; index < nodes.length; index += 1) {
+        if (nodes[index].nodeType === 3 && nodes[index].textContent.trim()) return false;
+    }
+    for (let index = 0; index < children.length; index += 1) {
+        if (!children[index].matches?.('span[data-note], span[data-draw], sub[data-note-label]')) {
+            return false;
+        }
+    }
+    return true;
+}
+
+/**
+ * 覆盖 StarterKit 的 Underline（tiptap-editor.js 里 `underline: false` 关掉原版），
+ * 只改 parseHTML，其余（renderHTML `<u>`、commands、Mod+U、markdown 位）全部继承。
+ * 两条规则都要：tag 规则负责清掉已被污染的老数据，style 规则负责不再制造新污染。
+ */
+export const DumbPadUnderline = Underline.extend({
+    parseHTML() {
+        return [
+            // PM 语义：getAttrs 返回 false 会跳过这条规则（元素内容照常解析，等于把 <u> 拆掉），
+            // 返回 null 则按无属性应用 mark。
+            { tag: 'u', getAttrs: (element) => (isDecorationArtifactUnderline(element) ? false : null) },
+            {
+                style: 'text-decoration',
+                consuming: false,
+                getAttrs: (value) => (isPlainUnderlineStyle(value) ? {} : false),
+            },
+        ];
     },
 });
 

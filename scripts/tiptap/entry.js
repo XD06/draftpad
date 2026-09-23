@@ -19,6 +19,7 @@ import { TaskList } from '@tiptap/extension-task-list';
 import { TaskItem } from '@tiptap/extension-task-item';
 import { Highlight } from '@tiptap/extension-highlight';
 import { CodeBlockLowlight } from '@tiptap/extension-code-block-lowlight';
+import { Underline } from '@tiptap/extension-underline';
 import { createLowlight, common } from 'lowlight';
 
 export const {
@@ -48,6 +49,7 @@ export {
   TaskItem,
   Highlight,
   CodeBlockLowlight,
+  Underline,
 };
 
 // 代码块语法高亮走 Tiptap 官方 CodeBlockLowlight（PM Decoration 机制），
