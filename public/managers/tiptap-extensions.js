@@ -312,13 +312,20 @@ export const DrawMark = Mark.create({
  * matchingStyles，注释里明说简写属性在 style.item 里会被拆成长属性、所以直接查名字）。
  * 浏览器查 `text-decoration` 时会把长属性重新序列化回简写：实测 Chrome 对批注的
  * `text-decoration:underline wavy #e74c3c;text-decoration-thickness:2.5px` 返回
- * `underline 2.5px wavy rgb(231, 76, 60)`，对划线的 `underline blue` 返回 `underline 2px blue`
  * ——两者都含 'underline'，于是被额外套上 underline mark。后果不只是多一条直线：
  * **`<u>` 会被写回正文**（存进去是 `<span data-note=…>`，刷新一次再保存就变成
- * `<u><span data-note=…></u>`）。改成只写长属性也躲不开，因为查的就是简写名。
+ * `<u><span data-note=…></u>`）。
+ *
+ * 实测（Chrome 153）逐条形态：`underline` → `underline`；`underline solid` → `underline`；
+ * `underline wavy` → `underline wavy`；`underline solid red` → `underline red`；
+ * 只写长属性 `text-decoration-line: underline` → **空串**（查不到就不进规则）。
+ * 也就是说把存储样式改写成长属性能躲开这条规则，但那要换掉批注 / 划线的存储形态，
+ * 而且救不了已经被污染成 `<u>` 的老文章，所以仍然在解析判定上收窄。
  *
  * 因此带颜色 / 粗细 / 线型（wavy、dashed、dotted）的装饰一律不当作 underline：那是批注、
  * 划线或外部富文本的语义，不是「正文加下划线」。`solid` 是初始值，允许显式写出来。
+ * 已知取舍：外部粘贴来的 `underline red` / `underline double` / `underline overline`
+ * 不再被识别为下划线（`<u>` 标签与纯 `underline` 照常）。
  */
 function isPlainUnderlineStyle(value) {
     const tokens = String(value).trim().toLowerCase().split(/\s+/)
@@ -331,6 +338,10 @@ function isPlainUnderlineStyle(value) {
  * span（外加批注的 `<sub>` 说明标签，它在归一化时会被吃掉）。这种 `<u>` 是纯残留，
  * 不再解析成 underline，下次保存自然消失——不需要迁移数据。
  * 只要 `<u>` 里还有自己的文字，就按「用户真的给这段加了 下划线」处理，照常解析。
+ *
+ * 判定是**保守**的：只认这个 bug 实际产出的扁平形态。`<u><em><span data-note>…`、`<u>` 里夹
+ * `<br>` 或嵌套 `<u>` 时会放过（残留不清，那条直线还在），因为反向误判的代价是删掉用户真的
+ * 下划线，代价更大；放过的残留用户可以选中那段按 Mod+U 取消。边界由回归 §10 固化。
  */
 function isDecorationArtifactUnderline(element) {
     const children = element?.children;

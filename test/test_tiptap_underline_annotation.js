@@ -175,6 +175,38 @@ async function main() {
     check('only one underline extension is registered (the StarterKit copy is off)',
         underlineExtensions.length === 1, underlineExtensions.map(extension => extension.name));
 
+    // 9. Mod+U 键位随 extend 继承（关掉 StarterKit 原版后最容易丢的就是这类间接能力）
+    {
+        wrapper.setValue('快捷键测试', false);
+        await wait();
+        const doc = view.state.doc;
+        view.dispatch(view.state.tr.setSelection(
+            globalThis.DumbPadTiptap.PM.state.TextSelection.create(doc, 1, doc.content.size - 1),
+        ));
+        view.focus();
+        view.dom.dispatchEvent(new KeyboardEvent('keydown', {
+            key: 'u', code: 'KeyU', ctrlKey: true, bubbles: true, cancelable: true,
+        }));
+        await wait();
+        const after = inspect();
+        check('Mod+U still toggles the underline mark and serializes back',
+            after.combos.includes('underline') && after.value.includes('<u>快捷键测试</u>'), after);
+    }
+
+    // 10. 残留识别是**保守**的：只认这个 bug 真正产出的扁平形态。嵌套或夹杂其它内容时
+    //     宁可放过（继续保留 underline，用户可以选中按 Mod+U 取消），也绝不误删真下划线。
+    {
+        const nested = await load(`<u><em><span data-note="备注" style="${ANNOTATION_STYLE}">批注</span></em></u>`);
+        check('a nested <u> is left alone rather than guessed at',
+            nested.combos.some(c => c.includes('underline'))
+            && nested.combos.some(c => c.includes('annotation'))
+            && nested.value.includes('批注'), nested);
+        const whitespace = await load(`<u>&nbsp;<span data-note="备注" style="${ANNOTATION_STYLE}">批注</span></u>`);
+        check('whitespace inside <u> still counts as residue and no text is lost',
+            !whitespace.combos.some(c => c.includes('underline'))
+            && !/<u[ >]/.test(whitespace.html) && whitespace.value.includes('批注'), whitespace);
+    }
+
     if (failures) {
         console.error(`\n${failures} check(s) failed`);
         process.exitCode = 1;
