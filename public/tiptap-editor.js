@@ -20,6 +20,7 @@ import {
     MdHighlight,
     MdSoftBreak,
     SoftEnterShortcut,
+    QuoteBackspaceShortcut,
     SoftBreakBlockRules,
     TaskListInputShortcut,
     DumbPadTaskList,
@@ -92,6 +93,7 @@ export class HybridMarkdownEditor {
             },
             extensions: [
                 SoftEnterShortcut,
+                QuoteBackspaceShortcut,
                 TaskListInputShortcut,
                 Markdown.configure({
                     html: true,
@@ -258,9 +260,8 @@ export class HybridMarkdownEditor {
         this.isReadingMode = Boolean(enabled);
         this.editor.setEditable(!this.isReadingMode);
         this.container.classList.toggle('is-reading-mode', this.isReadingMode);
-        if (this.isReadingMode) {
-            this.renderMermaidDiagrams();
-        }
+        // 可编辑状态变了但不会产事务：让 mermaid 的 NodeView 重新判定该显示源码还是图。
+        this.notifyMermaidModeChange();
     }
 
     focus() {
@@ -597,66 +598,14 @@ export class HybridMarkdownEditor {
         return true;
     }
 
-    /* ---------------- Mermaid 阅读模式隔离渲染 ---------------- */
-
-    loadMermaidRuntime() {
-        if (!this.mermaidRuntimePromise) {
-            this.mermaidRuntimePromise = new Promise((resolve, reject) => {
-                if (globalThis.DumbPadMermaid) {
-                    resolve(globalThis.DumbPadMermaid);
-                    return;
-                }
-                const script = document.createElement("script");
-                script.src = "/vendor/tiptap/tiptap-mermaid.bundle.js";
-                script.onload = () => resolve(globalThis.DumbPadMermaid);
-                script.onerror = () => {
-                    script.remove();
-                    this.mermaidRuntimePromise = null;
-                    reject(new Error("Mermaid runtime failed to load."));
-                };
-                document.head.appendChild(script);
-            });
-        }
-        return this.mermaidRuntimePromise;
-    }
-
-    async renderMermaidDiagrams() {
-        const codeBlocks = this.container.querySelectorAll(".tiptap pre code.language-mermaid");
-        if (!codeBlocks.length) return;
-        let mermaidRuntime = null;
-        try {
-            mermaidRuntime = await this.loadMermaidRuntime();
-        } catch (_error) {
-            Array.from(codeBlocks).forEach((code) => this.showMermaidError(code));
-            return;
-        }
-        const mermaid = mermaidRuntime && (mermaidRuntime.default || mermaidRuntime);
-        if (!mermaid || typeof mermaid.render !== "function") return;
-        mermaid.initialize({ startOnLoad: false, securityLevel: "strict" });
-        const blocks = Array.from(codeBlocks);
-        for (let index = 0; index < blocks.length; index += 1) {
-            const code = blocks[index];
-            const source = code.textContent || "";
-            try {
-                const renderId = `dumbpad-mermaid-${Date.now()}-${index}`;
-                const { svg } = await mermaid.render(renderId, source);
-                code.innerHTML = svg;
-                code.classList.add("mermaid-rendered");
-            } catch (_error) {
-                this.showMermaidError(code);
-            }
-        }
-    }
-
-    showMermaidError(code) {
-        const pre = code.closest("pre");
-        if (!pre) return;
-        pre.classList.add("dumbpad-mermaid-error");
-        if (!pre.querySelector(".mermaid-error-hint")) {
-            const hint = document.createElement("div");
-            hint.className = "mermaid-error-hint";
-            hint.textContent = "Mermaid 图表语法有误，已保留源码，不影响其他内容编辑。";
-            pre.appendChild(hint);
-        }
+    /* Mermaid 图表由代码块 NodeView 负责渲染与显隐（managers/tiptap-code-block-view.js）。
+     * 可编辑状态的变化不产事务，所以切换阅读模式后必须显式通知一次，让 NodeView
+     * 重新判定「光标是否还在块内」——否则带着光标进阅读模式会停在源码视图。 */
+    notifyMermaidModeChange() {
+        // 构造器必须取自 document 所属的那个 window：只把 global.window 挂上、没挂
+        // global.CustomEvent 的 jsdom 宿主里，裸 `new CustomEvent()` 会解析到 Node 自带的
+        // 实现，jsdom 的 dispatchEvent 直接拒收（"parameter 1 is not of type 'Event'"）。
+        const CustomEventCtor = (globalThis.window || globalThis).CustomEvent;
+        document.dispatchEvent(new CustomEventCtor('dumbpad-mermaid-refresh'));
     }
 }
