@@ -217,6 +217,44 @@ html[data-initial-workspace="today"] #header-title {
     margin: auto;
 }
 
+/* Tiptap 代码块 NodeView 的编辑态实时预览（Typora 式）：光标在块内时看源码，
+ * 离开块后看图。两个类都由 NodeView 自己维护——.is-mermaid-preview 表示「图已经
+ * 画出来了」，.is-mermaid-editing 表示「光标/选区还在这块里」。渲染容器是
+ * wrapper 的兄弟节点，不在 contentDOM 内，因此文档与存储永远只有源码。 */
+.typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"].is-mermaid-preview:not(.is-mermaid-editing) > pre {
+    display: none !important;
+}
+
+.typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"].is-mermaid-preview:not(.is-mermaid-editing) > .dumbpad-mermaid-render {
+    display: flex;
+    min-height: 96px;
+    margin: 0 0 1em;
+    padding: 14px;
+    align-items: center;
+    justify-content: center;
+    overflow: auto;
+    border: 1px solid color-mix(in srgb, var(--border-color) 80%, transparent);
+    border-radius: 8px;
+    background: var(--code-bg);
+}
+
+.typora-editor-shell .vditor-reset .vditor-wysiwyg__block.is-mermaid-preview .dumbpad-mermaid-render svg {
+    display: block;
+    max-width: 100%;
+    height: auto;
+    margin: auto;
+}
+
+/* 语法写坏/还没写完时不藏源码，只在块下方挂一行提示，源码始终可继续编辑。 */
+.typora-editor-shell .vditor-reset .vditor-wysiwyg__block.dumbpad-mermaid-error > .mermaid-error-hint {
+    margin-top: 6px;
+    padding: 6px 10px;
+    border-left: 3px solid var(--primary-color);
+    color: var(--muted-text);
+    font-size: 12px;
+    line-height: 1.5;
+}
+
 .typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] .dumbpad-code-copy {
     display: inline-grid;
     width: 18px;
@@ -2264,6 +2302,34 @@ main {
     margin: 0 0 1em;
 }
 
+/* 编辑器里的引用块（两个编辑器共用 .vditor-reset 内容根）：一条细竖线 + 比正文浅一档的
+ * 正体字，不画卡片、不加引号装饰。竖线用 ::before 画——伪元素不进 DOM，PM 的解析与存储
+ * 完全不受影响，同时还能带圆角、上下各缩一点，比 border-left 更接近参考稿。
+ * 块内最后一个子块不带段尾间距，否则单行引用会在文字下面多出一整行空白。 */
+.typora-editor-shell .vditor-reset blockquote {
+    position: relative;
+    margin-left: 2px;
+    border-left: 0;
+    padding-left: 22px;
+    font-style: normal;
+    color: color-mix(in srgb, var(--text-color) 52%, var(--muted-text));
+}
+
+.typora-editor-shell .vditor-reset blockquote::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0.15em;
+    bottom: 0.15em;
+    width: 3px;
+    border-radius: 3px;
+    background: color-mix(in srgb, var(--muted-text) 45%, transparent);
+    pointer-events: none;
+}
+
+.typora-editor-shell .vditor-reset blockquote > :last-child {
+    margin-bottom: 0;
+}
 .typora-editor-shell .tiptap mark.md-mark {
     background: rgba(255, 214, 10, 0.35);
     color: inherit;

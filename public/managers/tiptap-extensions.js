@@ -700,9 +700,187 @@ function frontmatterRule(state, startLine, endLine, silent) {
     return true;
 }
 
-/** 普通段落回车=软换行：与旧 handleWysiwygSoftEnter 行为一致——
- * 仅拦截"doc > paragraph"的顶层普通段落且非空时，Enter 插入段内换行
- * 而非拆分段落；标题/列表/引用/代码保持各自默认回车行为。 */
+/**
+ * 软换行的生效范围：`doc > paragraph` 与 `blockquote > paragraph`。
+ * 标题/列表/表格/代码块仍走各自默认回车行为（和旧 handleWysiwygSoftEnter 一致）。
+ */
+function softBreakScope($pos) {
+    if ($pos.parent.type.name !== 'paragraph') return null;
+    if ($pos.depth === 1) return { inQuote: false };
+    if ($pos.depth === 2 && $pos.node(1).type.name === 'blockquote') return { inQuote: true };
+    return null;
+}
+
+/** 段落内光标所在「视觉行」的起止偏移：软换行 `<br>` 就是视觉行的分隔线。 */
+function visualLineRange(para, parentOffset) {
+    let start = 0;
+    let end = -1;
+    para.forEach((child, offset) => {
+        if (child.type.name !== 'hardBreak') return;
+        const childEnd = offset + child.nodeSize;
+        if (childEnd <= parentOffset) start = childEnd;
+        else if (offset >= parentOffset && end < 0) end = offset;
+    });
+    return { start, end: end < 0 ? para.content.size : end };
+}
+
+/** 当前视觉行是否空白（软换行插入的零宽保护字符算空白）。 */
+function visualLineIsBlank(para, parentOffset) {
+    const { start, end } = visualLineRange(para, parentOffset);
+    return !para.textBetween(start, end).replace(/[\u200B\uFEFF]/g, '').trim();
+}
+
+/**
+ * 引用块里在空行上按回车 = 退出引用块（Typora 式），并且不留游离空行：
+ * 1) 这条空行如果是刚才那次回车造出来的软换行，先删掉它——段尾软换行本来就不写进
+ *    源（`> 甲\n> ` 会被压回 `> 甲`），留在块尾只会让引用块显示成多一行空白；
+ * 2) 段落整体空掉时把它从引用块里摘走（引用块只剩这一个空段落时整块撤掉）；
+ * 3) 光标落到引用块下面的段落里——引用块后面必须真有一个可输入的段落，用户才感到
+ *    「已经出去了」。
+ * 全程一个事务，撤销一次就回到退出前的状态。
+ */
+function exitBlockquoteLine(state, view, $pos) {
+    const { paragraph, hardBreak } = state.schema.nodes;
+    if (!paragraph) return false;
+    const depth = $pos.depth;
+    const quoteDepth = depth - 1;
+    const paraStart = $pos.before(depth);
+    const paraEnd = $pos.after(depth);
+    const quoteStart = $pos.before(quoteDepth);
+    const quoteEnd = $pos.after(quoteDepth);
+    const quote = $pos.node(quoteDepth);
+    const para = $pos.parent;
+    const paraIsBlank = !para.textContent.replace(/[\u200B\uFEFF]/g, '').trim();
+    const tr = state.tr;
+    if (paraIsBlank && quote.childCount === 1) {
+        tr.replaceWith(quoteStart, quoteEnd, paragraph.create());
+        tr.setSelection(TextSelection.create(tr.doc, quoteStart + 1));
+        view.dispatch(tr.scrollIntoView());
+        return true;
+    }
+    if (paraIsBlank) {
+        tr.delete(paraStart, paraEnd);
+    } else {
+        const { start } = visualLineRange(para, $pos.parentOffset);
+        if (start > 0) {
+            // 段落内容从 paraStart + 1 起算（paraStart 指向段落节点自己的开标签）。
+            const brPos = paraStart + start;
+            const br = tr.doc.nodeAt(brPos);
+            if (br && hardBreak && br.type === hardBreak) tr.delete(brPos, brPos + br.nodeSize);
+        }
+    }
+    const afterQuote = tr.mapping.map(quoteEnd);
+    const next = tr.doc.nodeAt(afterQuote);
+    if (!next || next.type !== paragraph || next.textContent.trim()) {
+        tr.insert(afterQuote, paragraph.create());
+    }
+    tr.setSelection(TextSelection.create(tr.doc, afterQuote + 1));
+    view.dispatch(tr.scrollIntoView());
+    return true;
+}
+
+/** 引用块内的普通段落（软换行作用域之一）。 */
+function isQuoteParagraph($pos) {
+    return $pos.depth === 2 && $pos.parent.type.name === 'paragraph'
+        && $pos.node(1).type.name === 'blockquote';
+}
+
+/**
+ * 引用块内行首退格 = 并回上一行，而不是「整行抬出引用块」。
+ * 两种情况：
+ * 1. 同一引用块内还有上一段（老数据 `> 甲\n>\n> 乙`，回车曾经会拆段）——PM 默认的
+ *    joinBackward 取的切点会越过引用块这一层，结果是抬出而不是并合，就是用户报的
+ *    「退格退出区域」。这里显式并合同一引用块里的相邻两段。
+ * 2. 这是引用块唯一的一段、上面正好是同类型的文本块（`前言` + `> 甲`）——PM 默认会把
+ *    整段 lift 出去，变成两段之间多一个空行（用户报的「退格后出现空白行 + 退出区域」）。
+ *    这里把「上一行 + 引用行」合成一个块替换掉引用块，引用壳随之消失。
+ * 其余形态（多段引用的第一段、上面是标题等）仍交给默认行为。
+ */
+function joinQuoteParagraph(state, view, $pos) {
+    const depth = $pos.depth;
+    const { doc } = state;
+    // index(depth - 1) 才是「这一段在引用块里的下标」；index(depth) 是段内子节点的下标。
+    const index = $pos.index(depth - 1);
+
+    if (index > 0) {
+        const before = $pos.node(depth - 1).maybeChild(index - 1);
+        if (!before || !before.isTextblock) return false;
+        let tr;
+        try {
+            tr = state.tr.join($pos.before(depth));
+        } catch (_error) {
+            return false;
+        }
+        if (!tr.docChanged) return false;
+        view.dispatch(tr.scrollIntoView());
+        return true;
+    }
+
+    // 引用块的第一段：只有单段引用、且上一块是同类型文本块时才并合，否则交给默认行为。
+    if (depth < 2 || $pos.node(depth - 1).childCount !== 1) return false;
+    const quoteStart = $pos.before(depth - 1);
+    const $quote = doc.resolve(quoteStart);
+    const quoteIndex = $quote.index();
+    const quote = $quote.parent.maybeChild(quoteIndex);
+    const above = $quote.parent.maybeChild(quoteIndex - 1);
+    const para = $pos.parent;
+    if (!quote || !above || above.type !== para.type) return false;
+    const aboveStart = quoteStart - above.nodeSize;
+
+    // PM 的 delete 会把「只删包装标记」的区间规范化成无操作，所以这里直接用合并后的
+    // 整块替换「上一行 + 引用块」——引用壳随之消失，不会留下空引用或多余空行。
+    let tr;
+    try {
+        const merged = above.type.create(above.attrs, above.content.append(para.content));
+        tr = state.tr.replaceWith(aboveStart, quoteStart + quote.nodeSize, merged);
+        tr.setSelection(TextSelection.create(tr.doc, aboveStart + 1 + above.content.size));
+    } catch (_error) {
+        return false;
+    }
+    if (!tr.docChanged) return false;
+    view.dispatch(tr.scrollIntoView());
+    return true;
+}
+
+/**
+ * 引用块内行首退格。必须比 PM 基础键位先跑（priority 1000），否则默认 joinBackward
+ * 先把整行抬出引用块，这里就再也没机会并回上一行。
+ */
+export const QuoteBackspaceShortcut = Extension.create({
+    name: 'quoteBackspaceShortcut',
+
+    priority: 1000,
+
+    addProseMirrorPlugins() {
+        return [
+            new globalThis.DumbPadTiptap.PM.state.Plugin({
+                props: {
+                    handleKeyDown: (view, event) => {
+                        if (event.key !== 'Backspace' || event.shiftKey
+                            || event.ctrlKey || event.metaKey || event.altKey || event.isComposing) {
+                            return false;
+                        }
+                        const { state } = view;
+                        const selection = state.selection;
+                        if (!selection.empty) return false;
+                        const $from = selection.$from;
+                        if ($from.parentOffset !== 0 || !isQuoteParagraph($from)) return false;
+                        return joinQuoteParagraph(state, view, $from);
+                    },
+                },
+            }),
+        ];
+    },
+});
+
+
+/**
+ * 回车 / 退格的软换行语义：
+ * - 顶层普通段落、引用块内段落：回车 = 段内软换行（不拆段、不产生空行）；
+ * - 引用块内的空行回车 = 退出引用块；
+ * - 引用块内行首退格 = 并回上一行；
+ * - 标题 / 列表 / 表格 / 代码块：完全交给各自默认行为（和旧 handleWysiwygSoftEnter 一致）。
+ */
 export const SoftEnterShortcut = Extension.create({
     name: 'softEnterShortcut',
 
@@ -716,10 +894,18 @@ export const SoftEnterShortcut = Extension.create({
                         }
                         const { state } = view;
                         const selection = state.selection;
-                        if (!selection.empty || selection.$from.parent.type.name !== 'paragraph') return false;
-                        if (selection.$from.depth !== 1) return false;
-                        const paragraph = selection.$from.parent;
-                        if (!paragraph.textContent.replace(/[\u200B\uFEFF]/g, '').trim()) return false;
+                        if (!selection.empty) return false;
+                        const $from = selection.$from;
+                        const scope = softBreakScope($from);
+                        if (!scope) return false;
+                        const paragraph = $from.parent;
+                        if (scope.inQuote) {
+                            if (visualLineIsBlank(paragraph, $from.parentOffset)) {
+                                return exitBlockquoteLine(state, view, $from);
+                            }
+                        } else if (!paragraph.textContent.replace(/[\u200B\uFEFF]/g, '').trim()) {
+                            return false;
+                        }
                         const { hardBreak } = state.schema.nodes;
                         if (!hardBreak) return false;
                         insertSoftBreak(state, (tr) => view.dispatch(tr), hardBreak);
@@ -910,7 +1096,7 @@ export const TaskListInputShortcut = Extension.create({
 
 export const DumbPadCodeBlock = CodeBlockLowlight.extend({
     addNodeView() {
-        return ({ node, view }) => buildCodeBlockNodeView()({ node, view });
+        return ({ node, view, editor, getPos }) => buildCodeBlockNodeView()({ node, view, editor, getPos });
     },
 });
 

@@ -1794,12 +1794,15 @@ main {
         margin-top: 0.32em;
     }
 
+    /* 宽屏下引用块只把竖线右侧的呼吸感放大一点；实心卡片已按用户要求撤掉，
+     * 形态统一是「细竖线 + 浅一档的正体字」。段尾间距必须在这里压一次：桌面端
+     * `.vditor-reset p { margin-bottom: 14px }` 的优先级比 styles.css 那条高。 */
     body:not(.thoughts-mode) .typora-editor-shell .vditor-reset blockquote {
-        padding: 11px 14px;
-        border: 1px solid rgba(60, 60, 67, 0.10);
-        border-radius: 8px;
-        background: rgba(118, 118, 128, 0.06);
-        color: color-mix(in srgb, var(--text-color) 76%, var(--muted-text));
+        padding-left: 26px;
+    }
+
+    body:not(.thoughts-mode) .typora-editor-shell .vditor-reset blockquote > :last-child {
+        margin-bottom: 0;
     }
 
     body:not(.thoughts-mode) .typora-editor-shell .vditor-reset :not(pre) > code:not(.hljs):not(.highlight-chroma) {
