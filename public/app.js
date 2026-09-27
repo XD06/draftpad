@@ -498,6 +498,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             todayDraftsManagerLoader = import('./managers/today-drafts/today-drafts-manager.js')
                 .then(({ TodayDraftsManager }) => {
                     todayDraftsManager = new TodayDraftsManager({
+                        toaster,
                         onMoveToThought: async draft => {
                             const manager = await ensureThoughtsManager();
                             const moved = manager.createTodayDraftThought(draft.text);

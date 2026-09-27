@@ -25,9 +25,9 @@ function loadModule(relativePath, names) {
 }
 
 function run() {
-    const { TodayDraftsStore, createTodayDraft, localDayKey } = loadModule(
+    const { TodayDraftsStore, createTodayDraft, localDayKey, dayWindowKeys } = loadModule(
         'public/managers/today-drafts/today-drafts-store.js',
-        ['TodayDraftsStore', 'createTodayDraft', 'localDayKey']
+        ['TodayDraftsStore', 'createTodayDraft', 'localDayKey', 'dayWindowKeys']
     );
     const { formatTodayDraftTime, renderTodayDrafts, renderTodayDraftItem } = loadModule(
         'public/managers/today-drafts/today-drafts-renderer.js',
@@ -59,7 +59,15 @@ function run() {
     assert(store.load().items.length === 1, 'today drafts should survive within the same day');
 
     const tomorrowStore = new TodayDraftsStore({ storage: localStorage, now: () => new Date('2026-08-04T09:00:00') });
-    assert(tomorrowStore.load().items.length === 0, 'stale today drafts should be cleared on the next calendar day');
+    assert(tomorrowStore.load().items.length === 1, 'drafts should survive into the next day inside the 3-day window');
+
+    const lastWeekStore = new TodayDraftsStore({ storage: localStorage, now: () => new Date('2026-08-10T09:00:00') });
+    assert(lastWeekStore.load().items.length === 0, 'drafts older than the 3-day window should be dropped on load');
+
+    assert(JSON.stringify(dayWindowKeys(monday)) === JSON.stringify(['2026-08-01', '2026-08-02', '2026-08-03']),
+        'the retention window should list today plus the two previous days from oldest to newest');
+    const stamped = createTodayDraft('带日期的草稿', monday.getTime());
+    assert(stamped.day === '2026-08-03', 'a new draft should carry the local day it was created on');
 
     const rendered = renderTodayDrafts([{ id: 'draft-1', text: '<unsafe>', completed: true }]);
     assert(rendered.includes('&lt;unsafe&gt;'), 'today draft rendering should escape user text');
@@ -82,6 +90,14 @@ function run() {
     assert(rightSwipe.swipeX === 72, 'right swipes should keep their signed direction for the row transform');
     const idleSwipe = getTodayDraftSwipeState(0, 64, 92);
     assert(idleSwipe.direction === null && !idleSwipe.ready && idleSwipe.actionOpacity === 0, 'an untouched row must not expose either swipe action');
+    const readonlyRendered = renderTodayDrafts([{ id: 'draft-old', text: '昨天的记录', day: '2026-08-02' }], { readonly: true });
+    assert(readonlyRendered.includes('is-readonly'), 'historical-day rows should render read-only');
+    assert(readonlyRendered.includes('加入今日') && readonlyRendered.includes('转为 Thought') && !readonlyRendered.includes('松开删除'),
+        'historical-day rows offer copy-to-today and copy-to-thought swipes, never delete');
+    assert(readonlyRendered.indexOf('转为 Thought') < readonlyRendered.indexOf('加入今日'),
+        'historical rows put 转为 Thought on the left-swipe slot and 加入今日 on the right-swipe slot');
+    assert(readonlyRendered.includes('disabled'), 'historical-day completion controls should not be togglable');
+    assert(readonlyRendered.includes('data-today-draft-text-display') === false, 'historical-day text should not enter the editing affordance');
 
     const registry = new ImportTargetRegistry();
     const received = [];
@@ -128,7 +144,23 @@ function run() {
     assert(appSource.includes('router.applyShellState(initialWorkspace)'), 'the app should apply the workspace shell before remote data loads');
     assert(appSource.includes('registerServiceWorker().catch(() => {})'), 'service worker registration should not block workspace startup');
     assert(indexSource.includes('class="today-drafts-writing-area"'), 'today drafts should use a dedicated continuous writing surface');
-    assert(indexSource.includes('<p class="today-drafts-subtitle">只留在今天，明天会自动清空。</p>'), 'today drafts should explain their disposable lifetime under the title');
+    assert(indexSource.includes('<textarea id="today-drafts-input"'), 'the new-draft composer should be a wrapping textarea, not a single-line input');
+    assert(todayManagerSource.includes("document.createElement('textarea')"), 'row editing should swap the display for a wrapping textarea');
+    assert(todayManagerSource.includes('scrollHeight'), 'both composers should auto-grow with their content');
+    assert(todayManagerSource.includes('event.isComposing'), 'IME confirm Enter must not submit or split drafts');
+    assert(indexSource.includes('<p class="today-drafts-subtitle">保留最近 3 天，左右滑动翻页。</p>'), 'today drafts should explain the 3-day window and paging under the title');
+    assert(indexSource.includes('id="today-drafts-pager"') && indexSource.includes('id="today-drafts-flip-static"') && indexSource.includes('id="today-drafts-flip-flap"'),
+        'the flip pager should own the whole paper card plus the static and mirrored curl copies');
+    const pagerIndex = indexSource.indexOf('id="today-drafts-pager"');
+    const baseCardIndex = indexSource.indexOf('<div id="today-drafts-base" class="today-drafts-sheet today-drafts-page">');
+    const headerIndex = indexSource.indexOf('class="today-drafts-header"');
+    const writingIndex = indexSource.indexOf('id="today-drafts-writing-area"');
+    assert(baseCardIndex > pagerIndex && headerIndex > baseCardIndex && writingIndex > headerIndex,
+        'the flip pager must wrap the entire paper card so the title turns together with the page');
+    assert(indexSource.includes('<h2>今日草稿<span class="today-drafts-eyebrow" id="today-drafts-eyebrow">'),
+        'the current page date should sit as a subscript beside the title, not a tab bar or its own line');
+    assert(todayManagerSource.includes("'2d ago', 'yest', 'today'"), 'day labels should use compact English abbreviations');
+    assert(/\.today-drafts-eyebrow\s*\{[^}]*vertical-align:\s*-0\.22em/.test(todayStyles), 'the date subscript should hang at the title baseline');
     assert(!indexSource.includes('<footer class="today-drafts-footer">'), 'today drafts should not repeat the lifetime hint at the bottom of the page');
     assert(!indexSource.includes('today-drafts-add'), 'today drafts should submit through Enter without a separate add button');
     assert(!indexSource.includes('today-drafts-clear-completed'), 'today drafts should not retain a global clear-completed action once rows support swipe actions');
@@ -147,10 +179,36 @@ function run() {
     assert(todayStyles.includes('padding: 26px 48px 28px;'), 'desktop today drafts should keep the footer close to the notebook edge');
     assert(todayStyles.includes('.today-drafts-writing-area'), 'the draft page should reserve a visible writing area when no items exist');
     assert(todayStyles.includes('.today-drafts-subtitle'), 'the disposable lifetime hint should have a dedicated subtitle style');
-    assert(/\.today-draft-text-display\s*\{[^}]*overflow:\s*hidden;[^}]*text-overflow:\s*ellipsis;[^}]*white-space:\s*nowrap;/.test(todayStyles), 'displayed today drafts should remain a single line and truncate long links instead of wrapping');
+    assert(/\.today-draft-text-display\s*\{[^}]*white-space:\s*pre-wrap;[^}]*overflow-wrap:\s*anywhere;/.test(todayStyles), 'displayed today drafts should wrap onto the ruled rhythm instead of truncating');
+    assert(/\.today-draft-text-display\s*\{[^}]*line-height:\s*44px;/.test(todayStyles), 'each wrapped text line should sit on one 44px ruled band');
+    assert(/\.today-draft-text-display\s*\{[^}]*text-indent:\s*36px;[^}]*white-space:\s*pre-wrap;/.test(todayStyles), 'the first line keeps the checkbox indent while wrapped lines start flush at the paper edge');
+    assert(/\.today-draft-check\s*\{[^}]*z-index:\s*1;/.test(todayStyles), 'the checkbox must stay clickable above the flush text box');
+    assert(todayStyles.includes('.today-draft-row.is-readonly .today-draft-swipe-action--delete'), 'the historical left-slot swipe is a copy action and must not wear the destructive red');
+    assert(todayManagerSource.includes('copyDraftToThought'), 'historical rows should expose the right-swipe copy-to-thought action');
     assert(/\.today-drafts-header\s*\{[\s\S]*?margin:\s*0;[\s\S]*?padding:\s*0 0 4px;/.test(todayStyles), 'the title group should connect to the writing paper without the former footer-sized gap');
     assert(todayStyles.includes('repeating-linear-gradient'), 'the empty writing area should retain subtle ruled-paper lines');
-    assert(todayManagerSource.includes("this.writingArea?.classList.toggle('is-empty', this.items.length === 0);"), 'the composer should move between the first and next available line as items change');
+    assert(todayManagerSource.includes("this.writingArea?.classList.toggle('is-empty', todayItems.length === 0);"), 'the composer should move between the first and next available line as today items change');
+    assert(todayManagerSource.includes('bindPagerFlipActions') && todayManagerSource.includes('this.viewDay'), 'the manager should own the day paging state and flip gesture');
+    assert(todayManagerSource.includes('copyDraftToToday'), 'historical rows should expose the copy-to-today action');
+    assert(todayManagerSource.includes('completed: item.completed === true'), 'copying a historical draft into today should preserve its completion state');
+    assert(todayManagerSource.includes('toaster?.show'), 're-adding a historical draft into today should surface a toast confirmation');
+    assert(todayManagerSource.includes('setHeaderStats(this.viewDay)'), 'the status line should describe the day being viewed, not always today');
+    assert(todayManagerSource.includes('setHeaderStats(targetDay)'), 'the pre-laid target page should carry the target day stats before the flip commits');
+    assert(todayManagerSource.includes('dayWindowKeys'), 'the manager should scope rendering and sync to the 3-day window');
+    assert(!todayStyles.includes('perspective:'), 'the page turn is a 2D clip + mirror curl, never a door-panel 3D rotation');
+    assert(/#today-drafts-flip-flap\s*\{[^}]*transform-origin:\s*0\s*0;/.test(todayStyles), 'the mirrored back face must hinge at the left edge so the crease reflection math holds');
+    assert(todayStyles.includes('.today-drafts-flip-layer'), 'the turning copies are dedicated absolutely-positioned layers');
+    assert(/#today-drafts-flip-crease\s*\{/.test(todayStyles) && /#today-drafts-flip-shadow\s*\{/.test(todayStyles), 'the fold line and its feathered drop shadows are dedicated overlay layers');
+    assert(todayStyles.includes('@media (prefers-reduced-motion: reduce)'), 'reduced motion must be able to still the paper immediately');
+    assert(todayManagerSource.includes('applyFlipFrame') && todayManagerSource.includes('scaleX(-1)'), 'the turning page renders its back face by mirroring the sheet around the moving crease');
+    assert(todayManagerSource.includes('animateFlipRelease'), 'the release should tween the crease to its landing or bounce');
+    assert(todayManagerSource.includes('FLIP_COMMIT_RATIO = 0.25'), 'release commits past a quarter of the page width');
+    assert(!todayManagerSource.includes('rotateY'), 'the page must not swing like a rigid door');
+    // 纸背拷贝复用卡片类 .today-drafts-sheet 是有意的（它们就是整页纸面的镜像），
+    // 但卡片规则本身绝不能自带 position:absolute——绝对定位只属于 .today-drafts-flip-layer。
+    assert(!/\.today-drafts-sheet\s*\{[^}]*position:\s*absolute/.test(todayStyles), 'the card class must never be absolutely positioned');
+    assert(/\.today-drafts-sheet\s*\{[^}]*padding:\s*26px 36px 20px;/.test(todayStyles), 'the paper card keeps its own geometry');
+    assert(todayStyles.includes('.today-draft-row.is-copied'), 'a copied historical row should flash a confirmation tint');
     assert(todayManagerSource.includes("if (!input.value.trim()) return;"), 'Enter on an empty draft line should not create accidental blank records');
     assert(!rendered.includes('data-today-draft-remove'), 'today drafts should not render a per-row delete action');
     assert(!todayRendererSource.includes('data-today-draft-remove'), 'single-draft deletion should remain outside the paper row renderer');
