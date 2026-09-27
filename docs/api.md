@@ -374,13 +374,13 @@ Note 是某个 Notepad 的正文内容。保存接口使用 `baseVersion` 做乐
 | `replace_first` | `target`、`replacement` | 只替换第一个 `target` |
 | `insert_before` | `target`、`text` | 在第一个 `target` 前插入 `text` |
 | `insert_after` | `target`、`text` | 在第一个 `target` 后插入 `text` |
-| `replace_section` | `section`、`text` | 替换某个标题下的正文 |
+| `replace_section` | `section`、`text` | 替换某个标题下的正文（服务端保留标题行本身；`text` 仅传标题下方正文，不要包含标题行本身） |
 | `append_to_section` | `section`、`text` | 在某个标题正文末尾追加 |
 | `overwrite` | `text` | 用 `text` 覆盖全文 |
 
 对任意基于 `target`/锚点的 action，可附加 `expectedCount`（正整数）断言匹配次数：实际匹配数不符时返回 `400` 并带上 `matchCount`，避免改错副本或误伤多处。
 
-`section` 取标题 slug（见 `GET /api/notes/:id/outline`）；唯一标题的原始文本（包括中文）也可直接使用。多个同名标题会返回 `400`（`ambiguous_section`），此时改用 slug。
+`section` 优先取标题 slug（推荐先调用 `GET /api/notes/:id/outline` 获取精准 slug）；文档中唯一的标题文本（包括中文）也可直接使用（服务端支持自动剥离 `()` 等 Markdown 格式符号后进行容错匹配）。若存在多个同名标题，接口将返回 `400`（`ambiguous_section`），此时须使用 outline 中的唯一 slug。
 
 **响应：**
 
@@ -590,7 +590,7 @@ curl -X POST http://localhost:3000/api/assets/files \
 
 ## 今日草稿 API
 
-今日草稿（Today Draft）是“用完即走”的单行记录，不是永久笔记或待办历史。服务端按自己的本地日历分区；读取或写入时会永久清除过期日期的记录，因此客户端不得依赖昨天的草稿还存在。需要长期保留的内容应先转成 Thought 或文章。
+今日草稿（Today Draft）是“用完即走”的单行记录，不是永久笔记或待办历史。服务端按自己的本地日历分区，保留 **3 天窗口**（今天 + 前 2 天）内的记录；读取或写入时会永久清除滑出窗口的记录，因此客户端不得依赖 3 天前的草稿还存在。窗口内的历史日仅供查看，编辑器只开放给今天。需要长期保留的内容应先转成 Thought 或文章。
 
 ### 数据模型
 
@@ -610,20 +610,22 @@ curl -X POST http://localhost:3000/api/assets/files \
 
 ### GET /api/today-drafts
 
-读取服务端当前日期的草稿。
+读取 3 天窗口（今天 + 前 2 天）内的全部草稿，每条带自己的 `day`。
 
 **响应：**
 
 ```json
 {
   "day": "2026-08-05",
-  "items": [{ "id": "today-standup-01", "text": "回复团队消息", "completed": false, "version": 1 }]
+  "items": [{ "id": "today-standup-01", "text": "回复团队消息", "completed": false, "day": "2026-08-05", "version": 1 }]
 }
 ```
 
+`day` 字段是服务端的今天；条目自己的 `day` 可能落在窗口内的任何一天。
+
 ### GET /api/today-drafts/:id
 
-读取当前日期的一条草稿。不存在、已过期或已删除时返回 `404`；非法 id 返回 `400` 与 `code: "INVALID_TODAY_DRAFT_ID"`。
+读取窗口内的一条草稿。不存在、已滑出窗口或已删除时返回 `404`；非法 id 返回 `400` 与 `code: "INVALID_TODAY_DRAFT_ID"`。
 
 ### PUT /api/today-drafts/:id
 
@@ -635,6 +637,8 @@ curl -X POST http://localhost:3000/api/assets/files \
 { "text": "回复团队消息", "completed": false, "baseVersion": 1 }
 ```
 
+创建时可以携带 `day`（`YYYY-MM-DD`）：离线草稿跨过午夜后才重放，它应落回原来的日子；只接受窗口内的 `day`，窗口外（或缺省）由服务端盖章今天。**更新永远保留记录原有的 `day`**，请求体的 `day` 会被忽略。
+
 **响应：**
 
 ```json
@@ -643,7 +647,7 @@ curl -X POST http://localhost:3000/api/assets/files \
 
 ### DELETE /api/today-drafts/:id
 
-删除当前日期的一条草稿。请求体必须包含当前 `baseVersion`；成功返回 `{ "success": true, "deleted": true, "draft": { ... } }`。这是破坏性操作，自动化执行前应获得用户确认。
+删除窗口内的一条草稿。请求体必须包含当前 `baseVersion`；成功返回 `{ "success": true, "deleted": true, "draft": { ... } }`。这是破坏性操作，自动化执行前应获得用户确认。
 
 实时客户端还会收到 WebSocket `today_drafts_update` 事件，`action` 为 `create`、`update` 或 `delete`，`payload` 是受影响的草稿对象。
 

@@ -57,17 +57,29 @@ curl -fsS -X POST "$DUMBPAD_BASE_URL/api/notepads" \
   -H "Content-Type: application/json" \
   -d '{"name":"Release notes","content":"# Release notes\n"}'
 
-# Read first, then make a narrow Markdown change with the returned version.
+# Read full note first, or fetch outline to target sections without downloading full body.
 curl -fsS "$DUMBPAD_BASE_URL/api/notes/<article-id>" \
   -H "Authorization: Bearer $DUMBPAD_TOKEN"
 
+curl -fsS "$DUMBPAD_BASE_URL/api/notes/<article-id>/outline" \
+  -H "Authorization: Bearer $DUMBPAD_TOKEN"
+
+# Narrow Markdown edit:
+# NOTE on `replace_section`: replaces ONLY the body under that heading (server preserves the heading line).
+# Do NOT include the heading line in `text`, otherwise the heading will be duplicated.
 curl -fsS -X PATCH "$DUMBPAD_BASE_URL/api/notes/<article-id>" \
   -H "Authorization: Bearer $DUMBPAD_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"action":"append","text":"\n- Follow up","baseVersion":3,"userId":"agent"}'
+  -d '{"action":"replace_section","section":"release-notes","text":"All checks green.\n","baseVersion":3,"userId":"agent"}'
+
+# Atomic batch edits: multiple changes applied under one write lock and one version bump.
+curl -fsS -X POST "$DUMBPAD_BASE_URL/api/notes/<article-id>/edits" \
+  -H "Authorization: Bearer $DUMBPAD_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"baseVersion":4,"userId":"agent","edits":[{"action":"replace_section","section":"summary","text":"Updated summary.\n"},{"action":"append","text":"\n- Follow up item"}]}'
 ```
 
-Prefer narrow `PATCH` actions for edits. Use `POST /api/notes/:id/edits` when several dependent changes must be atomic; inspect `/openapi.json` for the full edit action list.
+Prefer narrow `PATCH` actions for edits, or `POST /api/notes/:id/edits` when several dependent changes must be atomic; inspect `/openapi.json` for the full edit action list and exact schemas.
 
 ### Thoughts
 
@@ -122,7 +134,7 @@ curl -fsS -X PATCH "$DUMBPAD_BASE_URL/api/thoughts/<thought-id>" \
 
 ### Today Drafts
 
-Today Drafts are single, date-scoped rows. `GET /api/today-drafts` returns `{ day, items }`; use the server-assigned `day` and do not attempt to retain yesterday's rows. A caller supplies the row ID so offline clients can retry safely.
+Today Drafts are single, date-scoped rows. `GET /api/today-drafts` returns `{ day, items }` covering a 3-day window (today plus the two previous days); every row carries its own `day`. Do not attempt to retain rows older than the window. A caller supplies the row ID so offline clients can retry safely; a create may carry a `day` inside the window (offline drafts replayed after midnight land on their original day), while updates always keep the stored `day`.
 
 ```bash
 # List today's rows.
