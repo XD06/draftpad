@@ -25,8 +25,13 @@ const VALID_ACTIONS = new Set([...SIMPLE_ACTIONS, ...TARGET_ACTIONS, ...SECTION_
 // --- Structure awareness (Markdown ATX headings) -------------------------
 // Mirror public/managers/heading-index.js so a server-computed outline lines
 // up exactly with the table of contents the editor shows. A consistency test
-// (test_note_edits.js) pins the two implementations together.
+// (test_note_edits.js) pins the two implementations together — including the
+// fence semantics below. Without the fence state machine a `# 注释` line
+// inside a code block becomes a phantom section, and replace_section on it
+// swallows the closing fence (silent data corruption on a versioned,
+// broadcast write).
 const HEADING_RE = /^(#{1,6})\s+(.+?)\s*#*\s*$/;
+const FENCE_RE = /^ {0,3}(`{3,}|~{3,})/;
 
 function slugify(text, seen) {
     const base = String(text || '')
@@ -41,11 +46,30 @@ function slugify(text, seen) {
 }
 
 // Build the heading outline: [{ id, text, level, line }] with 0-based lines.
+// Lines inside a fenced code block are not headings. Closing-fence rule is
+// CommonMark: same fence character, at least as long as the opener, and the
+// rest of the line must not contain fence characters (trailing spaces allowed).
+// An unclosed fence swallows the remainder of the document on both sides.
 function buildOutline(content) {
     const seen = new Map();
+    let fenceMarker = null;
+    let fenceLength = 0;
     return String(content || '')
         .split('\n')
         .map((line, index) => {
+            const fence = line.match(FENCE_RE);
+            if (fenceMarker) {
+                if (fence && fence[1][0] === fenceMarker && fence[1].length >= fenceLength
+                    && !line.trim().slice(fence[1].length).includes(fenceMarker)) {
+                    fenceMarker = null;
+                }
+                return null;
+            }
+            if (fence) {
+                fenceMarker = fence[1][0];
+                fenceLength = fence[1].length;
+                return null;
+            }
             const match = line.match(HEADING_RE);
             if (!match) return null;
             const text = match[2].replace(/[`*_~[\]()]/g, '').trim();
@@ -72,6 +96,15 @@ function findSection(outline, identifier) {
     const byText = outline.filter(h => h.text === id);
     if (byText.length === 1) return { section: byText[0] };
     if (byText.length > 1) return { error: 'ambiguous_section', matchCount: byText.length };
+
+    // Fallback: if caller passed heading text with Markdown styling or stripped characters (e.g. parentheses or bold)
+    const normalized = id.replace(/[`*_~[\]()]/g, '').trim();
+    if (normalized && normalized !== id) {
+        const byNormText = outline.filter(h => h.text === normalized);
+        if (byNormText.length === 1) return { section: byNormText[0] };
+        if (byNormText.length > 1) return { error: 'ambiguous_section', matchCount: byNormText.length };
+    }
+
     return { error: 'section_not_found' };
 }
 
@@ -207,7 +240,11 @@ function applyNoteEdit(content, edit) {
                 );
             }
             if (found.error) {
-                return fail('section_not_found', 'Section heading not found in document', { section: String(edit.section) });
+                return fail(
+                    'section_not_found',
+                    'Section heading not found in document. Use GET /api/notes/:id/outline to list valid section slugs or exact headings.',
+                    { section: String(edit.section) }
+                );
             }
             if (text === undefined) {
                 return fail('missing_text', `${action} action requires text`);
