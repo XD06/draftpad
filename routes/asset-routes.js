@@ -109,7 +109,10 @@ function registerAssetRoutes(app, { storage, originValidationMiddleware, maxFile
                 const metadata = {
                     version: 1,
                     id,
-                    name: requestedName || `image.${ext}`,
+                    // Create path only: disambiguate a name another image
+                    // asset already holds (including the "image.${ext}"
+                    // fallback); the dedupe branch above must never rename.
+                    name: await assets.uniqueName(requestedName || `image.${ext}`, 'image'),
                     type,
                     size: input.length,
                     hash,
@@ -164,7 +167,10 @@ function registerAssetRoutes(app, { storage, originValidationMiddleware, maxFile
                     version: 1,
                     kind: 'file',
                     id,
-                    name: requestedName,
+                    // Create path only: disambiguate a name another file
+                    // asset already holds; the dedupe branch above must
+                    // never rename.
+                    name: await assets.uniqueName(requestedName, 'file'),
                     type: validation.type,
                     size: input.length,
                     hash,

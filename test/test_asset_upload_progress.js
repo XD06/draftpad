@@ -63,6 +63,7 @@ function loadClient() {
         String,
         Number,
         Math,
+        Date,
         TypeError,
         Error,
         encodeURIComponent,
@@ -91,6 +92,24 @@ async function run() {
         'upload progress should expose byte transfer and server processing as separate phases'
     );
     assert.strictEqual(asset.id, 'asset-1');
+    assert.strictEqual(
+        xhr.headers['X-Asset-Name'],
+        encodeURIComponent('说明.txt'),
+        'non-clipboard file names must pass through the upload header unchanged'
+    );
+
+    // Chromium clipboard screenshots arrive as File "image.png"; the upload
+    // header must rewrite them to a zero-padded local timestamp so the panel
+    // can tell successive paste uploads apart.
+    await new AssetApiClient().uploadImage({ name: 'image.png', type: 'image/png', size: 10 });
+    const imageXhr = FakeXMLHttpRequest.instances[1];
+    assert.strictEqual(imageXhr.url, '/api/assets/images');
+    assert.match(
+        imageXhr.headers['X-Asset-Name'],
+        /^image-\d{8}-\d{6}\.png$/,
+        'clipboard "image.png" uploads must be renamed to image-YYYYMMDD-HHmmss.png in the header'
+    );
+
     const configurableClient = new AssetApiClient({ maxFileBytes: 80 * 1024 * 1024 });
     await configurableClient.uploadFile({ name: 'large.zip', type: 'application/zip', size: 60 * 1024 * 1024 });
     await assert.rejects(

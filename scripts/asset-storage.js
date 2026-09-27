@@ -23,6 +23,16 @@ function contentDispositionFilename(name = 'image') {
         .slice(0, 180) || 'image';
 }
 
+// Split a display name at the last dot: "image.png" -> base "image", ext
+// "png". A leading dot (".hidden") or trailing dot ("file.") counts as no
+// extension so the "(n)" suffix lands before the whole token.
+function splitDisplayName(name = '') {
+    const value = String(name || '');
+    const dot = value.lastIndexOf('.');
+    if (dot <= 0 || dot === value.length - 1) return { base: value, ext: '' };
+    return { base: value.slice(0, dot), ext: value.slice(dot + 1) };
+}
+
 function createAssetStorage(storage) {
     const localRoot = path.join(storage.paths.DATA_DIR, 'assets');
 
@@ -172,6 +182,29 @@ function createAssetStorage(storage) {
             && (!kind || (meta.kind || 'image') === kind)) || null;
     }
 
+    // Display-name uniqueness for the attachment panel: metadata `name` lives
+    // only in meta.json, so two same-kind assets sharing a name are
+    // indistinguishable there. Mirrors findByHash's metadata scan; uploads are
+    // low-frequency, so one extra scan per create is acceptable. Returns the
+    // original name when unused, otherwise "base (n).ext" with n from 1
+    // ("image.png" taken twice yields "image (1).png", "image (2).png").
+    // Callers must apply this only on the create path — hash-dedupe reuse must
+    // never rename an already-stored asset.
+    async function uniqueName(name, kind = null) {
+        const wanted = String(name || '');
+        if (!wanted) return wanted;
+        const list = await listAssets();
+        const taken = new Set(list
+            .filter(meta => meta && meta.name && (!kind || (meta.kind || 'image') === kind))
+            .map(meta => String(meta.name)));
+        if (!taken.has(wanted)) return wanted;
+        const { base, ext } = splitDisplayName(wanted);
+        for (let n = 1; ; n += 1) {
+            const candidate = ext ? `${base} (${n}).${ext}` : `${base} (${n})`;
+            if (!taken.has(candidate)) return candidate;
+        }
+    }
+
     async function deleteAsset(id) {
         const safeId = safeAssetId(id);
         if (!safeId) return false;
@@ -223,7 +256,7 @@ function createAssetStorage(storage) {
         return { deleted, missing };
     }
 
-    return { readAsset, readMetadata, writeAsset, listAssets, findByHash, deleteAsset, deleteAssets };
+    return { readAsset, readMetadata, writeAsset, listAssets, findByHash, uniqueName, deleteAsset, deleteAssets };
 }
 
 module.exports = { createAssetStorage, safeAssetId };

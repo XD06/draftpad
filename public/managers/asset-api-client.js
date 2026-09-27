@@ -7,6 +7,20 @@ function safeName(file) {
     return String(file?.name || 'image').trim() || 'image';
 }
 
+// Chromium clipboard screenshots arrive as a File literally named "image.png";
+// sending that as-is makes the attachment panel accumulate indistinguishable
+// assets. Rewrite such uploads to a local-time, zero-padded timestamped name
+// ("image-YYYYMMDD-HHmmss.png"); every other name passes through unchanged.
+export function buildUploadName(file) {
+    const name = safeName(file);
+    if (!/^image\.png$/i.test(name)) return name;
+    const now = new Date();
+    const pad = value => String(value).padStart(2, '0');
+    const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}`
+        + `-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+    return `image-${stamp}.png`;
+}
+
 export function isImageFile(file) {
     return String(file?.type || '').toLowerCase().startsWith('image/');
 }
@@ -93,7 +107,7 @@ export class AssetApiClient {
             file,
             headers: {
                 'Content-Type': file.type || 'application/octet-stream',
-                'X-Asset-Name': encodeURIComponent(safeName(file))
+                'X-Asset-Name': encodeURIComponent(buildUploadName(file))
             },
             errorMessage: '图片上传失败',
             onProgress
@@ -111,7 +125,7 @@ export class AssetApiClient {
             file,
             headers: {
                 'Content-Type': 'application/octet-stream',
-                'X-Asset-Name': encodeURIComponent(safeName(file)),
+                'X-Asset-Name': encodeURIComponent(buildUploadName(file)),
                 'X-Asset-Type': String(file.type || 'application/octet-stream')
             },
             errorMessage: '文件上传失败',
