@@ -41,8 +41,9 @@ export default class TodayDraftsApiClient {
         return this.request(this.draftUrl(id));
     }
 
-    put(id, { text, completed, baseVersion } = {}) {
+    put(id, { text, completed, baseVersion, day } = {}) {
         const body = { text, completed };
+        if (/^\d{4}-\d{2}-\d{2}$/.test(String(day || ''))) body.day = String(day);
         if (Number.isSafeInteger(Number(baseVersion)) && Number(baseVersion) > 0) {
             body.baseVersion = Number(baseVersion);
         }

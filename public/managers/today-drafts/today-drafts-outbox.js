@@ -1,7 +1,7 @@
 const DEFAULT_OUTBOX_KEY = 'dumbpad_today_drafts_outbox_v1';
 
 function cloneDraft(draft) {
-    return {
+    const next = {
         id: String(draft.id),
         text: String(draft.text || ''),
         completed: draft.completed === true,
@@ -9,6 +9,10 @@ function cloneDraft(draft) {
         createdAt: Number(draft.createdAt) || Date.now(),
         updatedAt: Number(draft.updatedAt) || Date.now()
     };
+    // day 必须跟着进队列：离线草稿跨过午夜后才重放时，服务端要把它盖回
+    // 原来的日子，而不是重放当天。
+    if (/^\d{4}-\d{2}-\d{2}$/.test(String(draft.day || ''))) next.day = String(draft.day);
+    return next;
 }
 
 export default class TodayDraftsOutbox {
@@ -84,6 +88,7 @@ export default class TodayDraftsOutbox {
         const save = async baseVersion => apiClient.put(item.draftId, {
             text: item.draft.text,
             completed: item.draft.completed,
+            day: item.draft.day,
             baseVersion
         });
         const remove = async baseVersion => apiClient.delete(item.draftId, baseVersion);

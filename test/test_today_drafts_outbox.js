@@ -31,8 +31,9 @@ async function run() {
     outbox.enqueueDelete({ ...localDraft, version: 0 });
     assert.strictEqual(outbox.load().length, 0, 'deleting an unsynced creation should cancel it without a server call');
 
-    const remoteDraft = { id: 'today-remote-1', text: 'review PR', completed: false, version: 3, updatedAt: 200 };
+    const remoteDraft = { id: 'today-remote-1', text: 'review PR', completed: false, version: 3, updatedAt: 200, day: '2026-08-02' };
     outbox.enqueueUpsert(remoteDraft);
+    assert.strictEqual(outbox.load()[0].draft.day, '2026-08-02', 'the outbox clone should carry the draft day across a midnight replay');
     const requests = [];
     const api = {
         put: async (id, body) => {
@@ -45,6 +46,7 @@ async function run() {
     const result = await outbox.retry(api);
     assert.strictEqual(requests.length, 1, 'queued writes should replay one request per latest draft');
     assert.strictEqual(requests[0].body.baseVersion, 3, 'existing drafts should retain optimistic-concurrency versions');
+    assert.strictEqual(requests[0].body.day, '2026-08-02', 'replayed writes should carry the draft day to the server');
     assert.strictEqual(result.saved[0].result.draft.version, 4, 'successful replay should expose the saved server record');
     assert.strictEqual(outbox.load().length, 0, 'successful replay should clear the queue item');
 
