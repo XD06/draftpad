@@ -638,6 +638,33 @@ export class TodayDraftsManager {
         }
     }
 
+    // Global-search jump: search covers the whole 3-day window, so the target
+    // may live on a history page — switch the pager to that day, then flash
+    // the row. The caller (app.js) is responsible for navigating to the
+    // today workspace first; activate() synchronously renders the local
+    // store, so items are populated by the time this runs.
+    async revealDraftById(targetId) {
+        const id = String(targetId || '').trim();
+        if (!id) throw new Error('revealDraftById requires an id');
+        if (!this.items.some(item => item.id === id)) {
+            await this.refreshWindowDrafts();
+        }
+        const draft = this.items.find(item => item.id === id);
+        if (!draft) throw new Error('该草稿已不存在');
+
+        const day = draft.day || localDayKey();
+        if (this.viewDay !== day) {
+            this.viewDay = day;
+            this.render();
+        }
+        const row = this.base?.querySelector(`[data-today-draft-id="${CSS.escape(id)}"]`);
+        if (!row) throw new Error('无法定位该草稿');
+        row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        row.classList.add('reveal-focus');
+        setTimeout(() => row.classList.remove('reveal-focus'), 1800);
+        return true;
+    }
+
     scheduleDayBoundary() {
         clearTimeout(this.dayTimer);
         const now = new Date();

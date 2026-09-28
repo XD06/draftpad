@@ -1576,6 +1576,144 @@ main {
     padding: 0 1px;
 }
 
+/* Global search: grouped results, source badges, current-article matches */
+.command-group-header {
+    padding: 10px 16px 4px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    color: var(--muted-text);
+}
+
+.command-empty {
+    justify-content: center;
+    color: var(--muted-text);
+    cursor: default;
+}
+
+/* 当前文章命中：两行平面条目——头行（块徽标 + 章节 + 序号）+ 整行命中文本；
+   身份由分组头承担，不逐条加徽标和底色 */
+.command-item-match {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 4px;
+}
+
+.command-item-match-head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+}
+
+.command-item-blockbadge {
+    flex-shrink: 0;
+    font-size: 10px;
+    line-height: 1;
+    font-weight: 700;
+    padding: 3px 5px;
+    border-radius: 4px;
+    background: color-mix(in srgb, var(--muted-text) 14%, transparent);
+    color: var(--muted-text);
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+}
+
+.command-item-section {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 12px;
+    color: var(--muted-text);
+}
+
+.command-item-context {
+    flex-shrink: 0;
+    font-size: 10px;
+    line-height: 1;
+    padding: 3px 6px;
+    border-radius: 999px;
+    border: 1px solid var(--border-color);
+    color: var(--muted-text);
+    white-space: nowrap;
+}
+
+.command-item-line {
+    display: block;
+    flex: 0 0 auto;
+    width: 100%;
+    font-size: 13px;
+    color: var(--text-color);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.command-item-more .command-item-line {
+    color: var(--muted-text);
+    font-style: italic;
+}
+
+.command-item-meta {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+}
+
+.command-item-count {
+    font-size: 11px;
+    color: var(--muted-text);
+    white-space: nowrap;
+}
+
+.command-item-badge {
+    flex-shrink: 0;
+    font-size: 10px;
+    line-height: 1;
+    padding: 4px 8px;
+    border-radius: 999px;
+    border: 1px solid var(--border-color);
+    color: var(--muted-text);
+    white-space: nowrap;
+}
+
+.command-item-badge.badge-notepad {
+    border-color: transparent;
+    background: color-mix(in srgb, var(--primary-color) 14%, transparent);
+    color: var(--primary-color);
+}
+
+.command-item-badge.badge-thought {
+    border-color: transparent;
+    background: color-mix(in srgb, #d97706 14%, transparent);
+    color: #d97706;
+}
+
+.command-item-badge.badge-today-draft {
+    border-color: transparent;
+    background: color-mix(in srgb, #0d9488 14%, transparent);
+    color: #0d9488;
+}
+
+.command-item-ordinal {
+    flex-shrink: 0;
+    margin-left: auto;
+    font-size: 10px;
+    color: var(--muted-text);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+@media (max-width: 640px) {
+    .command-item kbd,
+    .command-item-ordinal {
+        display: none;
+    }
+}
+
 ::highlight(dumbpad-search-hit) {
     background: color-mix(in srgb, var(--primary-color) 36%, transparent);
     color: inherit;

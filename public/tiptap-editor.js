@@ -537,40 +537,75 @@ export class HybridMarkdownEditor {
         return document.scrollingElement || document.documentElement;
     }
 
-    jumpToKeyword(keyword) {
-        const query = String(keyword || '').trim();
-        if (!query) return false;
+    // Jump to a precise hit in the rendered document. `keywords` is an array
+    // (multi-keyword search) or a single string; `hitIndex` is the global
+    // occurrence index across ALL keywords in document order — the server
+    // (server/search/matcher.js) counts source hits with the same semantics,
+    // so rendered plain text aligns with the search result rows.
+    jumpToKeyword(keywords, hitIndex = 0) {
+        const list = (Array.isArray(keywords) ? keywords : [keywords])
+            .map(keyword => String(keyword || '').trim().toLowerCase())
+            .filter(Boolean);
+        if (list.length === 0) return false;
         const root = this.container.querySelector('.tiptap');
         if (!root) return false;
+        const targetIndex = Math.max(0, Number(hitIndex) || 0);
         const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
         let node = walker.nextNode();
+        let globalIndex = 0;
+        let lastHit = null;
+        const wrapHit = (textNode, at, length) => {
+            const range = document.createRange();
+            range.setStart(textNode, at);
+            range.setEnd(textNode, at + length);
+            const mark = document.createElement('span');
+            mark.className = 'article-search-hit';
+            try {
+                range.surroundContents(mark);
+            } catch (_error) {
+                // 跨元素关键词退化为滚动定位，不做包裹。
+            }
+            // 与旧实现一致：滚动统一走 scrollRenderedElementIntoView
+            // （scrollIntoView 会被同一点击流程内的其他滚动取消）。
+            this.scrollRenderedElementIntoView(mark);
+            setTimeout(() => {
+                const parent = mark.parentNode;
+                if (parent) {
+                    while (mark.firstChild) parent.insertBefore(mark.firstChild, mark);
+                    mark.remove();
+                }
+            }, 1600);
+        };
         while (node) {
             const value = node.nodeValue || '';
-            const hit = value.toLowerCase().indexOf(query.toLowerCase());
-            if (hit >= 0 && !node.parentElement?.closest?.('.article-search-hit')) {
-                const range = document.createRange();
-                range.setStart(node, hit);
-                range.setEnd(node, hit + query.length);
-                const mark = document.createElement('span');
-                mark.className = 'article-search-hit';
-                try {
-                    range.surroundContents(mark);
-                } catch (_error) {
-                    // 跨元素关键词退化为滚动定位，不做包裹。
+            const lower = value.toLowerCase();
+            const hits = [];
+            for (const keyword of list) {
+                let at = lower.indexOf(keyword);
+                while (at >= 0) {
+                    hits.push([at, keyword.length]);
+                    at = lower.indexOf(keyword, at + Math.max(keyword.length, 1));
                 }
-                // 与旧实现一致：滚动统一走 scrollRenderedElementIntoView
-                // （scrollIntoView 会被同一点击流程内的其他滚动取消）。
-                this.scrollRenderedElementIntoView(mark);
-                setTimeout(() => {
-                    const parent = mark.parentNode;
-                    if (parent) {
-                        while (mark.firstChild) parent.insertBefore(mark.firstChild, mark);
-                        mark.remove();
-                    }
-                }, 1600);
-                return true;
+            }
+            hits.sort((left, right) => left[0] - right[0]);
+            for (const [at, length] of hits) {
+                // Leftover marks from a previous (not yet expired) jump must
+                // not shift the occurrence counting against server-side hits.
+                if (node.parentElement?.closest?.('.article-search-hit')) break;
+                if (globalIndex === targetIndex) {
+                    wrapHit(node, at, length);
+                    return true;
+                }
+                lastHit = { node, at, length };
+                globalIndex += 1;
             }
             node = walker.nextNode();
+        }
+        // Hit index beyond the rendered hits falls back to the closest one so
+        // the jump still lands somewhere useful instead of nowhere.
+        if (lastHit) {
+            wrapHit(lastHit.node, lastHit.at, lastHit.length);
+            return true;
         }
         return false;
     }
