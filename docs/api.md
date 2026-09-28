@@ -1579,14 +1579,16 @@ loosely_related
 
 ### GET /api/search
 
-全文搜索 Notepad、Thought 或两者。省略 `scope` 保持兼容，仅搜索 Notepad。
+全局搜索，跨三个数据域：Notepad（文章）、Thought、Today Draft（今日草稿）。匹配语义为**精确多关键词 AND**：查询按空白分词（上限 8 个），每个关键词都必须出现（大小写不敏感，标题 / 正文 / 标签任一位置）才算命中，不做模糊近似。
+
+架构上由 `server/search/` 的领域 provider 注册表驱动（notepad / thought / today_draft 各自提供实现），新增数据域只需注册一个 provider；每个结果都带 `type` 字段标识来源域。
 
 **Query 参数：**
 
 | 参数 | 类型 | 说明 |
 |---|---|---|
-| `q` / `query` | string | 搜索关键词 |
-| `scope` | `notepads` / `thoughts` / `all` | 搜索范围，默认 `notepads` |
+| `q` / `query` | string | 搜索关键词，支持空格分隔多关键词（AND）；空串返回空结果 |
+| `scope` | `notepads` / `thoughts` / `today_drafts` / `all` | 搜索范围，默认 `all` |
 | `page` | number | 页码，默认 `1` |
 | `pageSize` | number | 每页数量，默认返回全部 |
 
@@ -1594,12 +1596,23 @@ loosely_related
 
 ```json
 {
+  "query": "部署 笔记",
+  "keywords": ["部署", "笔记"],
   "results": [
     {
       "id": "default",
       "title": "Default",
       "type": "notepad",
-      "matches": []
+      "matchType": "content",
+      "matches": [],
+      "snippet": "...部署...",
+      "snippetStart": 12,
+      "snippetPrefixLength": 3,
+      "matchCount": 4,
+      "occurrencesTruncated": false,
+      "occurrences": [
+        { "line": 3, "lineText": "运行部署脚本", "context": null, "matchCount": 1, "section": "步骤" }
+      ]
     }
   ],
   "totalPages": 1,
@@ -1607,7 +1620,19 @@ loosely_related
 }
 ```
 
-Thought 结果同样带 `type: "thought"`，并提供 `title`、`snippet`、`matchType` 与 `matches`，调用方可按 `type` 分流展示或处理。
+**字段说明：**
+
+- 旧字段（`id` / `type` / `title` / `name` / `snippet` / `snippetStart` / `snippetPrefixLength` / `matchType` / `matches`）全部保留；`matches` 恒为 `[]`（高亮改由调用方按 `keywords` 精确标注）。
+- `matchCount`：命中总数 =（标题命中计 1）+（含命中的行数）。
+- `coLineCount`：**同时包含全部关键词的行数**（多关键词时的最强相关性信号）。
+- `occurrences`：按行聚合的命中明细，排序为**相关性优先**（命中的不同关键词数多的行在前，其次行内命中数，最后按行序；单关键词保持行序）。每条含：
+  - `line`（0 起行号）、`lineText`（该行原文）；
+  - `matchCount`（该行命中次数）、`distinctKeywords`（该行命中的不同关键词数）；
+  - `hitIndex`（该行首个命中在**全文档命中序列**中的序号，调用方按同一语义在渲染结果中数第 N 个命中即可精确跳转）；
+  - `block`（块类型：`{ type: 'heading', level }` / `todo` / `list` / `quote` / `code`（围栏内行）/ `text`，供 UI 显示徽标）；
+  - `section`（notepad 域为所属 ATX 标题，感知围栏代码块；其他域为 `null`）、`context`（Thought 域标注 `正文` / `子任务` / `标签`，其他域为 `null`）。
+  - 单文档上限 50 条，超出由 `occurrencesTruncated: true` 标记（`matchCount` 始终是未截断的真实总数）。
+- 排序：文档级——标题命中 > `coLineCount` 多 > 命中数多 > 更新时间新；域内排序一致，域间按 notepad → thought → today_draft。
 
 ### GET /api/share/:id
 

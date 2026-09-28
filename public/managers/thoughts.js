@@ -294,7 +294,7 @@ export class ThoughtsManager {
     }
 
     initSearchAndFilterEvents() {
-        this.searchToggle = document.getElementById('thoughts-search-toggle');
+        this.searchToggle = document.getElementById('global-search-toggle');
         this.headerActions = document.querySelector('.thoughts-header-actions');
         if (this.searchToggle) {
             this.searchToggle.addEventListener('click', () => {
@@ -1969,6 +1969,137 @@ export class ThoughtsManager {
         }
         if (!highlight()) throw new Error('无法定位引用 Thought');
         return true;
+    }
+
+    // Global-search jump: make an arbitrary Thought visible in the timeline
+    // whatever the current view state is. Server-side filtering means "not
+    // in memory" cannot distinguish "filtered out" from "on a later page",
+    // so the steps are: activate the workspace (navigate awaits the first
+    // page) → clear filters that may hide the target → render buffered
+    // batches until the card exists → fetch by id as the last resort.
+    async revealThoughtById(targetId, { keyword = '' } = {}) {
+        const id = String(targetId || '').trim();
+        if (!id) throw new Error('revealThoughtById requires an id');
+
+        if (!this.isActive) {
+            await this.app?.navigateWorkspace?.('thoughts');
+        }
+        if (!this.isActive) throw new Error('无法打开 Thoughts 视图');
+
+        if (!this.getFilteredThoughts().some(item => item.id === id) && this.hasActiveListFilters()) {
+            this.clearListFilters();
+            await this.fetchThoughts();
+        }
+
+        if (!(await this.renderThoughtCardIntoView(id))) {
+            const target = await this.apiClient.get(id);
+            if (!target?.id) throw new Error('该 Thought 已不存在');
+            if (!this.thoughts.some(item => item.id === target.id)) {
+                // Keep the fetched card locally so pagination state cannot
+                // make a verified target unreachable (same policy as agent
+                // citations); the next normal refresh restores the order.
+                this.thoughts = [{
+                    ...target,
+                    relationCount: Number(target.relationCount || 0),
+                    aiStatus: target.aiStatus || 'missing'
+                }, ...this.thoughts];
+                this.render();
+            }
+            if (!(await this.renderThoughtCardIntoView(id))) {
+                throw new Error('无法定位该 Thought');
+            }
+        }
+
+        const card = this.timeline?.querySelector(`.thought-card[data-id="${CSS.escape(id)}"]`);
+        if (!card) throw new Error('无法定位该 Thought');
+        this.focusThoughtCard(card, keyword);
+        return true;
+    }
+
+    hasActiveListFilters() {
+        const filters = this.getThoughtListFilters();
+        return Boolean(filters.date || filters.query || filters.tag || (filters.status && filters.status !== 'all'));
+    }
+
+    clearListFilters() {
+        if (this.searchInput) this.searchInput.value = '';
+        if (this.dateFilter) this.dateFilter.value = '';
+        if (this.statusFilter) {
+            this.statusFilter.dataset.value = 'all';
+            this.statusFilter.querySelector('.status-pill.active')?.classList.remove('active');
+            this.statusFilter.querySelector('.status-pill[data-status="all"]')?.classList.add('active');
+        }
+        this.activeTag = '';
+    }
+
+    // Render buffered batches until the card is in the DOM. Returns false
+    // when the target exists in memory but lives on a not-yet-fetched page
+    // (the caller then fetches it by id) or is not in the filtered set.
+    async renderThoughtCardIntoView(id) {
+        if (this.timeline?.querySelector(`.thought-card[data-id="${CSS.escape(id)}"]`)) return true;
+        if (!this.getFilteredThoughts().some(item => item.id === id)) return false;
+        const query = this.searchInput.value.toLowerCase();
+        let guard = 0;
+        while (!this.timeline?.querySelector(`.thought-card[data-id="${CSS.escape(id)}"]`)) {
+            const before = this._renderedCount;
+            this._renderBatch(this.getFilteredThoughts(), query);
+            if (this._renderedCount === before) return false;
+            guard += 1;
+            if (guard > 500) return false;
+        }
+        return true;
+    }
+
+    focusThoughtCard(card, keyword = '') {
+        const term = String(keyword || '').trim();
+        const mark = term ? this.applyTransientKeywordHighlight(card, term) : null;
+        const target = mark || card;
+        target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        card.classList.add('relation-focus');
+        setTimeout(() => card.classList.remove('relation-focus'), 1800);
+        if (mark) setTimeout(() => this.removeTransientKeywordHighlight(mark), 2600);
+    }
+
+    // Wrap the first keyword hit inside the card's body text with a
+    // thought-highlight mark (in place, no re-render, no filter change) and
+    // return the mark so the caller can scroll to it and unwrap it later.
+    applyTransientKeywordHighlight(card, term) {
+        const body = card.querySelector('.thought-text');
+        if (!body) return null;
+        const lowerTerm = term.toLowerCase();
+        const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT);
+        let node = walker.nextNode();
+        while (node) {
+            if (node.parentElement?.closest?.('mark, input, textarea')) {
+                node = walker.nextNode();
+                continue;
+            }
+            const text = node.nodeValue || '';
+            const at = text.toLowerCase().indexOf(lowerTerm);
+            if (at >= 0) {
+                const mark = document.createElement('mark');
+                mark.className = 'thought-highlight thought-highlight-transient';
+                mark.textContent = text.slice(at, at + term.length);
+                const range = document.createRange();
+                range.setStart(node, at);
+                range.setEnd(node, at + term.length);
+                try {
+                    range.surroundContents(mark);
+                } catch (_error) {
+                    return null;
+                }
+                return mark;
+            }
+            node = walker.nextNode();
+        }
+        return null;
+    }
+
+    removeTransientKeywordHighlight(mark) {
+        const parent = mark.parentNode;
+        if (!parent) return;
+        while (mark.firstChild) parent.insertBefore(mark.firstChild, mark);
+        mark.remove();
     }
 
     openThoughtAttachmentPicker(thought) {

@@ -22,6 +22,8 @@ import {
 } from './sidebar.js';
 import { ArticleMetaFooter } from './managers/article-meta-footer.js';
 import { applyFloatingActionsVisibility } from './managers/floating-actions-config.js';
+import { createCommandSearchManager } from './managers/command-search/command-search-manager.js';
+import { registerResultType } from './managers/command-search/result-type-registry.js';
 
 // Global 401 handler: any /api 401 means the PIN session is gone — redirect to login.
 // This catches the case where the cookie expires while the app is open (the SW
@@ -517,6 +519,32 @@ document.addEventListener('DOMContentLoaded', async () => {
                 });
         }
         return todayDraftsManagerLoader;
+    }
+
+    // Global search jumps into the short-lived workspaces. Both managers are
+    // lazy-loaded, so reveal by id goes through their ensure helpers; the
+    // reveal implementations live inside the managers (they own the loading,
+    // filtering and rendering state needed to make the target visible).
+    async function revealThoughtFromSearch(id, keywords) {
+        const manager = await ensureThoughtsManager();
+        const keyword = (Array.isArray(keywords) ? keywords : []).find(Boolean) || '';
+        try {
+            await manager.revealThoughtById(id, { keyword });
+        } catch (error) {
+            console.warn('Failed to reveal thought from search:', error);
+            toaster.show('未能定位该 Thought', 'error');
+        }
+    }
+
+    async function revealTodayDraftFromSearch(id) {
+        await workspaceRouter?.navigate('today');
+        const manager = await ensureTodayDraftsManager();
+        try {
+            await manager.revealDraftById(id);
+        } catch (error) {
+            console.warn('Failed to reveal today draft from search:', error);
+            toaster.show('未能定位该草稿', 'error');
+        }
     }
 
     function renderMarkdown(markdown) {
@@ -2811,7 +2839,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     }
 
-    async function selectNotepad(id, query = "") {
+    async function selectNotepad(id, query = "", keywordJump = null) {
         const selectedNotepad = findNotepadByIdOrName(currentNotepads, id);
         if (!selectedNotepad) return;
         if (selectedNotepad.id === currentNotepadId && activeNotepadLoaded && !query) return;
@@ -2856,7 +2884,14 @@ document.addEventListener('DOMContentLoaded', async () => {
         applyCurrentNotepadTitle();
 
         if (query && editorInstance) {
-            setTimeout(() => editorInstance.jumpToKeyword(query), 100);
+            // Multi-keyword queries jump by global hit index across ALL
+            // keywords (the server counts occurrences the same way); plain
+            // string queries degrade to a single-keyword jump.
+            const keywords = Array.isArray(keywordJump?.keywords) && keywordJump.keywords.length
+                ? keywordJump.keywords
+                : [query];
+            const hitIndex = Number.isFinite(Number(keywordJump?.hitIndex)) ? Number(keywordJump.hitIndex) : 0;
+            setTimeout(() => editorInstance.jumpToKeyword(keywords, hitIndex), 100);
         }
         // editor.focus(); // Disabled to allow opening in full preview mode
         const name = getCurrentNotepadName();
@@ -2889,200 +2924,35 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     function addEventListeners() {
-        // --- Command Palette Implementation ---
-        const commandPalette = {
-            overlay: null,
-            input: null,
-            results: null,
-            selectedIndex: 0,
-            isActive: false,
-            currentQuery: '',
-            searchTimeout: null,
+        // --- Global search palette (Ctrl+F / Ctrl+K) ---
+        // Domain presentation + jump behavior registers here; the palette
+        // core (public/managers/command-search/) stays domain-agnostic, so
+        // future domains (e.g. reflections) only add one registerResultType.
+        registerResultType('notepad', {
+            label: '文章',
+            badgeClass: 'badge-notepad',
+            jump: (result, ctx) => selectNotepad(result.id, ctx.query, { keywords: ctx.keywords, hitIndex: ctx.hitIndex })
+        });
+        registerResultType('thought', {
+            label: 'Thought',
+            badgeClass: 'badge-thought',
+            jump: (result, ctx) => revealThoughtFromSearch(result.id, ctx.keywords)
+        });
+        registerResultType('today_draft', {
+            label: '今日草稿',
+            badgeClass: 'badge-today-draft',
+            jump: result => revealTodayDraftFromSearch(result.id)
+        });
 
-            init() {
-                this.overlay = document.getElementById('command-palette-overlay');
-                this.input = document.getElementById('command-input');
-                this.results = document.getElementById('command-results');
-
-                this.input.addEventListener('input', () => this.search());
-                this.input.addEventListener('keydown', (e) => this.handleKeydown(e));
-                this.overlay.addEventListener('click', (e) => {
-                    if (e.target === this.overlay) this.close();
-                });
-
-                window.addEventListener('keydown', (e) => {
-                    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') {
-                        e.preventDefault();
-                        if (thoughtsManager?.isActive) {
-                            thoughtsManager.focusSearch();
-                        } else {
-                            this.open();
-                        }
-                        return;
-                    }
-                    if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
-                        e.preventDefault();
-                        this.open();
-                    }
-                    if (e.key === 'Escape' && this.isActive) this.close();
-                });
-            },
-
-            open() {
-                this.isActive = true;
-                this.overlay.classList.add('active');
-                this.input.value = '';
-                this.currentQuery = '';
-                this.input.focus();
-                this.results.innerHTML = '';
-            },
-
-            close() {
-                this.isActive = false;
-                this.overlay.classList.remove('active');
-            },
-
-            async search() {
-                const query = this.input.value.trim();
-                this.currentQuery = query;
-                if (!query) {
-                    this.results.innerHTML = '';
-                    return;
-                }
-
-                // Debounce: wait 200ms after last keystroke
-                clearTimeout(this.searchTimeout);
-                this.searchTimeout = setTimeout(async () => {
-                    if (!this.isActive) return;
-                    try {
-                        this.results.innerHTML = '<div class="command-item"><span>Searching…</span></div>';
-                        const response = await fetchWithPin(`/api/search?q=${encodeURIComponent(query)}`);
-                        const data = await response.json();
-                        if (this.currentQuery !== query) return; // stale
-                        this.render(data.results || []);
-                    } catch (err) {
-                        console.error('Search failed:', err);
-                        this.results.innerHTML = '<div class="command-item"><span>Search failed</span></div>';
-                    }
-                }, 200);
-            },
-
-            render(items) {
-                this.selectedIndex = 0;
-                if (!items.length) {
-                    this.results.innerHTML = '<div class="command-item" style="color:var(--muted-text)"><span>No results</span></div>';
-                    return;
-                }
-
-                this.results.innerHTML = items.map((item, index) => `
-                    <div class="command-item ${index === 0 ? 'selected' : ''}" data-id="${this.escapeAttr(item.id)}">
-                        <div class="command-item-main">
-                            <span class="command-item-title">${this.highlightSearchText(item.title || item.name, item.matches, 'title')}</span>
-                            ${item.matchType === 'content' && item.snippet
-                                ? `<span class="command-item-snippet">${this.highlightSearchText(item.snippet, item.matches, 'content', item.snippetStart, item.snippetPrefixLength)}</span>`
-                                : ''}
-                        </div>
-                        <kbd>Enter</kbd>
-                    </div>
-                `).join('');
-
-                const query = this.currentQuery;
-                const els = this.results.querySelectorAll('.command-item');
-                els.forEach((el, index) => {
-                    el.onclick = () => {
-                        selectNotepad(el.dataset.id, query);
-                        this.close();
-                    };
-                });
-            },
-
-            handleKeydown(e) {
-                const items = this.results.querySelectorAll('.command-item');
-                if (e.key === 'ArrowDown') {
-                    e.preventDefault();
-                    this.selectedIndex = (this.selectedIndex + 1) % items.length;
-                    this.updateSelection(items);
-                } else if (e.key === 'ArrowUp') {
-                    e.preventDefault();
-                    this.selectedIndex = (this.selectedIndex - 1 + items.length) % items.length;
-                    this.updateSelection(items);
-                } else if (e.key === 'Enter') {
-                    if (items[this.selectedIndex]) {
-                        items[this.selectedIndex].click();
-                    }
-                }
-            },
-
-            updateSelection(items) {
-                items.forEach((item, index) => {
-                    item.classList.toggle('selected', index === this.selectedIndex);
-                    if (index === this.selectedIndex) item.scrollIntoView({ block: 'nearest' });
-                });
-            },
-
-            highlightSearchText(text, matches = [], key = '', sourceOffset = 0, prefixLength = 0) {
-                const raw = String(text || '');
-                const startOffset = Number.isFinite(Number(sourceOffset)) ? Number(sourceOffset) : 0;
-                const prefix = Number.isFinite(Number(prefixLength)) ? Number(prefixLength) : 0;
-                const ranges = [];
-                for (const match of Array.isArray(matches) ? matches : []) {
-                    if (match?.key !== key || !Array.isArray(match.indices)) continue;
-                    for (const pair of match.indices) {
-                        const start = Number(pair?.[0]) - startOffset + prefix;
-                        const end = Number(pair?.[1]) - startOffset + prefix + 1;
-                        if (!Number.isFinite(start) || !Number.isFinite(end) || end <= 0 || start >= raw.length) continue;
-                        const range = [Math.max(0, start), Math.min(raw.length, end)];
-                        const query = this.currentQuery.toLowerCase();
-                        if (query && !raw.slice(range[0], range[1]).toLowerCase().includes(query)) continue;
-                        ranges.push(range);
-                    }
-                }
-
-                if (ranges.length === 0 && this.currentQuery) {
-                    const needle = this.currentQuery.toLowerCase();
-                    const lower = raw.toLowerCase();
-                    let cursor = lower.indexOf(needle);
-                    while (cursor >= 0) {
-                        ranges.push([cursor, cursor + needle.length]);
-                        cursor = lower.indexOf(needle, cursor + needle.length);
-                    }
-                }
-                if (ranges.length === 0) return this.escapeHtml(raw);
-
-                ranges.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
-                const merged = ranges.reduce((result, range) => {
-                    const previous = result[result.length - 1];
-                    if (previous && range[0] <= previous[1]) previous[1] = Math.max(previous[1], range[1]);
-                    else result.push(range);
-                    return result;
-                }, []);
-                let cursor = 0;
-                let html = '';
-                for (const [start, end] of merged) {
-                    html += this.escapeHtml(raw.slice(cursor, start));
-                    html += `<mark class="command-search-highlight">${this.escapeHtml(raw.slice(start, end))}</mark>`;
-                    cursor = end;
-                }
-                return html + this.escapeHtml(raw.slice(cursor));
-            },
-
-            escapeHtml(text) {
-                if (!text) return '';
-                const div = document.createElement('div');
-                div.textContent = text;
-                return div.innerHTML;
-            },
-
-            escapeAttr(text) {
-                if (!text) return '';
-                return text.replace(/"/g, '&quot;').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-            }
-        };
-
-        commandPalette.init();
+        const commandSearch = createCommandSearchManager({
+            fetchJson: fetchWithPin,
+            getCurrentNotepadId: () => currentNotepadId,
+            isCurrentArticleVisible: () => (workspaceRouter?.activeWorkspace ?? 'editor') === 'editor'
+        });
+        commandSearch.init();
 
         // Wire search toggle button: editor mode → command palette, thoughts mode → expand filter
-        openCommandSearch = () => commandPalette.open();
+        openCommandSearch = () => commandSearch.open();
         document.getElementById('toggle-thoughts')?.addEventListener('click', async (event) => {
             if (thoughtsManager) return;
             event.preventDefault();

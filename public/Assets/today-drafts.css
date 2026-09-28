@@ -812,3 +812,17 @@ body.clipboard-import-open {
         transition: none;
     }
 }
+
+/* 全局搜索跳转落点：行高亮闪烁后归于纸面 */
+.today-draft-row.reveal-focus {
+    animation: today-draft-reveal-flash 1.8s ease;
+}
+
+@keyframes today-draft-reveal-flash {
+    0% {
+        background: color-mix(in srgb, var(--primary-color) 20%, transparent);
+    }
+    100% {
+        background: transparent;
+    }
+}
