@@ -158,7 +158,7 @@ To discard an individual Today Draft, first obtain explicit user confirmation, t
 
 ### Search
 
-Use the combined search only when the target area is unknown:
+Use the combined search only when the target area is unknown. Matching is exact multi-keyword AND: whitespace-separated keywords must all appear (case-insensitive) across Articles, Thoughts and Today Drafts. Results are typed (`type: notepad | thought | today_draft`) and carry `matchCount` plus per-line `occurrences`:
 
 ```bash
 curl -fsS "$DUMBPAD_BASE_URL/api/search?q=release&scope=all&page=1&pageSize=20" \

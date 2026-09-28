@@ -7,7 +7,7 @@
 - 后端：Node.js、Express、WebSocket。
 - 前端：Vanilla JS ES modules、CSS、Tiptap/ProseMirror（编辑器内核，离线 bundle）、Marked。
 - 存储：本地 JSON/txt 文件或 S3 兼容对象存储。
-- 搜索：服务端 Fuse.js，数据由 `storage.getSearchDocuments()` 汇总。
+- 搜索：全局搜索走 `server/search/` 的领域 provider 注册表（精确多关键词 AND，notepad/thought/today_draft 三个 provider），语料来自 `storage.getSearchDocuments()` 的内存缓存；Fuse.js 索引保留仅供交互 Agent 的 recall_context 候选。
 - AI：OpenAI-compatible chat、embedding、可选 rerank、手动 Thought insight，以及默认关闭的独立交互 Agent；无 key 时后台 pipeline 使用 noop provider。
 - PWA：运行时生成 manifest 和 asset manifest，service worker 负责缓存静态资源。
 
@@ -26,6 +26,7 @@
 - `routes/data-management-routes.js`：负责 `/api/data-management/*` 路由，包含状态读取、数据空间列表/切换、inventory、backup、delete、本地导入 S3、双向覆盖。
 - `routes/trash-routes.js`：负责 `/api/trash/*` 路由，恢复和永久删除都只调用 storage 边界，不在 route 层拼接本地路径或 S3 key。
 - `routes/today-drafts-routes.js`：负责 `/api/today-drafts/*` 路由；在独立写锁内按服务端 3 天窗口（今天 + 前 2 天）过滤并清理滑出窗口的草稿，对单条 PUT/DELETE 校验 `baseVersion`（创建可携带窗口内的 `day`，更新保留原 `day`），完成后广播 `today_drafts_update`。
+- `server/search/`：全局搜索（`GET /api/search`）的领域 provider 架构。`matcher.js` 是纯匹配原语（空白分词 AND、按行 occurrences、围栏感知章节映射——复用 `scripts/note-edits.js` 的 `buildOutline`、确定性排序）；`providers/` 下每个数据域一个 provider（notepad 读索引语料缓存、thought 走 `searchThoughtsLight` 的索引短名单、today-draft 直读 3 天窗口数据）；`registry.js` 聚合并隔离单域故障。匹配是精确 AND，不做模糊；Fuse（`server/indexing.js`）只为 Agent recall_context 保留，其语料缓存通过 `getSearchCorpus()` 与 HTTP 搜索共享。新增数据域 = 注册一个 provider + 前端 `registerResultType`，搜索核心不变。
 
 ## 3. 前端边界
 
@@ -35,12 +36,13 @@ Thought 前端 helper 拆分模块有聚合测试入口：`npm run test:thought-
 核心模块：
 
 - `public/app.js`：应用启动、Notepad 编辑与保存、设置页、同步状态、全局快捷键和主视图协调。
+- `public/managers/command-search/`：全局搜索面板（Ctrl+F / Ctrl+K，任何视图统一打开）。`command-search-manager.js` 负责请求防抖、分组渲染（当前文章命中展开置顶、其余按域分组）、多关键词高亮、键盘导航；`result-type-registry.js` 是 `type → 徽标文案/样式/跳转` 的注册表，域的跳转行为在 app.js 注册（notepad→selectNotepad、thought→`revealThoughtById`、today_draft→`revealDraftById`），新增域只加一条注册。
 - `public/tiptap-editor.js` + `public/managers/tiptap-*.js`：Tiptap/ProseMirror 编辑器适配层，负责混合编辑、源码模式、阅读模式、目录索引、批注和高亮装饰。导出与旧 Vditor 封装同名的 `HybridMarkdownEditor` 类，`app.js` 契约不变；序列化与旧编辑器逐字节对齐（`test/test_tiptap_roundtrip.js` 固化）。编辑内核打包为离线单文件 `public/vendor/tiptap/tiptap.bundle.js`（`scripts/build-tiptap-bundle.js` 生成，含 tiptap-markdown、lowlight/highlight.js 常用语言）。
 - `public/hybrid-editor.js`：旧 Vditor 封装，已被 Tiptap 适配层取代，运行时不再加载，文件待删除（保留期间仅作行为对照）。
 - `public/managers/thoughts.js`：Thought UI 协调层。负责 DOM 插入、每卡事件绑定、乐观更新、toast、筛选、AI/relations 面板入口；全局事件初始化按 Quick Add、视图切换、搜索筛选、outbox、socket 分段，`render()` 负责列表生成，单卡交互集中在 `bindThoughtCardEvents()`，relation panel 事件分发集中在 `handleRelationsPanelClick()`，inline 子任务编辑的输入替换和提交协调分开维护。
 - `public/managers/thought-api-client.js`：Thought HTTP client。负责 URL 拼接、`encodeURIComponent`、JSON 请求和带 `status` 的错误。
 - `public/managers/thought-outbox.js`：Thought 本地 outbox。负责 localStorage key、队列合并、create/patch/delete/relation 队列项构造、服务端列表合并和 retry。
-- `public/managers/today-drafts/`：日期草稿的独立前端模块。store 保留 3 天窗口的本机缓存（`dayWindowKeys` 与路由层同语义），API client 与 outbox 负责按条重试和版本更新（outbox 克隆携带 `day`），manager 协调编辑、整页折角卷曲翻页（今天可编辑、历史日只读；右滑掀页看更早历史、左滑拉回看更新日期，标题随整张纸卡一起翻）、WebSocket 合并与转 Thought 手势。
+- `public/managers/today-drafts/`：日期草稿的独立前端模块。store 保留 3 天窗口的本机缓存（`dayWindowKeys` 与路由层同语义），API client 与 outbox 负责按条重试和版本更新（outbox 克隆携带 `day`），manager 协调编辑、整页折角卷曲翻页（今天可编辑、历史日只读；中间拖拽 = 竖直折痕实时跟随指尖、左下/右下角抓取 = 动页的角折向指尖，两种形态按抓取位置自适应；右滑看更早、左滑拉回更新，标题随整张纸卡一起翻）、WebSocket 合并与转 Thought 手势。
 - `public/managers/thought-ai-status.js`：Thought AI 状态边界。负责 AI 状态/阶段归一化、pending 最短显示时间计算、socket detail 应用到 Thought 对象、标签文案、按钮图标、状态详情 HTML、手动 insight 区块、loading/error 片段；`ThoughtsManager` 保留 timer 调度、点击、拉取状态、Markdown hydrate、重试和 insight 触发协调。
 - `public/managers/agent-api-client.js`、`thought-agent-state.js`、`thought-agent-panel.js`、`thought-agent-controller.js`：交互 Agent 的 API、纯状态、纯视图和 SSE 生命周期边界；Thought 卡片只提供明确入口和局部面板，不混入后台 AI 状态面板。
 - `public/managers/thought-card-renderer.js`：Thought 卡片纯 HTML 渲染边界。负责正文、legacy checkbox 子任务、标签、AI 状态入口、关系计数和折叠子任务摘要；`ThoughtsManager` 只保留 DOM 插入、复制文本和交互事件绑定。
