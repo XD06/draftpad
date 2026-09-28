@@ -745,17 +745,27 @@ async function listThoughtsPage({
 // and only fetches the matched objects. An index without `searchText`
 // (written before the field existed) falls back to a full read: a search
 // must never silently return incomplete results.
-async function searchThoughtsLight({ query = '', limit = 8 } = {}) {
+// Pass `keywords` (array) for multi-keyword AND matching (every keyword must
+// appear somewhere in text / subItems / tags); `query` keeps the legacy
+// single-substring semantics.
+async function searchThoughtsLight({ query = '', keywords = null, limit = 8 } = {}) {
     await init();
-    const q = String(query || '').trim().toLowerCase();
-    if (!q) return [];
+    const keywordList = Array.isArray(keywords)
+        ? keywords.map(keyword => String(keyword || '').trim().toLowerCase()).filter(Boolean).slice(0, 8)
+        : null;
+    const q = keywordList ? '' : String(query || '').trim().toLowerCase();
+    if (!keywordList && !q) return [];
     const cappedLimit = Math.max(1, Math.min(Number(limit) || 8, 20));
 
-    const matchFull = (thought) => {
-        if (String(thought?.text || '').toLowerCase().includes(q)) return true;
-        if ((thought?.subItems || []).some(item => String(item?.text || '').toLowerCase().includes(q))) return true;
-        if ((thought?.tags || []).some(tag => String(tag || '').toLowerCase().includes(q))) return true;
+    const matchesThought = (thought, keyword) => {
+        if (String(thought?.text || '').toLowerCase().includes(keyword)) return true;
+        if ((thought?.subItems || []).some(item => String(item?.text || '').toLowerCase().includes(keyword))) return true;
+        if ((thought?.tags || []).some(tag => String(tag || '').toLowerCase().includes(keyword))) return true;
         return false;
+    };
+    const matchFull = (thought) => {
+        if (keywordList) return keywordList.every(keyword => matchesThought(thought, keyword));
+        return matchesThought(thought, q);
     };
     const toLight = thought => ({
         id: thought.id,
@@ -784,7 +794,9 @@ async function searchThoughtsLight({ query = '', limit = 8 } = {}) {
     }
 
     const matched = index.items
-        .filter(item => item.searchText.includes(q))
+        .filter(item => keywordList
+            ? keywordList.every(keyword => item.searchText.includes(keyword))
+            : item.searchText.includes(q))
         .sort((left, right) => Number(right.updatedAt || right.createdAt || 0) - Number(left.updatedAt || left.createdAt || 0))
         .slice(0, cappedLimit);
     const items = await Promise.all(matched.map(entry => readThought(entry.id)));

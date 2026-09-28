@@ -77,6 +77,7 @@ function assertSaveNotesConflictScope() {
 function assertThoughtsFrontendRegressions() {
     const appSource = fs.readFileSync(path.join(ROOT, 'public', 'app.js'), 'utf8');
     const thoughtsSource = fs.readFileSync(path.join(ROOT, 'public', 'managers', 'thoughts.js'), 'utf8');
+    const commandSearchSource = fs.readFileSync(path.join(ROOT, 'public', 'managers', 'command-search', 'command-search-manager.js'), 'utf8');
     const serverSource = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
     const thoughtRoutesSource = fs.readFileSync(path.join(ROOT, 'routes', 'thought-routes.js'), 'utf8');
     const trashRoutesSource = fs.readFileSync(path.join(ROOT, 'routes', 'trash-routes.js'), 'utf8');
@@ -400,10 +401,10 @@ function assertThoughtsFrontendRegressions() {
     assert(
         thoughtsSource.includes('focusSearch()') &&
         thoughtsSource.includes('this.searchInput.focus()') &&
-        appSource.includes("e.key.toLowerCase() === 'f'") &&
-        appSource.includes('thoughtsManager?.isActive') &&
-        appSource.includes('thoughtsManager.focusSearch()'),
-        'Ctrl/Cmd+F should focus Thought search in Thoughts mode and reuse command search elsewhere'
+        commandSearchSource.includes("event.key.toLowerCase() === 'f'") &&
+        commandSearchSource.includes("event.key.toLowerCase() === 'k'") &&
+        !appSource.includes('thoughtsManager.focusSearch()'),
+        'Ctrl/Cmd+F and Ctrl+K should both open the unified global search palette in every workspace'
     );
     assert(
         stylesCss.includes('[data-theme="dark"] .vditor-reset pre > code.hljs') &&
@@ -589,9 +590,10 @@ function assertDataSpaceSettingsRegression() {
     );
     assert(
         serverSource.includes('registerSearchRoutes(app') &&
+        serverSource.includes('createSearchRegistry({') &&
         searchRoutesSource.includes("app.get('/api/search'") &&
-        searchRoutesSource.includes('searchNotepads(query)'),
-        'search route should live in the search route module'
+        searchRoutesSource.includes('searchRegistry.search('),
+        'search route should live in the search route module and delegate to the provider registry'
     );
     assert(
         serverSource.includes('registerShareRoutes(app') &&

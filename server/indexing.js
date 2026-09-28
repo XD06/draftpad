@@ -6,6 +6,7 @@ function createSearchIndex({ storage, dataDir, notepadsFile }) {
         documents: [],
         index: null
     };
+    let corpusReady = false;
     let indexTimer = null;
     let indexingPromise = null;
 
@@ -15,6 +16,7 @@ function createSearchIndex({ storage, dataDir, notepadsFile }) {
         indexingPromise = (async () => {
             const items = await storage.getSearchDocuments();
             notepadsCache.documents = items;
+            corpusReady = true;
 
             notepadsCache.index = new Fuse(items, {
                 keys: ['title', 'content', 'tags'],
@@ -113,6 +115,14 @@ function createSearchIndex({ storage, dataDir, notepadsFile }) {
         return searchNotepadsIfReady(query);
     }
 
+    // Raw corpus documents for the HTTP search providers. Unlike the Agent
+    // path (searchNotepadsIfReady, which must never bootstrap indexing) the
+    // HTTP search is user-initiated, so a cold cache triggers one build.
+    async function getSearchCorpus() {
+        if (!corpusReady) await indexNotepads();
+        return notepadsCache.documents;
+    }
+
     function watchSearchDocuments() {
         if (storage.backend === 's3') return;
 
@@ -136,6 +146,7 @@ function createSearchIndex({ storage, dataDir, notepadsFile }) {
         scheduleIndexNotepads,
         searchNotepads,
         searchNotepadsIfReady,
+        getSearchCorpus,
         watchSearchDocuments
     };
 }

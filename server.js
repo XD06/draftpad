@@ -19,6 +19,10 @@ const {
 const { TRUST_PROXY, TRUSTED_PROXY_IPS, HIDDEN_FLOATING_ACTIONS } = require('./config');
 const { getClientIp } = require('./utils/ipExtractor');
 const { createSearchIndex } = require('./server/indexing');
+const { createSearchRegistry } = require('./server/search/registry');
+const { createNotepadSearchProvider } = require('./server/search/providers/notepad-provider');
+const { createThoughtSearchProvider } = require('./server/search/providers/thought-provider');
+const { createTodayDraftSearchProvider } = require('./server/search/providers/today-draft-provider');
 const { createWebSocketHub } = require('./server/websocket');
 const storage = require('./scripts/storage');
 const aiQueue = require('./scripts/ai-queue');
@@ -570,11 +574,23 @@ const {
     scheduleIndexNotepads,
     searchNotepads,
     searchNotepadsIfReady,
+    getSearchCorpus,
     watchSearchDocuments
 } = createSearchIndex({
     storage,
     dataDir: DATA_DIR,
     notepadsFile: NOTEPADS_FILE
+});
+
+// Global search: domain providers compose on the shared corpus / storage.
+// Adding a data domain means appending one provider — route, response
+// contract and the frontend result-type registry need no other changes.
+const searchRegistry = createSearchRegistry({
+    providers: [
+        createNotepadSearchProvider({ getCorpus: getSearchCorpus }),
+        createThoughtSearchProvider({ storage }),
+        createTodayDraftSearchProvider({ storage })
+    ]
 });
 
 // Interactive Agent runs deliberately live beside, not inside, the existing
@@ -675,8 +691,7 @@ registerNotepadRoutes(app, {
 });
 
 registerSearchRoutes(app, {
-    searchNotepads,
-    storage
+    searchRegistry
 });
 
 registerMetaRoutes(app, {
