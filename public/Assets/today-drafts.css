@@ -5,6 +5,7 @@
     margin: 0 auto;
     padding: 6px 0 24px;
     box-sizing: border-box;
+    touch-action: pan-y;
 }
 
 .today-drafts-sheet {
@@ -31,13 +32,17 @@
     box-shadow: none;
 }
 
+/* 当前页日期做成标题右下角的下标小字，不占独立行、不抢标题的视觉重量。 */
 .today-drafts-eyebrow {
-    margin: 0 0 5px;
+    margin-left: 7px;
     color: var(--primary-color);
     font-size: 10px;
-    font-weight: 750;
-    letter-spacing: 0.08em;
+    font-weight: 650;
+    letter-spacing: 0.06em;
     line-height: 1;
+    text-transform: uppercase;
+    vertical-align: -0.22em;
+    font-variant-numeric: tabular-nums;
 }
 
 .today-drafts-header h2 {
@@ -78,11 +83,12 @@
 }
 
 .today-drafts-input-row {
+    position: relative;
     display: grid;
     order: 2;
     grid-template-columns: 36px minmax(0, 1fr);
     min-height: 44px;
-    align-items: end;
+    align-items: start;
     margin: 0;
     padding-bottom: 3px;
     border-bottom: 1px solid color-mix(in srgb, var(--border-color) 74%, transparent);
@@ -90,14 +96,21 @@
 }
 
 .today-drafts-input-marker {
+    grid-column: 1;
+    grid-row: 1;
+    display: flex;
+    width: 36px;
+    height: 44px;
+    align-items: center;
+    justify-content: center;
     color: var(--primary-color);
     font-size: 20px;
     font-weight: 400;
     line-height: 1;
-    text-align: center;
 }
 
 .today-drafts-input-row input,
+.today-drafts-input-row textarea,
 .today-draft-text {
     min-width: 0;
     border: 0;
@@ -106,11 +119,26 @@
     color: var(--text-color);
     font-family: "DumbPad Reading", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     font-size: 16px;
-    line-height: 1.4;
+    line-height: 44px;
 }
 
-.today-drafts-input-row input::placeholder {
+.today-drafts-input-row input::placeholder,
+.today-drafts-input-row textarea::placeholder {
     color: color-mix(in srgb, var(--muted-text) 76%, transparent);
+}
+
+/* 新增草稿的输入框是 textarea：输入时按纸面宽度实时软换行、随内容增高，
+   line-height 44px 让编辑态每一行继续落在纸纹节奏上。 */
+.today-drafts-input-row textarea {
+    display: block;
+    width: 100%;
+    min-height: 44px;
+    padding: 0;
+    box-sizing: border-box;
+    resize: none;
+    overflow: hidden;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
 }
 
 .today-drafts-writing-area {
@@ -119,6 +147,8 @@
     flex: 1 0 250px;
     flex-direction: column;
     overflow: hidden;
+    /* 纸纹必须画在书写区而不是整张卡上：横线要从第一行草稿的顶部起画，
+       才能与 44px 行节奏对齐（卡顶到书写区之间隔着不为 44 倍数的页眉）。 */
     background-image:
         repeating-linear-gradient(
             to bottom,
@@ -130,6 +160,127 @@
         radial-gradient(circle at 1px 1px, color-mix(in srgb, var(--muted-text) 8%, transparent) 0.5px, transparent 0.8px),
         radial-gradient(circle at 6px 5px, color-mix(in srgb, var(--muted-text) 4%, transparent) 0.45px, transparent 0.7px);
     background-size: 100% 44px, 9px 9px, 13px 13px;
+}
+
+/* 整页仿真折角卷曲翻页：#today-drafts-base 是平铺在文档流里的整张纸卡
+   （标题与正文一起翻），pager 是它的定位母体。动页有两份拷贝：
+   flip-static 用 clip-path 只露出折痕线一侧尚未掀起/已经落下的部分，
+   flip-flap 用 scaleX(-1) 镜像同一份内容充当纸背，同样用 clip-path 只露出
+   折痕处卷起的窄条；flip-fx 三件套负责折痕亮线与两侧羽化落影。 */
+.today-drafts-pager {
+    position: relative;
+    display: flex;
+    width: 100%;
+    min-height: min(620px, calc(100vh - 122px));
+    flex: 1 1 auto;
+    flex-direction: column;
+    touch-action: pan-y;
+}
+
+.today-drafts-page {
+    position: relative;
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    touch-action: pan-y;
+}
+
+#today-drafts-base {
+    flex: 1 1 auto;
+}
+
+/* 动页拷贝：与纸卡同款观感，但绝对定位铺满 pager、不接收指针、
+   不画自身投影（落影由 flip-fx 与底卡承担）。 */
+.today-drafts-flip-layer {
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    overflow: hidden;
+    box-shadow: none;
+    pointer-events: none;
+}
+
+.today-drafts-flip-layer[hidden] {
+    display: none;
+}
+
+/* 纸背：同一份内容的镜像。transform-origin 钉死在左缘，
+   JS 每帧写 translate3d(2*折痕) scaleX(-1) 完成绕折痕线的镜像反射。 */
+#today-drafts-flip-flap {
+    z-index: 4;
+    transform-origin: 0 0;
+}
+
+/* 手势期间的合成提升只跟着翻页会话走，平时不占层（动效策略与 Thought 一致） */
+.today-drafts-pager.is-flipping .today-drafts-flip-layer {
+    will-change: clip-path, transform;
+}
+
+.today-drafts-flip-fx {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    z-index: 5;
+    pointer-events: none;
+    opacity: 0;
+}
+
+.today-drafts-flip-fx[hidden] {
+    display: none;
+}
+
+/* 卷起窄条上的拟物光影：折痕侧压暗、三分之一处留一道圆柱反光 */
+#today-drafts-flip-curl.is-toward-right {
+    background: linear-gradient(90deg,
+        rgba(15, 23, 42, 0.32) 0%,
+        rgba(15, 23, 42, 0.10) 22%,
+        rgba(255, 255, 255, 0.20) 40%,
+        rgba(255, 255, 255, 0.03) 64%,
+        rgba(15, 23, 42, 0.12) 100%);
+}
+
+#today-drafts-flip-curl.is-toward-left {
+    background: linear-gradient(270deg,
+        rgba(15, 23, 42, 0.32) 0%,
+        rgba(15, 23, 42, 0.10) 22%,
+        rgba(255, 255, 255, 0.20) 40%,
+        rgba(255, 255, 255, 0.03) 64%,
+        rgba(15, 23, 42, 0.12) 100%);
+}
+
+[data-theme="dark"] #today-drafts-flip-curl.is-toward-right,
+[data-theme="dark"] #today-drafts-flip-curl.is-toward-left {
+    background: linear-gradient(90deg,
+        rgba(0, 0, 0, 0.42) 0%,
+        rgba(0, 0, 0, 0.16) 22%,
+        rgba(255, 255, 255, 0.07) 40%,
+        rgba(255, 255, 255, 0.01) 64%,
+        rgba(0, 0, 0, 0.18) 100%);
+}
+
+/* 折痕两侧的羽化落影：一半盖在掀露的底页上，一半盖在未掀的纸面上 */
+#today-drafts-flip-shadow {
+    z-index: 3;
+    background: linear-gradient(90deg,
+        transparent 0%,
+        rgba(15, 23, 42, 0.12) 34%,
+        rgba(15, 23, 42, 0.22) 50%,
+        rgba(15, 23, 42, 0.12) 66%,
+        transparent 100%);
+}
+
+/* 折痕线本身：一道清晰的深色细缝 */
+#today-drafts-flip-crease {
+    z-index: 6;
+    background: linear-gradient(90deg,
+        transparent 0%,
+        rgba(15, 23, 42, 0.42) 50%,
+        transparent 100%);
+}
+
+/* 历史页只读：输入行不出现，纸面留给浏览。 */
+.today-drafts-page.is-history .today-drafts-input-row {
+    display: none;
 }
 
 .today-drafts-list {
@@ -148,18 +299,22 @@
     flex: 1 1 auto;
 }
 
+/* 行不再画自己的底线：每行恰好 44px 的倍数，纸纹背景线就是行间分隔线，
+   换行后的第二、三行文字继续落在同一条纸纹节奏上。 */
 .today-draft-row {
     position: relative;
     display: grid;
     grid-template-columns: 36px minmax(0, 1fr) auto;
     min-height: 44px;
-    align-items: end;
-    padding-bottom: 3px;
-    border-bottom: 1px solid color-mix(in srgb, var(--border-color) 66%, transparent);
+    align-items: start;
     box-sizing: border-box;
     touch-action: pan-y;
     transform: translate3d(var(--today-draft-swipe-x, 0), 0, 0);
-    transition: transform 160ms ease, opacity 160ms ease;
+    transition: transform 160ms ease, opacity 160ms ease, background-color 400ms ease;
+}
+
+.today-draft-row.is-copied {
+    background-color: color-mix(in srgb, var(--primary-color) 10%, transparent);
 }
 
 .today-draft-row.is-swiping {
@@ -175,9 +330,39 @@
     border-color: color-mix(in srgb, #d94743 48%, var(--border-color));
 }
 
+/* 历史页的左侧动作位不是删除，是「转为 Thought」：去掉破坏性的红色语义。 */
+.today-draft-row.is-readonly .today-draft-swipe-action--delete {
+    color: var(--primary-color);
+}
+
+.today-draft-row.is-readonly.is-swipe-delete {
+    border-color: color-mix(in srgb, var(--primary-color) 44%, var(--border-color));
+}
+
 .today-draft-row.is-swipe-departing {
     opacity: 0;
     transform: translate3d(45%, 0, 0);
+}
+
+/* 历史日只读：没有滑动动作，复选框与文本都不可交互，整页轻微降饱和。 */
+.today-draft-row.is-readonly {
+    touch-action: pan-y;
+}
+
+.today-draft-check.is-readonly {
+    cursor: default;
+}
+
+.today-draft-check input:disabled + span {
+    opacity: 0.55;
+}
+
+.today-draft-row.is-readonly .today-draft-text-display {
+    cursor: default;
+}
+
+.today-drafts-page.is-history {
+    opacity: 0.92;
 }
 
 .today-draft-swipe-action {
@@ -211,10 +396,13 @@
 }
 
 .today-draft-check {
+    grid-column: 1;
+    grid-row: 1;
     position: relative;
+    z-index: 1;
     display: inline-flex;
     width: 36px;
-    height: 30px;
+    height: 44px;
     align-items: center;
     justify-content: center;
     cursor: pointer;
@@ -263,20 +451,49 @@
 
 .today-draft-text {
     width: 100%;
-    height: 32px;
-    padding: 7px 6px 0;
+    min-height: 44px;
+    padding: 0 6px;
     box-sizing: border-box;
 }
 
 .today-draft-text-display {
+    grid-column: 1 / 3;
+    grid-row: 1;
     display: block;
     height: auto;
-    min-height: 32px;
+    min-height: 44px;
     min-width: 0;
     cursor: text;
+    line-height: 44px;
+    text-indent: 36px;
+    padding: 0 6px;
+    margin: 0;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    box-sizing: border-box;
+}
+
+textarea.today-draft-text {
+    grid-column: 1 / 3;
+    grid-row: 1;
+    display: block;
+    width: 100%;
+    min-height: 44px;
+    line-height: 44px;
+    text-indent: 36px;
+    padding: 0 6px;
+    margin: 0;
+    border: 0;
+    outline: 0;
+    background: transparent;
+    color: var(--text-color);
+    font-family: "DumbPad Reading", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-size: 16px;
+    resize: none;
     overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    box-sizing: border-box;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
 }
 
 .today-draft-text-display:focus-visible {
@@ -299,12 +516,14 @@
 }
 
 .today-draft-time {
+    grid-column: 3;
+    grid-row: 1;
     min-width: 3.2em;
-    padding: 6px 6px;
+    padding: 0 6px;
     color: color-mix(in srgb, var(--muted-text) 82%, transparent);
     font-size: 11px;
     font-variant-numeric: tabular-nums;
-    line-height: 1;
+    line-height: 44px;
     text-align: right;
     white-space: nowrap;
 }
@@ -535,6 +754,10 @@ body.clipboard-import-open {
         display: flex;
     }
 
+    .today-drafts-pager {
+        min-height: 0;
+    }
+
     .today-drafts-sheet {
         width: 100%;
         min-height: 0;
@@ -566,6 +789,7 @@ body.clipboard-import-open {
     .today-drafts-writing-area {
         min-height: 250px;
     }
+
     .clipboard-import-dialog {
         padding: 12px;
         place-items: end center;
@@ -575,5 +799,16 @@ body.clipboard-import-open {
         max-height: min(720px, calc(100dvh - 24px));
         padding: 18px;
         overflow: auto;
+    }
+}
+
+/* 减弱动态：拖拽本身是直接操纵仍逐帧跟手，但松手后的落页/回弹补间
+   与行级过渡全部立即到位（manager 侧同步跳帧，CSS 侧关掉过渡）。 */
+@media (prefers-reduced-motion: reduce) {
+    .today-draft-row,
+    .today-draft-row.is-swiping,
+    .today-draft-row.is-swipe-departing,
+    .today-drafts-pager {
+        transition: none;
     }
 }

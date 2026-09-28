@@ -177,3 +177,6 @@ public/Assets/test.png
 # Unused local font experiments
 font/MapleMono-NF-CN-Regular.ttf
 font/SourceHanSansSC-Regular.otf
+
+# Browser-test artifacts (regenerated on every run)
+test/browser/page_flip_curl_preview.png

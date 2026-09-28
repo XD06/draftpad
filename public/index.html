@@ -344,24 +344,30 @@
         </div>
 
         <section id="today-drafts-view" class="today-drafts-view" style="display: none;" aria-label="今日草稿">
-            <div class="today-drafts-sheet">
-                <div class="today-drafts-header">
-                    <div>
-                        <p class="today-drafts-eyebrow">TODAY</p>
-                        <h2>今日草稿</h2>
-                        <p class="today-drafts-subtitle">只留在今天，明天会自动清空。</p>
+            <div id="today-drafts-pager" class="today-drafts-pager">
+                <div id="today-drafts-base" class="today-drafts-sheet today-drafts-page">
+                    <div class="today-drafts-header">
+                        <div>
+                            <h2>今日草稿<span class="today-drafts-eyebrow" id="today-drafts-eyebrow">TODAY</span></h2>
+                            <p class="today-drafts-subtitle">保留最近 3 天，左右滑动翻页。</p>
+                        </div>
+                        <div class="today-drafts-status">
+                            <span id="today-drafts-count" aria-live="polite">用完即走</span>
+                        </div>
                     </div>
-                    <div class="today-drafts-status">
-                        <span id="today-drafts-count" aria-live="polite">用完即走</span>
+                    <div id="today-drafts-writing-area" class="today-drafts-writing-area">
+                        <ol id="today-drafts-list" class="today-drafts-list"></ol>
+                        <form id="today-drafts-form" class="today-drafts-input-row">
+                            <span class="today-drafts-input-marker" aria-hidden="true">+</span>
+                            <textarea id="today-drafts-input" rows="1" placeholder="写下一件现在要做的事" aria-label="新增今日草稿" autocomplete="off"></textarea>
+                        </form>
                     </div>
                 </div>
-                <div id="today-drafts-writing-area" class="today-drafts-writing-area">
-                    <ol id="today-drafts-list" class="today-drafts-list"></ol>
-                    <form id="today-drafts-form" class="today-drafts-input-row">
-                        <span class="today-drafts-input-marker" aria-hidden="true">+</span>
-                        <input id="today-drafts-input" type="text" placeholder="写下一件现在要做的事" aria-label="新增今日草稿" autocomplete="off">
-                    </form>
-                </div>
+                <div id="today-drafts-flip-static" class="today-drafts-sheet today-drafts-page today-drafts-flip-layer" aria-hidden="true" hidden></div>
+                <div id="today-drafts-flip-flap" class="today-drafts-sheet today-drafts-page today-drafts-flip-layer" aria-hidden="true" hidden></div>
+                <div id="today-drafts-flip-curl" class="today-drafts-flip-fx" aria-hidden="true" hidden></div>
+                <div id="today-drafts-flip-shadow" class="today-drafts-flip-fx" aria-hidden="true" hidden></div>
+                <div id="today-drafts-flip-crease" class="today-drafts-flip-fx" aria-hidden="true" hidden></div>
             </div>
         </section>
 

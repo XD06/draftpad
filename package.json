@@ -61,6 +61,7 @@
     "test:tiptap-underline-annotation-browser": "node test/browser/annotation-underline.js",
     "test:blockquote-style-browser": "node test/browser/blockquote-style.js",
     "test:mermaid-preview-browser": "node test/browser/mermaid-preview.js",
+    "test:today-drafts-flip-browser": "node test/browser/today-drafts-flip.js",
     "test:source-mode-roundtrip": "node test/test_source_mode_roundtrip.js",
     "test:editor-noop-save-guard": "node test/test_editor_noop_save_guard.js",
     "test:scroll-helper": "node test/test_scroll_helper_regression.js",

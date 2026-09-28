@@ -73,6 +73,49 @@ async function run() {
             'a deduped image must appear exactly once in the listing'
         );
 
+        // Same display name, different bytes: each create (201) must
+        // disambiguate the stored name as "base (n).ext" so the panel can
+        // tell same-named assets apart, while a hash-dedupe hit (200) must
+        // still return the existing asset with its stored name untouched.
+        const clashBytesOne = await sharp({
+            create: { width: 40, height: 20, channels: 3, background: '#00ccff' }
+        }).png().toBuffer();
+        const clashBytesTwo = await sharp({
+            create: { width: 42, height: 20, channels: 3, background: '#cc00ff' }
+        }).png().toBuffer();
+        const clashBytesThree = await sharp({
+            create: { width: 44, height: 20, channels: 3, background: '#ff00cc' }
+        }).png().toBuffer();
+        const uploadNamedImage = async (bytes, name) => {
+            const response = await fetch(`${baseUrl}/api/assets/images`, {
+                method: 'POST',
+                headers: {
+                    'content-type': 'image/png',
+                    'x-asset-name': encodeURIComponent(name)
+                },
+                body: bytes
+            });
+            return { response, asset: await response.json() };
+        };
+
+        const clashFirst = await uploadNamedImage(clashBytesOne, 'image.png');
+        assert.strictEqual(clashFirst.response.status, 201, 'an image with an unused name should be created');
+        assert.strictEqual(clashFirst.asset.name, 'image.png', 'an unused name must be stored verbatim');
+
+        const clashDedupe = await uploadNamedImage(clashBytesOne, 'image.png');
+        assert.strictEqual(clashDedupe.response.status, 200, 'identical bytes must still dedupe even under a clashing name');
+        assert.strictEqual(clashDedupe.asset.id, clashFirst.asset.id, 'hash dedupe must return the existing asset id');
+        assert.strictEqual(clashDedupe.asset.name, 'image.png', 'hash dedupe must never rename the stored asset');
+
+        const clashSecond = await uploadNamedImage(clashBytesTwo, 'image.png');
+        assert.strictEqual(clashSecond.response.status, 201, 'different bytes under the same name must create a new asset');
+        assert.notStrictEqual(clashSecond.asset.id, clashFirst.asset.id, 'different bytes must not dedupe to the first asset');
+        assert.strictEqual(clashSecond.asset.name, 'image (1).png', 'the second same-name image must be disambiguated as base (1).ext');
+
+        const clashThird = await uploadNamedImage(clashBytesThree, 'image.png');
+        assert.strictEqual(clashThird.response.status, 201, 'different bytes under the same name must create a new asset');
+        assert.strictEqual(clashThird.asset.name, 'image (2).png', 'the third same-name image must be disambiguated as base (2).ext');
+
         const invalid = await fetch(`${baseUrl}/api/assets/images`, {
             method: 'POST',
             headers: { 'content-type': 'image/png' },

@@ -25,7 +25,7 @@
 - `scripts/s3-service.js`、`scripts/s3-prefix-tools.js`：负责 S3 对象操作、prefix inventory、backup、delete 和 data space 列表。
 - `routes/data-management-routes.js`：负责 `/api/data-management/*` 路由，包含状态读取、数据空间列表/切换、inventory、backup、delete、本地导入 S3、双向覆盖。
 - `routes/trash-routes.js`：负责 `/api/trash/*` 路由，恢复和永久删除都只调用 storage 边界，不在 route 层拼接本地路径或 S3 key。
-- `routes/today-drafts-routes.js`：负责 `/api/today-drafts/*` 路由；在独立写锁内按服务端当前日期过滤并清理过期草稿，对单条 PUT/DELETE 校验 `baseVersion`，完成后广播 `today_drafts_update`。
+- `routes/today-drafts-routes.js`：负责 `/api/today-drafts/*` 路由；在独立写锁内按服务端 3 天窗口（今天 + 前 2 天）过滤并清理滑出窗口的草稿，对单条 PUT/DELETE 校验 `baseVersion`（创建可携带窗口内的 `day`，更新保留原 `day`），完成后广播 `today_drafts_update`。
 
 ## 3. 前端边界
 
@@ -40,7 +40,7 @@ Thought 前端 helper 拆分模块有聚合测试入口：`npm run test:thought-
 - `public/managers/thoughts.js`：Thought UI 协调层。负责 DOM 插入、每卡事件绑定、乐观更新、toast、筛选、AI/relations 面板入口；全局事件初始化按 Quick Add、视图切换、搜索筛选、outbox、socket 分段，`render()` 负责列表生成，单卡交互集中在 `bindThoughtCardEvents()`，relation panel 事件分发集中在 `handleRelationsPanelClick()`，inline 子任务编辑的输入替换和提交协调分开维护。
 - `public/managers/thought-api-client.js`：Thought HTTP client。负责 URL 拼接、`encodeURIComponent`、JSON 请求和带 `status` 的错误。
 - `public/managers/thought-outbox.js`：Thought 本地 outbox。负责 localStorage key、队列合并、create/patch/delete/relation 队列项构造、服务端列表合并和 retry。
-- `public/managers/today-drafts/`：日期草稿的独立前端模块。store 只保留当天的本机缓存，API client 与 outbox 负责按条重试和版本更新，manager 协调编辑、当天切换、WebSocket 合并与转 Thought 手势。
+- `public/managers/today-drafts/`：日期草稿的独立前端模块。store 保留 3 天窗口的本机缓存（`dayWindowKeys` 与路由层同语义），API client 与 outbox 负责按条重试和版本更新（outbox 克隆携带 `day`），manager 协调编辑、整页折角卷曲翻页（今天可编辑、历史日只读；右滑掀页看更早历史、左滑拉回看更新日期，标题随整张纸卡一起翻）、WebSocket 合并与转 Thought 手势。
 - `public/managers/thought-ai-status.js`：Thought AI 状态边界。负责 AI 状态/阶段归一化、pending 最短显示时间计算、socket detail 应用到 Thought 对象、标签文案、按钮图标、状态详情 HTML、手动 insight 区块、loading/error 片段；`ThoughtsManager` 保留 timer 调度、点击、拉取状态、Markdown hydrate、重试和 insight 触发协调。
 - `public/managers/agent-api-client.js`、`thought-agent-state.js`、`thought-agent-panel.js`、`thought-agent-controller.js`：交互 Agent 的 API、纯状态、纯视图和 SSE 生命周期边界；Thought 卡片只提供明确入口和局部面板，不混入后台 AI 状态面板。
 - `public/managers/thought-card-renderer.js`：Thought 卡片纯 HTML 渲染边界。负责正文、legacy checkbox 子任务、标签、AI 状态入口、关系计数和折叠子任务摘要；`ThoughtsManager` 只保留 DOM 插入、复制文本和交互事件绑定。
@@ -114,7 +114,7 @@ Thought 前端 helper 拆分模块有聚合测试入口：`npm run test:thought-
 
 ## 4.1 今日草稿写入流程
 
-今日草稿是日期范围内的一行用户数据，存放在独立的 `today-drafts.json`（S3 同名 key）中，不进入 Thought 的 AI、标签、关系或垃圾桶流程。服务端以自己的本地日期为准：每次读写先清理过期项，再在 Today Draft 写锁内创建、更新或删除当前日单条记录。前端先保存本机当天缓存并写入 outbox；联网后按 id 回放 PUT/DELETE，服务端成功后以返回版本更新本机项。`today_drafts_update` 只携带受影响记录，收到后对未处于本地待同步状态的单条记录做局部合并。
+今日草稿是一行用户数据，存放在独立的 `today-drafts.json`（S3 同名 key）中，不进入 Thought 的 AI、标签、关系或垃圾桶流程。服务端以自己的本地日期为准，保留 3 天窗口（今天 + 前 2 天）：每次读写先清理滑出窗口的项，再在 Today Draft 写锁内创建、更新或删除窗口内单条记录——创建可携带窗口内的 `day`（离线草稿跨午夜重放时落回原日），更新永远保留原 `day`。前端先保存本机窗口缓存并写入 outbox（克隆携带 `day`）；联网后按 id 回放 PUT/DELETE，服务端成功后以返回版本更新本机项。`today_drafts_update` 只携带受影响记录，收到后对未处于本地待同步状态的单条记录做局部合并。前端翻页视图只在今天页开放编辑与行级滑动手势，历史日整页只读。
 
 ### Thought 时间线分页与局部更新
 

@@ -105,7 +105,15 @@ assert(!r.ok && r.errorCode === 'missing_text', 'anchor insert requires text to 
     '## **Hello** `World` ~~Now~~ ###',
     '# API 设计\n# API 设计\n# API-设计',
     '# !!!\n# ???\n# 中文 标题！',
-    '# Alpha #\r\n###### Zeta ######\r\n'
+    '# Alpha #\r\n###### Zeta ######\r\n',
+    // 围栏感知：代码块内的 # 行不是标题（两侧必须同语义，否则 Agent 按
+    // outline 定位会撕毁代码块——replace_section 的 body 延伸到下一个
+    // outline 条目为止）。
+    '正文\n\n```bash\n# 注释\ncode1\ncode2\n```\n\n# 真标题\n真内容',
+    '~~~\n# tilde 内注释\n~~~\n# 围栏后标题',
+    '```\n# 未闭合围栏吞掉剩余全文\n## 也不算',
+    '````\n```\n# 长围栏内的短围栏与标题\n````\n# 出来了',
+    '```js\nconsole.log(1)\n```\n# 闭合后的真标题'
 ].forEach(doc => {
     assert.deepStrictEqual(
         JSON.parse(JSON.stringify(buildOutline(doc))),
@@ -147,6 +155,35 @@ assert(!r.ok && r.errorCode === 'ambiguous_section' && r.matchCount === 2, 'an a
 
 r = applyNoteEdit('# Dup\naaa\n# Dup\nbbb', { action: 'replace_section', section: 'dup-1', text: 'x' });
 assert(r.ok && r.content === '# Dup\naaa\n# Dup\nx', 'a duplicated heading is addressable by its unique slug');
+
+// Headings with formatting or parentheses should resolve cleanly even if caller provides them with formatting
+const formattedDoc = '## 安全基线 (标准验收条件)\n旧内容\n## 其他节\n其他内容';
+r = applyNoteEdit(formattedDoc, { action: 'replace_section', section: '安全基线 (标准验收条件)', text: '新正文' });
+assert(r.ok && r.content === '## 安全基线 (标准验收条件)\n新正文\n## 其他节\n其他内容', 'replace_section resolves heading containing parentheses and replaces only section body');
+
+// section_not_found error should include guidance pointing to outline
+r = applyNoteEdit(formattedDoc, { action: 'replace_section', section: '不存在的标题', text: 'x' });
+assert(!r.ok && r.errorCode === 'section_not_found' && r.error.includes('/api/notes/:id/outline'), 'section_not_found error hints at outline endpoint');
+
+
+// --- fence-aware section safety (P0 regression) -----------------------------
+// A `# 注释` line inside a code fence must not become an addressable section:
+// before the fix, replace_section on it swallowed the closing fence and the
+// following real heading, silently corrupting the document.
+const fenced = '正文\n\n```bash\n# 注释\ncode1\ncode2\n```\n\n# 真标题\n真内容';
+
+r = applyNoteEdit(fenced, { action: 'replace_section', section: '注释', text: 'X' });
+assert(!r.ok && r.errorCode === 'section_not_found', 'a heading inside a code fence is not a section');
+
+r = applyNoteEdit(fenced, { action: 'replace_section', section: '真标题', text: '新内容' });
+assert(r.ok && r.content === '正文\n\n```bash\n# 注释\ncode1\ncode2\n```\n\n# 真标题\n新内容',
+    'replacing the real section after a fenced block leaves the fence intact');
+
+r = applyNoteEdit(fenced, { action: 'append_to_section', section: '真标题', text: '追加' });
+assert(r.ok && r.content === fenced + '\n追加', 'appending to the last real section lands after the fenced block, not inside it');
+
+r = applyNoteEdit('```sh\n# only a comment in code\n```', { action: 'replace_section', section: 'only-a-comment-in-code', text: 'x' });
+assert(!r.ok && r.errorCode === 'section_not_found', 'a document whose only hash lines are inside a fence has no sections');
 
 // --- invalid action ----------------------------------------------------------
 r = applyNoteEdit('hello', { action: 'nope' });

@@ -21,7 +21,7 @@
 | Thought 本体 | `thoughts.json` 或 `thoughts/*.json` | 用户数据 | 是 | 否 | 包含 text、subItems、tags、completed、version、createdAt、updatedAt。 |
 | Thought 用户标签 | `thought.tags` | 用户数据 | 是 | 否 | 标签由用户最终确认，AI 只能建议。 |
 | Thought 子任务 | `thought.subItems` | 用户数据 | 是 | 否 | 子任务文本和完成状态属于 Thought 本体。 |
-| 今日草稿 | `today-drafts.json` | 用户数据 | 是 | 否 | 仅保存服务端当前本地日期的单行事项；读写会清除过期项。 |
+| 今日草稿 | `today-drafts.json` | 用户数据 | 是 | 否 | 保存服务端 3 天窗口（今天 + 前 2 天）内的单行事项；读写会清除滑出窗口的项。 |
 | 手动 relation | `relations/*.json` 中 `source=manual` | 用户数据 | 是 | 否 | 双向写入，AI rebuild 不得删除。 |
 | suppressed relation | `relations.suppressed/*.json` | 用户数据 | 是 | 否 | 用户删除关系后的“不要再推荐”记忆。 |
 | 垃圾桶 | `trash/index.json`、`trash/notepads/*.json`、`trash/thoughts/*.json` | 用户数据 | 是 | 否 | 保存已删除文章和 Thought 的恢复 payload；永久删除后才移除。 |
@@ -92,12 +92,12 @@ Thought 创建和修改不能等待 AI extract、embedding、rerank 或 S3 之�
 
 ### 今日草稿
 
-- `GET /api/today-drafts`、`GET /api/today-drafts/:id` 只读取服务端当前本地日期的记录，并在访问时清理过期日期。
-- 新记录用客户端生成的 id 调用 `PUT /api/today-drafts/:id`，不带 `baseVersion`；更新与删除必须带当前 `baseVersion`，版本过期返回 `409`。
+- `GET /api/today-drafts`、`GET /api/today-drafts/:id` 读取服务端 3 天窗口（今天 + 前 2 天）内的记录，并在访问时清理滑出窗口的日期。
+- 新记录用客户端生成的 id 调用 `PUT /api/today-drafts/:id`，不带 `baseVersion`；更新与删除必须带当前 `baseVersion`，版本过期返回 `409`。创建可以携带窗口内的 `day`（离线草稿跨过午夜后才重放时落回原日，窗口外由服务端盖章今天）；更新永远保留记录原有的 `day`。
 - 成功创建、更新、删除后广播 `today_drafts_update`，其 payload 只包含受影响的一条草稿。
-- 前端将当天缓存和待同步 outbox 分开保存；本机存在待同步项时，不以 WebSocket 的远端版本覆盖它。
+- 前端将 3 天窗口缓存和待同步 outbox 分开保存（outbox 克隆携带 `day`）；本机存在待同步项时，不以 WebSocket 的远端版本覆盖它。
 - outbox 冲刷是链式的：同步进行中再次触发的冲刷会在当前请求结束后立即重跑；网络失败以 3 秒退避自动重试；离开今日草稿视图前会先冲刷待同步项，而不是丢弃定时器。
-- WebSocket 重连（`ws_connected`）时，除重试 outbox 外还会重新拉取当天列表，补齐断线期间其他设备的更新。
+- WebSocket 重连（`ws_connected`）时，除重试 outbox 外还会重新拉取窗口列表，补齐断线期间其他设备的更新。
 - 今日草稿管理器在应用启动的空闲时段即创建（编辑器/Thought 工作区也会），保证后台也能接收 `today_drafts_update` 推送并冲刷 outbox，而不是等用户首次打开今日视图。
 - 草稿不写入垃圾桶、Thought AI、relation 或搜索索引；需要长期保留时，先显式创建 Thought 或文章，再删除草稿。
 
@@ -168,7 +168,7 @@ AI 日志应保留在后端控制台，用于定位任务是否入队、模型�
 - `thoughts_update`：Thought 本体发生创建、修改、删除。
 - `relations_update`：某个 Thought 的 relation 数量或内容发生变化。
 - `ai_status_update`：某个 Thought 的 AI 状态发生变化。
-- `today_drafts_update`：当前日期的一条草稿被创建、更新或删除，payload 为该条草稿。
+- `today_drafts_update`：3 天窗口内的一条草稿被创建、更新或删除，payload 为该条草稿（含 `day`）。
 
 WebSocket 只负责通知：
 
@@ -206,7 +206,7 @@ Notepad、Thought 和 Today Draft 使用 `version/baseVersion` 做乐观并发�
 4. 如果本地有 dirty 内容，恢复在线后尝试保存；遇到 409 不自动覆盖。
 5. Thought 视图打开时再请求 `/api/thoughts`，不阻塞 Notepad 首屏。
 6. AI 状态、relation 面板按需请求，或通过 WebSocket 轻量刷新。
-7. 今日草稿视图打开时读取 `/api/today-drafts` 并重试本机 outbox；它不阻塞文章首屏，也不恢复跨日内容。
+7. 今日草稿视图打开时读取 `/api/today-drafts` 并重试本机 outbox；它不阻塞文章首屏，跨日内容只恢复到 3 天窗口以内（今天可编辑，历史日只读翻页查看）。
 
 设置同步面板的职责：
 
