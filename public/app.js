@@ -527,9 +527,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     // filtering and rendering state needed to make the target visible).
     async function revealThoughtFromSearch(id, keywords) {
         const manager = await ensureThoughtsManager();
-        const keyword = (Array.isArray(keywords) ? keywords : []).find(Boolean) || '';
+        const list = (Array.isArray(keywords) ? keywords : []).filter(Boolean);
         try {
-            await manager.revealThoughtById(id, { keyword });
+            await manager.revealThoughtById(id, { keywords: list });
         } catch (error) {
             console.warn('Failed to reveal thought from search:', error);
             toaster.show('未能定位该 Thought', 'error');
@@ -1639,7 +1639,12 @@ document.addEventListener('DOMContentLoaded', async () => {
                     return;
                 }
 
-                if (editor.value !== (data.content || '')) editor.value = data.content || '';
+                if (editor.value !== (data.content || '')) {
+                    editor.value = data.content || '';
+                    // 远端内容真正写入编辑器：若有未完成的搜索跳转（或刚
+                    // 成功但高亮被这次写入抹掉），在窗口内重放一次。
+                    replaySearchJumpAfterContentWrite();
+                }
                 restoreEditorCaretForNotepad(notepadId);
                 markEditorPerformanceContent(editorPerformanceSwitchToken);
                 hasUnsavedChanges = false;
@@ -2839,6 +2844,52 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     }
 
+    // —— 全局搜索跳转的落地执行 ——
+    // 时序坑：笔记是「缓存先渲染、远端刷新随后改写 editor.value」的流程，
+    // 一次性的 setTimeout 跳转要么落在还没内容的编辑器上（无缓存场景）、
+    // 要么刚加的高亮被随后的内容写入抹掉（缓存过期场景）。改为：带重试的
+    // 跳转（编辑器可跳即跳），且远端内容真正写入编辑器后的短暂窗口内
+    // 受控重放一次，保证高亮落在最终内容上。
+    let activeSearchJump = null;
+    function scheduleSearchJump(keywords, hitIndex) {
+        activeSearchJump = {
+            keywords: Array.isArray(keywords) ? keywords : [String(keywords || '')],
+            hitIndex: Number(hitIndex) || 0,
+            startedAt: Date.now(),
+            done: false
+        };
+        setTimeout(trySearchJump, 100);
+    }
+    function trySearchJump() {
+        const jump = activeSearchJump;
+        if (!jump || jump.done) return;
+        if (Date.now() - jump.startedAt > 3500) {
+            activeSearchJump = null;
+            return;
+        }
+        let ok = false;
+        try {
+            ok = Boolean(editorInstance?.jumpToKeyword(jump.keywords, jump.hitIndex));
+        } catch (_error) {
+            ok = false;
+        }
+        if (ok) {
+            jump.done = true;
+            return;
+        }
+        setTimeout(trySearchJump, 180);
+    }
+    function replaySearchJumpAfterContentWrite() {
+        const jump = activeSearchJump;
+        if (!jump) return;
+        if (Date.now() - jump.startedAt > 3500) {
+            activeSearchJump = null;
+            return;
+        }
+        jump.done = false; // 内容被改写：重放跳转，让高亮落在最终内容上
+        setTimeout(trySearchJump, 50);
+    }
+
     async function selectNotepad(id, query = "", keywordJump = null) {
         const selectedNotepad = findNotepadByIdOrName(currentNotepads, id);
         if (!selectedNotepad) return;
@@ -2883,15 +2934,14 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         applyCurrentNotepadTitle();
 
-        if (query && editorInstance) {
-            // Multi-keyword queries jump by global hit index across ALL
-            // keywords (the server counts occurrences the same way); plain
-            // string queries degrade to a single-keyword jump.
+        if (query) {
+            // 多关键词查询跳转按全局命中序号定位；编辑器可能尚未就绪，
+            // 由 scheduleSearchJump 的重试/重放机制保证最终落地。
             const keywords = Array.isArray(keywordJump?.keywords) && keywordJump.keywords.length
                 ? keywordJump.keywords
                 : [query];
             const hitIndex = Number.isFinite(Number(keywordJump?.hitIndex)) ? Number(keywordJump.hitIndex) : 0;
-            setTimeout(() => editorInstance.jumpToKeyword(keywords, hitIndex), 100);
+            scheduleSearchJump(keywords, hitIndex);
         }
         // editor.focus(); // Disabled to allow opening in full preview mode
         const name = getCurrentNotepadName();

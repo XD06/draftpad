@@ -1977,7 +1977,7 @@ export class ThoughtsManager {
     // so the steps are: activate the workspace (navigate awaits the first
     // page) → clear filters that may hide the target → render buffered
     // batches until the card exists → fetch by id as the last resort.
-    async revealThoughtById(targetId, { keyword = '' } = {}) {
+    async revealThoughtById(targetId, { keyword = '', keywords = null } = {}) {
         const id = String(targetId || '').trim();
         if (!id) throw new Error('revealThoughtById requires an id');
 
@@ -2012,7 +2012,7 @@ export class ThoughtsManager {
 
         const card = this.timeline?.querySelector(`.thought-card[data-id="${CSS.escape(id)}"]`);
         if (!card) throw new Error('无法定位该 Thought');
-        this.focusThoughtCard(card, keyword);
+        this.focusThoughtCard(card, keywords || keyword);
         return true;
     }
 
@@ -2050,49 +2050,67 @@ export class ThoughtsManager {
         return true;
     }
 
-    focusThoughtCard(card, keyword = '') {
-        const term = String(keyword || '').trim();
-        const mark = term ? this.applyTransientKeywordHighlight(card, term) : null;
-        const target = mark || card;
+    focusThoughtCard(card, keywords = []) {
+        const terms = Array.isArray(keywords) ? keywords : (keywords ? [keywords] : []);
+        const marks = this.applyTransientKeywordHighlight(card, terms);
+        const target = marks[0] || card;
         target.scrollIntoView({ behavior: 'smooth', block: 'center' });
         card.classList.add('relation-focus');
         setTimeout(() => card.classList.remove('relation-focus'), 1800);
-        if (mark) setTimeout(() => this.removeTransientKeywordHighlight(mark), 2600);
+        if (marks.length) {
+            setTimeout(() => marks.forEach(mark => this.removeTransientKeywordHighlight(mark)), 2600);
+        }
     }
 
-    // Wrap the first keyword hit inside the card's body text with a
-    // thought-highlight mark (in place, no re-render, no filter change) and
-    // return the mark so the caller can scroll to it and unwrap it later.
-    applyTransientKeywordHighlight(card, term) {
+    // Wrap EVERY keyword hit inside the card's body text with transient
+    // thought-highlight marks (in place, no re-render, no filter change) and
+    // return them in document order so the caller can scroll to the first
+    // and unwrap them all later.
+    applyTransientKeywordHighlight(card, terms) {
         const body = card.querySelector('.thought-text');
-        if (!body) return null;
-        const lowerTerm = term.toLowerCase();
+        if (!body) return [];
+        const list = (Array.isArray(terms) ? terms : [terms])
+            .map(term => String(term || '').trim().toLowerCase())
+            .filter(Boolean);
+        if (!list.length) return [];
         const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT);
+        const textNodes = [];
         let node = walker.nextNode();
         while (node) {
-            if (node.parentElement?.closest?.('mark, input, textarea')) {
-                node = walker.nextNode();
-                continue;
+            if (!node.parentElement?.closest?.('mark, input, textarea')) textNodes.push(node);
+            node = walker.nextNode();
+        }
+        const marks = [];
+        for (const textNode of textNodes) {
+            const text = textNode.nodeValue || '';
+            const lower = text.toLowerCase();
+            const hits = [];
+            for (const term of list) {
+                let at = lower.indexOf(term);
+                while (at >= 0) {
+                    hits.push([at, term.length]);
+                    at = lower.indexOf(term, at + Math.max(term.length, 1));
+                }
             }
-            const text = node.nodeValue || '';
-            const at = text.toLowerCase().indexOf(lowerTerm);
-            if (at >= 0) {
+            // 从后往前包裹，前面的偏移不会被破坏；命中区间重叠时
+            // surroundContents 会失败，跳过该处即可。
+            hits.sort((left, right) => right[0] - left[0]);
+            for (const [at, length] of hits) {
                 const mark = document.createElement('mark');
                 mark.className = 'thought-highlight thought-highlight-transient';
-                mark.textContent = text.slice(at, at + term.length);
+                mark.textContent = text.slice(at, at + length);
                 const range = document.createRange();
-                range.setStart(node, at);
-                range.setEnd(node, at + term.length);
+                range.setStart(textNode, at);
+                range.setEnd(textNode, at + length);
                 try {
                     range.surroundContents(mark);
                 } catch (_error) {
-                    return null;
+                    continue;
                 }
-                return mark;
+                marks.unshift(mark); // unshift 保持文档顺序
             }
-            node = walker.nextNode();
         }
-        return null;
+        return marks;
     }
 
     removeTransientKeywordHighlight(mark) {
