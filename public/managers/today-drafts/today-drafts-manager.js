@@ -5,12 +5,13 @@ import TodayDraftsApiClient from './today-drafts-api-client.js';
 import TodayDraftsOutbox from './today-drafts-outbox.js';
 
 const DAY_LABELS = ['2d ago', 'yest', 'today'];
+// 行程达纸宽 25% 判落页（older 折痕左缘→右缘、newer 反向）
 const FLIP_COMMIT_RATIO = 0.25;
 const FLIP_RELEASE_MS = 340;
 // 卷起窄条的最大宽度（占纸宽比例）：起手与落页时收拢为 0，中段最宽
-const FLIP_CURL_RATIO = 0.3;
-// 折痕两侧羽化落影的宽度（占纸宽比例，上限 72px）
-const FLIP_FEATHER_RATIO = 0.085;
+const FLIP_CURL_RATIO = 0.22;
+// 折痕两侧羽化落影的宽度（占纸宽比例，上限 56px）
+const FLIP_FEATHER_RATIO = 0.07;
 
 function prefersReducedMotion() {
     return Boolean(window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches);
@@ -53,6 +54,8 @@ export class TodayDraftsManager {
         this.viewDay = localDayKey();
         this.pagerInteraction = null;
         this.flipAnim = null;
+        this.flipFrameRaf = null;
+        this.pendingFlipFrame = null;
         this.movingDraftIds = new Set();
         this.isActive = false;
         this.dayTimer = null;
@@ -295,13 +298,27 @@ export class TodayDraftsManager {
         }, true);
     }
 
-    // 整页折角卷曲揭页：pager 包住整张纸卡（标题与正文一起翻），动页由两份拷贝
-    // 组成——flip-static 用 clip-path 露出折痕一侧的纸面，flip-flap 用 scaleX(-1)
-    // 镜像出纸背、clip-path 只露折痕处卷起的窄条；折痕亮线与两侧羽化落影由
-    // flip-fx 承担。方向与阅读类 App 一致：右滑（deltaX > 0）掀页看更早历史，
-    // 左滑（deltaX < 0）拉回更新日期。拖拽逐帧跟手，松手 rAF 补间落页或回弹。
+    // 整页仿真翻页：右滑（deltaX > 0）掀页看更早历史，左滑（deltaX < 0）
+    // 拉回更新日期（阅读类 App 方向语义）。动页由两份拷贝渲染：flip-static
+    // 露出已落定部分，flip-flap 镜像出纸背，flip-fx 三件套负责折痕亮线与
+    // 两侧羽化落影。拖拽逐帧跟手，松手 rAF 补间落页或回弹。
     bindPagerFlipActions() {
         let suppressNextClick = false;
+
+        const pagerBox = () => {
+            const rect = this.pager?.getBoundingClientRect();
+            return {
+                left: rect?.left || 0,
+                top: rect?.top || 0,
+                width: this.pager?.clientWidth || 1,
+                height: this.pager?.clientHeight || 1
+            };
+        };
+        const setReady = (current, ready) => {
+            const wasReady = current.ready;
+            current.ready = ready;
+            if (ready && !wasReady) navigator.vibrate?.(8);
+        };
 
         this.view?.addEventListener('pointerdown', event => {
             if (!event.isPrimary) return;
@@ -318,11 +335,14 @@ export class TodayDraftsManager {
                 startX: event.clientX,
                 startY: event.clientY,
                 deltaX: 0,
+                dir: null,
+                progress: 0,
                 isDragging: false,
                 ready: false,
                 invalid: false,
                 day: this.viewDay,
-                index: Math.max(0, pages.indexOf(this.viewDay))
+                index: Math.max(0, pages.indexOf(this.viewDay)),
+                box: pagerBox()
             };
             try {
                 this.view?.setPointerCapture?.(event.pointerId);
@@ -335,9 +355,11 @@ export class TodayDraftsManager {
             const current = this.pagerInteraction;
             if (!current || event.pointerId !== current.pointerId) return;
             current.deltaX = event.clientX - current.startX;
-            const deltaY = Math.abs(event.clientY - current.startY);
-            if (!current.isDragging && !current.invalid && Math.abs(current.deltaX) > 14 && Math.abs(current.deltaX) > deltaY * 1.3) {
+            const deltaY = event.clientY - current.startY;
+            if (!current.isDragging && !current.invalid && Math.abs(current.deltaX) > 14 && Math.abs(current.deltaX) > Math.abs(deltaY) * 1.3) {
                 current.dir = current.deltaX > 0 ? 'older' : 'newer';
+                event.preventDefault();
+                window.getSelection?.()?.removeAllRanges();
                 this.beginFlip(current);
                 if (current.invalid) return;
                 current.isDragging = true;
@@ -353,12 +375,11 @@ export class TodayDraftsManager {
             }
 
             event.preventDefault();
-            const width = this.pager?.clientWidth || 1;
-            current.progress = Math.min(1, Math.abs(current.deltaX) / width);
-            this.applyFlipFrame(current.dir, current.progress);
-            const wasReady = current.ready;
-            current.ready = current.progress >= FLIP_COMMIT_RATIO;
-            if (current.ready && !wasReady) navigator.vibrate?.(8);
+            const box = current.box;
+            // 行程驱动：older 折痕从左缘扫向右缘，newer 反向
+            current.progress = Math.min(1, Math.abs(current.deltaX) / box.width);
+            setReady(current, current.progress >= FLIP_COMMIT_RATIO);
+            this.scheduleFlipFrame(current);
         });
 
         const finishFlipGesture = event => {
@@ -379,13 +400,15 @@ export class TodayDraftsManager {
                         if (!this.pagerInteraction) this.pager.style.transition = '';
                     }, 220);
                 }
+                // 手势期间被记账的异步刷新在这里补上（finishFlip 走 animate 后自带 render）。
+                if (this.pendingRender && !this.isComposingDraft) this.render();
                 return;
             }
             suppressNextClick = true;
             setTimeout(() => {
                 suppressNextClick = false;
             }, 0);
-            this.animateFlipRelease(current, current.ready ? 1 : 0);
+            this.animateFlipRelease(current);
         };
 
         this.view?.addEventListener('pointerup', finishFlipGesture);
@@ -394,10 +417,11 @@ export class TodayDraftsManager {
             if (!current || event.pointerId !== current.pointerId) return;
             this.pagerInteraction = null;
             if (current.isDragging) {
-                this.animateFlipRelease(current, 0);
+                this.animateFlipRelease(current);
             } else {
                 if (this.pager) this.pager.style.transform = '';
                 this.hideFlipLayers();
+                if (this.pendingRender && !this.isComposingDraft) this.render();
             }
         });
         this.view?.addEventListener('click', event => {
@@ -462,8 +486,26 @@ export class TodayDraftsManager {
         }
     }
 
+    scheduleFlipFrame(current) {
+        this.pendingFlipFrame = current;
+        if (this.flipFrameRaf) return;
+        this.flipFrameRaf = requestAnimationFrame(() => {
+            this.flipFrameRaf = null;
+            const frame = this.pendingFlipFrame;
+            this.pendingFlipFrame = null;
+            if (frame) this.applyFlipFrame(frame);
+        });
+    }
+
+    stopFlipFrame() {
+        if (this.flipFrameRaf) cancelAnimationFrame(this.flipFrameRaf);
+        this.flipFrameRaf = null;
+        this.pendingFlipFrame = null;
+    }
+
     hideFlipLayers() {
         this.stopFlipAnim();
+        this.stopFlipFrame();
         this.pager?.classList.remove('is-flipping');
         for (const layer of this.flipElements()) {
             if (!layer) continue;
@@ -510,21 +552,24 @@ export class TodayDraftsManager {
             if (layer) layer.hidden = false;
         }
         this.pager?.classList.add('is-flipping');
-        this.applyFlipFrame(current.dir, 0);
+        this.applyFlipFrame(current);
     }
 
-    // 折痕位置由滑动进度直接驱动：older 从左缘扫向右缘，newer 从右缘拉回左缘。
-    // 卷起窄条宽度随进度呈正弦起伏（起手与落页时收拢为 0），投影恒在纸面内。
-    applyFlipFrame(dir, progress) {
-        const p = Math.max(0, Math.min(1, Number(progress) || 0));
-        const width = Math.max(1, this.pager?.clientWidth || 1);
+    // 每帧渲染：折痕位置由滑动进度直接驱动，older 从左缘扫向右缘，
+    // newer 从右缘拉回左缘。卷起窄条宽度随进度呈正弦起伏（起手与落页时
+    // 收拢为 0），投影恒在纸面内。
+    applyFlipFrame(current) {
+        const width = Math.max(1, current.box?.width || this.pager?.clientWidth || 1);
+        const dir = current.dir;
+        const p = Math.max(0, Math.min(1, current.progress || 0));
         const crease = (dir === 'older' ? p : 1 - p) * width;
         const curl = width * FLIP_CURL_RATIO * Math.sin(Math.PI * p);
-        const feather = Math.min(width * FLIP_FEATHER_RATIO, 72);
+        const feather = Math.min(width * FLIP_FEATHER_RATIO, 56);
         const strength = Math.min(1, curl / (width * 0.1));
 
         if (this.flipStatic) {
             // 未掀部分：折痕一侧的动页正脸
+            this.flipStatic.hidden = false;
             this.flipStatic.style.clipPath = crease >= width - 0.5
                 ? 'inset(0 0 0 100%)'
                 : `inset(0 0 0 ${crease.toFixed(2)}px)`;
@@ -532,38 +577,45 @@ export class TodayDraftsManager {
         if (this.flipFlap) {
             // 纸背：local 坐标里裁出折痕旁的窄条，再绕折痕线反射到对侧
             const localLeft = dir === 'older' ? crease - curl : crease;
+            this.flipFlap.hidden = false;
             this.flipFlap.style.clipPath = curl > 0.5
                 ? `inset(0 ${(width - localLeft - curl).toFixed(2)}px 0 ${Math.max(0, localLeft).toFixed(2)}px)`
                 : 'inset(0 0 0 100%)';
             this.flipFlap.style.transform = `translate3d(${(2 * crease).toFixed(2)}px, 0, 0) scaleX(-1)`;
         }
         if (this.flipShadow) {
+            this.flipShadow.hidden = false;
             this.flipShadow.style.left = `${(crease - feather).toFixed(2)}px`;
             this.flipShadow.style.width = `${(feather * 2).toFixed(2)}px`;
             this.flipShadow.style.opacity = strength.toFixed(3);
         }
         if (this.flipCrease) {
+            this.flipCrease.hidden = false;
             this.flipCrease.style.left = `${(crease - 1.5).toFixed(2)}px`;
+            this.flipCrease.style.width = '3px';
             this.flipCrease.style.opacity = strength.toFixed(3);
         }
         if (this.flipCurl) {
+            this.flipCurl.hidden = false;
             this.flipCurl.style.left = `${(dir === 'older' ? crease : crease - curl).toFixed(2)}px`;
             this.flipCurl.style.width = `${Math.max(0, curl).toFixed(2)}px`;
             this.flipCurl.style.opacity = curl > 0.5 ? '1' : '0';
         }
     }
 
-    animateFlipRelease(current, target) {
+    animateFlipRelease(current) {
+        this.stopFlipFrame();
         const from = current.progress || 0;
+        const target = current.ready ? 1 : 0;
         const distance = Math.abs(target - from);
-        if (distance < 0.005) {
-            this.finishFlip(current, target);
-            return;
-        }
+        const apply = t => {
+            current.progress = from + (target - from) * t;
+            this.applyFlipFrame(current);
+        };
         const duration = prefersReducedMotion() ? 0 : Math.max(120, Math.round(FLIP_RELEASE_MS * distance));
         if (duration <= 0) {
-            this.applyFlipFrame(current.dir, target);
-            this.finishFlip(current, target);
+            apply(1);
+            this.finishFlip(current);
             return;
         }
         this.stopFlipAnim();
@@ -571,19 +623,19 @@ export class TodayDraftsManager {
         const easeOutCubic = t => 1 - Math.pow(1 - t, 3);
         const step = now => {
             const t = Math.min(1, (now - startedAt) / duration);
-            this.applyFlipFrame(current.dir, from + (target - from) * easeOutCubic(t));
+            apply(easeOutCubic(t));
             if (t < 1) {
                 this.flipAnim = requestAnimationFrame(step);
                 return;
             }
             this.flipAnim = null;
-            this.finishFlip(current, target);
+            this.finishFlip(current);
         };
         this.flipAnim = requestAnimationFrame(step);
     }
 
-    finishFlip(current, target) {
-        if (target >= 1 && current.targetDay) this.viewDay = current.targetDay;
+    finishFlip(current) {
+        if (current.ready && current.targetDay) this.viewDay = current.targetDay;
         this.hideFlipLayers();
         this.render();
     }
@@ -946,6 +998,13 @@ export class TodayDraftsManager {
 
     render() {
         if (this.isComposingDraft) {
+            this.pendingRender = true;
+            return;
+        }
+        // 翻页手势进行中不重铺底页：beginFlip 已把目标日铺进底层等待露出，
+        // 此时任何异步刷新（远端合并/outbox 回填）进来 render 都会把它刷回
+        // viewDay，掀开的角底下露出同一页。先记账，手势结束 finishFlip 会重绘。
+        if (this.pagerInteraction) {
             this.pendingRender = true;
             return;
         }
