@@ -1516,6 +1516,11 @@ main {
     max-height: 350px;
     overflow-y: auto;
     padding: 8px;
+    /* 相邻条目留缝：键盘选中项与鼠标悬停项相邻时，两块灰色高亮
+       不再贴成一片（圆角块之间的页面底色可见） */
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
 }
 
 .command-item {
