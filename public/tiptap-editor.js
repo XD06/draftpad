@@ -22,6 +22,8 @@ import {
     SoftEnterShortcut,
     QuoteBackspaceShortcut,
     SoftBreakBlockRules,
+    SearchHitHighlight,
+    searchHitPluginKey,
     TaskListInputShortcut,
     DumbPadTaskList,
     DumbPadCodeBlock,
@@ -130,6 +132,8 @@ export class HybridMarkdownEditor {
                 // 软换行后的「视觉行首」输入块标记（# - 1. >）就地拆块，见 tiptap-extensions.js
                 SoftBreakBlockRules,
                 HeadingAnchor,
+                // 全局搜索跳转的词级 + 块级命中高亮（PM Decoration，见 tiptap-extensions.js）
+                SearchHitHighlight,
                 TimeCommandShortcut,
                 TimeMarkerNode,
                 // 图片节点由 DumbPadImage 提供（关闭原生 draggable，换位走
@@ -542,6 +546,13 @@ export class HybridMarkdownEditor {
     // occurrence index across ALL keywords in document order — the server
     // (server/search/matcher.js) counts source hits with the same semantics,
     // so rendered plain text aligns with the search result rows.
+    // Jump to a precise hit in the rendered document. `keywords` is an array
+    // (multi-keyword search) or a single string; `hitIndex` is the global
+    // occurrence index across ALL keywords in document order — the server
+    // (server/search/matcher.js) counts source hits with the same semantics,
+    // so rendered plain text aligns with the search result rows. On success
+    // the word and its enclosing block are highlighted through PM decorations
+    // (SearchHitHighlight extension), which survive the editor's node rebuilds.
     jumpToKeyword(keywords, hitIndex = 0) {
         const list = (Array.isArray(keywords) ? keywords : [keywords])
             .map(keyword => String(keyword || '').trim().toLowerCase())
@@ -554,27 +565,32 @@ export class HybridMarkdownEditor {
         let node = walker.nextNode();
         let globalIndex = 0;
         let lastHit = null;
-        const wrapHit = (textNode, at, length) => {
-            const range = document.createRange();
-            range.setStart(textNode, at);
-            range.setEnd(textNode, at + length);
-            const mark = document.createElement('span');
-            mark.className = 'article-search-hit';
-            try {
-                range.surroundContents(mark);
-            } catch (_error) {
-                // 跨元素关键词退化为滚动定位，不做包裹。
+        // 落地：把命中位置交给 SearchHitHighlight 扩展（PM Decoration）。
+        // 词级 + 命中所在块的高亮都由 PM 在重绘时自行维护——这个编辑器的
+        // 块节点会被周期性重建，任何注入 DOM 的高亮（span 或类名）都活不
+        // 过一轮重绘，Decoration 是唯一能存活的形态。4.2s 后发 clear meta
+        // 摘除；期间的 docChanged 事务经 mapping 跟随内容。
+        const landHit = (textNode, at, length) => {
+            const anchor = textNode.parentElement;
+            const view = this.editor?.view;
+            if (view && anchor && root.contains(anchor)) {
+                try {
+                    const from = view.posAtDOM(textNode, at);
+                    view.dispatch(view.state.tr.setMeta(searchHitPluginKey, { from, to: from + length }));
+                    clearTimeout(this.searchHitClearTimer);
+                    this.searchHitClearTimer = setTimeout(() => {
+                        const currentView = this.editor?.view;
+                        if (currentView) currentView.dispatch(currentView.state.tr.setMeta(searchHitPluginKey, null));
+                    }, 4200);
+                } catch (_error) {
+                    // posAtDOM 失败（节点不在视图内）：退化为仅滚动。
+                }
             }
+            const blockEl = anchor ? anchor.closest('p, h1, h2, h3, h4, h5, h6, li, blockquote, pre, td, th') : null;
             // 与旧实现一致：滚动统一走 scrollRenderedElementIntoView
             // （scrollIntoView 会被同一点击流程内的其他滚动取消）。
-            this.scrollRenderedElementIntoView(mark);
-            setTimeout(() => {
-                const parent = mark.parentNode;
-                if (parent) {
-                    while (mark.firstChild) parent.insertBefore(mark.firstChild, mark);
-                    mark.remove();
-                }
-            }, 1600);
+            const scrollEl = blockEl || anchor;
+            if (scrollEl) this.scrollRenderedElementIntoView(scrollEl);
         };
         while (node) {
             const value = node.nodeValue || '';
@@ -591,9 +607,9 @@ export class HybridMarkdownEditor {
             for (const [at, length] of hits) {
                 // Leftover marks from a previous (not yet expired) jump must
                 // not shift the occurrence counting against server-side hits.
-                if (node.parentElement?.closest?.('.article-search-hit')) break;
+                if (node.parentElement?.closest?.('.search-hit-inline, .article-search-hit')) break;
                 if (globalIndex === targetIndex) {
-                    wrapHit(node, at, length);
+                    landHit(node, at, length);
                     return true;
                 }
                 lastHit = { node, at, length };
@@ -604,7 +620,7 @@ export class HybridMarkdownEditor {
         // Hit index beyond the rendered hits falls back to the closest one so
         // the jump still lands somewhere useful instead of nowhere.
         if (lastHit) {
-            wrapHit(lastHit.node, lastHit.at, lastHit.length);
+            landHit(lastHit.node, lastHit.at, lastHit.length);
             return true;
         }
         return false;

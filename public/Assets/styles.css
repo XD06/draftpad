@@ -2512,6 +2512,34 @@ main {
     border-radius: 3px;
 }
 
+/* 全局搜索跳转的词级高亮（SearchHitHighlight 扩展以 PM Decoration 渲染，
+   能存活于块节点周期性重建；样式与上方注入式 .article-search-hit 一致） */
+.tiptap .search-hit-inline {
+    background: rgba(250, 204, 21, 0.55);
+    border-radius: 3px;
+}
+
+/* 全局搜索跳转：命中所在块（段落/标题/列表项/引用/代码块）的高亮，
+   比词级标记更醒目、停留约 4s，方便看清匹配内容所在的上下文 */
+.tiptap .article-search-block-hit {
+    animation: article-search-block-flash 4s ease;
+    border-radius: 6px;
+}
+
+@keyframes article-search-block-flash {
+    0% {
+        background-color: rgba(var(--primary-rgb), 0.3);
+    }
+
+    55% {
+        background-color: rgba(var(--primary-rgb), 0.15);
+    }
+
+    100% {
+        background-color: transparent;
+    }
+}
+
 .typora-source-editor {
     display: none;
     width: 100%;

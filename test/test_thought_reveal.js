@@ -99,6 +99,24 @@ async function run() {
         assert.strictEqual(card.querySelector('.thought-text').textContent, '第二条部署相关想法');
     }
 
+    // 1b. 多关键词：所有关键词的全部命中处都被临时高亮，滚动锚点是文档顺序第一个
+    {
+        const manager = createHarness({
+            thoughts: [thought('c', '部署相关的想法，部署要快')]
+        });
+        manager.isActive = true;
+        manager._renderBatch(manager.getFilteredThoughts(), '');
+        const ok = await manager.revealThoughtById('c', { keywords: ['部署', '想法'] });
+        assert.ok(ok, 'multi-keyword reveal returns true');
+        const card = manager.timeline.querySelector('[data-id="c"]');
+        const marks = [...card.querySelectorAll('mark.thought-highlight-transient')];
+        assert.strictEqual(marks.length, 3, 'every keyword hit gets a mark (部署×2 + 想法×1)');
+        assert.deepStrictEqual(marks.map(m => m.textContent), ['部署', '想法', '部署'], 'marks stay in document order');
+        assert.ok(marks[0].textContent === '部署', 'first mark is the scroll anchor');
+        marks.forEach(mark => manager.removeTransientKeywordHighlight(mark));
+        assert.strictEqual(card.querySelector('.thought-text').textContent, '部署相关的想法，部署要快', 'all marks unwrap cleanly');
+    }
+
     // 2. 目标在内存但未渲染（第 2 批之后）：循环渲染批次直到可见
     {
         // createdAt 递减让 timeline 排序与书写顺序一致（新→旧）。

@@ -1157,3 +1157,74 @@ export const HeadingAnchor = Extension.create({
         ];
     },
 });
+
+/* 全局搜索跳转的命中高亮（server 侧逐行 occurrences → 前端 jumpToKeyword）。
+ * 词级用 Decoration.inline（关键词底色），命中所在的块用 Decoration.node
+ * （段落/标题/列表项/引用/代码块整体闪烁）——Decoration 由 PM 在重绘时
+ * 自行维护，能存活于块节点周期性重建，任何注入 DOM 的高亮都做不到。
+ * 位置由适配器（tiptap-editor.js 的 jumpToKeyword）经 pluginKey meta 传入
+ * doc 坐标；docChanged 时经 mapping 跟随内容变化（远端刷新不漂移）；clear
+ * meta 摘除。meta 事务无步骤：不进撤销历史、不触发保存。 */
+export const searchHitPluginKey = new PluginKey('dumbpadSearchHit');
+
+const SEARCH_HIT_BLOCK_TYPES = new Set([
+    'paragraph', 'heading', 'listItem', 'taskItem', 'blockquote', 'codeBlock',
+]);
+const SEARCH_HIT_LIST_ITEMS = new Set(['listItem', 'taskItem']);
+
+export const SearchHitHighlight = Extension.create({
+    name: 'searchHitHighlight',
+
+    addProseMirrorPlugins() {
+        return [
+            new Plugin({
+                key: searchHitPluginKey,
+                state: {
+                    init: () => null,
+                    apply: (tr, value) => {
+                        const meta = tr.getMeta(searchHitPluginKey);
+                        if (meta !== undefined) {
+                            if (!meta || !Number.isFinite(meta.from) || !Number.isFinite(meta.to)) return null;
+                            return { from: meta.from, to: meta.to };
+                        }
+                        if (!value) return null;
+                        if (!tr.docChanged) return value;
+                        const from = tr.mapping.map(value.from, -1);
+                        const to = tr.mapping.map(value.to, 1);
+                        if (from >= to) return null;
+                        return { from, to };
+                    },
+                },
+                props: {
+                    decorations(state) {
+                        const range = searchHitPluginKey.getState(state);
+                        if (!range) return DecorationSet.empty;
+                        try {
+                            const docSize = state.doc.content.size;
+                            const from = Math.min(Math.max(0, range.from), docSize);
+                            const to = Math.min(Math.max(from + 1, range.to), docSize);
+                            const $from = state.doc.resolve(from);
+                            const decorations = [Decoration.inline($from.pos, to, {
+                                class: 'search-hit-inline',
+                            })];
+                            // 命中所在的块：从内向外找第一个块级单元；命中在
+                            // 列表/待办项里时闪烁整个条目，上下文更完整。
+                            let depth = $from.depth;
+                            while (depth > 0 && !SEARCH_HIT_BLOCK_TYPES.has($from.node(depth).type.name)) depth -= 1;
+                            if (depth > 0) {
+                                const parentType = depth > 1 ? $from.node(depth - 1).type.name : '';
+                                if (SEARCH_HIT_LIST_ITEMS.has(parentType)) depth -= 1;
+                                decorations.push(Decoration.node($from.before(depth), $from.after(depth), {
+                                    class: 'article-search-block-hit',
+                                }));
+                            }
+                            return DecorationSet.create(state.doc, decorations);
+                        } catch (_error) {
+                            return DecorationSet.empty;
+                        }
+                    },
+                },
+            }),
+        ];
+    },
+});
