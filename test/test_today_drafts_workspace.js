@@ -203,6 +203,12 @@ function run() {
     assert(todayManagerSource.includes('applyFlipFrame') && todayManagerSource.includes('scaleX(-1)'), 'the turning page renders its back face by mirroring the sheet around the moving crease');
     assert(todayManagerSource.includes('animateFlipRelease'), 'the release should tween the crease to its landing or bounce');
     assert(todayManagerSource.includes('FLIP_COMMIT_RATIO = 0.25'), 'release commits past a quarter of the page width');
+    assert(!todayManagerSource.includes("current.mode = 'corner'") && !todayManagerSource.includes('clipRectHalfPlane'),
+        'corner fold mode is removed: every drag uses the single vertical-crease flip');
+    assert(!todayManagerSource.includes('FLIP_CORNER_TRAVEL_RATIO') && !todayManagerSource.includes('FLIP_CORNER_GRAB_RATIO'),
+        'no corner grab zone or travel threshold may remain');
+    assert(indexSource.includes('id="today-drafts-flip-flap-clip"') && todayStyles.includes('.today-drafts-flip-clip'),
+        'the mirrored flap must live inside an overflow-hidden clip so no fold frame escapes the paper card');
     assert(!todayManagerSource.includes('rotateY'), 'the page must not swing like a rigid door');
     // 纸背拷贝复用卡片类 .today-drafts-sheet 是有意的（它们就是整页纸面的镜像），
     // 但卡片规则本身绝不能自带 position:absolute——绝对定位只属于 .today-drafts-flip-layer。

@@ -204,6 +204,17 @@
     display: none;
 }
 
+/* 纸背的裁剪容器：镜像翻页/落页扫出的部分在书缘被裁掉，
+   任何角度都不会把纸甩出卡片边界（卡片投影画在裁剪容器之外，不受影响） */
+.today-drafts-flip-clip {
+    position: absolute;
+    inset: 0;
+    z-index: 4;
+    overflow: hidden;
+    border-radius: 1rem;
+    pointer-events: none;
+}
+
 /* 纸背：同一份内容的镜像。transform-origin 钉死在左缘，
    JS 每帧写 translate3d(2*折痕) scaleX(-1) 完成绕折痕线的镜像反射。 */
 #today-drafts-flip-flap {
@@ -214,6 +225,11 @@
 /* 手势期间的合成提升只跟着翻页会话走，平时不占层（动效策略与 Thought 一致） */
 .today-drafts-pager.is-flipping .today-drafts-flip-layer {
     will-change: clip-path, transform;
+}
+
+.today-drafts-pager.is-flipping {
+    user-select: none;
+    -webkit-user-select: none;
 }
 
 .today-drafts-flip-fx {
@@ -229,33 +245,37 @@
     display: none;
 }
 
-/* 卷起窄条上的拟物光影：折痕侧压暗、三分之一处留一道圆柱反光 */
+/* 卷起窄条上的拟物光影：折痕侧深压、三分之一处一道圆柱反光，
+   整体带一层背光暗色调，让镜像排版读作「纸背」而不是透印文字 */
 #today-drafts-flip-curl.is-toward-right {
     background: linear-gradient(90deg,
-        rgba(15, 23, 42, 0.32) 0%,
-        rgba(15, 23, 42, 0.10) 22%,
-        rgba(255, 255, 255, 0.20) 40%,
-        rgba(255, 255, 255, 0.03) 64%,
-        rgba(15, 23, 42, 0.12) 100%);
+        rgba(15, 23, 42, 0.44) 0%,
+        rgba(15, 23, 42, 0.18) 20%,
+        rgba(15, 23, 42, 0.08) 34%,
+        rgba(255, 255, 255, 0.22) 44%,
+        rgba(255, 255, 255, 0.04) 62%,
+        rgba(15, 23, 42, 0.16) 100%);
 }
 
 #today-drafts-flip-curl.is-toward-left {
     background: linear-gradient(270deg,
-        rgba(15, 23, 42, 0.32) 0%,
-        rgba(15, 23, 42, 0.10) 22%,
-        rgba(255, 255, 255, 0.20) 40%,
-        rgba(255, 255, 255, 0.03) 64%,
-        rgba(15, 23, 42, 0.12) 100%);
+        rgba(15, 23, 42, 0.44) 0%,
+        rgba(15, 23, 42, 0.18) 20%,
+        rgba(15, 23, 42, 0.08) 34%,
+        rgba(255, 255, 255, 0.22) 44%,
+        rgba(255, 255, 255, 0.04) 62%,
+        rgba(15, 23, 42, 0.16) 100%);
 }
 
 [data-theme="dark"] #today-drafts-flip-curl.is-toward-right,
 [data-theme="dark"] #today-drafts-flip-curl.is-toward-left {
     background: linear-gradient(90deg,
-        rgba(0, 0, 0, 0.42) 0%,
-        rgba(0, 0, 0, 0.16) 22%,
-        rgba(255, 255, 255, 0.07) 40%,
-        rgba(255, 255, 255, 0.01) 64%,
-        rgba(0, 0, 0, 0.18) 100%);
+        rgba(0, 0, 0, 0.55) 0%,
+        rgba(0, 0, 0, 0.24) 20%,
+        rgba(0, 0, 0, 0.12) 34%,
+        rgba(255, 255, 255, 0.08) 44%,
+        rgba(255, 255, 255, 0.02) 62%,
+        rgba(0, 0, 0, 0.22) 100%);
 }
 
 /* 折痕两侧的羽化落影：一半盖在掀露的底页上，一半盖在未掀的纸面上 */
@@ -263,9 +283,9 @@
     z-index: 3;
     background: linear-gradient(90deg,
         transparent 0%,
-        rgba(15, 23, 42, 0.12) 34%,
-        rgba(15, 23, 42, 0.22) 50%,
-        rgba(15, 23, 42, 0.12) 66%,
+        rgba(15, 23, 42, 0.16) 32%,
+        rgba(15, 23, 42, 0.30) 50%,
+        rgba(15, 23, 42, 0.16) 68%,
         transparent 100%);
 }
 
@@ -274,7 +294,7 @@
     z-index: 6;
     background: linear-gradient(90deg,
         transparent 0%,
-        rgba(15, 23, 42, 0.42) 50%,
+        rgba(15, 23, 42, 0.52) 50%,
         transparent 100%);
 }
 

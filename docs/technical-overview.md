@@ -42,7 +42,7 @@ Thought 前端 helper 拆分模块有聚合测试入口：`npm run test:thought-
 - `public/managers/thoughts.js`：Thought UI 协调层。负责 DOM 插入、每卡事件绑定、乐观更新、toast、筛选、AI/relations 面板入口；全局事件初始化按 Quick Add、视图切换、搜索筛选、outbox、socket 分段，`render()` 负责列表生成，单卡交互集中在 `bindThoughtCardEvents()`，relation panel 事件分发集中在 `handleRelationsPanelClick()`，inline 子任务编辑的输入替换和提交协调分开维护。
 - `public/managers/thought-api-client.js`：Thought HTTP client。负责 URL 拼接、`encodeURIComponent`、JSON 请求和带 `status` 的错误。
 - `public/managers/thought-outbox.js`：Thought 本地 outbox。负责 localStorage key、队列合并、create/patch/delete/relation 队列项构造、服务端列表合并和 retry。
-- `public/managers/today-drafts/`：日期草稿的独立前端模块。store 保留 3 天窗口的本机缓存（`dayWindowKeys` 与路由层同语义），API client 与 outbox 负责按条重试和版本更新（outbox 克隆携带 `day`），manager 协调编辑、整页折角卷曲翻页（今天可编辑、历史日只读；中间拖拽 = 竖直折痕实时跟随指尖、左下/右下角抓取 = 动页的角折向指尖，两种形态按抓取位置自适应；右滑看更早、左滑拉回更新，标题随整张纸卡一起翻）、WebSocket 合并与转 Thought 手势。
+- `public/managers/today-drafts/`：日期草稿的独立前端模块。store 保留 3 天窗口的本机缓存（`dayWindowKeys` 与路由层同语义），API client 与 outbox 负责按条重试和版本更新（outbox 克隆携带 `day`），manager 协调编辑、整页仿真翻页（今天可编辑、历史日只读；竖直折痕实时跟随指尖，右滑看更早、左滑拉回更新，标题随整张纸卡一起翻）、WebSocket 合并与转 Thought 手势。
 - `public/managers/thought-ai-status.js`：Thought AI 状态边界。负责 AI 状态/阶段归一化、pending 最短显示时间计算、socket detail 应用到 Thought 对象、标签文案、按钮图标、状态详情 HTML、手动 insight 区块、loading/error 片段；`ThoughtsManager` 保留 timer 调度、点击、拉取状态、Markdown hydrate、重试和 insight 触发协调。
 - `public/managers/agent-api-client.js`、`thought-agent-state.js`、`thought-agent-panel.js`、`thought-agent-controller.js`：交互 Agent 的 API、纯状态、纯视图和 SSE 生命周期边界；Thought 卡片只提供明确入口和局部面板，不混入后台 AI 状态面板。
 - `public/managers/thought-card-renderer.js`：Thought 卡片纯 HTML 渲染边界。负责正文、legacy checkbox 子任务、标签、AI 状态入口、关系计数和折叠子任务摘要；`ThoughtsManager` 只保留 DOM 插入、复制文本和交互事件绑定。
