@@ -58,7 +58,7 @@ function renderBadge(badge, language) {
     badge.replaceChildren(...parts);
 }
 
-export function buildCodeBlockNodeView({ onToast } = {}) {
+export function buildCodeBlockNodeView() {
     return ({ node, view, editor, getPos }) => {
         const wrapper = document.createElement('div');
         wrapper.className = 'vditor-wysiwyg__block';
@@ -84,7 +84,11 @@ export function buildCodeBlockNodeView({ onToast } = {}) {
         copyButton.title = '复制代码';
         copyButton.setAttribute('aria-label', '复制代码');
         copyButton.setAttribute('contenteditable', 'false');
-        copyButton.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect width="14" height="14" x="8" y="8" rx="2"></rect><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"></path></svg>';
+        const CODE_COPY_ICON_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect width="14" height="14" x="8" y="8" rx="2"></rect><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"></path></svg>';
+        // 复制成功的唯一反馈就是按钮图标变勾（无 toast）：勾用同一套 stroke 图形，
+        // 颜色随 .is-copied 的主色调走。
+        const CODE_COPIED_ICON_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6 9 17l-5-5"></path></svg>';
+        copyButton.innerHTML = CODE_COPY_ICON_SVG;
         copyButton.addEventListener('mousedown', (event) => {
             event.preventDefault();
             event.stopPropagation();
@@ -94,17 +98,19 @@ export function buildCodeBlockNodeView({ onToast } = {}) {
             event.stopPropagation();
             try {
                 await navigator.clipboard.writeText(currentCodeNode?.textContent || '');
-                copyButton.classList.add('is-copied');
-                copyButton.title = '已复制';
-                onToast?.('代码已复制', 1200);
-                clearTimeout(copyButton._copiedTimer);
-                copyButton._copiedTimer = setTimeout(() => {
-                    copyButton.classList.remove('is-copied');
-                    copyButton.title = '复制代码';
-                }, 1200);
             } catch (_error) {
                 // 复制失败静默处理，不阻断编辑。
+                return;
             }
+            copyButton.innerHTML = CODE_COPIED_ICON_SVG;
+            copyButton.classList.add('is-copied');
+            copyButton.title = '已复制';
+            clearTimeout(copyButton._copiedTimer);
+            copyButton._copiedTimer = setTimeout(() => {
+                copyButton.innerHTML = CODE_COPY_ICON_SVG;
+                copyButton.classList.remove('is-copied');
+                copyButton.title = '复制代码';
+            }, 1200);
         });
         header.appendChild(copyButton);
 

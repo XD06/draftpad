@@ -22,6 +22,8 @@ import {
     SoftEnterShortcut,
     QuoteBackspaceShortcut,
     SoftBreakBlockRules,
+    CodeFenceInputShortcut,
+    DumbPadMixedTaskListGuard,
     SearchHitHighlight,
     searchHitPluginKey,
     TaskListInputShortcut,
@@ -131,6 +133,8 @@ export class HybridMarkdownEditor {
                 MdSoftBreak,
                 // 软换行后的「视觉行首」输入块标记（# - 1. >）就地拆块，见 tiptap-extensions.js
                 SoftBreakBlockRules,
+                // 手打的 ``` 围栏在收尾反引号落下时转正为代码块，见 tiptap-extensions.js
+                CodeFenceInputShortcut,
                 HeadingAnchor,
                 // 全局搜索跳转的词级 + 块级命中高亮（PM Decoration，见 tiptap-extensions.js）
                 SearchHitHighlight,
@@ -145,6 +149,8 @@ export class HybridMarkdownEditor {
                 TableCell,
                 DumbPadTaskList,
                 DumbPadTaskItem.configure({ nested: true }),
+                // 混排列表撤 taskList 章（必须在 DumbPadTaskList 之后），见 tiptap-extensions.js
+                DumbPadMixedTaskListGuard,
                 // frontmatter 假代码块按 YAML 高亮，避免官方插件对未注册
                 // 语言回退 highlightAuto 产生的随机着色。
                 DumbPadCodeBlock.configure({

@@ -969,8 +969,9 @@ function softBreakRulePosition(state, range) {
  * 内容）。标题/列表/引用/表格里确实可能出现 `<br>`（Shift+Enter 走 `setHardBreak`，它没有
  * depth 守卫），那些块不接管，免得把块结构拆坏。
  *
- * 不覆盖 `---`/`___`/``` 围栏：`---` 紧跟在一行文字后面时，markdown 语义是 setext 标题下划线
+ * 不覆盖 `---`/`___`：`---` 紧跟在一行文字后面时，markdown 语义是 setext 标题下划线
  * 而不是分隔线，就地拆块会与重新解析打架，属于另一个决策，不在这里顺手改。
+ * ``` 围栏跨行、还要整体转块，拆块表达不了，由下面的 CodeFenceInputShortcut 接管。
  */
 export const SoftBreakBlockRules = Extension.create({
     name: 'softBreakBlockRules',
@@ -1044,6 +1045,142 @@ export const SoftBreakBlockRules = Extension.create({
     },
 });
 
+/**
+ * 段落里手打的 ``` 围栏当场转正为代码块：开栏行（``` + 可选语言）回车即开块，
+ * 完整围栏在收尾反引号落下时补转。
+ *
+ * 旧 Vditor 编辑器里这件事是「顺手」发生的：handleWysiwygSoftEnter 在软换行后异步
+ * 同步编辑器值，Lute 重解析时认出围栏。Tiptap 内核没有这一步——反引号留在段落文本里，
+ * 序列化时被转义写成 \`，重新解析永远是纯文本：用户敲的围栏永远变不成代码块，刷新后
+ * 源码模式还能看到反斜杠污染。解析侧本来就没问题（未转义的围栏源码 setValue 直接解析成
+ * codeBlock，CommonMark 允许围栏打断段落），缺的只是打字那一刻的转换。
+ *
+ * 两条输入规则（收尾规则声明在前：同一段文本下「…\n```」既形似收尾行也形似开栏行，
+ * runner 取第一条命中的规则，完整围栏必须优先按带围栏体解析）：
+ * ① 完整围栏 —— 收尾 ``` 的最后一个反引号落下时转正（文本输入路径）；
+ * ② 开栏行 —— 回车时转正（InputRule runner 在 Enter 键位上会以**虚拟的 "\n"** 补跑
+ *    一遍规则——模拟即将插入的换行；IME compositionend 后则补跑空串。「匹配串去掉
+ *    虚拟换行后已完整落进文档」的复核挡住逐字打 ```` ```c ```` 时的抢跑，语言标记
+ *    不会打一半就生效）。这就是旧 Vditor 的触发时机：
+ *    ```` ```c ```` + 回车当场得到代码块，光标落在块内，不必再敲收尾围栏。
+ *
+ * 只接管 `doc > paragraph`（与 SoftEnterShortcut 的软换行作用域一致），且要求：
+ * - 空选区（不让一次按键顺手改动选中的内容，与 blockRule 同一条红线）；
+ * - 光标已在段末——「```尾文」在 CommonMark 里不是合法收尾（收尾围栏只许跟空白），
+ *   后面还有文字时就地转换会与重新解析打架，宁可不转；
+ * - 开栏必须落在「视觉行首」：要么前面是软换行（并向前吞掉紧邻的连续软换行，与
+ *   softBreakRulePosition 同一套语义——段尾软换行本来就不写进源），要么就在块首。
+ *
+ * 为什么不复用官方 CodeBlock 的输入规则：它 `^` 锚定块首（空段落 ```` ``` ```` + 空格 /
+ * Enter 的路径归它，实测先行），软换行不是块首、围栏体又跨多个视觉行，框架的
+ * textblockTypeInputRule 作用域是整个块，会把围栏前的文字一起拖进代码块。所以自己拆：
+ * 前缀文字留在段落、围栏整体转成 codeBlock 节点插到段落之后（围栏吃满整段时连段落一起
+ * 让位），单个事务、走 input rule 的 undoable 元数据（可撤销、自然触发保存）。
+ *
+ * 范围取舍：只认反引号围栏（~~~ 波浪围栏与缩进围栏不在内）；```` `(?:^|\n) ```` 的 `^`
+ * 在超长段落上会误中 runner 的 500 字符窗口开头而不是块首，段首分支必须复核 range.from
+ * 真的是块内容起点，否则放弃转换。
+ */
+export const CodeFenceInputShortcut = Extension.create({
+    name: 'codeFenceInputShortcut',
+
+    addInputRules() {
+        /**
+         * 共享守卫：软换行作用域、空选区、光标在段末、开栏行首（含连续软换行的回吞）。
+         * 命中返回转正事务需要的位置上下文，否则 null（规则放弃，不接管这次输入）。
+         */
+        const fenceContext = (state, range, match) => {
+            if (!state.selection.empty) return null;
+            const $caret = state.doc.resolve(range.to);
+            if ($caret.depth !== 1 || $caret.parent.type.name !== 'paragraph') return null;
+            const paragraph = $caret.parent;
+            // 打字尚未落进文档（字符交给规则处理时还没插入），range.to 就是光标：
+            // 要求它已在段末，收尾围栏之后不允许再有文字。
+            if ($caret.parentOffset !== paragraph.content.size) return null;
+            // range.from 指向匹配串在文档里的起点（不含还没插入的那个字符）：
+            // 软换行分支必须是 hardBreak 节点，并向前吞掉紧邻的连续软换行；
+            // 块首分支必须真的是块内容起点（防 500 字符窗口截断误判）。
+            let from = range.from;
+            if (match[0].startsWith('\n')) {
+                if (state.doc.nodeAt(from)?.type.name !== 'hardBreak') return null;
+                const contentStart = $caret.start();
+                while (from > contentStart && state.doc.nodeAt(from - 1)?.type.name === 'hardBreak') {
+                    from -= 1;
+                }
+            } else if (from !== $caret.start()) {
+                return null;
+            }
+            return { $caret, paragraph, from, caretPos: range.to };
+        };
+
+        /** 转正事务：代码块插到段落之后的块边界（该位置不受随后段内删除的影响），再删掉
+         * 段内围栏文本；围栏吃满整段时连段落一起让位。光标落进代码块末尾——开栏回车得到
+         * 空块直接开始写代码，收尾转正则刚写完的就是代码（退出走 Mod-Enter/方向键）。 */
+        const commitFence = (chain, state, context, language, body) => {
+            const { $caret, paragraph, from, caretPos } = context;
+            const paraStart = $caret.before(1);
+            const paraEnd = $caret.after(1);
+            const wholeParagraph = from === paraStart + 1;
+            const fenceNode = state.schema.nodes.codeBlock.create(
+                { language: language || null },
+                body ? [state.schema.text(body)] : null,
+            );
+            const deletedLength = wholeParagraph ? paragraph.nodeSize : caretPos - from;
+            const blockStart = wholeParagraph ? paraStart : paraEnd - deletedLength;
+            chain()
+                .command(({ tr }) => {
+                    tr.insert(paraEnd, fenceNode);
+                    tr.delete(wholeParagraph ? paraStart : from, wholeParagraph ? paraEnd : caretPos);
+                    tr.setSelection(TextSelection.create(tr.doc, blockStart + 1 + body.length));
+                    tr.scrollIntoView();
+                })
+                .run();
+        };
+
+        const fenceLanguage = (raw) => String(raw || '').replace(/[\u200B\uFEFF]/g, '').trim();
+
+        return [
+            // ① 完整围栏：开栏行（``` + 可选语言）+ 围栏体（可跨软换行）+ 收尾行。
+            // 匹配串里的 \n 是 MdSoftBreak 的 leafText：软换行在文本视图里就是一个换行符。
+            // 围栏体允许为空（\`\`\`\n\`\`\` 直接得到空代码块）。
+            new InputRule({
+                find: /(?:^|\n)```([^\n`]*)\n(?:([\s\S]*?)\n)?```$/,
+                handler: ({ state, range, match, chain }) => {
+                    const context = fenceContext(state, range, match);
+                    if (!context) return;
+                    const { codeBlock } = state.schema.nodes;
+                    if (!codeBlock) return;
+                    commitFence(chain, state, context, fenceLanguage(match[1]), (match[2] || '').replace(/[\u200B\uFEFF]/g, ''));
+                },
+            }),
+            // ② 开栏行 + 回车。Enter 的补跑在匹配串尾虚拟一个 "\n"（模拟即将插入的
+            // 换行，不在文档里；IME compositionend 补跑则是空串），find 因此容忍
+            // 可选的串尾 \n。「匹配串（去掉虚拟换行）已完整落进文档」是补跑的指纹：
+            // 逐字打 ```` ```c ```` 时语言标记还没进文档，对不上，不会在打到一半时
+            // 抢跑把想继续打的字符关进块里。
+            new InputRule({
+                find: /(?:^|\n)```([^\n`]*)\n?$/,
+                handler: ({ state, range, match, chain }) => {
+                    const $caret = state.doc.resolve(range.to);
+                    if ($caret.depth !== 1 || $caret.parent.type.name !== 'paragraph') return;
+                    const virtualNewline = match[0].endsWith('\n');
+                    const inDocPart = virtualNewline ? match[0].slice(0, -1) : match[0];
+                    const docMatch = state.doc.textBetween(
+                        Math.max(range.to - inDocPart.length, $caret.start()),
+                        range.to,
+                    );
+                    if (docMatch !== inDocPart) return;
+                    const context = fenceContext(state, range, match);
+                    if (!context) return;
+                    const { codeBlock } = state.schema.nodes;
+                    if (!codeBlock) return;
+                    commitFence(chain, state, context, fenceLanguage(match[1]), '');
+                },
+            }),
+        ];
+    },
+});
+
 /** tiptap-markdown 的 MarkdownTightLists 只给 bulletList/orderedList 声明
  * 全局 tight 属性，taskList 没有声明。序列化时 renderList 对没有 tight
  * 属性的节点回退到 options.tightLists（未传 → 宽松列表），保存会在任务
@@ -1057,6 +1194,62 @@ export const DumbPadTaskList = TaskList.extend({
                 parseHTML: element =>
                     element.getAttribute('data-tight') === 'true' || !element.querySelector('p'),
                 renderHTML: () => ({}),
+            },
+        };
+    },
+});
+
+/**
+ * 混排列表守卫：`- 甲` 与 `- [ ] 乙` 同列表时（不管谁打头、怎么交错），markdown-it
+ * 输出**单个** ul.contains-task-list（只有任务项的 li 带 task-list-item 类），而
+ * tiptap-markdown 的 TaskList.parse.updateDOM 会给**所有** ul.contains-task-list 无条件
+ * 盖 data-type="taskList" 章。盖章后普通 li 塞不进 taskList 的 taskItem+ 内容模型，
+ * PM 装配时凭空吐出幽灵节点：普通项打头是空 taskItem（保存固化成 `- [ ] `），任务项
+ * 打头是空 listItem（空圆点，保存固化成 `- `）——每次刷新渲染多一个、每次保存污染一次。
+ *
+ * 这个守卫在解析 DOM 上把混排列表**就地拆成同级的纯种列表段**（严格保持条目顺序）：
+ * 连续的任务项归一段 ul[data-type="taskList"]，连续的普通项归一段普通 ul，原 ul 整个
+ * 退位。纯任务列表一个字节都不动。任何交错顺序都不再依赖 PM 的内容模型兜底。
+ *
+ * 为什么是独立扩展而不是覆盖 DumbPadTaskList 的 addStorage：内核解析器收集
+ * markdown 配置时做浅合并（{...默认, ...storage.markdown}），覆盖 parse 会把
+ * 上游的 setup（挂载 github-task-lists 解析插件、`[ ]` 识别全靠它）整个挤掉，
+ * `parent` 注入对 addStorage 也不可靠。updateDOM 按扩展注册顺序执行，本扩展
+ * 必须注册在 DumbPadTaskList 之后（tiptap-editor.js 里相邻声明）。
+ */
+export const DumbPadMixedTaskListGuard = Extension.create({
+    name: 'dumbpadMixedTaskListGuard',
+
+    addStorage() {
+        return {
+            markdown: {
+                parse: {
+                    updateDOM: (element) => {
+                        element.querySelectorAll('ul[data-type="taskList"]').forEach((listElement) => {
+                            const items = Array.from(listElement.children)
+                                .filter(child => child.tagName === 'LI');
+                            const hasPlainItem = items.some(item => !item.classList.contains('task-list-item'));
+                            if (!hasPlainItem) return;
+                            const tightAttribute = listElement.getAttribute('data-tight');
+                            const runs = [];
+                            for (const item of items) {
+                                const isTask = item.classList.contains('task-list-item');
+                                const lastRun = runs[runs.length - 1];
+                                if (lastRun && lastRun.isTask === isTask) lastRun.items.push(item);
+                                else runs.push({ isTask, items: [item] });
+                            }
+                            const replacement = document.createDocumentFragment();
+                            for (const run of runs) {
+                                const subList = document.createElement('ul');
+                                if (run.isTask) subList.setAttribute('data-type', 'taskList');
+                                if (tightAttribute !== null) subList.setAttribute('data-tight', tightAttribute);
+                                subList.append(...run.items);
+                                replacement.appendChild(subList);
+                            }
+                            listElement.replaceWith(replacement);
+                        });
+                    },
+                },
             },
         };
     },

@@ -49,6 +49,8 @@
     "test:tiptap-image-menu": "node test/test_tiptap_image_menu.js",
     "test:tiptap-soft-enter-link": "node test/test_tiptap_soft_enter_link.js",
     "test:tiptap-soft-enter-block-rules": "node test/test_tiptap_soft_enter_block_rules.js",
+    "test:tiptap-code-fence-input": "node test/test_tiptap_code_fence_input.js",
+    "test:tiptap-mixed-task-list": "node test/test_tiptap_mixed_task_list.js",
     "test:tiptap-underline-annotation": "node test/test_tiptap_underline_annotation.js",
     "test:tiptap-blockquote-input": "node test/test_tiptap_blockquote_input.js",
     "test:css-integrity": "node test/test_css_integrity.js",
