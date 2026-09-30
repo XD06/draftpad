@@ -4483,6 +4483,16 @@ blockquote {
     color: inherit;
 }
 
+/* 批注波浪线要整条连续。Chrome 的 text-decoration-skip-ink 默认 auto，会在
+   字距与标点这类「无墨」处把装饰线剪断——英文正文里表现为波浪一节一节。
+   只作用于画线的那一层：编辑器是 .has-annotation 的内层 span，分享页与
+   Thought 卡片是带内联 style 的 span[data-note]（内联 style 不含本属性，
+   所以这里能生效且不改存储形态）。 */
+.has-annotation > span,
+span[data-note] {
+    text-decoration-skip-ink: none;
+}
+
 .annotation-note {
     color: #e74c3c;
     font-size: 0.72em;
@@ -4493,14 +4503,13 @@ blockquote {
 }
 
 .annotation-badge {
-    position: absolute;
-    right: -16px;
-    bottom: -8px;
-    width: 14px;
-    height: 14px;
     display: inline-flex;
     align-items: center;
     justify-content: center;
+    width: 14px;
+    height: 14px;
+    margin-left: 3px;
+    vertical-align: middle;
     background: color-mix(in srgb, #e74c3c 10%, transparent);
     border-radius: 50%;
     color: #e74c3c;

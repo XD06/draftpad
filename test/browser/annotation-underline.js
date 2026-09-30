@@ -15,6 +15,7 @@ module.exports = async function testAnnotationUnderline(browser) {
     const app = express();
     const root = path.resolve(__dirname, '../..');
     app.get('/', (_req, res) => res.send(`<!doctype html><html><head>
+        <link rel="stylesheet" href="/Assets/styles.css">
         <style>body{margin:0}#editor{height:600px}</style>
         </head><body><div id="editor"></div>
         <script src="/vendor/tiptap/tiptap.bundle.js"></script></body></html>`));
@@ -152,6 +153,53 @@ module.exports = async function testAnnotationUnderline(browser) {
                 `the annotation the user just made must survive a reload without <u>, got ${JSON.stringify(created.reloaded)}`);
             assert.ok(!created.reloaded.value.includes('<u'),
                 `and it must not be written back either, got ${created.reloaded.value}`);
+        }
+
+        // 7. 波浪线的「连续性」还有一半在绘制层：Chrome 的 text-decoration-skip-ink
+        //    默认 auto，会在空格与标点这类「无墨」处把波浪剪断（观感一节一节）。
+        //    这条只能在真浏览器里用 computed 值证明——jsdom 不做样式层计算。
+        //    顺带在 Chrome 里复核「一条批注跨行内代码 + 跨链接」渲染成单 span 单徽标
+        //    （AnnotationMark 的 priority 抬到 Link 之上）。
+        {
+            const wave = await page.evaluate(async (value) => {
+                editor.setValue(value, false);
+                await new Promise(resolve => setTimeout(resolve, 600));
+                const root = editor.container.querySelector('.tiptap');
+                const outers = [...root.querySelectorAll('.has-annotation')];
+                const inners = outers.map(outer => outer.querySelector(':scope > span') || outer);
+                return {
+                    annotationCount: outers.length,
+                    badgeCount: root.querySelectorAll('.annotation-badge').length,
+                    skipInk: inners.map(el => getComputedStyle(el).textDecorationSkipInk),
+                    lineStyle: inners.map(el => getComputedStyle(el).textDecorationStyle),
+                    thickness: inners.map(el => getComputedStyle(el).textDecorationThickness),
+                    stored: editor.getValue(),
+                };
+            }, `<span data-note="连续" style="${ANNOTATION_STYLE}">Use the authenticated API, it preserves versions. 甲 <code>beta()</code> 丙 [链接](https://example.com) 丁</span>`);
+            assert.equal(wave.annotationCount, 1,
+                `one annotation across code and a link must be one span, got ${JSON.stringify(wave)}`);
+            assert.equal(wave.badgeCount, 1,
+                `and exactly one badge, got ${wave.badgeCount}`);
+            assert.deepEqual(wave.skipInk, ['none'],
+                `the wavy run must not be clipped at spaces (text-decoration-skip-ink), got ${JSON.stringify(wave.skipInk)}`);
+            assert.deepEqual(wave.lineStyle, ['wavy'],
+                `the decoration must stay wavy, got ${JSON.stringify(wave.lineStyle)}`);
+            assert.deepEqual(wave.thickness, ['2.5px'],
+                `the stored thickness must survive, got ${JSON.stringify(wave.thickness)}`);
+            assert.ok(wave.stored.includes('甲 `beta()` 丙 [链接](https://example.com) 丁'),
+                `the whole run must serialize as one span, got ${wave.stored}`);
+
+            // 展示形态（分享页 / Thought 卡片）靠内联 style，同一批 CSS 规则要命中它
+            const display = await page.evaluate((style) => {
+                const host = document.createElement('div');
+                host.innerHTML = `<span data-note="x" style="${style}">空格 逗号, 句号.</span>`;
+                document.body.appendChild(host);
+                const skip = getComputedStyle(host.firstElementChild).textDecorationSkipInk;
+                host.remove();
+                return skip;
+            }, ANNOTATION_STYLE);
+            assert.equal(display, 'none',
+                `the display form (span[data-note]) must get skip-ink:none too, got ${display}`);
         }
 
         assert.deepEqual(errors, []);

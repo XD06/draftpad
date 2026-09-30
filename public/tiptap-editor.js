@@ -98,6 +98,11 @@ export class HybridMarkdownEditor {
                 handleKeyDown: (view, event) => Boolean(this.fileCommand?.handleKeyDown(view, event)),
             },
             extensions: [
+                // AnnotationMark 排在最前，且 priority 高于 Link（见 tiptap-extensions.js）：
+                // PM 的 mark 渲染按 schema rank 排序取共同前缀开闭元素，annotation rank
+                // 必须小于 code / link，跨行内代码与跨链接的批注才渲染成一个连续的
+                // has-annotation span（否则被切成三段、三个徽标）。
+                AnnotationMark,
                 SoftEnterShortcut,
                 QuoteBackspaceShortcut,
                 TaskListInputShortcut,
@@ -127,7 +132,6 @@ export class HybridMarkdownEditor {
                     // 浏览器原生行为，不经过这里。
                     link: { openOnClick: false },
                 }),
-                AnnotationMark,
                 DrawMark,
                 // 下划线 mark 的解析判定由 DumbPadUnderline 收窄（tiptap-extensions.js）
                 DumbPadUnderline,
@@ -171,13 +175,26 @@ export class HybridMarkdownEditor {
         this.editor.on('create', () => {
             this.ready = true;
             this._resolveReady();
+            // Tiptap 的 Code mark 排除所有其他 marks（excluded = 全部），行内代码
+            // chip 是 schema 层的「mark 禁区」——后果是「批注盖住行内代码」在 parse
+            // 时 annotation 于 code 边界断开，一条批注存储/渲染成两段（两个徽标、
+            // 波浪线断开）。批注是内容语义（需要跨行内代码），这里豁免 annotation
+            // 不被 code 排除；其余 marks（粗体/斜体等）保持被排除的 Tiptap 默认。
+            // 只动这一个数组，Code 的其他行为不变。
+            const annType = this.editor.state.schema.marks.annotation;
+            const codeType = this.editor.state.schema.marks.code;
+            if (annType && codeType && Array.isArray(codeType.excluded)) {
+                codeType.excluded = codeType.excluded.filter(type => type !== annType);
+            }
         });
 
         this.editor.on('update', ({ transaction }) => {
             // Tiptap v3 的 setEditable（阅读模式切换）也会 emit update，
             // 必须过滤掉未改变文档的事务，否则启动即上报空变更、
             // 触发脏笔记保存与 409 冲突（"内容已在其他设备更新"）。
-            if (transaction && !transaction.docChanged) return;
+            // dumbpadNormalize 是批注段连接事务：修复内容本身就是加载进来的
+            // 内容，不能被当作用户编辑触发保存。
+            if (!transaction || !transaction.docChanged || transaction.getMeta('dumbpadNormalize')) return;
             this.notifyEditorValueChanged(this.getValue());
         });
 
@@ -245,11 +262,73 @@ export class HybridMarkdownEditor {
         const nextValue = String(value ?? '');
         this._lastValue = nextValue;
         this.editor.commands.setContent(this.frontmatterToFence(nextValue), { emitUpdate: false });
+        this.normalizeAnnotationMarks();
         if (emit) {
             this.notifyEditorValueChanged(this.getValue());
         } else {
             this._lastValue = this.getValue();
         }
+    }
+
+    // 存储层无法表达「批注覆盖行内代码」：序列化器的 open/close 包不住
+    // code_inline（markdown-it 的 code_inline 是原子 token），历史内容因此
+    // 固化成「批注-代码-批注」两段 span[data-note]（note 相同），渲染出两个
+    // 徽标、波浪线在代码处断开。excludes 豁免（见 create 钩子）之后，schema
+    // 允许 annotation 与 code 共存——这里在 parse 后把「相邻同 note 的批注段」
+    // 用 addMark 重新连成一个 mark（覆盖中间的行内代码），渲染恢复单 span
+    // 单徽标、波浪线连续。防误伤：gap 中只要有无任何 mark 的纯文本节点就不
+    // 连接（那是用户故意分开的两条批注，不是拆段产物）。序列化仍会输出拆段
+    // 形态，parse→normalize→serialize 幂等。修复事务带 dumbpadNormalize
+    // meta：不进撤销历史、不触发保存。
+    normalizeAnnotationMarks() {
+        const { state } = this.editor;
+        const annType = state.schema.marks.annotation;
+        if (!annType) return;
+        const noteOf = (node) => {
+            const m = node.marks.find(m => m.type === annType);
+            return m ? String(m.attrs.note ?? '') : null;
+        };
+        const { tr } = state;
+        let changed = false;
+        state.doc.descendants((block, blockPos) => {
+            if (!block.isTextblock) return true;
+            const children = [];
+            let childPos = blockPos + 1;
+            block.forEach(child => {
+                children.push({ node: child, from: childPos });
+                childPos += child.nodeSize;
+            });
+            let i = 0;
+            while (i < children.length) {
+                const note = noteOf(children[i].node);
+                if (note === null) { i += 1; continue; }
+                let j = i + 1;
+                while (j < children.length && noteOf(children[j].node) === note) j += 1;
+                // 从 j 向后找下一个同 note 段；gap 内出现其他批注即停
+                let k = j, target = null, hasBareText = false;
+                while (k < children.length) {
+                    const n2 = noteOf(children[k].node);
+                    if (n2 !== null) {
+                        if (n2 === note) target = k;
+                        break;
+                    }
+                    if (children[k].node.isText && children[k].node.marks.length === 0) hasBareText = true;
+                    k += 1;
+                }
+                if (target !== null && !hasBareText) {
+                    tr.addMark(children[j].from, children[target].from, annType.create({ note }));
+                    changed = true;
+                    i = target;
+                } else {
+                    i = j;
+                }
+            }
+            return false;
+        });
+        if (!changed) return;
+        tr.setMeta('dumbpadNormalize', true);
+        tr.setMeta('addToHistory', false);
+        this.editor.view.dispatch(tr);
     }
 
     /** 远端更新（WS notes_update）时保持用户光标位置（issue #5）。 */

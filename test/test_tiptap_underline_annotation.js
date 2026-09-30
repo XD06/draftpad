@@ -207,6 +207,85 @@ async function main() {
             && !/<u[ >]/.test(whitespace.html) && whitespace.value.includes('批注'), whitespace);
     }
 
+    // 11. 批注跨行内代码 / 跨链接必须渲染成**一条**连续批注。PM 渲染行内 mark 时按
+    //     schema rank 排序取共同前缀决定开闭元素：annotation 的 rank 排在 link 之后时，
+    //     一条覆盖链接的批注会被切成三段三个徽标，序列化还把 <sub>（批注）</sub> 写进
+    //     链接的 label 内部（`[<span data-note>…</span><sub>…</sub>](url)`）。
+    //     rank 靠 AnnotationMark 的 priority 抬到 Link（1000）之上；跨 code 另需
+    //     code.excluded 豁免（tiptap-editor.js 的 create 钩子）。两条机制缺一不可。
+    {
+        const markRank = Object.keys(editor.schema.marks);
+        check('annotation ranks before link in the schema (priority > Link 1000)',
+            markRank.indexOf('annotation') !== -1 && markRank.indexOf('link') !== -1
+            && markRank.indexOf('annotation') < markRank.indexOf('link'), markRank);
+        check('annotation ranks before code in the schema',
+            markRank.indexOf('annotation') < markRank.indexOf('code'), markRank);
+
+        const across = await load(
+            `前<span data-note="跨标记" style="${ANNOTATION_STYLE}">甲 <code>beta()</code> 丙 [链接](https://example.com) 丁</span>后`,
+        );
+        const rendered = container.querySelector('.tiptap');
+        check('an annotation across inline code and a link renders as ONE span',
+            rendered.querySelectorAll('.has-annotation').length === 1
+            && rendered.querySelectorAll('.annotation-badge').length === 1,
+            { spans: rendered.querySelectorAll('.has-annotation').length, badges: rendered.querySelectorAll('.annotation-badge').length, html: rendered.innerHTML });
+        check('the single annotation serializes as one span wrapping the link',
+            across.value.includes('<span data-note="跨标记"')
+            && (across.value.match(/<span data-note=/g) || []).length === 1
+            && across.value.includes('甲 `beta()` 丙 [链接](https://example.com) 丁'), across.value);
+        check('the note label <sub> never lands inside a link label',
+            !/\[<span data-note=[^\]]*<\/sub>\]/.test(across.value), across.value);
+    }
+
+    // 12. 历史数据自愈：老文章里「批注-代码-批注」的拆段形态（同 note 两段）在 parse 后
+    //     被 normalizeAnnotationMarks 连成一条；但两段之间夹着**无 mark 的纯文本**时是
+    //     用户故意分开的两条批注，绝不允许误连。
+    {
+        const split = await load(
+            `前<span data-note="同一条" style="${ANNOTATION_STYLE}">甲 </span><code>beta()</code><span data-note="同一条" style="${ANNOTATION_STYLE}"> 丙</span>后`,
+        );
+        const healed = container.querySelector('.tiptap');
+        check('a historically split annotation (same note around code) heals to one span',
+            healed.querySelectorAll('.has-annotation').length === 1
+            && healed.querySelectorAll('.annotation-badge').length === 1,
+            { spans: healed.querySelectorAll('.has-annotation').length, html: healed.innerHTML });
+        check('healing does not lose the code text', split.value.includes('`beta()`'), split.value);
+        // 修复事务不能被当成用户编辑：否则打开一篇文章就上报一次变更，
+        // 触发脏保存甚至 409（"内容已在其他设备更新"）。
+        let notifies = 0;
+        const notifyOriginal = wrapper.notifyEditorValueChanged.bind(wrapper);
+        wrapper.notifyEditorValueChanged = (...args) => { notifies += 1; return notifyOriginal(...args); };
+        wrapper.setValue(
+            `前<span data-note="同一条" style="${ANNOTATION_STYLE}">甲 </span><code>beta()</code><span data-note="同一条" style="${ANNOTATION_STYLE}"> 丙</span>后`,
+            true,
+        );
+        await wait(600);
+        wrapper.notifyEditorValueChanged = notifyOriginal;
+        check('healing dispatches no extra change notification', notifies === 1, { notifies });
+
+        await load(
+            `<span data-note="两条" style="${ANNOTATION_STYLE}">甲</span>中间没有标记的文字<span data-note="两条" style="${ANNOTATION_STYLE}">乙</span>`,
+        );
+        const untouched = container.querySelector('.tiptap');
+        check('two same-note annotations separated by bare text stay two',
+            untouched.querySelectorAll('.has-annotation').length === 2,
+            { spans: untouched.querySelectorAll('.has-annotation').length, html: untouched.innerHTML });
+    }
+
+    // 13. 波浪线的连续性还有一半在绘制层：Chrome 的 text-decoration-skip-ink 默认 auto，
+    //     会在空格与标点这类「无墨」处把波浪剪断（观感断断续续）。这里钉住 CSS 规则存在
+    //     且覆盖两层形态（编辑器内层 span / 分享页与 Thought 的 span[data-note]）；
+    //     真实 computed 值由 test/browser/annotation-underline.js 断言。
+    {
+        const css = fs.readFileSync(path.join(ROOT, 'public/Assets/styles.css'), 'utf8');
+        const rule = css.match(/\.has-annotation\s*>\s*span\s*,\s*\nspan\[data-note\]\s*\{[^}]*\}/);
+        check('the skip-ink rule exists and covers both the editor and display forms',
+            Boolean(rule) && /text-decoration-skip-ink:\s*none/.test(rule ? rule[0] : ''), rule);
+        check('the stored annotation style is untouched (no data-format change)',
+            ANNOTATION_STYLE === 'text-decoration:underline wavy #e74c3c;text-decoration-thickness:2.5px;'
+            && !ANNOTATION_STYLE.includes('skip-ink'), ANNOTATION_STYLE);
+    }
+
     if (failures) {
         console.error(`\n${failures} check(s) failed`);
         process.exitCode = 1;

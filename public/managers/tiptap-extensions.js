@@ -229,6 +229,17 @@ export function createAnnotationBadge() {
 export const AnnotationMark = Mark.create({
     name: 'annotation',
 
+    /**
+     * 必须高于 Link 的 priority（1000）：Tiptap 按 priority 降序摊平扩展后建 schema，
+     * 而 PM 渲染行内 mark 时按 **schema rank 排序取共同前缀** 决定开闭元素。annotation
+     * 的 rank 排在 link 之后时，一条覆盖链接的批注会在 `<a>` 前后各断一次——渲染成
+     * 三个 .has-annotation + 三个徽标，序列化还把 `<sub>（批注）</sub>` 写进链接的
+     * label 里（`[<span data-note>…</span><sub>…</sub>](url)`）。排到最前才是批注
+     * 包住链接。跨行内代码靠的是 code.excluded 豁免（tiptap-editor.js 的 create 钩子），
+     * 与本条无关，两者都要。
+     */
+    priority: 1100,
+
     inclusive: false,
 
     addAttributes() {
