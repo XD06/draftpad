@@ -346,7 +346,7 @@ class SelectionMenuView {
         }
 
         this.popover.append(actions);
-        this.popover.style.display = 'block';
+        this.popover.style.display = 'flex';
         this.positionPopover(element);
         this.installPopoverCloseHandler();
     }
@@ -460,22 +460,80 @@ class SelectionMenuView {
         this.view.focus();
     }
 
-    /** 编辑批注：框架更新 mark attrs（可撤销），与旧 updateAnnotationComment 对齐。 */
+    /** 编辑批注：原地展开编辑卡片，框架更新 mark attrs（可撤销），与旧 updateAnnotationComment 对齐。 */
     editAnnotationComment(element, comment) {
         const range = this.posRangeForElement(element);
-        this.popover.style.display = 'none';
-        if (!range) return;
-        const next = window.prompt('修改批注内容', comment || '');
-        if (next === null) return;
-        const trimmed = next.trim();
-        if (!trimmed) return;
-        const annotationType = this.view.state.schema.marks.annotation;
-        if (!annotationType) return;
-        const tr = this.view.state.tr;
-        tr.removeMark(range.from, range.to, annotationType);
-        tr.addMark(range.from, range.to, annotationType.create({ note: trimmed }));
-        this.view.dispatch(tr);
-        this.view.focus();
+        if (!range) {
+            this.popover.style.display = 'none';
+            return;
+        }
+
+        this.popover.innerHTML = '';
+        this.popover.className = 'mark-popover mark-popover-editing';
+
+        const content = document.createElement('div');
+        content.className = 'mark-popover-inline-content';
+        const input = document.createElement('textarea');
+        input.className = 'mark-popover-edit-input';
+        input.rows = 2;
+        input.value = comment || '';
+        content.appendChild(input);
+
+        const actions = document.createElement('div');
+        actions.className = 'mark-popover-actions';
+        const saveBtn = document.createElement('button');
+        saveBtn.type = 'button';
+        saveBtn.className = 'save-btn';
+        saveBtn.textContent = '保存';
+        const cancelBtn = document.createElement('button');
+        cancelBtn.type = 'button';
+        cancelBtn.className = 'cancel-edit-btn';
+        cancelBtn.textContent = '取消';
+        actions.append(saveBtn, cancelBtn);
+
+        this.popover.append(content, actions);
+        this.popover.style.display = 'flex';
+        this.positionPopover(element);
+
+        // 避免点击输入框触发编辑器失焦折叠选区
+        input.addEventListener('mousedown', (e) => e.stopPropagation());
+
+        const handleSave = () => {
+            const next = input.value.trim();
+            if (!next) return;
+            const annotationType = this.view.state.schema.marks.annotation;
+            if (annotationType && next !== comment) {
+                const tr = this.view.state.tr;
+                tr.removeMark(range.from, range.to, annotationType);
+                tr.addMark(range.from, range.to, annotationType.create({ note: next }));
+                this.view.dispatch(tr);
+            }
+            this.popover.style.display = 'none';
+            this.view.focus();
+        };
+
+        const handleCancel = () => {
+            this.popover.style.display = 'none';
+            this.view.focus();
+        };
+
+        saveBtn.addEventListener('click', handleSave);
+        cancelBtn.addEventListener('click', handleCancel);
+
+        input.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                handleSave();
+            } else if (e.key === 'Escape') {
+                e.preventDefault();
+                handleCancel();
+            }
+        });
+
+        requestAnimationFrame(() => {
+            input.focus();
+            input.setSelectionRange(input.value.length, input.value.length);
+        });
     }
 
 
