@@ -186,13 +186,16 @@ button.today-drafts-eyebrow:not([disabled]):active {
         radial-gradient(circle at 1px 1px, color-mix(in srgb, var(--muted-text) 8%, transparent) 0.5px, transparent 0.8px),
         radial-gradient(circle at 6px 5px, color-mix(in srgb, var(--muted-text) 4%, transparent) 0.45px, transparent 0.7px);
     background-size: 100% 44px, 9px 9px, 13px 13px;
+    background-attachment: local;
 }
 
 /* 一条草稿比整页还高（粘贴长文）时不再把内容吞掉：这一页允许纵向滚动兜底。
-   纸纹挂在书写区自己身上，滚动时纹线不动、正文按 44px 的整数倍位移，
-   行始终落在同一条节奏上。 */
+   纸纹挂在书写区自己身上，配合 background-attachment: local，滚动时纹线与正文
+   严格同步位移，行始终落在同一条节奏上。 */
 .today-drafts-writing-area.is-overflowing {
     overflow-y: auto;
+    overscroll-behavior-y: contain;
+    -webkit-overflow-scrolling: touch;
 }
 
 /* 整页仿真折角卷曲翻页：#today-drafts-base 是平铺在文档流里的整张纸卡

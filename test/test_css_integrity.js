@@ -62,6 +62,13 @@ function checkBlockquoteRules() {
         /blockquote > :last-child\s*\{\s*margin-bottom:\s*0/.test(ios), 'ios-theme.css lost the :last-child rule');
 }
 
+function checkTodayDraftsWritingAreaRules() {
+    const todayDraftsCss = fs.readFileSync(path.join(ASSETS, 'today-drafts.css'), 'utf8');
+    check('today drafts writing area has background-attachment: local for synchronous paper line scrolling',
+        /\.today-drafts-writing-area\s*\{[^}]*background-attachment:\s*local/s.test(todayDraftsCss),
+        'missing background-attachment: local on .today-drafts-writing-area');
+}
+
 async function checkEditorContentClasses() {
     const dom = new JSDOM('<!doctype html><html><body></body></html>', { url: 'http://localhost/' });
     global.window = dom.window;
@@ -98,6 +105,7 @@ async function checkEditorContentClasses() {
 async function main() {
     checkCssBalance();
     checkBlockquoteRules();
+    checkTodayDraftsWritingAreaRules();
     await checkEditorContentClasses();
     if (failures) {
         console.error(`\n${failures} check(s) failed`);
