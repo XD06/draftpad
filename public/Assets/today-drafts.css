@@ -190,7 +190,8 @@
 }
 
 /* 动页拷贝：与纸卡同款观感，但绝对定位铺满 pager、不接收指针、
-   不画自身投影（落影由 flip-fx 与底卡承担）。 */
+   不画自身投影（落影由 flip-fx 与底卡承担）。contain 把 clip-path
+   每帧变化的重绘范围锁在本层内（低端真机的 paint 面积减半）。 */
 .today-drafts-flip-layer {
     position: absolute;
     inset: 0;
@@ -198,6 +199,7 @@
     overflow: hidden;
     box-shadow: none;
     pointer-events: none;
+    contain: layout paint style;
 }
 
 .today-drafts-flip-layer[hidden] {

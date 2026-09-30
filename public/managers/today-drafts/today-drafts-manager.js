@@ -64,8 +64,27 @@ export class TodayDraftsManager {
         this.syncQueued = false;
         this.isComposingDraft = false;
         this.pendingRender = false;
+        this.flipFrameBudget = 0;
+        this.flipSlowFrames = 0;
         this.bindEvents();
         window.addEventListener('today_drafts_update', event => this.handleSocketUpdate(event.detail || {}));
+        // 移动端切后台/来电/切应用时浏览器可以吞掉 pointerup：翻页图层会卡在
+        // 半开状态（is-flipping 的 user-select 与图层栈还挂着），回到前台就
+        // 表现为「页面卡死」。可见性丢失与窗口失焦时无条件清场，代价为零——
+        // 正常路径下这些时刻不会有进行中的手势。
+        const abortFlipSession = () => {
+            if (!this.pagerInteraction && !this.flipAnim && !this.flipFrameRaf) return;
+            this.pagerInteraction = null;
+            this.pendingRender = false;
+            this.hideFlipLayers();
+            this.pager?.style.setProperty('transform', '');
+            this.pager?.style.setProperty('transition', '');
+            if (this.isActive) this.render();
+        };
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) abortFlipSession();
+        });
+        window.addEventListener('blur', abortFlipSession);
         // On (re)connect, flush anything queued while offline AND pull the
         // retention window from the server: updates pushed by other devices
         // while this client was disconnected never arrived, so without a
@@ -489,10 +508,18 @@ export class TodayDraftsManager {
     scheduleFlipFrame(current) {
         this.pendingFlipFrame = current;
         if (this.flipFrameRaf) return;
+        const scheduledAt = performance.now();
         this.flipFrameRaf = requestAnimationFrame(() => {
             this.flipFrameRaf = null;
             const frame = this.pendingFlipFrame;
             this.pendingFlipFrame = null;
+            // 帧预算自适应：rAF 排队间隔持续超过 34ms（<30fps，低端真机上
+            // clip-path 逐帧重绘的开销）时进入降级——跳过装饰层（卷曲光影/
+            // 羽化落影/折痕亮线三件套）的更新，只保留核心翻页（动页裁剪 +
+            // 纸背镜像），paint 面积砍掉近半；帧率恢复后自动退出，观感回升。
+            const interval = performance.now() - scheduledAt;
+            this.flipSlowFrames = interval > 34 ? Math.min(6, this.flipSlowFrames + 1) : Math.max(0, this.flipSlowFrames - 2);
+            this.flipFrameBudget = this.flipSlowFrames >= 2 ? 1 : 0;
             if (frame) this.applyFlipFrame(frame);
         });
     }
@@ -584,22 +611,27 @@ export class TodayDraftsManager {
             this.flipFlap.style.transform = `translate3d(${(2 * crease).toFixed(2)}px, 0, 0) scaleX(-1)`;
         }
         if (this.flipShadow) {
-            this.flipShadow.hidden = false;
-            this.flipShadow.style.left = `${(crease - feather).toFixed(2)}px`;
-            this.flipShadow.style.width = `${(feather * 2).toFixed(2)}px`;
-            this.flipShadow.style.opacity = strength.toFixed(3);
+            this.flipShadow.hidden = this.flipFrameBudget ? true : false;
+            if (!this.flipFrameBudget) {
+                this.flipShadow.style.left = `${(crease - feather).toFixed(2)}px`;
+                this.flipShadow.style.width = `${(feather * 2).toFixed(2)}px`;
+                this.flipShadow.style.opacity = strength.toFixed(3);
+            }
         }
         if (this.flipCrease) {
+            // 折痕亮线很细（3px），paint 成本可忽略，降级时也保留——落页方向感靠它。
             this.flipCrease.hidden = false;
             this.flipCrease.style.left = `${(crease - 1.5).toFixed(2)}px`;
             this.flipCrease.style.width = '3px';
             this.flipCrease.style.opacity = strength.toFixed(3);
         }
         if (this.flipCurl) {
-            this.flipCurl.hidden = false;
-            this.flipCurl.style.left = `${(dir === 'older' ? crease : crease - curl).toFixed(2)}px`;
-            this.flipCurl.style.width = `${Math.max(0, curl).toFixed(2)}px`;
-            this.flipCurl.style.opacity = curl > 0.5 ? '1' : '0';
+            this.flipCurl.hidden = this.flipFrameBudget ? true : false;
+            if (!this.flipFrameBudget) {
+                this.flipCurl.style.left = `${(dir === 'older' ? crease : crease - curl).toFixed(2)}px`;
+                this.flipCurl.style.width = `${Math.max(0, curl).toFixed(2)}px`;
+                this.flipCurl.style.opacity = curl > 0.5 ? '1' : '0';
+            }
         }
     }
 
