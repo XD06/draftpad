@@ -1351,6 +1351,69 @@ export const HeadingAnchor = Extension.create({
     },
 });
 
+/* 目录跳转的落点闪光（区别于搜索命中高亮：只有块级一层、时长更短、更轻——
+ * 左侧主色竖条 + 落点文字短暂变主色，无整块背景，样式见 styles.css 的
+ * .article-jump-target）。位置由适配器（tiptap-editor.js 的
+ * scrollRenderedElementIntoView）经 pluginKey meta 传入 doc 坐标；docChanged 时
+ * 经 mapping 跟随内容；clear meta 摘除。必须用 Decoration 而不是 DOM 类名：
+ * 直接写在 PM 管辖 DOM 上的类名会被 DOMObserver 在重绘时抹掉（实测编辑模式下
+ * is-jump-target 从未露面），Decoration 在编辑/阅读两种模式下都能存活。
+ * meta 事务无步骤：不进撤销历史、不触发保存。 */
+export const jumpTargetPluginKey = new PluginKey('dumbpadJumpTarget');
+
+const JUMP_TARGET_BLOCK_TYPES = new Set([
+    'paragraph', 'heading', 'listItem', 'taskItem', 'blockquote', 'codeBlock',
+]);
+
+export const JumpTargetHighlight = Extension.create({
+    name: 'jumpTargetHighlight',
+
+    addProseMirrorPlugins() {
+        return [
+            new Plugin({
+                key: jumpTargetPluginKey,
+                state: {
+                    init: () => null,
+                    apply: (tr, value) => {
+                        const meta = tr.getMeta(jumpTargetPluginKey);
+                        if (meta !== undefined) {
+                            if (!meta || !Number.isFinite(meta.from)) return null;
+                            return { from: meta.from };
+                        }
+                        if (!value) return null;
+                        if (!tr.docChanged) return value;
+                        return { from: tr.mapping.map(value.from, -1) };
+                    },
+                },
+                props: {
+                    decorations(state) {
+                        const range = jumpTargetPluginKey.getState(state);
+                        if (!range) return DecorationSet.empty;
+                        try {
+                            const docSize = state.doc.content.size;
+                            const from = Math.min(Math.max(0, range.from), docSize);
+                            const $from = state.doc.resolve(from);
+                            // 从内向外找命中所在的块级单元；目标在列表/待办项里时
+                            // 闪光整个条目，与搜索块级高亮的粒度一致。
+                            let depth = $from.depth;
+                            while (depth > 0 && !JUMP_TARGET_BLOCK_TYPES.has($from.node(depth).type.name)) depth -= 1;
+                            if (depth <= 0) return DecorationSet.empty;
+                            const parentType = depth > 1 ? $from.node(depth - 1).type.name : '';
+                            if (['listItem', 'taskItem'].includes(parentType)) depth -= 1;
+                            const decoration = Decoration.node($from.before(depth), $from.after(depth), {
+                                class: 'article-jump-target',
+                            });
+                            return DecorationSet.create(state.doc, [decoration]);
+                        } catch (_error) {
+                            return DecorationSet.empty;
+                        }
+                    },
+                },
+            }),
+        ];
+    },
+});
+
 /* 全局搜索跳转的命中高亮（server 侧逐行 occurrences → 前端 jumpToKeyword）。
  * 词级用 Decoration.inline（关键词底色），命中所在的块用 Decoration.node
  * （段落/标题/列表项/引用/代码块整体闪烁）——Decoration 由 PM 在重绘时

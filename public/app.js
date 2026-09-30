@@ -1644,6 +1644,11 @@ document.addEventListener('DOMContentLoaded', async () => {
                     // 远端内容真正写入编辑器：若有未完成的搜索跳转（或刚
                     // 成功但高亮被这次写入抹掉），在窗口内重放一次。
                     replaySearchJumpAfterContentWrite();
+                    // 目录的标题条目来自 markdown 索引（不受影响），但片段
+                    // 子条目扫描的是 DOM——「缓存先渲染、远端刷新随后改写」
+                    // 流程里 updateToC 先于这次写入执行，收集到的是旧/空
+                    // DOM，片段条目会丢失。写入后补一次重建（防抖）。
+                    debouncedUpdateToC();
                 }
                 restoreEditorCaretForNotepad(notepadId);
                 markEditorPerformanceContent(editorPerformanceSwitchToken);
@@ -1681,6 +1686,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         tocUpdateTimeout = setTimeout(() => updateToC(), 500);
     }
 
+    // 每个标题区段默认列出的片段（划线/高亮/批注）上限，超出折叠为「+N」
+    // 条目，点击展开/收起——批注密集的长文不至于把标题层级淹没。
+    const TOC_MARKS_PER_SECTION = 3;
+    const tocExpandedMarkGroups = new Set();
+    let tocRenderedForNotepadId = null;
+
     // In-article TOC (文章内目录): rendered into the right sidebar column on
     // desktop and into the same element when it slides in as a mobile drawer.
     // Works in both edit and reading mode; the active heading follows scroll.
@@ -1705,9 +1716,13 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         editorInstance.syncRenderedHeadingIds(toc);
         lastGeneratedToc = toc;
+        if (tocRenderedForNotepadId !== currentNotepadId) {
+            tocExpandedMarkGroups.clear();
+            tocRenderedForNotepadId = currentNotepadId;
+        }
 
-        // 目录补充：把各标题区段内的加粗/划线/高亮/批注片段列成子条目，
-        // 点击直接跳到那个片段（有序/无序列表和待办不进目录）。
+        // 目录补充：把各标题区段内的划线/高亮/批注片段列成子条目，
+        // 点击直接跳到那个片段（加粗、有序/无序列表和待办不进目录）。
         const markGroups = collectTocMarkEntries(toc);
         let markHtml = '';
         const markRefs = [];
@@ -1718,7 +1733,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                 <span class="toc-level-badge" aria-hidden="true">H${item.level}</span>
                 <span class="toc-item-text">${escapeHtml(item.text)}</span>
             </div>`;
-            entries.forEach(entry => {
+            const expanded = tocExpandedMarkGroups.has(item.id);
+            const shown = expanded ? entries : entries.slice(0, TOC_MARKS_PER_SECTION);
+            shown.forEach(entry => {
                 const refIndex = markRefs.push(entry.el) - 1;
                 markHtml += `
                 <div class="toc-item mark-entry type-${entry.type}" data-mark-ref="${refIndex}" title="${entry.typeLabel}">
@@ -1726,15 +1743,38 @@ document.addEventListener('DOMContentLoaded', async () => {
                     <span class="toc-item-text">${escapeHtml(entry.snippet)}</span>
                 </div>`;
             });
+            if (entries.length > shown.length) {
+                markHtml += `
+                <div class="toc-item mark-entry mark-more" data-mark-group="${escapeHtml(item.id)}" title="展开本节全部标记">
+                    <span class="toc-level-badge mark-badge" aria-hidden="true">+${entries.length - shown.length}</span>
+                    <span class="toc-item-text">展开全部标记</span>
+                </div>`;
+            } else if (expanded && entries.length > TOC_MARKS_PER_SECTION) {
+                markHtml += `
+                <div class="toc-item mark-entry mark-more" data-mark-collapse="${escapeHtml(item.id)}" title="收起本节标记">
+                    <span class="toc-level-badge mark-badge" aria-hidden="true">−</span>
+                    <span class="toc-item-text">收起标记</span>
+                </div>`;
+            }
         });
         tocList.innerHTML = markHtml;
         tocMarkRefs = markRefs;
 
         tocList.querySelectorAll('.mark-entry').forEach(el => {
             el.onclick = () => {
+                if (el.dataset.markGroup !== undefined) {
+                    tocExpandedMarkGroups.add(el.dataset.markGroup);
+                    updateToC();
+                    return;
+                }
+                if (el.dataset.markCollapse !== undefined) {
+                    tocExpandedMarkGroups.delete(el.dataset.markCollapse);
+                    updateToC();
+                    return;
+                }
                 const target = markRefs[Number(el.dataset.markRef)];
                 if (!target || !target.isConnected) return;
-                editorInstance.scrollRenderedElementIntoView(target);
+                editorInstance.scrollRenderedElementIntoView(target, { flash: true });
                 if (window.matchMedia('(max-width: 980px)').matches) {
                     setArticleTocDrawerVisible(false);
                 }
@@ -1748,8 +1788,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                     focusEditorHeading(el.dataset.headingId || '', index);
                 } else {
                     const headingId = el.dataset.headingId || '';
-                    if (!editorInstance.scrollToHeadingId(headingId)) {
-                        editorInstance.scrollToLine(index);
+                    if (!editorInstance.scrollToHeadingId(headingId, { flash: true })) {
+                        editorInstance.scrollToLine(index, undefined, { flash: true });
                     }
                 }
                 if (window.matchMedia('(max-width: 980px)').matches) {
@@ -1760,19 +1800,21 @@ document.addEventListener('DOMContentLoaded', async () => {
         updateActiveTocItem();
     }
 
-    // 收集各标题区段内的加粗/划线/高亮/批注片段，供文章目录作为子条目展示。
+    // 收集各标题区段内的高亮/划线/批注片段，供文章目录作为子条目展示。
     // 单次 DOM 顺序遍历：遇到标题就切换当前分组，命中装饰元素就归类；
     // 已收录元素的嵌套后代跳过，避免同一段文字重复出现。
+    // 加粗不进目录（用户要求）：调研类文章的加粗动辄几十处，条目会淹没
+    // 标题层级；且加粗常被当普通强调使用，不像批注/高亮/划线那样自带
+    // "值得回头定位"的语义。
     function collectTocMarkEntries(toc) {
         const root = document.querySelector('.vditor-wysiwyg .vditor-reset');
         const groups = new Map();
         if (!root || !toc.length) return groups;
-        const MARK_SELECTOR = 'strong, u, mark, .md-mark, .has-annotation, [data-note], [data-draw]';
+        const MARK_SELECTOR = 'mark, .md-mark, u, [data-draw], .has-annotation, [data-note]';
         const classify = (el) => {
             if (el.matches('.has-annotation, [data-note]')) return { type: 'note', badge: 'N', typeLabel: '批注' };
             if (el.matches('mark, .md-mark')) return { type: 'highlight', badge: 'H', typeLabel: '高亮' };
-            if (el.matches('u, [data-draw]')) return { type: 'underline', badge: 'U', typeLabel: '划线' };
-            return { type: 'bold', badge: 'B', typeLabel: '加粗' };
+            return { type: 'underline', badge: 'U', typeLabel: '划线' };
         };
         const accepted = new Set();
         let currentGroupId = '__preamble__';
@@ -1838,7 +1880,15 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
         }
         editorInstance.focus();
-        const scrollToHeading = () => editorInstance.scrollToLine(lineIndex, heading?.textContent?.trim() || '');
+        // 目录跳转不走搜索命中管线：旧实现把标题文字当关键词传给
+        // scrollToLine → jumpToKeyword，高亮会落在该词在全文第一次出现的
+        // 位置（常常不是被点击的标题），还会闪 4 秒搜索式黄块。这里只做
+        // 定位 + 落点闪光（JumpTargetHighlight，PM Decoration）。
+        const scrollToHeading = () => {
+            if (!editorInstance.scrollToHeadingId(headingId || '', { flash: true })) {
+                editorInstance.scrollToLine(lineIndex, undefined, { flash: true });
+            }
+        };
         if (window.matchMedia('(max-width: 980px)').matches) {
             // Mobile: focusing opens the keyboard and the viewport reflows;
             // wait one beat so the jump lands on the settled layout.
@@ -1853,7 +1903,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     let tocScrollSyncBound = false;
     let lastGeneratedToc = [];
     // 当前目录渲染持有的片段目标元素（与 .mark-entry 的 data-mark-ref 对应），
-    // 供滚动高亮把加粗/划线/高亮/批注子条目也纳入"我正在哪里"的判定。
+    // 供滚动高亮把划线/高亮/批注子条目也纳入"我正在哪里"的判定。
     let tocMarkRefs = [];
     function setupTocScrollSync() {
         if (tocScrollSyncBound) return;
@@ -1861,13 +1911,18 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (!scroller) return;
         tocScrollSyncBound = true;
         let frame = 0;
-        scroller.addEventListener('scroll', () => {
+        const schedule = () => {
             if (frame) return;
             frame = requestAnimationFrame(() => {
                 frame = 0;
                 updateActiveTocItem();
             });
-        }, { passive: true });
+        };
+        // 桌面端编辑器容器内滚动；≤980px（ios-theme）是整页滚动，.vditor-wysiwyg
+        // 自己不滚，scroll 事件不会触发——window scroll 兜住移动端的高亮跟随
+        //（桌面内部滚动不冒泡到 window，监听器空转，无副作用）。
+        scroller.addEventListener('scroll', schedule, { passive: true });
+        window.addEventListener('scroll', schedule, { passive: true });
     }
 
     function updateActiveTocItem() {
@@ -1899,9 +1954,19 @@ document.addEventListener('DOMContentLoaded', async () => {
                 const target = tocMarkRefs[Number(item.dataset.markRef)];
                 return target && target.isConnected ? target : null;
             }
-            const heading = root.querySelector(`#${CSS.escape(item.dataset.headingId)}`)
-                || headingEls[headingOrdinal]
-                || null;
+            if (item.dataset.markGroup !== undefined || item.dataset.markCollapse !== undefined) {
+                // 「+N 展开 / 收起」条目没有正文落点，不参与"我正在哪里"判定。
+                return null;
+            }
+            // 缓存标题元素（目录重建或 PM 重绘后断连重查）：滚动高亮每帧
+            // 都跑，避免对每个条目重复 querySelector。
+            let heading = item.__tocTarget;
+            if (!heading || !heading.isConnected) {
+                heading = root.querySelector(`#${CSS.escape(item.dataset.headingId)}`)
+                    || headingEls[headingOrdinal]
+                    || null;
+                item.__tocTarget = heading;
+            }
             headingOrdinal += 1;
             return heading;
         };

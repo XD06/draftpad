@@ -2677,10 +2677,57 @@ main {
     color: var(--primary-color);
 }
 
-.typora-editor-shell .vditor-reset .is-jump-target {
-    background: color-mix(in srgb, var(--primary-color) 16%, transparent);
-    border-radius: 6px;
-    transition: background 0.2s ease;
+/* 目录跳转的落点闪光（JumpTargetHighlight 扩展以 PM Decoration 渲染，编辑/
+   阅读模式都能存活；旧 is-jump-target DOM 类在编辑模式会被 PM 的 DOMObserver
+   抹掉、从未露面，已废弃）。不做整块背景——左侧主色竖条 + 落点文字短暂变
+   主色再渐回正文色，位置醒目又不糊住正文。 */
+.typora-editor-shell .vditor-reset .article-jump-target {
+    position: relative;
+    animation: article-jump-flash 1.8s ease;
+}
+
+.typora-editor-shell .vditor-reset .article-jump-target::before {
+    content: '';
+    position: absolute;
+    left: -12px;
+    top: 0.12em;
+    bottom: 0.12em;
+    width: 3px;
+    border-radius: 2px;
+    background: var(--primary-color);
+    animation: article-jump-bar 1.8s ease forwards;
+}
+
+@keyframes article-jump-flash {
+    0% {
+        color: var(--primary-color);
+    }
+
+    55% {
+        color: var(--primary-color);
+    }
+
+    100% {
+        color: var(--text-color);
+    }
+}
+
+@keyframes article-jump-bar {
+    0% {
+        opacity: 0;
+    }
+
+    10% {
+        opacity: 1;
+    }
+
+    55% {
+        opacity: 1;
+    }
+
+    100% {
+        opacity: 0;
+    }
 }
 
 .typora-editor-shell.is-reading-mode .vditor-toolbar,

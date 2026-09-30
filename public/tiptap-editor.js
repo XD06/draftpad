@@ -26,6 +26,8 @@ import {
     DumbPadMixedTaskListGuard,
     SearchHitHighlight,
     searchHitPluginKey,
+    JumpTargetHighlight,
+    jumpTargetPluginKey,
     TaskListInputShortcut,
     DumbPadTaskList,
     DumbPadCodeBlock,
@@ -138,6 +140,8 @@ export class HybridMarkdownEditor {
                 HeadingAnchor,
                 // 全局搜索跳转的词级 + 块级命中高亮（PM Decoration，见 tiptap-extensions.js）
                 SearchHitHighlight,
+                // 目录跳转的落点闪光（PM Decoration，见 tiptap-extensions.js）
+                JumpTargetHighlight,
                 TimeCommandShortcut,
                 TimeMarkerNode,
                 // 图片节点由 DumbPadImage 提供（关闭原生 draggable，换位走
@@ -502,28 +506,28 @@ export class HybridMarkdownEditor {
         this.editor.view.dispatch(this.editor.state.tr.setMeta(headingAnchorPluginKey, ids));
     }
 
-    scrollToHeadingId(id) {
+    scrollToHeadingId(id, { flash = false } = {}) {
         if (!id) return false;
         const heading = this.container.querySelector(`.tiptap h1[id="${CSS.escape(id)}"], .tiptap h2[id="${CSS.escape(id)}"], .tiptap h3[id="${CSS.escape(id)}"], .tiptap h4[id="${CSS.escape(id)}"], .tiptap h5[id="${CSS.escape(id)}"], .tiptap h6[id="${CSS.escape(id)}"]`);
         if (!heading) return false;
-        this.scrollRenderedElementIntoView(heading);
+        this.scrollRenderedElementIntoView(heading, { flash });
         return true;
     }
 
-    scrollToLine(index, keyword) {
+    scrollToLine(index, keyword, { flash = false } = {}) {
         const line = Math.max(0, Number(index) || 0);
         let anchorId = null;
         for (const [slug, line] of this.headingLineBySlug.entries()) {
             if (line <= index) anchorId = slug;
         }
-        if (anchorId && this.scrollToHeadingId(anchorId)) {
+        if (anchorId && this.scrollToHeadingId(anchorId, { flash })) {
             if (keyword) this.jumpToKeyword(keyword);
             return true;
         }
         return false;
     }
 
-    scrollRenderedElementIntoView(target) {
+    scrollRenderedElementIntoView(target, { flash = false } = {}) {
         if (!target) return;
         // 与旧 vditor 适配器同机制：手算偏移后在真正承载滚动的容器上
         // scrollTo。不能用 target.scrollIntoView({smooth})——它会被点击
@@ -537,8 +541,26 @@ export class HybridMarkdownEditor {
         const targetRect = target.getBoundingClientRect();
         const nextTop = scroller.scrollTop + targetRect.top - viewTop - Math.max(24, scroller.clientHeight * 0.18);
         scroller.scrollTo({ top: Math.max(0, nextTop), behavior: 'smooth' });
-        target.classList.add('is-jump-target');
-        setTimeout(() => target.classList.remove('is-jump-target'), 1600);
+        if (flash) this.flashJumpTarget(target);
+    }
+
+    // 落点闪光以 PM Decoration（JumpTargetHighlight 扩展）渲染。不能像旧编辑器
+    // 那样给目标元素加 is-jump-target 类：编辑模式下那是写进 PM 管辖 DOM 的
+    // 外来属性，DOMObserver 会在重绘时抹掉（实测从未露面）。
+    flashJumpTarget(target) {
+        const view = this.editor?.view;
+        if (!view || !target || !target.isConnected) return;
+        try {
+            const from = view.posAtDOM(target, 0);
+            view.dispatch(view.state.tr.setMeta(jumpTargetPluginKey, { from }));
+            clearTimeout(this.jumpTargetClearTimer);
+            this.jumpTargetClearTimer = setTimeout(() => {
+                const currentView = this.editor?.view;
+                if (currentView) currentView.dispatch(currentView.state.tr.setMeta(jumpTargetPluginKey, null));
+            }, 2200);
+        } catch (_error) {
+            // 目标不在视图内（如源码模式）：只滚动，不闪光。
+        }
     }
 
     getScrollContainer() {

@@ -53,6 +53,7 @@
     "test:tiptap-mixed-task-list": "node test/test_tiptap_mixed_task_list.js",
     "test:tiptap-underline-annotation": "node test/test_tiptap_underline_annotation.js",
     "test:tiptap-blockquote-input": "node test/test_tiptap_blockquote_input.js",
+    "test:toc-jump-highlight": "node test/test_toc_jump_highlight.js",
     "test:css-integrity": "node test/test_css_integrity.js",
     "test:hybrid-editor-time-command": "node test/test_hybrid_editor_time_command.js",
     "test:hybrid-editor-caret-stability": "node test/test_hybrid_editor_caret_stability.js",
