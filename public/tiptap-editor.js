@@ -41,7 +41,7 @@ import {
     TimeMarkerNode,
 } from './managers/tiptap-extensions.js';
 import { TiptapSelectionMenu } from './managers/tiptap-selection-menu.js';
-import { createFileCommandController } from './managers/tiptap-file-command.js';
+import { createFileCommandController, TiptapArticleUploadProgress } from './managers/tiptap-file-command.js';
 import { DEFAULT_ARTICLE_IMAGE_WIDTH } from './managers/article-file-command.js';
 import {
     DumbPadArticleFileLink,
@@ -179,30 +179,36 @@ export class HybridMarkdownEditor {
                 TiptapSelectionMenu,
                 TiptapImageInteractions,
                 DumbPadArticleFileLink,
+                TiptapArticleUploadProgress,
             ],
             content: '',
             autofocus: false,
         });
 
+        // Tiptap 的 Code mark 排除其他装饰类 marks（excluded 默认含 bold/italic/
+        // strike/underline/link/draw/mdHighlight/annotation），行内代码 chip 是
+        // schema 层的「mark 禁区」——后果是「标记盖住行内代码」在 addMark 时被 PM
+        // 直接丢弃：一条批注/一次画线于 code 边界断开，存储与渲染都变成两段（两个
+        // 徽标、波浪线断开），刷新后 getMarkRange 只沿连续段展开，取消一次只去掉一段。
+        // 批注/画线/高亮都是**内容层**语义（用户视角「一个操作 = 一个整体」），这里
+        // 豁免它们不被 code 排除；代码 chip 自身样式不受影响——code mark 仍在文字上，
+        // 只是被外层 span 包住（rank 由 priority 决定：annotation 1100 > draw 1090 >
+        // mdHighlight 1080 > code）。bold/italic/link 等文字级语义保持被排除的默认。
+        // 只动这一个数组，Code 的其他行为（渲染、序列化、输入规则）不变。
+        //
+        // 必须在构造函数中同步应用豁免（不能等 this.editor.on('create') 异步触发）：
+        // app.js 会在 new HybridMarkdownEditor(...) 之后立刻同步调用 setValue(pendingEditorValue)
+        // 载入草稿或首屏文章。若等 create 宏任务，首次 setValue 触发的 normalizeDecorationMarks()
+        // 就会因为 codeType.excluded 仍未豁免而被 ProseMirror 静默丢弃 addMark，导致刷新后
+        // 跨行内代码的批注/画线/高亮重新裂开成两段。
+        this._exemptDecorationMarksFromCode();
+
         this.editor.on('create', () => {
             this.ready = true;
             this._resolveReady();
-            // Tiptap 的 Code mark 排除其他装饰类 marks（excluded 默认含 bold/italic/
-            // strike/underline/link/draw/mdHighlight/annotation），行内代码 chip 是
-            // schema 层的「mark 禁区」——后果是「标记盖住行内代码」在 addMark 时被 PM
-            // 直接丢弃：一条批注/一次画线于 code 边界断开，存储与渲染都变成两段（两个
-            // 徽标、波浪线断开），刷新后 getMarkRange 只沿连续段展开，取消一次只去掉一段。
-            // 批注/画线/高亮都是**内容层**语义（用户视角「一个操作 = 一个整体」），这里
-            // 豁免它们不被 code 排除；代码 chip 自身样式不受影响——code mark 仍在文字上，
-            // 只是被外层 span 包住（rank 由 priority 决定：annotation 1100 > draw 1090 >
-            // mdHighlight 1080 > code）。bold/italic/link 等文字级语义保持被排除的默认。
-            // 只动这一个数组，Code 的其他行为（渲染、序列化、输入规则）不变。
-            const codeType = this.editor.state.schema.marks.code;
-            const exemptNames = ['annotation', 'draw', 'mdHighlight'];
-            if (codeType && Array.isArray(codeType.excluded)) {
-                codeType.excluded = codeType.excluded.filter(
-                    type => !exemptNames.includes(type.name));
-            }
+            this._exemptDecorationMarksFromCode();
+            // 若在 create 宏任务到来前已有内容载入，兜底收敛一次
+            this.normalizeDecorationMarks();
         });
 
         this.editor.on('update', ({ transaction }) => {
@@ -276,6 +282,7 @@ export class HybridMarkdownEditor {
     }
 
     setValue(value, emit = true) {
+        this._exemptDecorationMarksFromCode();
         const nextValue = String(value ?? '');
         this._lastValue = nextValue;
         // 载入事务必须排除出撤销历史。编辑器以 content:'' 创建，正文是靠 setContent
@@ -290,6 +297,15 @@ export class HybridMarkdownEditor {
             this.notifyEditorValueChanged(this.getValue());
         } else {
             this._lastValue = nextValue;
+        }
+    }
+
+    _exemptDecorationMarksFromCode() {
+        const codeType = this.editor?.state?.schema?.marks?.code;
+        const exemptNames = ['annotation', 'draw', 'mdHighlight'];
+        if (codeType && Array.isArray(codeType.excluded)) {
+            codeType.excluded = codeType.excluded.filter(
+                type => !exemptNames.includes(type.name));
         }
     }
 

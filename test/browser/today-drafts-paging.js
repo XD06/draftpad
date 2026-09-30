@@ -284,37 +284,40 @@ module.exports = async function testTodayDraftsPaging(browser) {
         assert.equal(backToToday.day, 'today', 'history returns to today');
         assert.equal(backToToday.pageIndex, 1, 'history lands on the first sheet it left');
 
-        // 行中间的长横扫：整条手势中途交给翻页。「想翻页却触发删除 / 转 Thought」的
-        // 根因是两个手势的判落行程本来就重叠（行 28% 判落、翻页 25% 判落），
-        // 起笔点分不开，只有横扫的长短分得开。
+        // 区域划分：从行两端（边缘翻页热区）起笔翻整页，行中间起笔归行自身操作。
+        // 起手定归属，动效绝不交棒串台。
         const sheet1 = await readSheet(page);
         const sweepRow = await firstRowBox(page);
-        const sweepX = sweepRow.x + sweepRow.width * 0.5;
-        const sweepY = sweepRow.y + sweepRow.height / 2;
-        const forwardSweep = await touchDragOnRow(page, sweepX, sweepY, -(sweepRow.width * 0.6));
-        assert.ok(forwardSweep.flipStarted, 'a long sweep from the middle of a row takes over the page turn while the finger is still down');
-        assert.ok(!forwardSweep.swiping && forwardSweep.swipeX === 0,
-            'the handed-over row wipes its own action strip, so letting go can no longer fire the row action');
+        // 从行右端起笔向左扫：整页翻向下一页
+        const edgeX = sweepRow.x + sweepRow.width - 20;
+        const edgeY = sweepRow.y + sweepRow.height / 2;
+        const forwardSweep = await touchDragOnRow(page, edgeX, edgeY, -(sweepRow.width * 0.5));
+        assert.ok(forwardSweep.flipStarted, 'a sweep from the edge of a row turns the page directly');
+        assert.ok(!forwardSweep.swiping, 'the row action strip is never triggered by an edge swipe');
         await page.waitForTimeout(700);
-        assert.equal((await readSheet(page)).pageIndex, sheet1.pageIndex + 1, 'the long sweep turned to the next sheet');
+        assert.equal((await readSheet(page)).pageIndex, sheet1.pageIndex + 1, 'the edge sweep turned to the next sheet');
 
-        const backSweep = await touchDragOnRow(page, sweepX, sweepY, sweepRow.width * 0.6);
-        assert.ok(backSweep.flipStarted, 'the same handoff turns the sheet back toward the older one');
+        // 从行左端起笔向右扫：整页翻回前一页
+        const leftEdgeX = sweepRow.x + 20;
+        const backSweep = await touchDragOnRow(page, leftEdgeX, edgeY, sweepRow.width * 0.5);
+        assert.ok(backSweep.flipStarted, 'a sweep from the left edge turns the sheet back toward the older one');
         await page.waitForTimeout(700);
         const afterSweeps = await readSheet(page);
         assert.deepEqual(afterSweeps.rowIds, sheet1.rowIds,
-            'both long sweeps moved nothing but the sheet: no draft was deleted or turned into a Thought');
+            'edge page turns moved nothing but the sheet: no draft was deleted or turned into a Thought');
 
-        // 交棒不吃掉行自己的短滑：中段短滑照旧删掉这一条，纸一页都不动。
-        const shortRow = await firstRowBox(page);
-        const shortSwipe = await touchDragOnRow(page,
-            shortRow.x + shortRow.width * 0.5, shortRow.y + shortRow.height / 2, shortRow.width * 0.36);
-        assert.ok(shortSwipe.swiping && shortSwipe.rowId, 'a short swipe from the middle is still owned by that row');
-        assert.ok(!shortSwipe.flipStarted, 'a short swipe never takes over the page turn');
+        // 行中间起笔：归行自身操作，绝不会在中途中断变成翻页
+        const middleRow = await firstRowBox(page);
+        const middleSwipe = await touchDragOnRow(page,
+            middleRow.x + middleRow.width * 0.5, middleRow.y + middleRow.height / 2, middleRow.width * 0.36);
+        assert.ok(middleSwipe.swiping && middleSwipe.rowId, 'a swipe from the middle is strictly owned by that row');
+        assert.ok(!middleSwipe.flipStarted, 'a middle swipe never leaks into page flip');
+        const confirmBtn = await page.waitForSelector('#confirmation-confirm', { timeout: 1500 }).catch(() => null);
+        if (confirmBtn) await confirmBtn.click();
         await page.waitForTimeout(400);
         const afterDelete = await readSheet(page);
-        assert.ok(!afterDelete.rowIds.includes(shortSwipe.rowId), 'the short swipe still deletes exactly that draft');
-        assert.equal(afterDelete.pageIndex, sheet1.pageIndex, 'the short swipe never turned the sheet');
+        assert.ok(!afterDelete.rowIds.includes(middleSwipe.rowId), 'the middle swipe still deletes exactly that draft');
+        assert.equal(afterDelete.pageIndex, sheet1.pageIndex, 'the middle swipe never turned the sheet');
 
         assert.deepEqual(errors, []);
         console.log('Today drafts paging browser regression passed');

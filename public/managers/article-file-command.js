@@ -85,7 +85,7 @@ export function buildArticleFileMarkdown(asset = {}) {
     if (!url) return '';
     const size = Math.max(0, Number(asset.size) || 0);
     const type = safeTitlePart(asset.type || 'application/octet-stream');
-    const title = `${ARTICLE_FILE_TITLE_PREFIX};size=${size};type=${type}`;
+    const title = `${ARTICLE_FILE_TITLE_PREFIX};size=${size};type=${type};name=${safeTitlePart(asset.name || '')}`;
     // label 不再带 📎 前缀：图标由 CSS（a.dumbpad-article-file::before 的主题图标）
     // 提供，label 只放「文件名 · 大小」这类真实信息（旧 label 的 📎 由
     // DumbPadArticleFileLink 的解析期归一化去掉）。

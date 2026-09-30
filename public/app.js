@@ -6,6 +6,7 @@ import ConfirmationManager from './managers/confirmation.js';
 import NoteSyncController from './managers/note-sync-controller.js';
 import SettingsDataPanel from './managers/settings-data-panel.js';
 import { AssetApiClient } from './managers/asset-api-client.js';
+import { renderAssetThumbHtml } from './managers/file-type-icons.js';
 import { WorkspaceRouter } from './managers/workspace-router.js';
 import { ImportTargetRegistry } from './managers/import-target-registry.js';
 import { ClipboardImportCoordinator } from './managers/clipboard-import-coordinator.js';
@@ -501,6 +502,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 .then(({ TodayDraftsManager }) => {
                     todayDraftsManager = new TodayDraftsManager({
                         toaster,
+                        confirmationManager,
                         onMoveToThought: async draft => {
                             const manager = await ensureThoughtsManager();
                             const moved = manager.createTodayDraftThought(draft.text);
@@ -1145,9 +1147,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             const isImage = (item.kind || 'image') === 'image' && item.previewUrl;
             const typeLabel = escapeHtml(item.type || (item.kind === 'file' ? '文件' : '图片'));
             const meta = `${typeLabel} · ${escapeHtml(formatBytes(item.size))} · ${escapeHtml(formatAssetTimestamp(item.createdAt))}`;
-            const thumb = isImage
-                ? `<img class="settings-asset-thumb" src="${escapeHtml(item.previewUrl)}" alt="" loading="lazy" />`
-                : `<div class="settings-asset-thumb settings-asset-thumb-file" aria-hidden="true">📎</div>`;
+            const thumb = renderAssetThumbHtml(item);
             const downloadUrl = escapeHtml(item.downloadUrl || item.originalUrl || '');
             const checked = selectedAssetIds.has(id) ? ' checked' : '';
             return `

@@ -114,21 +114,47 @@ async function main() {
     await new Promise((resolve) => setTimeout(resolve, 30));
     check('user can keep editing during upload', editor.getValue().includes('附件更多文字 ：/file'), editor.getValue());
 
-    // 5. 文件选择 → 上传 → /file 替换为文件引用 Markdown
+    // 5. 文件选择 → 上传 → /file 替换为文件引用 Markdown（含进度卡片渲染与分类属性）
     const pdfFile = new dom.window.File(['pdf-bytes'], '报告.pdf', { type: 'application/pdf' });
     const pngFile = new dom.window.File(['png-bytes'], '截图.png', { type: 'image/png' });
+    let progressCallback = null;
     editor.assetApi = {
-        async uploadFile(file) {
+        async uploadFile(file, { onProgress } = {}) {
+            progressCallback = onProgress;
+            await new Promise((resolve) => setTimeout(resolve, 50));
             return { name: file.name, size: 2048, type: file.type, downloadUrl: `/api/df/stub-report` };
         },
         async uploadImage(file) {
+            await new Promise((resolve) => setTimeout(resolve, 50));
             return { name: file.name, previewUrl: `/api/df/stub-image` };
         },
     };
     const input = fileInputs()[0];
     Object.defineProperty(input, 'files', { value: [pdfFile, pngFile], configurable: true });
     input.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
-    await new Promise((resolve) => setTimeout(resolve, 80));
+
+    // 检查上传中的进度卡片 DOM
+    await new Promise((resolve) => setTimeout(resolve, 15));
+    const cardsDuringUpload = container.querySelectorAll('.article-upload-card');
+    check('upload progress cards rendered during upload', cardsDuringUpload.length === 2, cardsDuringUpload.length);
+    const pdfCard = container.querySelector('.article-upload-card[data-upload-id]');
+    check('upload card displays filename', pdfCard?.querySelector('.article-upload-name')?.textContent === '报告.pdf');
+    check('upload card displays initial progress', pdfCard?.querySelector('.article-upload-status')?.textContent.includes('0%'));
+
+    // 触发进度回调并验证卡片更新
+    if (progressCallback) {
+        progressCallback({ phase: 'uploading', percent: 65, loaded: 1331, total: 2048 });
+        check('progress callback updates status text', pdfCard?.querySelector('.article-upload-status')?.textContent === '上传中 65%');
+        check('progress callback updates progress fill', pdfCard?.querySelector('.article-upload-progress-fill')?.style.width === '65%');
+
+        progressCallback({ phase: 'processing', percent: 100, loaded: 2048, total: 2048 });
+        check('processing phase updates status text', pdfCard?.querySelector('.article-upload-status')?.textContent === '服务器处理中…');
+    }
+
+    // 等待上传完成
+    await new Promise((resolve) => setTimeout(resolve, 90));
+    check('upload cards removed after completion', container.querySelectorAll('.article-upload-card').length === 0);
+
     const finalValue = editor.getValue();
     check('/file replaced after upload', !finalValue.includes('：/file'), finalValue);
     // label 不带 📎（图标由 CSS 提供）；图片默认宽度是「窄」档 360。
@@ -139,7 +165,12 @@ async function main() {
     // 插入位置在上传期间编辑的文字之后（位置随事务映射）
     check('insert position follows edits', finalValue.indexOf('报告.pdf') > finalValue.indexOf('更多文字'), finalValue);
 
-    // 6. 上传失败：响亮提示且不静默成功
+    // 验证渲染的附件胶囊带文件类别属性与主题色
+    const renderedFileLink = container.querySelector('a.dumbpad-article-file');
+    check('attachment capsule has data-file-category="pdf"', renderedFileLink?.getAttribute('data-file-category') === 'pdf', renderedFileLink?.outerHTML);
+    check('attachment capsule has --file-theme color', renderedFileLink?.getAttribute('style')?.includes('--file-theme: #e74c3c'), renderedFileLink?.getAttribute('style'));
+
+    // 6. 上传失败：显示错误卡片与移除按钮
     await setValueAndSelect('失败：/file', 9, 9);
     pressEnter();
     await new Promise((resolve) => setTimeout(resolve, 30));
@@ -153,6 +184,16 @@ async function main() {
     await new Promise((resolve) => setTimeout(resolve, 80));
     const failedValue = editor.getValue();
     check('failed upload leaves doc without reference', !failedValue.includes('报告.pdf'), failedValue);
+
+    const errorCard = container.querySelector('.article-upload-card.is-error');
+    check('failed upload displays error card', Boolean(errorCard), container.querySelector('.article-upload-card')?.className);
+    const removeBtn = errorCard?.querySelector('.article-upload-actions button');
+    check('error card provides remove button', Boolean(removeBtn));
+    if (removeBtn) {
+        removeBtn.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        check('clicking remove cleans up error card', container.querySelectorAll('.article-upload-card').length === 0);
+    }
 
     console.log('');
     if (failures > 0) {

@@ -1,6 +1,6 @@
 import { createTodayDraft, dayWindowKeys, localDayKey, TodayDraftsStore } from './today-drafts-store.js';
 import { escapeTodayDraftHtml, renderTodayDrafts } from './today-drafts-renderer.js';
-import { getTodayDraftSwipeState, isTodayDraftFlipHandoff, isTodayDraftPagerEdge } from './today-drafts-swipe.js';
+import { getTodayDraftSwipeState, isTodayDraftPagerEdge } from './today-drafts-swipe.js';
 import { TODAY_DRAFT_LINE_UNIT, findTodayDraftPageByRow, flattenTodayDraftPages, paginateTodayDraftRows } from './today-drafts-paging.js';
 import TodayDraftsApiClient from './today-drafts-api-client.js';
 import TodayDraftsOutbox from './today-drafts-outbox.js';
@@ -29,12 +29,14 @@ export class TodayDraftsManager {
         apiClient = new TodayDraftsApiClient(),
         outbox = new TodayDraftsOutbox(),
         onMoveToThought = async () => false,
+        confirmationManager = null,
         toaster = null
     } = {}) {
         this.store = store;
         this.apiClient = apiClient;
         this.outbox = outbox;
         this.onMoveToThought = onMoveToThought;
+        this.confirmationManager = confirmationManager;
         this.toaster = toaster;
         this.view = document.getElementById('today-drafts-view');
         this.writingArea = document.getElementById('today-drafts-writing-area');
@@ -70,6 +72,7 @@ export class TodayDraftsManager {
         this.syncInFlight = false;
         this.syncQueued = false;
         this.isComposingDraft = false;
+        this.isRendering = false;
         this.pendingRender = false;
         this.flipFrameBudget = 0;
         this.flipSlowFrames = 0;
@@ -164,7 +167,6 @@ export class TodayDraftsManager {
         this.list?.addEventListener('compositionend', event => {
             if (!event.target.matches('[data-today-draft-text]')) return;
             this.isComposingDraft = false;
-            if (this.pendingRender) this.render();
         });
         this.list?.addEventListener('keydown', event => {
             if (event.target.closest('[data-today-draft-link]')) return;
@@ -184,6 +186,7 @@ export class TodayDraftsManager {
             this.addAfter(input.closest('[data-today-draft-id]')?.dataset.todayDraftId);
         });
         this.list?.addEventListener('focusout', event => {
+            if (this.isRendering) return;
             const input = event.target.closest('[data-today-draft-text]');
             if (!input) return;
             const row = input.closest('[data-today-draft-id]');
@@ -192,7 +195,7 @@ export class TodayDraftsManager {
                 this.remove(row.dataset.todayDraftId);
                 return;
             }
-            this.render();
+            this.render({ force: true });
         });
         this.bindDraftSwipeActions();
         this.bindPagerFlipActions();
@@ -266,12 +269,6 @@ export class TodayDraftsManager {
             if (!interaction.isDragging) return;
 
             event.preventDefault();
-            // 拖过交接线 = 这一下是想翻整页：行的动作条当场撤销，同一根手指接上翻页。
-            // 不这么做的话，「翻页」和「行短滑」在纸面上根本分不开，误删就是这么来的。
-            if (this.handOffRowSwipeToFlip(interaction, event)) {
-                interaction = null;
-                return;
-            }
             const state = getTodayDraftSwipeState(interaction.deltaX, interaction.threshold, interaction.maxSwipe);
             row.style.setProperty('--today-draft-swipe-x', `${state.swipeX}px`);
             row.style.setProperty('--today-draft-swipe-opacity', String(state.actionOpacity));
@@ -316,6 +313,20 @@ export class TodayDraftsManager {
                 return;
             }
             if (action === 'delete') {
+                const confirmed = this.confirmationManager
+                    ? await this.confirmationManager.show({
+                        title: '确认删除',
+                        message: '确定要删除这条草稿吗？此操作无法撤销。',
+                        confirmText: '确定删除',
+                        confirmType: 'danger'
+                    })
+                    : true;
+                if (!confirmed) {
+                    current.row.classList.remove('is-swipe-ready', 'is-swipe-delete');
+                    current.row.style.removeProperty('--today-draft-swipe-x');
+                    current.row.style.removeProperty('--today-draft-swipe-opacity');
+                    return;
+                }
                 current.row.classList.add('is-swipe-departing');
                 await new Promise(resolve => setTimeout(resolve, 160));
                 this.remove(current.id);
@@ -361,40 +372,6 @@ export class TodayDraftsManager {
         };
     }
 
-    // 行拖拽中途交棒给翻页：起点在行中间也照翻，只要行程过了交接线。
-    // 沿用行手势原本的 startX/startY，折痕进度从当前指尖位置连续接上（不跳回 0）；
-    // isDragging 留在 false，让翻页自己的 pointermove 判定方向并 beginFlip。
-    handOffRowSwipeToFlip(current, event) {
-        if (this.pagerInteraction || this.flipAnim || this.flipFrameRaf) return false;
-        const width = this.pager?.clientWidth || 0;
-        if (!isTodayDraftFlipHandoff({ deltaX: current.deltaX, width })) return false;
-        const dir = current.deltaX > 0 ? 'older' : 'newer';
-        // 序列尽头没什么可翻（今天末页再左滑、前天再右滑）：这条手势仍归行的短滑。
-        if (!this.pageAt(dir === 'older' ? -1 : 1)) return false;
-        const row = current.row;
-        row.classList.remove('is-swiping', 'is-swipe-ready', 'is-swipe-thought', 'is-swipe-delete');
-        row.style.removeProperty('--today-draft-swipe-x');
-        row.style.removeProperty('--today-draft-swipe-opacity');
-        this.pagerInteraction = {
-            pointerId: current.pointerId,
-            startX: current.startX,
-            startY: current.startY,
-            deltaX: current.deltaX,
-            dir: null,
-            progress: 0,
-            isDragging: false,
-            ready: false,
-            invalid: false,
-            box: this.pagerBox()
-        };
-        try {
-            this.view?.setPointerCapture?.(event.pointerId);
-        } catch {
-            // Pointer capture is an enhancement.
-        }
-        return true;
-    }
-
     // 整页仿真翻页：右滑（deltaX > 0）掀页看更早历史，左滑（deltaX < 0）
     // 拉回更新日期（阅读类 App 方向语义）。动页由两份拷贝渲染：flip-static
     // 露出已落定部分，flip-flap 镜像出纸背，flip-fx 三件套负责折痕亮线与
@@ -413,15 +390,15 @@ export class TodayDraftsManager {
             // 上一页的落页/回弹补间还没收尾时，新手势直接接管并清场复原
             if (this.flipAnim) {
                 this.hideFlipLayers();
-                this.render();
+                this.render({ force: true });
             }
             if (this.pagerInteraction) return;
             // 页眉的「N/M」是点按入口，不参与拖拽：手势一旦认领就会 setPointerCapture，
             // 浏览器会把随后的 click 改派到捕获元素上，按钮自己的点击就丢了（真机实测）。
             if (event.target.closest('input, textarea, button, a, [contenteditable]')) return;
-            // 行上的横向拖动起手归行操作；从纸边那条热区起笔才直接翻整页。
-            // 行中间的长横扫另有中途交棒（handOffRowSwipeToFlip），两条加起来
-            // 才是完整答案：草稿铺满整页时，纸面空白所剩无几，只有热区翻不动页。
+            // 行上的横向拖动起手归行操作；从草稿两侧边缘区域起笔才直接翻整页。
+            // 中间区域（约 56% 正文区）留给草稿行操作（删除 / 转 Thought），两侧区域（各 22% 或至少 72px）直接翻页。
+            // 起手定归属，手势中途绝不交棒变异，避免动效串台。
             const rowUnderPointer = event.target.closest('[data-today-draft-id]');
             if (rowUnderPointer && !isTodayDraftPagerEdge({
                 clientX: event.clientX,
@@ -496,7 +473,7 @@ export class TodayDraftsManager {
                     }, 220);
                 }
                 // 手势期间被记账的异步刷新在这里补上（finishFlip 走 animate 后自带 render）。
-                if (this.pendingRender && !this.isComposingDraft) this.render();
+                if (this.pendingRender && !this.isComposingDraft && !this.hasActiveDraftInput()) this.render();
                 return;
             }
             suppressNextClick = true;
@@ -516,7 +493,7 @@ export class TodayDraftsManager {
             } else {
                 if (this.pager) this.pager.style.transform = '';
                 this.hideFlipLayers();
-                if (this.pendingRender && !this.isComposingDraft) this.render();
+                if (this.pendingRender && !this.isComposingDraft && !this.hasActiveDraftInput()) this.render();
             }
         });
         this.view?.addEventListener('click', event => {
@@ -571,7 +548,7 @@ export class TodayDraftsManager {
         if (this.viewDay === day && this.viewPageIndex === pageIndex) return false;
         this.viewDay = day;
         this.viewPageIndex = pageIndex;
-        this.render();
+        this.render({ force: true });
         return true;
     }
 
@@ -585,7 +562,7 @@ export class TodayDraftsManager {
         if (!target) {
             // 已经是全序列最后一页：回到当天第 1 页，没有相邻页可掀，直接重排。
             this.viewPageIndex = 0;
-            this.render();
+            this.render({ force: true });
             return true;
         }
         const current = {
@@ -895,7 +872,7 @@ export class TodayDraftsManager {
             this.viewPageIndex = current.targetPage.index;
         }
         this.hideFlipLayers();
-        this.render();
+        this.render({ force: true });
     }
 
     itemsForDay(day) {
@@ -967,7 +944,7 @@ export class TodayDraftsManager {
         const day = draft.day || localDayKey();
         if (this.viewDay !== day) {
             this.viewDay = day;
-            this.render();
+            this.render({ force: true });
         }
         // 一屏只渲染当前页的行，同一天更早页上的记录要先落到它所在的那一页。
         this.goToDraft(id);
@@ -1012,7 +989,7 @@ export class TodayDraftsManager {
         }
         if (!keepView) this.viewDay = draft.day;
         this.persist();
-        this.render();
+        this.render({ force: true });
         this.queueUpsert(draft, 0);
         if (this.input) {
             this.input.value = '';
@@ -1091,7 +1068,7 @@ export class TodayDraftsManager {
         const removed = this.items.find(item => item.id === id);
         this.items = this.items.filter(item => item.id !== id);
         this.persist();
-        this.render();
+        this.render({ force: true });
         if (removed) {
             this.outbox.enqueueDelete(removed);
             this.scheduleSync(0);
@@ -1197,8 +1174,14 @@ export class TodayDraftsManager {
         this.render();
     }
 
+    hasActiveDraftInput() {
+        if (typeof document === 'undefined') return false;
+        const active = document.activeElement;
+        return Boolean(active && active.matches?.('[data-today-draft-text]') && this.list?.contains(active));
+    }
+
     captureActiveDraftInput() {
-        const input = document.activeElement?.matches?.('[data-today-draft-text]')
+        const input = this.hasActiveDraftInput()
             ? document.activeElement
             : null;
         const row = input?.closest('[data-today-draft-id]');
@@ -1219,6 +1202,8 @@ export class TodayDraftsManager {
         const input = this.beginEditingDraft(row, { focus: false });
         if (!input) return;
         input.value = state.value;
+        input.style.height = 'auto';
+        input.style.height = `${Math.max(44, input.scrollHeight)}px`;
         try {
             input.focus({ preventScroll: true });
         } catch {
@@ -1262,7 +1247,7 @@ export class TodayDraftsManager {
         return editor;
     }
 
-    render() {
+    render({ force = false } = {}) {
         if (this.isComposingDraft) {
             this.pendingRender = true;
             return;
@@ -1274,20 +1259,38 @@ export class TodayDraftsManager {
             this.pendingRender = true;
             return;
         }
-        const activeInput = this.captureActiveDraftInput();
-        const today = localDayKey();
-        this.measurePageModel();
-        this.clampView();
-        const page = this.currentPage() || this.pageList[0];
-        this.viewDay = page.day;
-        this.viewPageIndex = page.index;
-        this.applyPageToBase(page);
-        this.setEyebrow(page);
-        this.restoreActiveDraftInput(activeInput);
-        this.pendingRender = false;
-        const todayItems = this.items.filter(item => (item.day || today) === today);
-        this.writingArea?.classList.toggle('is-empty', todayItems.length === 0);
-        this.setHeaderStats(this.viewDay);
-        this.syncPageOverflow();
+        // 正在编辑草稿行时，异步刷新（网络回填/WebSocket 推送等）不得重排撕扯 DOM，
+        // 否则会造成输入中断、虚拟键盘收起或重入报错。记为待渲染，失焦或提交时再刷。
+        if (!force && this.hasActiveDraftInput()) {
+            this.pendingRender = true;
+            return;
+        }
+        if (this.isRendering) return;
+        this.isRendering = true;
+        try {
+            const activeInput = this.captureActiveDraftInput();
+            const today = localDayKey();
+            this.measurePageModel();
+            this.clampView();
+            if (activeInput) {
+                const targetPageIndex = this.pageIndexForDraft(activeInput.id);
+                if (targetPageIndex !== null) {
+                    this.viewPageIndex = targetPageIndex;
+                }
+            }
+            const page = this.currentPage() || this.pageList[0];
+            this.viewDay = page.day;
+            this.viewPageIndex = page.index;
+            this.applyPageToBase(page);
+            this.setEyebrow(page);
+            this.restoreActiveDraftInput(activeInput);
+            this.pendingRender = false;
+            const todayItems = this.items.filter(item => (item.day || today) === today);
+            this.writingArea?.classList.toggle('is-empty', todayItems.length === 0);
+            this.setHeaderStats(this.viewDay);
+            this.syncPageOverflow();
+        } finally {
+            this.isRendering = false;
+        }
     }
 }

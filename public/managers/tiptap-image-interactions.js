@@ -7,6 +7,7 @@
  */
 import { Extension, Image, PM, getMarkRange } from './tiptap-runtime.js';
 import { ARTICLE_FILE_TITLE_PREFIX } from './article-file-command.js';
+import { getFileCategory, FILE_CATEGORIES } from './file-type-icons.js';
 
 const { Plugin, PluginKey } = PM.state;
 const { Decoration, DecorationSet } = PM.view;
@@ -139,7 +140,21 @@ export const DumbPadArticleFileLink = Extension.create({
                 attributes: {
                     articleFileClass: {
                         default: null,
-                        parseHTML: () => null,
+                        parseHTML: (element) => {
+                            if (!isArticleFileLink(element)) return null;
+                            const title = element.getAttribute('title') || '';
+                            const href = element.getAttribute('href') || '';
+                            const typeMatch = title.match(/(?:^|;)type=([^;]+)/);
+                            const nameMatch = title.match(/(?:^|;)name=([^;]+)/);
+                            const mimeType = typeMatch ? decodeURIComponent(typeMatch[1]) : '';
+                            let name = nameMatch ? decodeURIComponent(nameMatch[1]) : '';
+                            if (!name) {
+                                const text = (element.textContent || '').replace(/^\s*\u{1F4CE}\s*/u, '').trim();
+                                name = text.includes(' · ') ? text.slice(0, text.lastIndexOf(' · ')).trim() : text;
+                            }
+                            const cat = getFileCategory(name || href, mimeType);
+                            return cat.id;
+                        },
                         // 与 isArticleFileLink 同一套判定：title 标了附件，或 href 就是资产
                         // 下载 URL（旧数据 / title 丢失的形态）都要拿到 chip 样式与 download。
                         renderHTML: (attributes) => {
@@ -147,7 +162,24 @@ export const DumbPadArticleFileLink = Extension.create({
                             const href = String(attributes.href || '');
                             const isFile = title.startsWith(ARTICLE_FILE_TITLE_PREFIX)
                                 || ASSET_DOWNLOAD_URL_RE.test(href);
-                            return isFile ? { class: 'dumbpad-article-file', download: '' } : {};
+                            if (!isFile) return {};
+
+                            const catId = attributes.articleFileClass;
+                            let cat = (catId && FILE_CATEGORIES[catId]) ? FILE_CATEGORIES[catId] : null;
+                            if (!cat) {
+                                const typeMatch = title.match(/(?:^|;)type=([^;]+)/);
+                                const nameMatch = title.match(/(?:^|;)name=([^;]+)/);
+                                const mimeType = typeMatch ? decodeURIComponent(typeMatch[1]) : '';
+                                const name = nameMatch ? decodeURIComponent(nameMatch[1]) : '';
+                                cat = getFileCategory(name || href, mimeType);
+                            }
+
+                            return {
+                                class: 'dumbpad-article-file',
+                                download: '',
+                                'data-file-category': cat.id,
+                                style: `--file-theme: ${cat.color};`,
+                            };
                         },
                     },
                 },

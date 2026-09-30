@@ -7,6 +7,8 @@
  * textarea 的 findFileCommandBeforeCursor / replaceFileCommand。上传期间
  * 用户继续编辑是常态：插入用的是映射后的最新位置，失败时响亮提示。
  */
+import { Extension, PM } from './tiptap-runtime.js';
+import { getFileCategory, getFileIconSvg } from './file-type-icons.js';
 import {
     AssetApiClient,
     ARTICLE_FILE_ACCEPT,
@@ -17,8 +19,184 @@ import {
     DEFAULT_ARTICLE_IMAGE_WIDTH,
     findFileCommandBeforeCursor,
     buildArticleFileMarkdown,
+    formatFileSize,
     replaceFileCommand,
 } from './article-file-command.js';
+
+const { Plugin, PluginKey } = PM.state;
+const { Decoration, DecorationSet } = PM.view;
+
+export const articleUploadProgressPluginKey = new PluginKey('dumbpadArticleUploadProgress');
+
+function renderUploadCardWidgetDom(item, view) {
+    if (item.dom) return item.dom;
+
+    const card = document.createElement('span');
+    card.className = 'article-upload-card';
+    card.dataset.uploadId = item.id;
+    card.setAttribute('contenteditable', 'false');
+    card.setAttribute('role', 'status');
+
+    const cat = item.isImage
+        ? { id: 'image', name: '图片', color: 'var(--primary-color)' }
+        : getFileCategory(item.file?.name, item.file?.type);
+    const themeColor = cat.color || 'var(--primary-color)';
+    card.style.setProperty('--upload-theme', themeColor);
+
+    const icon = document.createElement('span');
+    icon.className = 'article-upload-icon';
+    icon.setAttribute('aria-hidden', 'true');
+    icon.style.color = themeColor;
+    icon.style.background = `color-mix(in srgb, ${themeColor} 15%, transparent)`;
+    icon.innerHTML = item.isImage
+        ? getFileIconSvg('image', item.file?.type || '', { size: 20 })
+        : getFileIconSvg(cat, item.file?.type || '', { size: 20 });
+
+    const content = document.createElement('span');
+    content.className = 'article-upload-content';
+
+    const heading = document.createElement('span');
+    heading.className = 'article-upload-heading';
+
+    const nameEl = document.createElement('span');
+    nameEl.className = 'article-upload-name';
+    nameEl.textContent = item.file?.name || (item.isImage ? '图片' : '文件');
+
+    const sizeEl = document.createElement('span');
+    sizeEl.className = 'article-upload-size';
+    sizeEl.textContent = formatFileSize(item.file?.size || item.total || 0);
+
+    heading.append(nameEl, sizeEl);
+
+    const statusEl = document.createElement('span');
+    statusEl.className = 'article-upload-status';
+    const percent = Math.round(item.percent || 0);
+    statusEl.textContent = item.phase === 'processing'
+        ? '服务器处理中…'
+        : (item.phase === 'error' ? (item.error || '上传失败') : `上传中 ${percent}%`);
+
+    const progress = document.createElement('span');
+    progress.className = 'article-upload-progress';
+
+    const progressFill = document.createElement('span');
+    progressFill.className = 'article-upload-progress-fill';
+    progressFill.style.width = `${item.phase === 'error' ? 100 : percent}%`;
+    progress.append(progressFill);
+
+    content.append(heading, statusEl, progress);
+    card.append(icon, content);
+
+    const actions = document.createElement('span');
+    actions.className = 'article-upload-actions';
+    actions.hidden = item.phase !== 'error';
+
+    const removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.textContent = '移除';
+    removeBtn.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        view?.dispatch?.(view.state.tr.setMeta(articleUploadProgressPluginKey, {
+            type: 'REMOVE_UPLOADS',
+            ids: [item.id],
+        }));
+    });
+    actions.append(removeBtn);
+    card.append(actions);
+
+    item.dom = card;
+    item.statusEl = statusEl;
+    item.progressFill = progressFill;
+    item.actions = actions;
+
+    return card;
+}
+
+function updateUploadProgress(item, progress = {}) {
+    if (progress.phase) item.phase = progress.phase;
+    if (typeof progress.percent === 'number') item.percent = progress.percent;
+    if (typeof progress.total === 'number') item.total = progress.total;
+    if (typeof progress.loaded === 'number') item.loaded = progress.loaded;
+    if (progress.error) item.error = progress.error;
+
+    if (!item.dom) return;
+
+    const roundPercent = Math.min(100, Math.max(0, Math.round(item.percent || 0)));
+    if (item.phase === 'error') {
+        item.dom.classList.add('is-error');
+        if (item.statusEl) item.statusEl.textContent = item.error || '上传失败';
+        if (item.progressFill) item.progressFill.style.width = '100%';
+        if (item.actions) item.actions.hidden = false;
+        item.dom.setAttribute('aria-label', `${item.file?.name || '文件'}，上传失败`);
+    } else if (item.phase === 'processing') {
+        if (item.statusEl) item.statusEl.textContent = '服务器处理中…';
+        if (item.progressFill) item.progressFill.style.width = '100%';
+        item.dom.setAttribute('aria-label', `${item.file?.name || '文件'}，服务器处理中…`);
+    } else {
+        if (item.statusEl) item.statusEl.textContent = `上传中 ${roundPercent}%`;
+        if (item.progressFill) item.progressFill.style.width = `${roundPercent}%`;
+        item.dom.setAttribute('aria-label', `${item.file?.name || '文件'}，上传中 ${roundPercent}%`);
+    }
+}
+
+export const TiptapArticleUploadProgress = Extension.create({
+    name: 'tiptapArticleUploadProgress',
+
+    addProseMirrorPlugins() {
+        return [
+            new Plugin({
+                key: articleUploadProgressPluginKey,
+                state: {
+                    init() {
+                        return { items: [] };
+                    },
+                    apply(tr, pluginState) {
+                        const meta = tr.getMeta(articleUploadProgressPluginKey);
+                        let items = pluginState.items;
+                        if (meta) {
+                            if (meta.type === 'ADD_UPLOADS') {
+                                items = [...items, ...(meta.uploads || [])];
+                            } else if (meta.type === 'REMOVE_UPLOADS') {
+                                const removeIds = new Set(meta.ids || []);
+                                items = items.filter(item => !removeIds.has(item.id));
+                            } else if (meta.type === 'CLEAR') {
+                                items = [];
+                            }
+                        }
+                        if (tr.docChanged && items.length > 0) {
+                            items = items.map(item => ({
+                                ...item,
+                                pos: tr.mapping.map(item.pos, 0),
+                            }));
+                        }
+                        return { items };
+                    },
+                },
+                props: {
+                    decorations(state) {
+                        const pluginState = articleUploadProgressPluginKey.getState(state);
+                        if (!pluginState || !pluginState.items.length) {
+                            return DecorationSet.empty;
+                        }
+                        const docSize = state.doc.content.size;
+                        const decorations = [];
+                        pluginState.items.forEach((item, index) => {
+                            const pos = Math.max(0, Math.min(item.pos, docSize));
+                            decorations.push(
+                                Decoration.widget(pos, (view) => renderUploadCardWidgetDom(item, view), {
+                                    key: item.id,
+                                    side: index,
+                                    stopEvent: () => true,
+                                })
+                            );
+                        });
+                        return DecorationSet.create(state.doc, decorations);
+                    },
+                },
+            }),
+        ];
+    },
+});
 
 const FILE_COMMAND_LENGTH = FILE_COMMAND.length;
 
@@ -142,21 +320,113 @@ export function createFileCommandController(adapter) {
 
     async function handleFiles(files) {
         if (!files.length) return;
-        const hasWysiwygTarget = pendingPos !== null && !adapter.sourceMode;
-        if (!hasWysiwygTarget && !pendingSourceRange) return;
+        const isWysiwyg = pendingPos !== null && !adapter.sourceMode;
+        if (!isWysiwyg && !pendingSourceRange) return;
 
         const assetApi = getAssetApi();
-        const uploads = files.map((file) => {
-            const isImage = isImageFile(file);
-            const upload = isImage
-                ? assetApi.uploadImage(file, {})
-                : assetApi.uploadFile(file, {});
-            return { isImage, upload };
-        });
-        if (files.length > 1) {
+
+        if (isWysiwyg) {
+            deletePendingCommand();
+            const view = adapter.editor?.view;
+            const startPos = pendingPos;
+            const uploadItems = files.map((file, idx) => {
+                const isImage = isImageFile(file);
+                return {
+                    id: `upload-${Date.now()}-${idx}-${Math.random().toString(36).slice(2, 7)}`,
+                    file,
+                    isImage,
+                    pos: startPos,
+                    percent: 0,
+                    phase: 'uploading',
+                    error: null,
+                    dom: null,
+                    statusEl: null,
+                    progressFill: null,
+                    actions: null,
+                };
+            });
+
+            if (view) {
+                view.dispatch(view.state.tr.setMeta(articleUploadProgressPluginKey, {
+                    type: 'ADD_UPLOADS',
+                    uploads: uploadItems,
+                }));
+            }
+
+            if (files.length > 1) {
+                window.toaster?.show?.(`正在上传 ${files.length} 个文件…`, 'info', false, 2400);
+            }
+
+            const uploads = uploadItems.map((item) => {
+                const onProgress = (p) => updateUploadProgress(item, p);
+                const upload = item.isImage
+                    ? assetApi.uploadImage(item.file, { onProgress })
+                    : assetApi.uploadFile(item.file, { onProgress });
+                return { item, upload };
+            });
+
+            const markdowns = [];
+            const failures = [];
+            await Promise.all(uploads.map(async ({ item, upload }, index) => {
+                try {
+                    const asset = await upload;
+                    markdowns[index] = item.isImage
+                        ? buildArticleImageMarkdown(asset)
+                        : buildArticleFileMarkdown(asset);
+                } catch (error) {
+                    console.error(`Failed to upload article ${item.isImage ? 'image' : 'file'}:`, error);
+                    updateUploadProgress(item, { phase: 'error', error: error?.message || '上传失败' });
+                    failures.push(item.file);
+                }
+            }));
+
+            const successfulIds = uploads
+                .map((u, i) => (markdowns[i] ? u.item.id : null))
+                .filter(Boolean);
+            if (view && successfulIds.length > 0) {
+                view.dispatch(view.state.tr.setMeta(articleUploadProgressPluginKey, {
+                    type: 'REMOVE_UPLOADS',
+                    ids: successfulIds,
+                }));
+            }
+
+            const ready = markdowns.filter(Boolean);
+            if (ready.length) {
+                insertIntoWysiwyg(ready);
+            }
+            if (failures.length) {
+                const label = failures.some(file => isImageFile(file)) ? '图片' : '文件';
+                window.toaster?.show?.(`${label}上传失败，请重试`, 'error', false, 3200);
+            }
+            pendingPos = null;
+            pendingSourceRange = null;
+            return;
+        }
+
+        // 源码模式
+        deletePendingCommand();
+        if (files.length === 1) {
+            window.toaster?.show?.(`正在上传 ${files[0].name}…`, 'info', false, 2400);
+        } else {
             window.toaster?.show?.(`正在上传 ${files.length} 个文件…`, 'info', false, 2400);
         }
-        deletePendingCommand();
+
+        const uploads = files.map((file) => {
+            const isImage = isImageFile(file);
+            let lastPercent = 0;
+            const onProgress = ({ phase, percent }) => {
+                if (phase === 'processing') {
+                    window.toaster?.show?.(`服务器处理中：${file.name}…`, 'info', false, 1800);
+                } else if (typeof percent === 'number' && percent - lastPercent >= 15) {
+                    lastPercent = percent;
+                    window.toaster?.show?.(`上传中 ${percent}%：${file.name}`, 'info', false, 1200);
+                }
+            };
+            const upload = isImage
+                ? assetApi.uploadImage(file, { onProgress })
+                : assetApi.uploadFile(file, { onProgress });
+            return { isImage, upload };
+        });
 
         const markdowns = [];
         const failures = [];
@@ -174,11 +444,7 @@ export function createFileCommandController(adapter) {
 
         const ready = markdowns.filter(Boolean);
         if (ready.length) {
-            if (pendingSourceRange) {
-                insertIntoSourceMode(ready);
-            } else {
-                insertIntoWysiwyg(ready);
-            }
+            insertIntoSourceMode(ready);
         }
         if (failures.length) {
             const label = failures.some(file => isImageFile(file)) ? '图片' : '文件';

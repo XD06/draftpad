@@ -542,6 +542,29 @@ async function main() {
         }
     }
 
+    // 21. 首屏同步载入断言：app.js 在 new HybridMarkdownEditor 之后立刻同步调用 setValue()
+    //     （此时 create 宏任务尚未触发），断言 codeType.excluded 已在构造期同步豁免，
+    //     首屏文章跨行内代码的批注 / 画线 / 高亮不会被切开成多段。
+    {
+        const syncContainer = document.createElement('div');
+        document.body.appendChild(syncContainer);
+        const syncEditor = new HybridMarkdownEditor(syncContainer, {});
+        // 关键断言：尚未 await whenReady() 时，excluded 已排除装饰 marks
+        const codeType = syncEditor.editor.state.schema.marks.code;
+        check('decoration marks are exempted from code.excluded synchronously on construction',
+            !codeType.excluded.some(m => ['annotation', 'draw', 'mdHighlight'].includes(m.name)));
+
+        // 关键断言：立即同步 setValue，单条跨代码批注即刻解析为单个 span 与单个 badge
+        const syncSource = '<span data-note="同步测试" style="text-decoration:underline wavy #e74c3c;">前 `beta()` 后</span>';
+        syncEditor.setValue(syncSource, false);
+        const renderedSpans = syncContainer.querySelectorAll('.has-annotation');
+        const renderedBadges = syncContainer.querySelectorAll('.annotation-badge');
+        check('synchronous setValue before create event renders single annotation span and badge',
+            renderedSpans.length === 1 && renderedBadges.length === 1,
+            { spans: renderedSpans.length, badges: renderedBadges.length, html: syncContainer.querySelector('.tiptap')?.innerHTML });
+        syncContainer.remove();
+    }
+
     console.log('');
     if (failures > 0) {
         console.error(`${failures} selection menu checks failed`);

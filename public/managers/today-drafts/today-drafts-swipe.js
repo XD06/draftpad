@@ -1,31 +1,39 @@
-// 纸边翻页热区：行内两端各这么多像素起笔算「翻整页」，中间留给行操作
-// （右滑删除 / 左滑转 Thought）。这是「起手就翻页」的快速通道；从行中间起笔的
-// 长横扫另有中途交棒，见下面的 TODAY_DRAFT_FLIP_HANDOFF_RATIO。
-export const TODAY_DRAFT_PAGER_EDGE = 32;
+// 触摸区域按起笔划分：
+// 草稿中间位置（约占中央 56% 宽度的正文区）起笔触发草稿行操作（左滑转 Thought / 右滑删除）；
+// 纸张两侧边缘（两端各占约 22% 宽度，或至少 72px 宽的舒适大拇指翻页区）起笔触发整页翻页。
+// 起手定归属，手势中途绝不交棒变异，保证动效不串台、操作可预期。
+export const TODAY_DRAFT_PAGER_EDGE_RATIO = 0.22;
+export const TODAY_DRAFT_PAGER_MIN_EDGE = 72;
+export const TODAY_DRAFT_PAGER_EDGE = TODAY_DRAFT_PAGER_MIN_EDGE;
 
-export function isTodayDraftPagerEdge({ clientX, rect, edgeWidth = TODAY_DRAFT_PAGER_EDGE } = {}) {
-    const width = Math.max(0, Number(edgeWidth) || 0);
+export function isTodayDraftPagerEdge({
+    clientX,
+    rect,
+    edgeWidth,
+    edgeRatio = TODAY_DRAFT_PAGER_EDGE_RATIO,
+    minEdge = TODAY_DRAFT_PAGER_MIN_EDGE
+} = {}) {
     const left = Number(rect?.left);
     const right = Number(rect?.right);
     const x = Number(clientX);
     if (!Number.isFinite(left) || !Number.isFinite(right) || !Number.isFinite(x)) return false;
     if (right <= left) return false;
     if (x < left || x > right) return false;
-    // 比行本身还宽的热区没有意义：整行都会变成翻页区，行操作就没有落点了。
-    const band = Math.min(width, (right - left) / 2);
+
+    const rowWidth = right - left;
+    const targetEdge = Number.isFinite(edgeWidth) && edgeWidth > 0
+        ? Number(edgeWidth)
+        : Math.max(Number(minEdge) || 0, rowWidth * (Number(edgeRatio) || 0));
+
+    // 比两倍热区还窄的极端小宽度行无法容纳中间操作区，整行归翻页
+    if (rowWidth <= targetEdge * 2) {
+        return true;
+    }
+
+    // 保证中间至少保留 30% 宽度给草稿行操作
+    const maxBand = rowWidth * 0.35;
+    const band = Math.min(maxBand, Math.max(0, targetEdge));
     return x - left <= band || right - x <= band;
-}
-
-// 行短滑与整页翻的判落行程本来就是重叠的（行在 28% 行宽判落、翻页在 25% 纸宽判落），
-// 光靠起笔点分不开。交接线画在行的动作行程之外：横扫过这个比例的纸宽就是「想翻整页」，
-// 整条手势交给翻页、行的动作条当场撤销——想翻页的人甩得远，误删因此不会发生。
-export const TODAY_DRAFT_FLIP_HANDOFF_RATIO = 0.45;
-
-export function isTodayDraftFlipHandoff({ deltaX, width, ratio = TODAY_DRAFT_FLIP_HANDOFF_RATIO } = {}) {
-    const safeWidth = Number(width) || 0;
-    const safeRatio = Math.min(1, Math.max(0, Number(ratio) || 0));
-    if (safeWidth <= 0 || safeRatio <= 0) return false;
-    return Math.abs(Number(deltaX) || 0) >= safeWidth * safeRatio;
 }
 
 export function getTodayDraftSwipeState(distance, threshold, maxSwipe) {

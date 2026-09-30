@@ -34,9 +34,9 @@ function run() {
         'public/managers/today-drafts/today-drafts-renderer.js',
         ['formatTodayDraftTime', 'renderTodayDrafts', 'renderTodayDraftItem']
     );
-    const { getTodayDraftSwipeState, isTodayDraftFlipHandoff, isTodayDraftPagerEdge, TODAY_DRAFT_FLIP_HANDOFF_RATIO, TODAY_DRAFT_PAGER_EDGE } = loadModule(
+    const { getTodayDraftSwipeState, isTodayDraftPagerEdge, TODAY_DRAFT_PAGER_EDGE, TODAY_DRAFT_PAGER_EDGE_RATIO, TODAY_DRAFT_PAGER_MIN_EDGE } = loadModule(
         'public/managers/today-drafts/today-drafts-swipe.js',
-        ['getTodayDraftSwipeState', 'isTodayDraftFlipHandoff', 'isTodayDraftPagerEdge', 'TODAY_DRAFT_FLIP_HANDOFF_RATIO', 'TODAY_DRAFT_PAGER_EDGE']
+        ['getTodayDraftSwipeState', 'isTodayDraftPagerEdge', 'TODAY_DRAFT_PAGER_EDGE', 'TODAY_DRAFT_PAGER_EDGE_RATIO', 'TODAY_DRAFT_PAGER_MIN_EDGE']
     );
     const { ImportTargetRegistry } = loadModule(
         'public/managers/import-target-registry.js',
@@ -91,13 +91,15 @@ function run() {
     assert(rightSwipe.swipeX === 72, 'right swipes should keep their signed direction for the row transform');
     const idleSwipe = getTodayDraftSwipeState(0, 64, 92);
     assert(idleSwipe.direction === null && !idleSwipe.ready && idleSwipe.actionOpacity === 0, 'an untouched row must not expose either swipe action');
-    // 纸边翻页热区：两端各 32px 起笔翻整页，中间留给行操作。
+    // 纸边翻页热区与中间行操作区划分：
+    // 行两端各占约 22% 宽度（至少 72px）起笔归翻整页，中间约 56% 留给行操作。
     const rowRect = { left: 100, right: 460, width: 360 };
-    assert(TODAY_DRAFT_PAGER_EDGE === 32, 'the pager edge band should be a single shared constant for both gesture owners');
+    assert(TODAY_DRAFT_PAGER_EDGE === 72, 'the pager edge band should be a single shared constant for both gesture owners');
+    assert(TODAY_DRAFT_PAGER_EDGE_RATIO === 0.22, 'the edge ratio covers comfortable thumb reach from both screen sides');
     assert(isTodayDraftPagerEdge({ clientX: 110, rect: rowRect }), 'a drag starting on the left edge of a row belongs to the pager');
     assert(isTodayDraftPagerEdge({ clientX: 450, rect: rowRect }), 'a drag starting on the right edge of a row belongs to the pager');
-    assert(isTodayDraftPagerEdge({ clientX: 132, rect: rowRect }), 'the edge band is inclusive of its boundary pixel');
-    assert(!isTodayDraftPagerEdge({ clientX: 133, rect: rowRect }), 'one pixel past the edge band goes back to the row');
+    assert(isTodayDraftPagerEdge({ clientX: 179, rect: rowRect }), 'the edge band includes boundary reach (79px on 360px row)');
+    assert(!isTodayDraftPagerEdge({ clientX: 181, rect: rowRect }), 'moving into the central region goes back to the row');
     assert(!isTodayDraftPagerEdge({ clientX: 280, rect: rowRect }), 'the middle of a row keeps the row swipe actions');
     assert(!isTodayDraftPagerEdge({ clientX: 90, rect: rowRect }) && !isTodayDraftPagerEdge({ clientX: 470, rect: rowRect }),
         'a pointer outside the row is not claimed by that row');
@@ -106,16 +108,6 @@ function run() {
     assert(!isTodayDraftPagerEdge({ clientX: 120, rect: { left: 0, right: 0 } }) && !isTodayDraftPagerEdge({ clientX: NaN, rect: rowRect })
         && !isTodayDraftPagerEdge({}) && !isTodayDraftPagerEdge({ clientX: 120 }),
         'an unmeasurable rect or pointer must not hijack the row');
-    // 长横扫的中途交棒：起笔点在行中间也算，只要行程过了这条线。行的动作行程
-    // 封顶在 0.38 行宽，交棒线必须落在它之外，否则短滑永远开不到底。
-    assert(TODAY_DRAFT_FLIP_HANDOFF_RATIO === 0.45, 'the handoff line should be one shared constant, not a number inlined in the manager');
-    assert(!isTodayDraftFlipHandoff({ deltaX: 360 * 0.38, width: 360 }), 'the row must be able to reach its own full travel before any handoff');
-    assert(isTodayDraftFlipHandoff({ deltaX: -(360 * 0.45), width: 360 }), 'a left sweep across the line belongs to the pager');
-    assert(isTodayDraftFlipHandoff({ deltaX: 360 * 0.45, width: 360 }), 'a right sweep across the line belongs to the pager as well');
-    assert(!isTodayDraftFlipHandoff({ deltaX: -(360 * 0.3), width: 360 }), 'a short swipe stays a row action in both directions');
-    assert(!isTodayDraftFlipHandoff({ deltaX: 200, width: 0 }) && !isTodayDraftFlipHandoff({ deltaX: 200 })
-        && !isTodayDraftFlipHandoff({ deltaX: NaN, width: 360 }) && !isTodayDraftFlipHandoff({}),
-        'an unmeasurable paper must never steal the row gesture');
     const readonlyRendered = renderTodayDrafts([{ id: 'draft-old', text: '昨天的记录', day: '2026-08-02' }], { readonly: true });
     assert(readonlyRendered.includes('is-readonly'), 'historical-day rows should render read-only');
     assert(readonlyRendered.includes('加入今日') && readonlyRendered.includes('转为 Thought') && !readonlyRendered.includes('松开删除'),
@@ -234,18 +226,13 @@ function run() {
         'the pager may no longer hand every row drag to the row owner');
     assert(todayManagerSource.includes('flipToAdjacentPage()') && todayManagerSource.includes("this.eyebrow?.addEventListener('click'"),
         'tapping the page counter turns the sheet through the same flip the gesture uses');
-    assert(todayManagerSource.includes('this.eyebrow.disabled = !paged'), 'the counter stops being a button when there is nothing to turn');
-    assert(todayManagerSource.includes('this.handOffRowSwipeToFlip(interaction, event)') && /handOffRowSwipeToFlip\(interaction, event\)\) \{\s*\n\s*interaction = null;/.test(todayManagerSource),
-        'a long sweep that started on a row is handed to the pager mid-drag and the row lets go of it');
-    assert(todayManagerSource.includes('isTodayDraftFlipHandoff({ deltaX: current.deltaX, width })'),
-        'the handoff line is one shared predicate, not a second copy of the arithmetic');
-    assert(todayManagerSource.includes("if (!this.pageAt(dir === 'older' ? -1 : 1)) return false;"),
-        'at the end of the sequence there is nothing to turn, so the row keeps even a long swipe');
-    assert(todayManagerSource.includes('startX: current.startX') && todayManagerSource.includes('isDragging: false'),
-        'the handed-off flip continues from the finger instead of restarting the crease at zero');
-    assert((todayManagerSource.match(/classList\.remove\('is-swiping', 'is-swipe-ready', 'is-swipe-thought', 'is-swipe-delete'\)/g) || []).length >= 2,
-        'handing over must wipe the row action strip clean, or the release still deletes');
-    assert(!todayManagerSource.includes('const pagerBox ='), 'the pager geometry has a single definition shared by gesture and handoff');
+    assert(!todayManagerSource.includes('handOffRowSwipeToFlip'),
+        'mid-drag handoff is removed: gestures are strictly isolated to prevent animation corruption');
+    assert(!todayManagerSource.includes('isTodayDraftFlipHandoff'),
+        'row swipes stay row actions and never morph into page turns mid-flight');
+    assert((todayManagerSource.match(/classList\.remove\('is-swiping', 'is-swipe-ready', 'is-swipe-thought', 'is-swipe-delete'\)/g) || []).length >= 1,
+        'resetting row swipe must wipe the action classes clean');
+    assert(!todayManagerSource.includes('const pagerBox ='), 'the pager geometry has a single definition shared by gestures');
     assert(todayManagerSource.includes('copyDraftToToday'), 'historical rows should expose the copy-to-today action');
     assert(todayManagerSource.includes('completed: item.completed === true'), 'copying a historical draft into today should preserve its completion state');
     assert(todayManagerSource.includes('toaster?.show'), 're-adding a historical draft into today should surface a toast confirmation');
@@ -278,6 +265,7 @@ function run() {
     assert(!todayManagerSource.includes('data-today-draft-remove'), 'the manager should not restore removed row-level delete controls');
     assert(todayManagerSource.includes('bindDraftSwipeActions'), 'today draft rows should bind their own directional swipe actions');
     assert(todayManagerSource.includes('this.onMoveToThought'), 'moving a draft into Thought should stay behind an application-level callback');
+    assert(todayManagerSource.includes('this.confirmationManager'), 'today drafts deletion should be guarded by the universal confirmation manager');
     assert(todayManagerSource.includes('this.movingDraftIds'), 'a draft being moved into Thought should not be transferred twice');
     assert(todayManagerSource.includes('mergeRemoteItems') && todayManagerSource.includes('retryOutbox'), 'today drafts should merge server state and retry local pending writes');
     assert(appSource.includes('createTodayDraftThought(draft.text)'), 'the application should transfer a left-swiped today draft into Thought');
@@ -302,6 +290,10 @@ function run() {
     assert(todayStyles.includes('.today-draft-swipe-action--delete'), 'today draft rows should expose a right-swipe delete affordance');
     assert(todayStyles.includes('transform: translate(-50%, -65%) rotate(-45deg);'), 'the completion mark should be centered within the square rather than positioned with fixed offsets');
     assert(!todayStyles.includes('.today-draft-text:focus-visible,'), 'row editing should avoid a detached input outline');
+    assert(todayManagerSource.includes('hasActiveDraftInput'), 'today drafts manager should detect active draft input to protect editing');
+    assert(todayManagerSource.includes('this.isRendering'), 'today drafts manager should guard against reentrant renders');
+    assert(todayManagerSource.includes('if (this.isRendering) return;'), 'focusout during DOM replacement must be ignored');
+    assert(!todayManagerSource.includes('if (this.pendingRender) this.render();'), 'compositionend must not teardown inline editor');
 
     console.log('Today drafts workspace checks passed');
 }
