@@ -350,7 +350,7 @@ async function main() {
             return range ? `${range.from}-${range.to}` : 'null';
         });
 
-        const onePiece = async ({ title, source, name, selector, expectSegments, expectReloadRanges }) => {
+        const onePiece = async ({ title, source, name, selector, expectSegments }) => {
             editor.setValue(source, false);
             markWholeParagraph(name);
             await new Promise((resolve) => setTimeout(resolve, 30));
@@ -363,19 +363,9 @@ async function main() {
                 typed.spans === expectSegments, JSON.stringify(typed));
             check(`${title} / ${name}: segments survive reload`,
                 reloaded.spans === expectSegments, JSON.stringify(reloaded));
-            if (expectReloadRanges) {
-                // 已知偏差，与本次抬 priority 无关（改动前后实测值完全相同）：draw 的
-                // expelEnclosingWhitespace 会把 run 末尾的空格赶到 span 外，而跨行内代码
-                // 时每个 span 都以空格收尾，于是刷新后的取消范围比打字时短一个空格。
-                // 钉住实测值，而不是假装它相等。
-                check(`${title} / ${name}: reload cancel ranges (enclosing space expelled)`,
-                    JSON.stringify(reloaded.ranges) === JSON.stringify(expectReloadRanges),
-                    `reloaded ${JSON.stringify(reloaded.ranges)} typed ${JSON.stringify(typed.ranges)}`);
-            } else {
-                check(`${title} / ${name}: cancel range typing == reload`,
-                    JSON.stringify(typed.ranges) === JSON.stringify(reloaded.ranges),
-                    `typed ${JSON.stringify(typed.ranges)} vs reloaded ${JSON.stringify(reloaded.ranges)}`);
-            }
+            check(`${title} / ${name}: cancel range typing == reload`,
+                JSON.stringify(typed.ranges) === JSON.stringify(reloaded.ranges),
+                `typed ${JSON.stringify(typed.ranges)} vs reloaded ${JSON.stringify(reloaded.ranges)}`);
             check(`${title} / ${name}: reload is idempotent`, editor.getValue() === typedValue, editor.getValue());
             return { typedValue, reloaded };
         };
@@ -384,11 +374,79 @@ async function main() {
         await onePiece({ title: 'crossing link', source: '甲 [链接](https://example.com) 丁', name: 'mdHighlight', selector: 'mark.md-mark', expectSegments: 1 });
         await onePiece({ title: 'crossing bold', source: '甲 **粗体** 丁', name: 'draw', selector: '[data-draw]', expectSegments: 1 });
         await onePiece({ title: 'crossing bold', source: '甲 **粗体** 丁', name: 'mdHighlight', selector: 'mark.md-mark', expectSegments: 1 });
-        // 已知取舍：行内代码是 code.excluded 的 schema 级禁区（只给 annotation 开了豁免），
-        // 跨代码片段仍然分段——代码自己的样式要保留，代价是取消要按段点。这里钉住的是
-        // 「分段数在打字与刷新后一致」，不是「变成一段」。
-        await onePiece({ title: 'crossing code', source: '甲 `code` 丁', name: 'draw', selector: '[data-draw]', expectSegments: 2, expectReloadRanges: ['1-2', '8-9'] });
-        await onePiece({ title: 'crossing code', source: '甲 `code` 丁', name: 'mdHighlight', selector: 'mark.md-mark', expectSegments: 2 });
+        // 行内代码也不再切开一次操作：code.excluded 的豁免从「只给 annotation」扩到
+        // 画线 / 高亮之后，跨代码片段是单 span、取消一次清干净，且打字与刷新同范围
+        // （旧的第二条「reload 范围短一个空格」偏差随拆段一起消失——那本来就是不连续
+        // 造成的，见下面 §20 的 DOM 与自愈断言）。
+        await onePiece({ title: 'crossing code', source: '甲 `code` 丁', name: 'draw', selector: '[data-draw]', expectSegments: 1 });
+        await onePiece({ title: 'crossing code', source: '甲 `code` 丁', name: 'mdHighlight', selector: 'mark.md-mark', expectSegments: 1 });
+        await onePiece({ title: 'crossing code', source: '甲 `code` 丁', name: 'annotation', selector: '.has-annotation', expectSegments: 1 });
+
+        // 20. 与行内代码共存的四条边界（本次改动的全部代价都在这几行上，逐条钉住）：
+        //     ① 代码 chip 自身样式没被吞；② 反向叠加不切断已有标记；③ 旧数据载入自愈；
+        //     ④ gap 不是代码时绝不合并（收紧后的谓词）。
+        {
+            editor.setValue('甲 `code` 丁', false);
+            markWholeParagraph('draw');
+            await new Promise((resolve) => setTimeout(resolve, 30));
+            const drawSpan = container.querySelector('[data-draw]');
+            check('draw over inline code keeps the inner <code> element',
+                container.querySelectorAll('[data-draw]').length === 1
+                && drawSpan?.querySelectorAll('code').length === 1
+                && drawSpan.textContent === '甲 code 丁',
+                drawSpan?.outerHTML);
+
+            // ② 反向：先有整段画线，再给中间文字打行内代码（Mod+E / 反引号规则都走 addMark）。
+            {
+                const tip = editor.editor;
+                editor.setValue('甲乙丙丁', false);
+                tip.view.dispatch(tip.state.tr.addMark(1, 5, tip.state.schema.marks.draw.create()));
+                tip.view.dispatch(tip.state.tr.addMark(2, 4, tip.state.schema.marks.code.create()));
+                await new Promise((resolve) => setTimeout(resolve, 30));
+                check('applying inline code over an existing draw does not cut it',
+                    container.querySelectorAll('[data-draw]').length === 1
+                    && cancelRanges('draw', '[data-draw]').length === 1,
+                    { html: tip.view.dom.querySelector('p')?.innerHTML, ranges: cancelRanges('draw', '[data-draw]') });
+                check('inline code over a draw keeps both marks on the code text',
+                    editor.getValue() === '<span data-draw style="text-decoration:underline blue;text-decoration-thickness:2px;">甲`乙丙`丁</span>',
+                    editor.getValue());
+            }
+
+            // ③ 旧数据自愈：豁免之前落盘的「标记-代码-标记」两段形态，载入即连成一条。
+            const DRAW_STYLE = 'text-decoration:underline blue;text-decoration-thickness:2px;';
+            const healCases = [
+                { name: 'draw', mark: 'draw', selector: '[data-draw]',
+                    source: `<span data-draw style="${DRAW_STYLE}">甲</span><code>beta()</code><span data-draw style="${DRAW_STYLE}">丁</span>`,
+                    healed: '<span data-draw style="text-decoration:underline blue;text-decoration-thickness:2px;">甲`beta()`丁</span>' },
+                { name: 'highlight', mark: 'mdHighlight', selector: 'mark.md-mark',
+                    source: '<mark>甲</mark><code>beta()</code><mark>丁</mark>',
+                    healed: '<mark>甲`beta()`丁</mark>' },
+            ];
+            for (const heal of healCases) {
+                editor.setValue(heal.source, false);
+                await new Promise((resolve) => setTimeout(resolve, 30));
+                const spans = container.querySelectorAll(heal.selector).length;
+                const value = editor.getValue();
+                editor.setValue(value, false);
+                await new Promise((resolve) => setTimeout(resolve, 30));
+                check(`legacy split ${heal.name} around inline code heals to one span`,
+                    spans === 1 && value === heal.healed, { spans, value });
+                check(`healed ${heal.name} keeps the code text and is idempotent`,
+                    container.querySelectorAll(heal.selector).length === 1
+                    && editor.getValue() === heal.healed, editor.getValue());
+            }
+
+            // ④ 谓词收紧：gap 里是不带 code 的文字（用户刻意跳过的加粗）就不是拆段产物，
+            //    两条独立画线必须留在两条。豁免之前这种形态只可能是两次操作，合并等于误删。
+            editor.setValue(
+                `<span data-draw style="${DRAW_STYLE}">甲</span><strong>乙</strong><span data-draw style="${DRAW_STYLE}">丙</span>`,
+                false);
+            await new Promise((resolve) => setTimeout(resolve, 30));
+            check('draw segments around bold (no inline code) are not merged',
+                container.querySelectorAll('[data-draw]').length === 2
+                && cancelRanges('draw', '[data-draw]').length === 2,
+                { html: editor.editor.view.dom.querySelector('p')?.innerHTML });
+        }
 
         // 端到端：刷新后点那个整体 → 取消画线 → 全文再无 data-draw（一次点干净）
         editor.setValue('甲 [链接](https://example.com) 丁', false);

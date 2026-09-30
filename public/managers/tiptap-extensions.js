@@ -300,8 +300,9 @@ export const DrawMark = Mark.create({
      * 空格留在 span 外面，刷新后 `getMarkRange` 只能沿连续段展开——取消一次只去掉一段，
      * 而不是用户当初那一个整体。抬到 Link 之上后一次选区收成单 span、取消一次清干净。
      * 排在 annotation 之下是刻意的：批注必须始终是最外层（徽标与 `<sub>` 标签的归属靠它）。
-     * 跨过行内代码仍会分段——那是 code.excluded 的 schema 级禁区（只给 annotation 开了豁免），
-     * 代码片段的自身样式保留，属已知取舍。
+     * 跨过行内代码靠的是 code.excluded 豁免（`tiptap-editor.js` 的 create 钩子），与 priority
+     * 是两条独立机制；代码 chip 的自身样式不丢——code mark 仍在那段文字上，只是被外层 span
+     * 包住（实测 `<span data-draw>甲<code>乙</code>丙</span>`）。
      */
     priority: 1090,
 

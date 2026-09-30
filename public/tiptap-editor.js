@@ -187,16 +187,21 @@ export class HybridMarkdownEditor {
         this.editor.on('create', () => {
             this.ready = true;
             this._resolveReady();
-            // Tiptap 的 Code mark 排除所有其他 marks（excluded = 全部），行内代码
-            // chip 是 schema 层的「mark 禁区」——后果是「批注盖住行内代码」在 parse
-            // 时 annotation 于 code 边界断开，一条批注存储/渲染成两段（两个徽标、
-            // 波浪线断开）。批注是内容语义（需要跨行内代码），这里豁免 annotation
-            // 不被 code 排除；其余 marks（粗体/斜体等）保持被排除的 Tiptap 默认。
-            // 只动这一个数组，Code 的其他行为不变。
-            const annType = this.editor.state.schema.marks.annotation;
+            // Tiptap 的 Code mark 排除其他装饰类 marks（excluded 默认含 bold/italic/
+            // strike/underline/link/draw/mdHighlight/annotation），行内代码 chip 是
+            // schema 层的「mark 禁区」——后果是「标记盖住行内代码」在 addMark 时被 PM
+            // 直接丢弃：一条批注/一次画线于 code 边界断开，存储与渲染都变成两段（两个
+            // 徽标、波浪线断开），刷新后 getMarkRange 只沿连续段展开，取消一次只去掉一段。
+            // 批注/画线/高亮都是**内容层**语义（用户视角「一个操作 = 一个整体」），这里
+            // 豁免它们不被 code 排除；代码 chip 自身样式不受影响——code mark 仍在文字上，
+            // 只是被外层 span 包住（rank 由 priority 决定：annotation 1100 > draw 1090 >
+            // mdHighlight 1080 > code）。bold/italic/link 等文字级语义保持被排除的默认。
+            // 只动这一个数组，Code 的其他行为（渲染、序列化、输入规则）不变。
             const codeType = this.editor.state.schema.marks.code;
-            if (annType && codeType && Array.isArray(codeType.excluded)) {
-                codeType.excluded = codeType.excluded.filter(type => type !== annType);
+            const exemptNames = ['annotation', 'draw', 'mdHighlight'];
+            if (codeType && Array.isArray(codeType.excluded)) {
+                codeType.excluded = codeType.excluded.filter(
+                    type => !exemptNames.includes(type.name));
             }
         });
 
@@ -204,8 +209,8 @@ export class HybridMarkdownEditor {
             // Tiptap v3 的 setEditable（阅读模式切换）也会 emit update，
             // 必须过滤掉未改变文档的事务，否则启动即上报空变更、
             // 触发脏笔记保存与 409 冲突（"内容已在其他设备更新"）。
-            // dumbpadNormalize 是批注段连接事务：修复内容本身就是加载进来的
-            // 内容，不能被当作用户编辑触发保存。
+            // dumbpadNormalize 是装饰 mark（批注/画线/高亮）的拆段连接事务：修复内容
+            // 本身就是加载进来的内容，不能被当作用户编辑触发保存。
             if (!transaction || !transaction.docChanged || transaction.getMeta('dumbpadNormalize')) return;
             this.notifyEditorValueChanged(this.getValue());
         });
@@ -280,7 +285,7 @@ export class HybridMarkdownEditor {
         // 撤出 B 文的内容，autosave 会把 A 文覆盖掉。
         this.editor.chain().setMeta('addToHistory', false)
             .setContent(this.frontmatterToFence(nextValue), { emitUpdate: false }).run();
-        this.normalizeAnnotationMarks();
+        this.normalizeDecorationMarks();
         if (emit) {
             this.notifyEditorValueChanged(this.getValue());
         } else {
@@ -288,24 +293,46 @@ export class HybridMarkdownEditor {
         }
     }
 
-    // 存储层无法表达「批注覆盖行内代码」：序列化器的 open/close 包不住
-    // code_inline（markdown-it 的 code_inline 是原子 token），历史内容因此
-    // 固化成「批注-代码-批注」两段 span[data-note]（note 相同），渲染出两个
-    // 徽标、波浪线在代码处断开。excludes 豁免（见 create 钩子）之后，schema
-    // 允许 annotation 与 code 共存——这里在 parse 后把「相邻同 note 的批注段」
-    // 用 addMark 重新连成一个 mark（覆盖中间的行内代码），渲染恢复单 span
-    // 单徽标、波浪线连续。防误伤：gap 中只要有无任何 mark 的纯文本节点就不
-    // 连接（那是用户故意分开的两条批注，不是拆段产物）。序列化仍会输出拆段
-    // 形态，parse→normalize→serialize 幂等。修复事务带 dumbpadNormalize
-    // meta：不进撤销历史、不触发保存。
-    normalizeAnnotationMarks() {
+    // 存储层无法表达「标记覆盖行内代码」：序列化器的 open/close 包不住 code_inline
+    // （markdown-it 的 code_inline 是原子 token），豁免之前落盘的历史内容因此固化成
+    // 「标记-代码-标记」两段（批注还是两个徽标）。excluded 豁免（见 create 钩子）之后
+    // 新操作不再被切开，这里把**已经存成拆段形态**的旧内容用 addMark 连回一个整体：
+    // 渲染恢复单 span 单徽标、线连续，取消一次就清干净。
+    //
+    // 身份：批注用 note 区分不是同一条；画线 / 高亮没有属性，同类型即同一条。
+    // 防误伤（比批注原先的「gap 无裸文本就连接」更紧）：**两段之间的 gap 必须每个
+    // 节点都带 code mark** 才连接。加了豁免之后，行内代码是唯一还能把一次操作切成
+    // 两段的来源；gap 里出现任何不带 code 的文字（裸文本、或用户刻意跳过的加粗 /
+    // 链接）就说明那是两次独立操作，不许合并。gap 里出现同类型的另一条标记也立刻停。
+    // 已知代价：同段内「先画 甲、再单独画 丙、中间恰好只有一段行内代码」这种极少见
+    // 手会被当成一次操作合并（存储里没有操作身份，无从区分），已由回归钉住该判定。
+    // 连接后的文档序列化就是一条（旧文章下次保存自然收敛），
+    // normalize→serialize→parse 幂等（实测）。
+    // 修复事务带 dumbpadNormalize meta：不进撤销历史、不触发保存。
+    normalizeDecorationMarks() {
         const { state } = this.editor;
-        const annType = state.schema.marks.annotation;
-        if (!annType) return;
-        const noteOf = (node) => {
-            const m = node.marks.find(m => m.type === annType);
-            return m ? String(m.attrs.note ?? '') : null;
-        };
+        const { marks } = state.schema;
+        const codeType = marks.code;
+        if (!codeType) return;
+        // identity(node)：null = 该节点不属于这一组；字符串 = 属于，且用它区分「是不是同一条」
+        const groups = [
+            marks.annotation && {
+                identity: (node) => {
+                    const mark = marks.annotation.isInSet(node.marks);
+                    return mark ? String(mark.attrs.note ?? '') : null;
+                },
+                restore: (key) => marks.annotation.create({ note: key }),
+            },
+            marks.draw && {
+                identity: (node) => (marks.draw.isInSet(node.marks) ? '' : null),
+                restore: () => marks.draw.create(),
+            },
+            marks.mdHighlight && {
+                identity: (node) => (marks.mdHighlight.isInSet(node.marks) ? '' : null),
+                restore: () => marks.mdHighlight.create(),
+            },
+        ].filter(Boolean);
+        if (!groups.length) return;
         const { tr } = state;
         let changed = false;
         state.doc.descendants((block, blockPos) => {
@@ -316,29 +343,31 @@ export class HybridMarkdownEditor {
                 children.push({ node: child, from: childPos });
                 childPos += child.nodeSize;
             });
-            let i = 0;
-            while (i < children.length) {
-                const note = noteOf(children[i].node);
-                if (note === null) { i += 1; continue; }
-                let j = i + 1;
-                while (j < children.length && noteOf(children[j].node) === note) j += 1;
-                // 从 j 向后找下一个同 note 段；gap 内出现其他批注即停
-                let k = j, target = null, hasBareText = false;
-                while (k < children.length) {
-                    const n2 = noteOf(children[k].node);
-                    if (n2 !== null) {
-                        if (n2 === note) target = k;
-                        break;
+            for (const group of groups) {
+                let i = 0;
+                while (i < children.length) {
+                    const key = group.identity(children[i].node);
+                    if (key === null) { i += 1; continue; }
+                    let j = i + 1;
+                    while (j < children.length && group.identity(children[j].node) === key) j += 1;
+                    // 从 j 向后找下一个同一条的段；gap 里只要有一个节点不带 code 就不连
+                    let k = j, target = null, gapIsAllCode = true;
+                    while (k < children.length) {
+                        const nodeKey = group.identity(children[k].node);
+                        if (nodeKey !== null) {
+                            if (nodeKey === key) target = k;
+                            break;
+                        }
+                        if (!codeType.isInSet(children[k].node.marks)) gapIsAllCode = false;
+                        k += 1;
                     }
-                    if (children[k].node.isText && children[k].node.marks.length === 0) hasBareText = true;
-                    k += 1;
-                }
-                if (target !== null && !hasBareText) {
-                    tr.addMark(children[j].from, children[target].from, annType.create({ note }));
-                    changed = true;
-                    i = target;
-                } else {
-                    i = j;
+                    if (target !== null && gapIsAllCode) {
+                        tr.addMark(children[j].from, children[target].from, group.restore(key));
+                        changed = true;
+                        i = target;
+                    } else {
+                        i = j;
+                    }
                 }
             }
             return false;

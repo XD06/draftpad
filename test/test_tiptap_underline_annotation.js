@@ -238,8 +238,9 @@ async function main() {
     }
 
     // 12. 历史数据自愈：老文章里「批注-代码-批注」的拆段形态（同 note 两段）在 parse 后
-    //     被 normalizeAnnotationMarks 连成一条；但两段之间夹着**无 mark 的纯文本**时是
-    //     用户故意分开的两条批注，绝不允许误连。
+    //     被 normalizeDecorationMarks 连成一条；但两段之间夹着**无 mark 的纯文本**时是
+    //     用户故意分开的两条批注，绝不允许误连。谓词收紧后连的判据是「gap 每个节点都带
+    //     code mark」——夹着加粗/链接（代码豁免之后这些已切不断一条批注）同样不许合并。
     {
         const split = await load(
             `前<span data-note="同一条" style="${ANNOTATION_STYLE}">甲 </span><code>beta()</code><span data-note="同一条" style="${ANNOTATION_STYLE}"> 丙</span>后`,
@@ -270,6 +271,16 @@ async function main() {
         check('two same-note annotations separated by bare text stay two',
             untouched.querySelectorAll('.has-annotation').length === 2,
             { spans: untouched.querySelectorAll('.has-annotation').length, html: untouched.innerHTML });
+
+        // 收紧后的另一半：gap 里是**带其他 mark 的文字**（这里是用 HTML 形态存进来的
+        // 加粗）也不合并——代码豁免之后加粗切不断批注，出现这种 gap 只可能是两次操作。
+        await load(
+            `<span data-note="两条" style="${ANNOTATION_STYLE}">甲</span><strong>乙</strong><span data-note="两条" style="${ANNOTATION_STYLE}">丙</span>`,
+        );
+        const boldGap = container.querySelector('.tiptap');
+        check('same-note annotations separated by bold text stay two',
+            boldGap.querySelectorAll('.has-annotation').length === 2,
+            { spans: boldGap.querySelectorAll('.has-annotation').length, html: boldGap.innerHTML });
     }
 
     // 13. 波浪线的连续性还有一半在绘制层：Chrome 的 text-decoration-skip-ink 默认 auto，

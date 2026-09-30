@@ -3,6 +3,8 @@
  * 与颜色折回简写值（`underline 2.5px wavy rgb(231, 76, 60)`），而这正是 Tiptap 上游
  * `value.includes('underline')` 判定误伤的入口。jsdom 的判定值形态不同，所以「刷新后不再多出
  * `<u>`」「老数据里的 `<u>` 自愈」「真下划线仍然渲染成下划线」这三件事必须在真浏览器里各测一遍。
+ * 后半段（§7/§8）是样式层的连续性：skip-ink 会不会剪断波浪、画线/高亮跨行内代码时能不能既
+ * 保持单元素又留住代码自己的 monospace —— computed 值只有 Chrome 会给。
  */
 const assert = require('node:assert/strict');
 const path = require('node:path');
@@ -200,6 +202,77 @@ module.exports = async function testAnnotationUnderline(browser) {
             }, ANNOTATION_STYLE);
             assert.equal(display, 'none',
                 `the display form (span[data-note]) must get skip-ink:none too, got ${display}`);
+        }
+
+        // 8. 画线/高亮跨行内代码：靠 code.excluded 豁免成为单元素（与批注同一机制），
+        //    这里要同时证明两件事——「一次操作 = 一个整体」和「代码自己的样式没被吞掉」。
+        //    后者只能看真实 DOM 与 computed 值：`<code>` 必须还在那一个 span/mark 里面。
+        for (const piece of [
+            { markName: 'draw', selector: '[data-draw]', label: '画线', expectDecoration: 'underline solid 2px' },
+            { markName: 'mdHighlight', selector: 'mark.md-mark', label: '高亮', expectBackground: 'rgba(255, 214, 10, 0.35)' },
+        ]) {
+            const whole = await page.evaluate(async ({ markName, selector }) => {
+                const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+                const snapshot = () => {
+                    const root = editor.container.querySelector('.tiptap');
+                    const spans = [...root.querySelectorAll(selector)];
+                    return {
+                        count: spans.length,
+                        codeInside: spans.map(el => el.querySelectorAll('code').length),
+                        codeFont: spans.flatMap(el => [...el.querySelectorAll('code')]
+                            .map(code => getComputedStyle(code).fontFamily)),
+                        decoration: spans.map(el => {
+                            const cs = getComputedStyle(el);
+                            return `${cs.textDecorationLine} ${cs.textDecorationStyle} ${cs.textDecorationThickness}`;
+                        }),
+                        painted: spans.map(el => getComputedStyle(el).backgroundColor),
+                    };
+                };
+                editor.setValue('甲 [链接](https://example.com) 乙 `code()` 丙\n', false);
+                await wait(400);
+                const tiptap = editor.editor;
+                const { PM } = globalThis.DumbPadTiptap;
+                const doc = tiptap.state.doc;
+                tiptap.view.dispatch(tiptap.state.tr.setSelection(
+                    PM.state.TextSelection.create(doc, 1, doc.content.size - 1),
+                ));
+                const markType = tiptap.schema.marks[markName];
+                tiptap.view.dispatch(tiptap.state.tr.addMark(
+                    1, doc.content.size - 1, markType.create({})));
+                await wait(300);
+                const typed = snapshot();
+                const stored = editor.getValue();
+                editor.setValue(stored, false);
+                await wait(600);
+                return { typed, reloaded: snapshot(), stored };
+            }, piece);
+
+            assert.equal(whole.typed.count, 1,
+                `${piece.label} crossing code and a link must render one element while typing, got ${JSON.stringify(whole.typed)}`);
+            assert.equal(whole.reloaded.count, 1,
+                `${piece.label} must still be one element after a reload, got ${JSON.stringify(whole.reloaded)}`);
+            assert.deepEqual(whole.typed.codeInside, [1],
+                `${piece.label} must keep the inline code inside the single element, got ${JSON.stringify(whole.typed)}`);
+            assert.ok(/mono/i.test(whole.typed.codeFont[0] || ''),
+                `${piece.label} must not swallow the code's own monospace style, got ${JSON.stringify(whole.typed.codeFont)}`);
+            assert.deepEqual(whole.reloaded.codeInside, [1],
+                `${piece.label} keeps its code child across a reload, got ${JSON.stringify(whole.reloaded)}`);
+            // 各自的「自己的样式」：画线靠 text-decoration，高亮靠 mark 背景（实测值钉住）。
+            // 两条都必须打字时 == 刷新后，否则又是一次「取消要点两下」的分裂。
+            if (piece.expectDecoration) {
+                assert.equal(whole.typed.decoration[0], piece.expectDecoration,
+                    `${piece.label} must paint its own decoration, got ${JSON.stringify(whole.typed)}`);
+                assert.deepEqual(whole.reloaded.decoration, whole.typed.decoration,
+                    `${piece.label} decoration must be identical between typing and reload, got ${JSON.stringify(whole)}`);
+            }
+            if (piece.expectBackground) {
+                assert.equal(whole.typed.painted[0], piece.expectBackground,
+                    `${piece.label} must keep its own highlight background, got ${JSON.stringify(whole.typed)}`);
+                assert.deepEqual(whole.reloaded.painted, whole.typed.painted,
+                    `${piece.label} background must be identical between typing and reload, got ${JSON.stringify(whole)}`);
+            }
+            assert.ok(whole.stored.includes('`code()`'),
+                `${piece.label} must not lose the code text, got ${whole.stored}`);
         }
 
         assert.deepEqual(errors, []);
