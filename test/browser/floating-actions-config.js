@@ -180,7 +180,7 @@ module.exports = async function testFloatingActionsConfig() {
         assert.equal(s1['toggle-thoughts'].display, 'flex', 'thoughts must stay visible by default');
         assert.equal(s1['toggle-thoughts'].size, '34x34', 'thoughts keeps the shared button box');
         assert.equal(s1['toggle-thoughts'].viewBox, '0 0 1024 1024', 'thoughts should use the supplied filled icon');
-        assert.equal(s1['toggle-thoughts'].paths, 2, 'the feather + sparkles icon needs both paths');
+        assert.equal(s1['toggle-thoughts'].paths, 1, 'the archive-box icon is a single path');
         assert.equal(s1['toggle-thoughts'].svgSize, '20x20', 'the new icon must render at the toolbar icon size');
         assert.equal(s1['toggle-thoughts'].ink.split('x')[0] > 100, true,
             'the icon must paint real geometry, got ' + s1['toggle-thoughts'].ink);
@@ -211,7 +211,7 @@ module.exports = async function testFloatingActionsConfig() {
         assert.equal(s2['toggle-thoughts'].hiddenAttr, true, 'a blacklisted id hides its button whatever the casing');
         assert.equal(s2['toggle-thoughts'].display, 'none', 'the blacklisted button must leave the toolbar');
         assert.ok(s2['toggle-thoughts'] !== null, 'hiding must keep the DOM node, not remove it');
-        assert.equal(s2['toggle-thoughts'].paths, 2, 'the hidden button keeps its markup so the config is reversible');
+        assert.equal(s2['toggle-thoughts'].paths, 1, 'the hidden button keeps its markup so the config is reversible');
         assert.equal(s2['scroll-helper'].display, 'flex', 'scroll-helper is shell-critical and must stay visible');
         assert.equal(s2['clipboard-import-trigger'].display, 'flex',
             'an explicit value replaces the default, so the collapsed entry shows again');
