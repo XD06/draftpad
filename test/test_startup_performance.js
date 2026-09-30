@@ -18,6 +18,7 @@ assert(app.includes('STARTUP_NOTE_PREFETCH_LIMIT = 3'), 'startup note prefetch s
 assert(app.includes('slice(0, STARTUP_NOTE_PREFETCH_LIMIT)'), 'startup note prefetch should only request the capped set');
 assert(app.includes('const renderedFromCache = Boolean(cachedBeforeFetch);'), 'a selected cached note should be recognised even when its content is empty');
 assert(app.includes('void refreshFromServer();'), 'cached note selection should not wait for the remote freshness check before returning control to the UI');
+assert(app.includes('listedVersion === freshCachedVersion'), 'a cached snapshot matching the freshly listed notepad version should skip the remote note fetch and second parse');
 assert(app.includes('loadNotes(currentNotepadId, { deferRemote: true })'), 'only directory selection should defer its remote freshness check');
 assert(app.includes('async function loadNotes(notepadId, { deferRemote = false } = {})'), 'explicit load callers should retain synchronous remote confirmation by default');
 assert(app.includes("renderCachedNotepad(notepadId, cachedBeforeFetch.content || '', { updateLocation: false });"), 'cached note rendering should avoid duplicate history updates during a selection');

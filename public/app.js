@@ -1609,6 +1609,24 @@ document.addEventListener('DOMContentLoaded', async () => {
         loadingNotepadId = notepadId;
         const refreshFromServer = async () => {
             try {
+                // Version-match short-circuit: the notepad list (freshly
+                // fetched in loadNotepads) already carries each note's
+                // version. When the local snapshot matches it and holds no
+                // dirty/conflict state, the content is provably identical —
+                // skip the S3 GET and the second full setValue parse. Fail
+                // open on any unknown version. Later remote saves still
+                // arrive live via the notes_update WS handler.
+                const freshCached = getCachedNote(notepadId);
+                const listed = findNotepadByIdOrName(currentNotepads, notepadId);
+                const listedVersion = Number(listed?.version);
+                const freshCachedVersion = Number(freshCached?.version);
+                if (freshCached && !freshCached.dirty && !freshCached.conflict
+                    && !dirtyConflictNotepadIds.has(notepadId)
+                    && Number.isFinite(listedVersion) && Number.isFinite(freshCachedVersion)
+                    && listedVersion === freshCachedVersion) {
+                    setStartupSyncStatus('synced', '已同步');
+                    return;
+                }
                 const data = await fetchNoteData(notepadId);
                 if (loadingNotepadId !== notepadId) return;
 
