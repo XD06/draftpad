@@ -1280,11 +1280,18 @@ async function getS3NotepadKey(notepad) {
     const cachedKey = s3NotepadKeyCache.get(cacheKey);
     if (cachedKey) return cachedKey;
 
-    if (await s3PathExists(nameKey)) {
+    // Two HeadObject probes in parallel (not sequential): cold read drops
+    // from 2 sequential RTT + 1 GET to 1 parallel RTT + 1 GET. Preference
+    // order (nameKey > idKey) is preserved.
+    const [nameExists, idExists] = await Promise.all([
+        s3PathExists(nameKey),
+        s3PathExists(idKey)
+    ]);
+    if (nameExists) {
         s3NotepadKeyCache.set(cacheKey, nameKey);
         return nameKey;
     }
-    if (await s3PathExists(idKey)) {
+    if (idExists) {
         s3NotepadKeyCache.set(cacheKey, idKey);
         return idKey;
     }

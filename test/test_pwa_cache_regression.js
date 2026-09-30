@@ -49,6 +49,17 @@ for (const asset of deferredAssets) {
 assert(serviceWorker.includes('const WARM_ASSETS = [];'), 'service worker should not prefetch optional heavy assets during installation');
 
 assert(serviceWorker.includes('cacheFirst'), 'service worker should use cache-first for static assets');
+// Immutable vendor/font runtime (tiptap.bundle.js ~843KB) is cache-first:
+// BUILD_VERSION fingerprints public/ into the cache name, so a vendor change
+// always creates a new cache — staleness is impossible within a version.
+// App code stays network-first (no content hash in URL).
+assert(
+    serviceWorker.includes("CACHE_FIRST_PATH_PREFIXES") &&
+    serviceWorker.includes("'/vendor/'") &&
+    serviceWorker.includes("'/font/'") &&
+    serviceWorker.includes('isCacheFirstPath(requestUrl.pathname)'),
+    'service worker should serve versioned vendor/font runtime cache-first for instant PWA warm starts'
+);
 assert(
     serviceWorker.includes('NETWORK_FIRST_STATIC_EXTENSIONS') &&
     serviceWorker.includes('fetchOptions: { cache: "no-cache" }'),

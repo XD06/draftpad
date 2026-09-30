@@ -72,6 +72,14 @@ const CORE_ASSETS = [
 // which is per-navigation and does not bloat install-time caching.)
 const WARM_ASSETS = [];
 
+// Versioned immutable runtime: vendor bundle + fonts change only with a new
+// BUILD_VERSION (server fingerprints the whole public/ dir into the cache
+// name), so within one cache version they are immutable and safe for
+// cache-first. App code (app.js, managers/*, *.css) stays network-first
+// because it changes without a content hash in the URL.
+const CACHE_FIRST_PATH_PREFIXES = ['/vendor/', '/font/'];
+const isCacheFirstPath = (pathname) => CACHE_FIRST_PATH_PREFIXES.some(prefix => pathname.startsWith(prefix));
+
 const NETWORK_FIRST_STATIC_EXTENSIONS = [".js", ".css", ".json"];
 // How long a navigation/static request may stall on a slow (e.g. home-server
 // over WAN) link before we fall back to the cached copy. Kept short because
@@ -326,6 +334,13 @@ self.addEventListener("fetch", (event) => {
   }
 
   if (isStaticAsset) {
+    // Immutable vendor/font runtime: serve from cache instantly (PWA warm
+    // start), refresh in background on next navigation if version changed
+    // (version change creates a new cache name, so staleness is impossible).
+    if (isCacheFirstPath(requestUrl.pathname)) {
+      event.respondWith(cacheFirst(event.request));
+      return;
+    }
     if (isNetworkFirstStaticAsset) {
       event.respondWith(
         networkFirstWithTimeout(event.request, {
