@@ -37,6 +37,7 @@ const CORE_ASSETS = [
   "/managers/today-drafts/today-drafts-manager.js",
   "/managers/today-drafts/today-drafts-api-client.js",
   "/managers/today-drafts/today-drafts-outbox.js",
+  "/managers/today-drafts/today-drafts-paging.js",
   "/managers/today-drafts/today-drafts-renderer.js",
   "/managers/today-drafts/today-drafts-swipe.js",
   "/managers/today-drafts/today-drafts-store.js",

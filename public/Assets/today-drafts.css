@@ -45,6 +45,32 @@
     font-variant-numeric: tabular-nums;
 }
 
+/* 「N/M」现在点得动：外观仍由上面那条规则决定，这里只重置按钮的 UA 样式并撑出
+   触控落点——padding 给出约 30px 高的命中区，等值负 margin 把文字顶回原位
+   （左偏移仍是 7px），标题行的排版一个像素都不动。 */
+button.today-drafts-eyebrow {
+    background: transparent;
+    border: 0;
+    font-family: inherit;
+    padding: 10px 8px;
+    margin: -10px -8px -10px -1px;
+    border-radius: 8px;
+    cursor: default;
+    -webkit-tap-highlight-color: transparent;
+}
+
+button.today-drafts-eyebrow:not([disabled]) {
+    cursor: pointer;
+}
+
+button.today-drafts-eyebrow:not([disabled]):hover {
+    background: color-mix(in srgb, var(--primary-color) 12%, transparent);
+}
+
+button.today-drafts-eyebrow:not([disabled]):active {
+    background: color-mix(in srgb, var(--primary-color) 22%, transparent);
+}
+
 .today-drafts-header h2 {
     margin: 0;
     color: var(--text-color);
@@ -160,6 +186,13 @@
         radial-gradient(circle at 1px 1px, color-mix(in srgb, var(--muted-text) 8%, transparent) 0.5px, transparent 0.8px),
         radial-gradient(circle at 6px 5px, color-mix(in srgb, var(--muted-text) 4%, transparent) 0.45px, transparent 0.7px);
     background-size: 100% 44px, 9px 9px, 13px 13px;
+}
+
+/* 一条草稿比整页还高（粘贴长文）时不再把内容吞掉：这一页允许纵向滚动兜底。
+   纸纹挂在书写区自己身上，滚动时纹线不动、正文按 44px 的整数倍位移，
+   行始终落在同一条节奏上。 */
+.today-drafts-writing-area.is-overflowing {
+    overflow-y: auto;
 }
 
 /* 整页仿真折角卷曲翻页：#today-drafts-base 是平铺在文档流里的整张纸卡
@@ -312,6 +345,19 @@
     list-style: none;
 }
 
+/* 分页要知道每条草稿吃掉几条纸纹，而换行只能在真实布局里量出来。
+   sizer 是一份与正文同宽的隐藏副本：absolute + height:0 + visibility:hidden
+   让它参与排版却不占位、不显示、不接收指针，读完一轮 offsetHeight 就拆掉。 */
+.today-drafts-sizer {
+    position: absolute;
+    top: 0;
+    left: 0;
+    height: 0;
+    overflow: hidden;
+    visibility: hidden;
+    pointer-events: none;
+}
+
 .today-drafts-writing-area.is-empty .today-drafts-input-row {
     order: 1;
 }
@@ -322,11 +368,14 @@
 }
 
 /* 行不再画自己的底线：每行恰好 44px 的倍数，纸纹背景线就是行间分隔线，
-   换行后的第二、三行文字继续落在同一条纸纹节奏上。 */
+   换行后的第二、三行文字继续落在同一条纸纹节奏上。
+   时间戳不进网格（见 .today-draft-time）：第三列 auto 会让每一行正文都比纸纹线
+   短掉一个时间宽度（实测 38px），且空时间戳的行是 35px，右边界连行间都不齐。 */
 .today-draft-row {
+    --today-draft-time-gutter: 44px;
     position: relative;
     display: grid;
-    grid-template-columns: 36px minmax(0, 1fr) auto;
+    grid-template-columns: 36px minmax(0, 1fr);
     min-height: 44px;
     align-items: start;
     box-sizing: border-box;
@@ -479,7 +528,7 @@
 }
 
 .today-draft-text-display {
-    grid-column: 1 / 3;
+    grid-column: 1 / -1;
     grid-row: 1;
     display: block;
     height: auto;
@@ -495,8 +544,18 @@
     box-sizing: border-box;
 }
 
+/* 只在首行让出时间戳的位置：float 只压得短它与自身底边之间的那几行，
+   第二行起正文就重新吃满纸宽——左右同时顶到纸纹线两端。
+   网格项本身就是独立格式化上下文，这个 44px 的浮块不会把行撑高。 */
+.today-draft-text-display::before {
+    content: '';
+    float: right;
+    width: var(--today-draft-time-gutter);
+    height: 44px;
+}
+
 textarea.today-draft-text {
-    grid-column: 1 / 3;
+    grid-column: 1 / -1;
     grid-row: 1;
     display: block;
     width: 100%;
@@ -537,17 +596,25 @@ textarea.today-draft-text {
     border-radius: 3px;
 }
 
+/* 时间戳是纸边批注，不是正文的一列：绝对定位挂在右上角，右边界与正文内容区
+   同一条线（都是行内边距 6px），正文因此能吃满整幅纸宽。 */
 .today-draft-time {
-    grid-column: 3;
-    grid-row: 1;
+    position: absolute;
+    top: 0;
+    right: 6px;
     min-width: 3.2em;
-    padding: 0 6px;
     color: color-mix(in srgb, var(--muted-text) 82%, transparent);
     font-size: 11px;
     font-variant-numeric: tabular-nums;
     line-height: 44px;
     text-align: right;
     white-space: nowrap;
+}
+
+/* textarea 生不出 ::before，首行没法跟着让位；编辑态是瞬时的，直接收掉时间戳，
+   避免正文从时间戳底下穿过。 */
+.today-draft-row:has(textarea) .today-draft-time {
+    opacity: 0;
 }
 
 #toggle-today-drafts.active {

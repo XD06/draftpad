@@ -49,7 +49,7 @@ graph TD
 
 ### 三个"用完即走/短生命周期"域互不串线
 
-- **Today Drafts**（`routes/today-drafts-routes.js` + `public/managers/today-drafts/`）：按服务端日期滚动清理的单行清单（保留今天 + 前 2 天的窗口，历史日只读翻页），独立写锁 + 独立 `today_drafts_update` 事件。
+- **Today Drafts**（`routes/today-drafts-routes.js` + `public/managers/today-drafts/`）：按服务端日期滚动清理的单行清单（保留今天 + 前 2 天的窗口，历史日只读翻页；单日超出纸面时按 44px 纸纹切成同一天里的多页，日与页拉平成一条页序列，翻页手势不分叉；横向手势的归属只有一条判据（行中段归行操作、行两端 32px 归翻页）），独立写锁 + 独立 `today_drafts_update` 事件。
 - **Trash**（`routes/trash-routes.js`）：回收站只经 storage 边界。
 - **AgentRun**（`scripts/agent/agent-run-service.js`）：运行记录，不参与搜索与关系。
 

@@ -1,6 +1,7 @@
 import { createTodayDraft, dayWindowKeys, localDayKey, TodayDraftsStore } from './today-drafts-store.js';
 import { escapeTodayDraftHtml, renderTodayDrafts } from './today-drafts-renderer.js';
-import { getTodayDraftSwipeState } from './today-drafts-swipe.js';
+import { getTodayDraftSwipeState, isTodayDraftFlipHandoff, isTodayDraftPagerEdge } from './today-drafts-swipe.js';
+import { TODAY_DRAFT_LINE_UNIT, findTodayDraftPageByRow, flattenTodayDraftPages, paginateTodayDraftRows } from './today-drafts-paging.js';
 import TodayDraftsApiClient from './today-drafts-api-client.js';
 import TodayDraftsOutbox from './today-drafts-outbox.js';
 
@@ -52,6 +53,12 @@ export class TodayDraftsManager {
         this.items = this.store.load().items;
         // 翻页的当前视图日；历史日只读（右滑可重新加入今日），只有今天可以编辑。
         this.viewDay = localDayKey();
+        // 一天的内容超过一张纸时按页纵向切开，viewPageIndex 是当天内的页码（0 起）。
+        // pageList / pagesByDay 每次 render 都在真实布局里量出来。
+        this.viewPageIndex = 0;
+        this.pageList = [];
+        this.pagesByDay = {};
+        this.resizeRenderQueued = false;
         this.pagerInteraction = null;
         this.flipAnim = null;
         this.flipFrameRaf = null;
@@ -93,15 +100,31 @@ export class TodayDraftsManager {
             this.retryOutbox();
             if (this.isActive) this.refreshWindowDrafts();
         });
+        // 分页预算来自真实纸高与真实换行，视口一变两者都会变：转屏 / 分屏 /
+        // 桌面拖窗口都要重算，否则页里会留着上一尺寸的排版。拖边缘会连发几十个
+        // resize，一帧只重排一次。
+        window.addEventListener('resize', () => {
+            if (!this.isActive || this.resizeRenderQueued) return;
+            this.resizeRenderQueued = true;
+            requestAnimationFrame(() => {
+                this.resizeRenderQueued = false;
+                this.render();
+            });
+        });
         this.render();
     }
 
     bindEvents() {
+        // 页眉的「N/M」是翻页入口：草稿铺满整页时，纸边热区之外还需要一个看得见、
+        // 点得中的落点，方向与左滑一致（翻向更新的一页）。
+        this.eyebrow?.addEventListener('click', () => this.flipToAdjacentPage());
         // 新增草稿输入框是 textarea：随内容自动增高，输入时实时软换行。
         const autoResizeInput = () => {
             if (!this.input) return;
             this.input.style.height = 'auto';
             this.input.style.height = `${Math.max(44, this.input.scrollHeight)}px`;
+            // 分页预算按折叠高度预留，输入行自己长高时靠这一页纵向滚动兜底。
+            this.syncPageOverflow();
         };
         this.input?.addEventListener('input', autoResizeInput);
         this.input?.addEventListener('keydown', event => {
@@ -132,6 +155,8 @@ export class TodayDraftsManager {
             event.target.style.height = `${Math.max(44, event.target.scrollHeight)}px`;
             this.update(row.dataset.todayDraftId, { text: event.target.value }, { render: false });
             row.classList.toggle('is-empty', !event.target.value.trim());
+            // 编辑中的行会实时长高，超出纸面的部分必须能滚，否则用户看不见自己在打什么。
+            this.syncPageOverflow();
         });
         this.list?.addEventListener('compositionstart', event => {
             if (event.target.matches('[data-today-draft-text]')) this.isComposingDraft = true;
@@ -206,6 +231,9 @@ export class TodayDraftsManager {
             const textInput = event.target.closest('[data-today-draft-text]');
             if (textInput && event.pointerType === 'mouse') return;
             if (event.pointerType === 'mouse' && event.target.closest('[data-today-draft-text-display]')) return;
+            // 纸边那一条留给翻整页（见 today-drafts-swipe.js 的 TODAY_DRAFT_PAGER_EDGE）：
+            // 这里不认领，pointerdown 会继续冒泡到 pager 的翻页手势。
+            if (isTodayDraftPagerEdge({ clientX: event.clientX, rect: row.getBoundingClientRect() })) return;
 
             interaction = {
                 row,
@@ -238,6 +266,12 @@ export class TodayDraftsManager {
             if (!interaction.isDragging) return;
 
             event.preventDefault();
+            // 拖过交接线 = 这一下是想翻整页：行的动作条当场撤销，同一根手指接上翻页。
+            // 不这么做的话，「翻页」和「行短滑」在纸面上根本分不开，误删就是这么来的。
+            if (this.handOffRowSwipeToFlip(interaction, event)) {
+                interaction = null;
+                return;
+            }
             const state = getTodayDraftSwipeState(interaction.deltaX, interaction.threshold, interaction.maxSwipe);
             row.style.setProperty('--today-draft-swipe-x', `${state.swipeX}px`);
             row.style.setProperty('--today-draft-swipe-opacity', String(state.actionOpacity));
@@ -317,6 +351,50 @@ export class TodayDraftsManager {
         }, true);
     }
 
+    pagerBox() {
+        const rect = this.pager?.getBoundingClientRect();
+        return {
+            left: rect?.left || 0,
+            top: rect?.top || 0,
+            width: this.pager?.clientWidth || 1,
+            height: this.pager?.clientHeight || 1
+        };
+    }
+
+    // 行拖拽中途交棒给翻页：起点在行中间也照翻，只要行程过了交接线。
+    // 沿用行手势原本的 startX/startY，折痕进度从当前指尖位置连续接上（不跳回 0）；
+    // isDragging 留在 false，让翻页自己的 pointermove 判定方向并 beginFlip。
+    handOffRowSwipeToFlip(current, event) {
+        if (this.pagerInteraction || this.flipAnim || this.flipFrameRaf) return false;
+        const width = this.pager?.clientWidth || 0;
+        if (!isTodayDraftFlipHandoff({ deltaX: current.deltaX, width })) return false;
+        const dir = current.deltaX > 0 ? 'older' : 'newer';
+        // 序列尽头没什么可翻（今天末页再左滑、前天再右滑）：这条手势仍归行的短滑。
+        if (!this.pageAt(dir === 'older' ? -1 : 1)) return false;
+        const row = current.row;
+        row.classList.remove('is-swiping', 'is-swipe-ready', 'is-swipe-thought', 'is-swipe-delete');
+        row.style.removeProperty('--today-draft-swipe-x');
+        row.style.removeProperty('--today-draft-swipe-opacity');
+        this.pagerInteraction = {
+            pointerId: current.pointerId,
+            startX: current.startX,
+            startY: current.startY,
+            deltaX: current.deltaX,
+            dir: null,
+            progress: 0,
+            isDragging: false,
+            ready: false,
+            invalid: false,
+            box: this.pagerBox()
+        };
+        try {
+            this.view?.setPointerCapture?.(event.pointerId);
+        } catch {
+            // Pointer capture is an enhancement.
+        }
+        return true;
+    }
+
     // 整页仿真翻页：右滑（deltaX > 0）掀页看更早历史，左滑（deltaX < 0）
     // 拉回更新日期（阅读类 App 方向语义）。动页由两份拷贝渲染：flip-static
     // 露出已落定部分，flip-flap 镜像出纸背，flip-fx 三件套负责折痕亮线与
@@ -324,15 +402,6 @@ export class TodayDraftsManager {
     bindPagerFlipActions() {
         let suppressNextClick = false;
 
-        const pagerBox = () => {
-            const rect = this.pager?.getBoundingClientRect();
-            return {
-                left: rect?.left || 0,
-                top: rect?.top || 0,
-                width: this.pager?.clientWidth || 1,
-                height: this.pager?.clientHeight || 1
-            };
-        };
         const setReady = (current, ready) => {
             const wasReady = current.ready;
             current.ready = ready;
@@ -347,8 +416,17 @@ export class TodayDraftsManager {
                 this.render();
             }
             if (this.pagerInteraction) return;
-            if (event.target.closest('[data-today-draft-id], input, textarea, button, a, [contenteditable]')) return;
-            const pages = dayWindowKeys();
+            // 页眉的「N/M」是点按入口，不参与拖拽：手势一旦认领就会 setPointerCapture，
+            // 浏览器会把随后的 click 改派到捕获元素上，按钮自己的点击就丢了（真机实测）。
+            if (event.target.closest('input, textarea, button, a, [contenteditable]')) return;
+            // 行上的横向拖动起手归行操作；从纸边那条热区起笔才直接翻整页。
+            // 行中间的长横扫另有中途交棒（handOffRowSwipeToFlip），两条加起来
+            // 才是完整答案：草稿铺满整页时，纸面空白所剩无几，只有热区翻不动页。
+            const rowUnderPointer = event.target.closest('[data-today-draft-id]');
+            if (rowUnderPointer && !isTodayDraftPagerEdge({
+                clientX: event.clientX,
+                rect: rowUnderPointer.getBoundingClientRect()
+            })) return;
             this.pagerInteraction = {
                 pointerId: event.pointerId,
                 startX: event.clientX,
@@ -359,9 +437,7 @@ export class TodayDraftsManager {
                 isDragging: false,
                 ready: false,
                 invalid: false,
-                day: this.viewDay,
-                index: Math.max(0, pages.indexOf(this.viewDay)),
-                box: pagerBox()
+                box: this.pagerBox()
             };
             try {
                 this.view?.setPointerCapture?.(event.pointerId);
@@ -451,13 +527,160 @@ export class TodayDraftsManager {
         }, true);
     }
 
+    // ---- 分页：一张纸 = 书写区高度 ÷ 44px 纸纹行 ---------------------------
+
+    pageLinesFor(day) {
+        const height = this.writingArea?.clientHeight || 0;
+        if (!height) return 0;
+        // 历史页不渲染输入行，整幅纸都是正文；今天要先扣掉输入行的真实高度
+        // （44px 纸纹 + 3px 收边 + 1px 分隔线），否则整幅纸排满时输入行会被挤出纸面。
+        const reserved = day === localDayKey() ? (this.form?.offsetHeight || TODAY_DRAFT_LINE_UNIT) : 0;
+        return Math.floor((height - reserved) / TODAY_DRAFT_LINE_UNIT);
+    }
+
+    currentKey() {
+        return `${this.viewDay}#${this.viewPageIndex}`;
+    }
+
+    currentPage() {
+        return this.pageList.find(page => page.key === this.currentKey()) || null;
+    }
+
+    pageAt(offset) {
+        const position = this.pageList.findIndex(page => page.key === this.currentKey());
+        if (position < 0) return null;
+        return this.pageList[position + offset] || null;
+    }
+
+    pageIndexForDraft(id) {
+        const draft = this.items.find(item => item.id === id);
+        if (!draft) return null;
+        const day = draft.day || localDayKey();
+        const rowIndex = this.itemsForDay(day).findIndex(item => item.id === id);
+        if (rowIndex < 0) return null;
+        const page = findTodayDraftPageByRow(this.pagesByDay[day], rowIndex);
+        return page ? page.index : null;
+    }
+
+    // 条目落在哪一页就翻到哪一页：同一天内换页只重绘，不重新拉数据。
+    goToDraft(id) {
+        const pageIndex = this.pageIndexForDraft(id);
+        if (pageIndex === null) return false;
+        const draft = this.items.find(item => item.id === id);
+        const day = draft?.day || localDayKey();
+        if (this.viewDay === day && this.viewPageIndex === pageIndex) return false;
+        this.viewDay = day;
+        this.viewPageIndex = pageIndex;
+        this.render();
+        return true;
+    }
+
+    // 点页眉「N/M」翻向更新的一页：借手势同一套 beginFlip / animateFlipRelease，
+    // 只是进度由补间从 0 推到 1，落页与记账路径完全共用。手势或补间进行中不插手。
+    flipToAdjacentPage() {
+        if (this.pagerInteraction || this.flipAnim || this.flipFrameRaf) return false;
+        const page = this.currentPage();
+        if (!page || page.pageCount <= 1) return false;
+        const target = this.pageAt(1);
+        if (!target) {
+            // 已经是全序列最后一页：回到当天第 1 页，没有相邻页可掀，直接重排。
+            this.viewPageIndex = 0;
+            this.render();
+            return true;
+        }
+        const current = {
+            dir: 'newer',
+            progress: 0,
+            isDragging: true,
+            ready: true,
+            invalid: false,
+            box: { width: this.pager?.clientWidth || 1 }
+        };
+        this.beginFlip(current);
+        if (current.invalid) {
+            this.hideFlipLayers();
+            return false;
+        }
+        this.animateFlipRelease(current);
+        return true;
+    }
+
+    // 每条草稿实际吃掉几条纸纹只能在真实布局里量（换行取决于宽度与标点）。
+    // 三天的行一次性铺进同宽的隐藏 sizer，读一轮 offsetHeight 就拆掉——整趟只一次
+    // 强制布局，比按文本猜宽度可靠，也不会出现「量到的和渲染的不是同一套规则」。
+    measureLineCounts(groups) {
+        if (!this.base || !this.list) return groups.map(items => items.map(() => 1));
+        const width = this.list.clientWidth;
+        if (!width) return groups.map(items => items.map(() => 1));
+        const today = localDayKey();
+        const sizer = document.createElement('ol');
+        sizer.className = 'today-drafts-list today-drafts-sizer';
+        sizer.setAttribute('aria-hidden', 'true');
+        sizer.style.width = `${width}px`;
+        sizer.innerHTML = groups
+            .map((items, index) => renderTodayDrafts(items, this.pageDays[index] === today ? {} : { readonly: true }))
+            .join('');
+        this.base.appendChild(sizer);
+        const heights = [...sizer.children].map(node => node.offsetHeight);
+        sizer.remove();
+        let cursor = 0;
+        return groups.map(items => {
+            const counts = heights.slice(cursor, cursor + items.length)
+                .map(height => Math.max(1, Math.round(height / TODAY_DRAFT_LINE_UNIT) || 1));
+            cursor += items.length;
+            return counts;
+        });
+    }
+
+    measurePageModel() {
+        const days = dayWindowKeys();
+        this.pageDays = days;
+        const groups = days.map(day => this.itemsForDay(day));
+        const lineCounts = this.measureLineCounts(groups);
+        const pagesByDay = {};
+        days.forEach((day, index) => {
+            // 量不到纸高或排版宽度（视图还没铺开）时不猜页边界：整日留作一页，
+            // 宁可暂时超出纸面由纵向滚动兜底，也不要按假数据把内容打散成几十页。
+            const budget = this.pageLinesFor(day);
+            pagesByDay[day] = paginateTodayDraftRows(lineCounts[index], budget || Number.POSITIVE_INFINITY);
+        });
+        this.pagesByDay = pagesByDay;
+        this.pageList = flattenTodayDraftPages({ dayKeys: days, pagesByDay });
+    }
+
+    clampView() {
+        if (!dayWindowKeys().includes(this.viewDay)) this.viewDay = localDayKey();
+        const pages = this.pagesByDay[this.viewDay] || [];
+        this.viewPageIndex = Math.min(Math.max(0, this.viewPageIndex || 0), Math.max(0, pages.length - 1));
+    }
+
+    // 单条草稿比一页还高（粘贴长文）时不再把内容吞掉，让这一页能纵向滚。
+    syncPageOverflow() {
+        const area = this.writingArea;
+        if (!area || !area.clientHeight) return;
+        const content = (this.list?.scrollHeight || 0) + (this.form?.offsetHeight || 0);
+        area.classList.toggle('is-overflowing', content > area.clientHeight + 1);
+    }
+
+    eyebrowText(page) {
+        const label = this.dayLabel(page.day);
+        return page.pageCount > 1 ? `${label} · ${page.index + 1}/${page.pageCount}` : label;
+    }
+
     dayLabel(day) {
         const pages = dayWindowKeys();
         return `${DAY_LABELS[pages.indexOf(day)] || ''} · ${formatDayDate(day)}`;
     }
 
-    setEyebrow(day) {
-        if (this.eyebrow) this.eyebrow.textContent = this.dayLabel(day);
+    setEyebrow(page) {
+        if (!this.eyebrow || !page) return;
+        this.eyebrow.textContent = this.eyebrowText(page);
+        const paged = page.pageCount > 1;
+        // 一页可翻时它不是按钮，而是纯日期标注：禁用比藏起来稳（藏起来标题行会跳位）。
+        this.eyebrow.disabled = !paged;
+        this.eyebrow.title = paged
+            ? `第 ${page.index + 1}/${page.pageCount} 页 · 点这里${this.pageAt(1) ? '翻到下一页' : '回到第 1 页'}`
+            : '';
     }
 
     // 状态栏统计跟随当前查看的日期（翻到昨天就显示昨天的完成度），不再永远显示今天。
@@ -470,9 +693,10 @@ export class TodayDraftsManager {
 
     // 翻页拷贝用的整卡静态 HTML：与 index.html 的纸卡同构（页眉 + 书写区），
     // 但不带任何 id、不绑事件——纯视觉镜像，指针事件由图层 pointer-events 关掉。
-    buildFlipCardHtml(day) {
-        const isToday = day === localDayKey();
-        const items = this.itemsForDay(day);
+    buildFlipCardHtml(page) {
+        const isToday = page.day === localDayKey();
+        const dayItems = this.itemsForDay(page.day);
+        const items = page.indexes.map(index => dayItems[index]).filter(Boolean);
         const completed = items.filter(item => item.completed).length;
         const countText = items.length ? `${completed}/${items.length} 已完成` : '用完即走';
         const inputRow = isToday
@@ -483,7 +707,7 @@ export class TodayDraftsManager {
             : '';
         return `<div class="today-drafts-header">
                 <div>
-                    <h2>今日草稿<span class="today-drafts-eyebrow">${escapeTodayDraftHtml(this.dayLabel(day))}</span></h2>
+                    <h2>今日草稿<span class="today-drafts-eyebrow">${escapeTodayDraftHtml(this.eyebrowText(page))}</span></h2>
                     <p class="today-drafts-subtitle">保留最近 3 天，左右滑动翻页。</p>
                 </div>
                 <div class="today-drafts-status"><span>${escapeTodayDraftHtml(countText)}</span></div>
@@ -548,18 +772,17 @@ export class TodayDraftsManager {
     }
 
     beginFlip(current) {
-        const pages = dayWindowKeys();
-        const targetIndex = current.index + (current.dir === 'older' ? -1 : 1);
-        const targetDay = pages[targetIndex];
-        if (!targetDay || !this.pager || !this.flipStatic || !this.flipFlap) {
+        const targetPage = this.pageAt(current.dir === 'older' ? -1 : 1);
+        if (!targetPage || !this.pager || !this.flipStatic || !this.flipFlap) {
             current.invalid = true;
             return;
         }
-        current.targetDay = targetDay;
-        // 动页：older 掀起的是当前页（露出底下的目标日），newer 拉回来盖的是目标页
-        const movingDay = current.dir === 'older' ? this.viewDay : targetDay;
-        const isHistory = movingDay !== localDayKey();
-        const cardHtml = this.buildFlipCardHtml(movingDay);
+        const targetDay = targetPage.day;
+        current.targetPage = targetPage;
+        // 动页：older 掀起的是当前页（露出底下的目标页），newer 拉回来盖的是目标页
+        const movingPage = current.dir === 'older' ? this.currentPage() : targetPage;
+        const isHistory = movingPage.day !== localDayKey();
+        const cardHtml = this.buildFlipCardHtml(movingPage);
         for (const layer of [this.flipStatic, this.flipFlap]) {
             layer.hidden = false;
             layer.innerHTML = cardHtml;
@@ -568,9 +791,9 @@ export class TodayDraftsManager {
             layer.style.transform = '';
         }
         if (current.dir === 'older') {
-            // 掀页前先把目标日整卡（含页眉）铺进文档流底层，随折痕推进逐渐露出
-            this.applyDayToBase(targetDay);
-            this.setEyebrow(targetDay);
+            // 掀页前先把目标整卡（含页眉）铺进文档流底层，随折痕推进逐渐露出
+            this.applyPageToBase(targetPage);
+            this.setEyebrow(targetPage);
             this.setHeaderStats(targetDay);
         }
         this.flipCurl?.classList.toggle('is-toward-right', current.dir === 'older');
@@ -667,7 +890,10 @@ export class TodayDraftsManager {
     }
 
     finishFlip(current) {
-        if (current.ready && current.targetDay) this.viewDay = current.targetDay;
+        if (current.ready && current.targetPage) {
+            this.viewDay = current.targetPage.day;
+            this.viewPageIndex = current.targetPage.index;
+        }
         this.hideFlipLayers();
         this.render();
     }
@@ -677,9 +903,11 @@ export class TodayDraftsManager {
         return this.items.filter(item => (item.day || today) === day);
     }
 
-    applyDayToBase(day) {
-        const isToday = day === localDayKey();
-        if (this.list) this.list.innerHTML = renderTodayDrafts(this.itemsForDay(day), isToday ? {} : { readonly: true });
+    applyPageToBase(page) {
+        const isToday = page.day === localDayKey();
+        const dayItems = this.itemsForDay(page.day);
+        const items = page.indexes.map(index => dayItems[index]).filter(Boolean);
+        if (this.list) this.list.innerHTML = renderTodayDrafts(items, isToday ? {} : { readonly: true });
         this.base?.classList.toggle('is-history', !isToday);
     }
 
@@ -741,6 +969,8 @@ export class TodayDraftsManager {
             this.viewDay = day;
             this.render();
         }
+        // 一屏只渲染当前页的行，同一天更早页上的记录要先落到它所在的那一页。
+        this.goToDraft(id);
         const row = this.base?.querySelector(`[data-today-draft-id="${CSS.escape(id)}"]`);
         if (!row) throw new Error('无法定位该草稿');
         row.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -762,6 +992,7 @@ export class TodayDraftsManager {
             this.items = this.items.filter(item => windowKeys.has(item.day || localDayKey()));
             stale.forEach(item => this.outbox.enqueueDelete(item));
             this.viewDay = localDayKey();
+            this.viewPageIndex = 0;
             this.persist();
             this.render();
             if (stale.length > 0) this.scheduleSync(0);
@@ -787,6 +1018,9 @@ export class TodayDraftsManager {
             this.input.value = '';
             this.input.style.height = '';
         }
+        // 新条目可能被排到下一页（当天写满时），跟着跳过去，否则用户会觉得
+        // 「按了回车什么都没发生」。copyDraftToToday 传 keepView，留在历史页不打断浏览。
+        if (!keepView) this.goToDraft(draft.id);
         if (focus) {
             requestAnimationFrame(() => this.beginEditingDraft(this.list?.querySelector(`[data-today-draft-id="${draft.id}"]`)));
         } else {
@@ -1033,23 +1267,27 @@ export class TodayDraftsManager {
             this.pendingRender = true;
             return;
         }
-        // 翻页手势进行中不重铺底页：beginFlip 已把目标日铺进底层等待露出，
+        // 翻页手势进行中不重铺底页：beginFlip 已把目标页整卡铺进底层等待露出，
         // 此时任何异步刷新（远端合并/outbox 回填）进来 render 都会把它刷回
-        // viewDay，掀开的角底下露出同一页。先记账，手势结束 finishFlip 会重绘。
+        // 当前页，掀开的角底下露出同一页。先记账，手势结束 finishFlip 会重绘。
         if (this.pagerInteraction) {
             this.pendingRender = true;
             return;
         }
         const activeInput = this.captureActiveDraftInput();
         const today = localDayKey();
-        const pages = dayWindowKeys();
-        if (!pages.includes(this.viewDay)) this.viewDay = today;
-        this.applyDayToBase(this.viewDay);
-        this.setEyebrow(this.viewDay);
+        this.measurePageModel();
+        this.clampView();
+        const page = this.currentPage() || this.pageList[0];
+        this.viewDay = page.day;
+        this.viewPageIndex = page.index;
+        this.applyPageToBase(page);
+        this.setEyebrow(page);
         this.restoreActiveDraftInput(activeInput);
         this.pendingRender = false;
         const todayItems = this.items.filter(item => (item.day || today) === today);
         this.writingArea?.classList.toggle('is-empty', todayItems.length === 0);
         this.setHeaderStats(this.viewDay);
+        this.syncPageOverflow();
     }
 }
