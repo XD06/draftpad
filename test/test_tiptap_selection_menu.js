@@ -320,6 +320,154 @@ async function main() {
     check('each annotation gets its own badge', container.querySelectorAll('.annotation-badge').length === 2,
         `found ${container.querySelectorAll('.annotation-badge').length}`);
 
+    // 19. 一次画线 / 高亮 == 一个整体。PM 渲染行内 mark 时按 **schema rank 排序取共同
+    //     前缀** 决定开闭元素：draw / mdHighlight 用默认 priority 100 时排在 link / bold
+    //     之后，一次标记跨链接就被 `<a>` 前后各断一次，序列化再叠加 expelEnclosingWhitespace
+    //     把段间空格留在 span 外——刷新后 getMarkRange 只能沿连续段展开，取消一次只去掉
+    //     一段。抬到 Link 之上（draw 1090 / mdHighlight 1080，仍低于 annotation 1100）后：
+    //     单 span、打字时的取消范围 == 刷新后的取消范围、走真实点击管线取消一次清干净。
+    {
+        const { getMarkRange } = await import('../public/managers/tiptap-runtime.js');
+        const { TextSelection } = global.DumbPadTiptap.PM.state;
+        const tip = editor.editor;
+        const ranks = Object.keys(tip.state.schema.marks);
+        check('mark rank puts annotation outermost, then draw, highlight, above link',
+            ranks.indexOf('annotation') < ranks.indexOf('draw')
+            && ranks.indexOf('draw') < ranks.indexOf('mdHighlight')
+            && ranks.indexOf('mdHighlight') < ranks.indexOf('link'), ranks.join(', '));
+
+        const markWholeParagraph = (name) => {
+            const size = tip.state.doc.content.size;
+            tip.view.dispatch(tip.state.tr.setSelection(
+                TextSelection.create(tip.state.doc, 1, size - 1)));
+            tip.chain().setMark(name).run();
+        };
+        // 与 posRangeForElement 同一算法：每个渲染出的 span → 它的取消范围。
+        const cancelRanges = (name, selector) => [...container.querySelectorAll(selector)].map(el => {
+            const pos = tip.view.posAtDOM(el, 0);
+            const $pos = tip.state.doc.resolve(Math.min(pos + 1, tip.state.doc.content.size));
+            const range = getMarkRange($pos, tip.state.schema.marks[name]);
+            return range ? `${range.from}-${range.to}` : 'null';
+        });
+
+        const onePiece = async ({ title, source, name, selector, expectSegments, expectReloadRanges }) => {
+            editor.setValue(source, false);
+            markWholeParagraph(name);
+            await new Promise((resolve) => setTimeout(resolve, 30));
+            const typed = { spans: container.querySelectorAll(selector).length, ranges: cancelRanges(name, selector) };
+            const typedValue = editor.getValue();
+            editor.setValue(typedValue, false);
+            await new Promise((resolve) => setTimeout(resolve, 30));
+            const reloaded = { spans: container.querySelectorAll(selector).length, ranges: cancelRanges(name, selector) };
+            check(`${title} / ${name}: one whole object while typing`,
+                typed.spans === expectSegments, JSON.stringify(typed));
+            check(`${title} / ${name}: segments survive reload`,
+                reloaded.spans === expectSegments, JSON.stringify(reloaded));
+            if (expectReloadRanges) {
+                // 已知偏差，与本次抬 priority 无关（改动前后实测值完全相同）：draw 的
+                // expelEnclosingWhitespace 会把 run 末尾的空格赶到 span 外，而跨行内代码
+                // 时每个 span 都以空格收尾，于是刷新后的取消范围比打字时短一个空格。
+                // 钉住实测值，而不是假装它相等。
+                check(`${title} / ${name}: reload cancel ranges (enclosing space expelled)`,
+                    JSON.stringify(reloaded.ranges) === JSON.stringify(expectReloadRanges),
+                    `reloaded ${JSON.stringify(reloaded.ranges)} typed ${JSON.stringify(typed.ranges)}`);
+            } else {
+                check(`${title} / ${name}: cancel range typing == reload`,
+                    JSON.stringify(typed.ranges) === JSON.stringify(reloaded.ranges),
+                    `typed ${JSON.stringify(typed.ranges)} vs reloaded ${JSON.stringify(reloaded.ranges)}`);
+            }
+            check(`${title} / ${name}: reload is idempotent`, editor.getValue() === typedValue, editor.getValue());
+            return { typedValue, reloaded };
+        };
+
+        await onePiece({ title: 'crossing link', source: '甲 [链接](https://example.com) 丁', name: 'draw', selector: '[data-draw]', expectSegments: 1 });
+        await onePiece({ title: 'crossing link', source: '甲 [链接](https://example.com) 丁', name: 'mdHighlight', selector: 'mark.md-mark', expectSegments: 1 });
+        await onePiece({ title: 'crossing bold', source: '甲 **粗体** 丁', name: 'draw', selector: '[data-draw]', expectSegments: 1 });
+        await onePiece({ title: 'crossing bold', source: '甲 **粗体** 丁', name: 'mdHighlight', selector: 'mark.md-mark', expectSegments: 1 });
+        // 已知取舍：行内代码是 code.excluded 的 schema 级禁区（只给 annotation 开了豁免），
+        // 跨代码片段仍然分段——代码自己的样式要保留，代价是取消要按段点。这里钉住的是
+        // 「分段数在打字与刷新后一致」，不是「变成一段」。
+        await onePiece({ title: 'crossing code', source: '甲 `code` 丁', name: 'draw', selector: '[data-draw]', expectSegments: 2, expectReloadRanges: ['1-2', '8-9'] });
+        await onePiece({ title: 'crossing code', source: '甲 `code` 丁', name: 'mdHighlight', selector: 'mark.md-mark', expectSegments: 2 });
+
+        // 端到端：刷新后点那个整体 → 取消画线 → 全文再无 data-draw（一次点干净）
+        editor.setValue('甲 [链接](https://example.com) 丁', false);
+        markWholeParagraph('draw');
+        editor.setValue(editor.getValue(), false);
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        const wholeDrawEl = container.querySelector('[data-draw]');
+        check('crossing-link draw renders one span after reload',
+            container.querySelectorAll('[data-draw]').length === 1 && Boolean(wholeDrawEl),
+            `found ${container.querySelectorAll('[data-draw]').length}`);
+        if (wholeDrawEl) {
+            const mouseOpts = { bubbles: true, cancelable: true, view: dom.window };
+            wholeDrawEl.dispatchEvent(new dom.window.MouseEvent('mousedown', mouseOpts));
+            wholeDrawEl.dispatchEvent(new dom.window.MouseEvent('mouseup', mouseOpts));
+            wholeDrawEl.dispatchEvent(new dom.window.MouseEvent('click', mouseOpts));
+            await new Promise((resolve) => setTimeout(resolve, 30));
+            const popover = document.body.querySelector('.mark-popover');
+            const cancelBtn = [...(popover?.querySelectorAll('button') || [])].find(b => b.textContent === '取消画线');
+            check('one cancel popover for the whole crossing-link draw', Boolean(cancelBtn));
+            if (cancelBtn) {
+                cancelBtn.click();
+                await new Promise((resolve) => setTimeout(resolve, 30));
+                check('cancel removes the whole draw in one action',
+                    !editor.getValue().includes('data-draw'), editor.getValue());
+            }
+        }
+
+        // 层次：批注永远在最外层（1100 > 1090），画线跨链接时徽标仍只有一个
+        editor.setValue('甲 [链接](https://example.com) 丁', false);
+        markWholeParagraph('draw');
+        editor.setValue(editor.getValue(), false);
+        markWholeParagraph('annotation');
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        check('annotation stays the outermost mark over draw + link',
+            container.querySelectorAll('.has-annotation').length === 1
+            && container.querySelectorAll('.annotation-badge').length === 1
+            && Boolean(container.querySelector('.has-annotation > span > [data-draw]')),
+            container.querySelector('.tiptap')?.innerHTML);
+
+        // 与其他特殊样式共存：mark 组合变化处 DOM 一定分段（`前` / 批注里的 `批注` / `后`
+        // 三个 span——这是 PM 的渲染规则，与 rank 无关），但取消范围沿「带该 mark 的相邻
+        // 文字」展开会跨过分段，所以三条仍是同一个整体：点任意一段取消，三条一起掉，
+        // 批注自身不受影响。
+        editor.setValue('前<span data-note="备注" style="text-decoration:underline wavy #e74c3c;">批注</span>后', false);
+        markWholeParagraph('draw');
+        editor.setValue(editor.getValue(), false);
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        const drawSegments = [...container.querySelectorAll('[data-draw]')];
+        const drawSegmentRanges = new Set(drawSegments.map(el => {
+            const pos = tip.view.posAtDOM(el, 0);
+            const $pos = tip.state.doc.resolve(Math.min(pos + 1, tip.state.doc.content.size));
+            const range = getMarkRange($pos, tip.state.schema.marks.draw);
+            return range ? `${range.from}-${range.to}` : 'null';
+        }));
+        check('draw over an annotation renders as segments but keeps one cancel range',
+            drawSegments.length >= 2 && drawSegmentRanges.size === 1,
+            `${drawSegments.length} segments, ranges ${JSON.stringify([...drawSegmentRanges])}`);
+        const firstSegment = drawSegments[0];
+        if (firstSegment) {
+            const mouseOpts = { bubbles: true, cancelable: true, view: dom.window };
+            firstSegment.dispatchEvent(new dom.window.MouseEvent('mousedown', mouseOpts));
+            firstSegment.dispatchEvent(new dom.window.MouseEvent('mouseup', mouseOpts));
+            firstSegment.dispatchEvent(new dom.window.MouseEvent('click', mouseOpts));
+            await new Promise((resolve) => setTimeout(resolve, 30));
+            const mixedPopover = document.body.querySelector('.mark-popover');
+            const mixedCancel = [...(mixedPopover?.querySelectorAll('button') || [])].find(b => b.textContent === '取消画线');
+            check('a marked segment still offers the draw cancel', Boolean(mixedCancel));
+            if (mixedCancel) {
+                mixedCancel.click();
+                await new Promise((resolve) => setTimeout(resolve, 30));
+                const afterMixedCancel = editor.getValue();
+                check('cancelling one segment drops the whole draw',
+                    !afterMixedCancel.includes('data-draw'), afterMixedCancel);
+                check('the underlying annotation survives',
+                    afterMixedCancel.includes('data-note="备注"'), afterMixedCancel);
+            }
+        }
+    }
+
     console.log('');
     if (failures > 0) {
         console.error(`${failures} selection menu checks failed`);

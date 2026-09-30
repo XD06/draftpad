@@ -292,6 +292,19 @@ export const AnnotationMark = Mark.create({
 export const DrawMark = Mark.create({
     name: 'draw',
 
+    /**
+     * 高于 Link（1000）、低于 annotation（1100），理由与批注那条同构：PM 渲染行内 mark 时
+     * 按 **schema rank 排序取共同前缀** 决定开闭元素，默认 priority 100 让 draw 排在
+     * link / bold / code 之后，于是「一次画线跨过链接或加粗」被 `<a>`、`<strong>` 前后各断
+     * 一次，渲染成多个 `<span data-draw>` 段；序列化再叠加 expelEnclosingWhitespace 把段间
+     * 空格留在 span 外面，刷新后 `getMarkRange` 只能沿连续段展开——取消一次只去掉一段，
+     * 而不是用户当初那一个整体。抬到 Link 之上后一次选区收成单 span、取消一次清干净。
+     * 排在 annotation 之下是刻意的：批注必须始终是最外层（徽标与 `<sub>` 标签的归属靠它）。
+     * 跨过行内代码仍会分段——那是 code.excluded 的 schema 级禁区（只给 annotation 开了豁免），
+     * 代码片段的自身样式保留，属已知取舍。
+     */
+    priority: 1090,
+
     parseHTML() {
         return [{ tag: 'span[data-draw]' }];
     },
@@ -391,6 +404,13 @@ export const DumbPadUnderline = Underline.extend({
 
 export const MdHighlight = Mark.create({
     name: 'mdHighlight',
+
+    /**
+     * 与 DrawMark 同一条理由（见那里的注释），只是层级低一档：批注 1100 > 划线 1090 >
+     * 高亮 1080 > Link 1000，保证高亮不会盖到批注/划线的 span 外面去。抬之前一次高亮跨
+     * 链接会被拆成多个 `<mark>`，刷新后取消一次只去掉其中一段。
+     */
+    priority: 1080,
 
     parseHTML() {
         return [{ tag: 'mark' }];
