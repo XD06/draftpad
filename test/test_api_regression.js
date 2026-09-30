@@ -394,9 +394,9 @@ function assertThoughtsFrontendRegressions() {
     );
     assert(
         indexSource.includes('id="toggle-thoughts"') &&
-        indexSource.includes('M358.4 0v102.4') &&
+        indexSource.includes('M837.818182 849.454545') &&
         !indexSource.includes('M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19'),
-        'the Thought entry action should use the filled feather icon (replacing the old lightbulb), never the editor pencil icon'
+        'the Thought entry action should use the filled clipboard-check icon (user-supplied), never the editor pencil icon'
     );
     assert(
         thoughtsSource.includes('focusSearch()') &&

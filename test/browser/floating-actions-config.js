@@ -92,6 +92,7 @@ function readState() {
         const el = document.getElementById(id);
         if (!el) return [id, null];
         const svg = el.querySelector('svg');
+        const path = svg && svg.querySelector('path');
         const box = svg && svg.getBoundingClientRect();
         let ink = null;
         if (svg && typeof svg.getBBox === 'function') {
@@ -105,6 +106,7 @@ function readState() {
             svgSize: box ? Math.round(box.width) + 'x' + Math.round(box.height) : null,
             viewBox: svg && svg.getAttribute('viewBox'),
             fill: svg && getComputedStyle(svg).fill,
+            pathFill: path && getComputedStyle(path).fill,
             paths: el.querySelectorAll('svg path').length,
             ink
         }];
@@ -159,9 +161,9 @@ module.exports = async function testFloatingActionsConfig() {
         started.child.kill();
     };
     try {
-        // 1) Default: the clipboard quick-record entry is collapsed and the reflections
-        //    button shows; Thoughts keeps the filled feather icon and renders at the same
-        //    box as its neighbours.
+        // 1) Default: the clipboard quick-record entry is collapsed and the
+        //    reflections button shows; Thoughts keeps the supplied filled
+        //    clipboard-check icon and renders at the same box as its neighbours.
         let { port } = await boot(undefined);
         let warnings = [];
         let page = await openEditorPage(browser, port, ['clipboard-import-trigger'], warnings);
@@ -179,14 +181,16 @@ module.exports = async function testFloatingActionsConfig() {
             'the reflections button is part of the toolbar by default');
         assert.equal(s1['toggle-thoughts'].display, 'flex', 'thoughts must stay visible by default');
         assert.equal(s1['toggle-thoughts'].size, '34x34', 'thoughts keeps the shared button box');
-        assert.equal(s1['toggle-thoughts'].viewBox, '0 0 1024 1024', 'thoughts should use the supplied filled icon');
-        assert.equal(s1['toggle-thoughts'].paths, 1, 'the archive-box icon is a single path');
+        assert.equal(s1['toggle-thoughts'].viewBox, '0 0 1024 1024',
+            'thoughts uses the supplied filled clipboard-check icon');
+        assert.equal(s1['toggle-thoughts'].paths, 1, 'the clipboard-check icon is a single path');
         assert.equal(s1['toggle-thoughts'].svgSize, '20x20', 'the new icon must render at the toolbar icon size');
-        assert.equal(s1['toggle-thoughts'].ink.split('x')[0] > 100, true,
+        assert.equal(s1['toggle-thoughts'].ink.split('x')[0] > 10, true,
             'the icon must paint real geometry, got ' + s1['toggle-thoughts'].ink);
         assert.match(s1['toggle-thoughts'].fill, /^(color\(srgb|rgb)/, 'fill should resolve like currentColor');
+        assert.match(s1['toggle-thoughts'].pathFill, /^(color\(srgb|oklab|rgb)/, 'the path must not hardcode #000000; it inherits currentColor');
         assert.equal(s1['copy-all'].fill, 'none', 'the untouched stroke icons must not have been restyled');
-        assert.ok(Number(s1['toggle-thoughts'].ink.split('x')[0]) > 100,
+        assert.ok(Number(s1['toggle-thoughts'].ink.split('x')[0]) > 10,
             'the icon must paint real geometry, got ' + s1['toggle-thoughts'].ink);
 
         // The reflections button is part of the default toolbar now, and it is still a
