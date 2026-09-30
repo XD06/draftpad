@@ -25,7 +25,10 @@ const requiredCoreAssets = [
     '/managers/thought-renderer.js',
     '/managers/thought-tags.js',
     '/managers/thought-text-formatting.js',
-    '/managers/time-command.js'
+    '/managers/time-command.js',
+    '/tiptap-editor.js',
+    '/managers/tiptap-runtime.js',
+    '/managers/tiptap-extensions.js'
 ];
 
 const deferredAssets = [

@@ -289,7 +289,7 @@ export class HybridMarkdownEditor {
         if (emit) {
             this.notifyEditorValueChanged(this.getValue());
         } else {
-            this._lastValue = this.getValue();
+            this._lastValue = nextValue;
         }
     }
 

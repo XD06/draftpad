@@ -64,6 +64,18 @@ const CORE_ASSETS = [
   "/managers/time-command.js",
   "/managers/toaster.js",
   "/managers/ws-client.js",
+  "/tiptap-editor.js",
+  "/managers/tiptap-runtime.js",
+  "/managers/tiptap-extensions.js",
+  "/managers/tiptap-selection-menu.js",
+  "/managers/tiptap-file-command.js",
+  "/managers/tiptap-image-interactions.js",
+  "/managers/tiptap-task-item-view.js",
+  "/managers/tiptap-code-block-view.js",
+  "/managers/code-language-catalog.js",
+  "/managers/code-fence-command.js",
+  "/managers/article-block-move.js",
+  "/managers/mermaid-render.js",
 ];
 
 // Fonts and the editor runtime are cached by the normal fetch handler after
