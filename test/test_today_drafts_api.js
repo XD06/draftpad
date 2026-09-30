@@ -169,6 +169,25 @@ async function run() {
         assert(result.response.status === 201 && result.body.draft.day === today,
             'a create with an out-of-window day should fall back to the server day');
 
+        const tomorrow = dayOffset(1);
+        result = await request('/api/today-drafts/ahead-timezone-create', {
+            method: 'PUT',
+            body: JSON.stringify({ text: 'created in ahead timezone', day: tomorrow })
+        });
+        assert(result.response.status === 201 && result.body.draft.day === tomorrow,
+            'a create from a client in a timezone ahead of server should retain tomorrow day');
+
+        result = await request('/api/today-drafts');
+        assert(result.body.items.some(item => item.id === 'ahead-timezone-create'),
+            'drafts created in an ahead timezone must be retained and not purged');
+
+        result = await request('/api/today-drafts/far-future-create', {
+            method: 'PUT',
+            body: JSON.stringify({ text: 'far future day falls back', day: dayOffset(2) })
+        });
+        assert(result.response.status === 201 && result.body.draft.day === today,
+            'a create with a far future day should fall back to server today');
+
         result = await request(`/api/today-drafts/${created.id}`, {
             method: 'PUT',
             body: JSON.stringify({ text: 'reply to the whole team', completed: true, baseVersion: created.version })

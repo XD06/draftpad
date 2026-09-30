@@ -11,9 +11,11 @@ services:
     env_file:
       - .env
     environment:
+      - TZ=${TZ:-Asia/Shanghai}
       # Override data dir inside container to match the mounted volume
       - DATA_DIR=/app/data
       # Authentication state, trusted devices, API tokens, and the audit chain
       # must survive container recreation and stay outside the user-data mount.
       - AUTH_STATE_DIR=/app/security
       - AUTH_AUDIT_DIR=/app/security/audit
+

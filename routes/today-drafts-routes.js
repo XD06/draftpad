@@ -19,6 +19,12 @@ function dayWindowKeys(date = new Date(), days = RETENTION_DAYS) {
     return keys;
 }
 
+function nextDayKey(date = new Date(), offset = 1) {
+    const shifted = new Date(date);
+    shifted.setDate(shifted.getDate() + offset);
+    return localDayKey(shifted);
+}
+
 function isSafeTodayDraftId(id) {
     return /^[A-Za-z0-9][A-Za-z0-9_-]{2,95}$/.test(String(id || ''));
 }
@@ -47,19 +53,22 @@ function normalizeTodayDraft(value, fallbackDay) {
 }
 
 function registerTodayDraftRoutes(app, { storage, broadcastWebSocketMessage }) {
-    // 窗口外的条目在下一次读或写时顺带清除（沿用旧的 lazy-cleanup 模式，没有定时任务）。
-    function withinWindow(item, oldest, today) {
-        return Boolean(item) && isDayKey(item.day) && item.day >= oldest && item.day <= today;
+    // 宽容窗口：考虑全球时区差异（UTC-12 到 UTC+14，时差范围最多跨 ±1 天）。
+    // 客户端若处于比服务端快的时区（如东八区相较于 UTC），其本地「今天」在服务端视角为「明天」。
+    // 淘汰历史草稿时保留 oldest（服务器 3 天前）；允许快时区客户端当前日 latest（服务器明天）。
+    function withinWindow(item, oldest, latest) {
+        return Boolean(item) && isDayKey(item.day) && item.day >= oldest && item.day <= latest;
     }
 
     async function readWindowDrafts() {
         const nowDate = new Date();
         const today = localDayKey(nowDate);
         const [oldest] = dayWindowKeys(nowDate);
+        const latest = nextDayKey(nowDate, 1);
         return storage.withTodayDraftWriteLock(async () => {
             const all = await storage.readTodayDrafts();
             const active = all
-                .filter(item => withinWindow(item, oldest, today))
+                .filter(item => withinWindow(item, oldest, latest))
                 .map(item => normalizeTodayDraft(item, today))
                 .filter(Boolean)
                 .sort((left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id));
@@ -113,8 +122,9 @@ function registerTodayDraftRoutes(app, { storage, broadcastWebSocketMessage }) {
                 const nowDate = new Date();
                 const today = localDayKey(nowDate);
                 const [oldest] = dayWindowKeys(nowDate);
+                const latest = nextDayKey(nowDate, 1);
                 const all = await storage.readTodayDrafts();
-                const active = all.filter(item => withinWindow(item, oldest, today));
+                const active = all.filter(item => withinWindow(item, oldest, latest));
                 const index = active.findIndex(item => item.id === id);
                 const existing = index >= 0 ? normalizeTodayDraft(active[index], today) : null;
                 const requestedVersion = Number(req.body?.baseVersion);
@@ -127,12 +137,13 @@ function registerTodayDraftRoutes(app, { storage, broadcastWebSocketMessage }) {
                 }
 
                 // 更新永远留在它被创建的那一天；新建可以携带客户端指定的 day
-                // （离线草稿跨过午夜后才重放时，它应落回原来的日子），但只接受
-                // 窗口内的 day，否则由服务端盖章今天。
+                // （离线草稿跨过午夜后才重放时，它应落回原来的日子；
+                // 处于快时区的客户端本地「今天」可能为服务端「明天」），
+                // 只要在 [oldest, latest] 宽容窗口内均予采纳，超出窗口才由服务端盖章今天。
                 const requestedDay = isDayKey(req.body?.day) ? String(req.body.day) : null;
                 const day = existing
                     ? existing.day
-                    : (requestedDay && requestedDay >= oldest && requestedDay <= today ? requestedDay : today);
+                    : (requestedDay && requestedDay >= oldest && requestedDay <= latest ? requestedDay : today);
                 const now = Date.now();
                 const draft = {
                     id,
@@ -169,8 +180,9 @@ function registerTodayDraftRoutes(app, { storage, broadcastWebSocketMessage }) {
                 const nowDate = new Date();
                 const today = localDayKey(nowDate);
                 const [oldest] = dayWindowKeys(nowDate);
+                const latest = nextDayKey(nowDate, 1);
                 const all = await storage.readTodayDrafts();
-                const active = all.filter(item => withinWindow(item, oldest, today));
+                const active = all.filter(item => withinWindow(item, oldest, latest));
                 const existing = active.find(item => item.id === id);
                 if (!existing) return { error: 'Today draft not found', status: 404 };
                 const requestedVersion = Number(req.body?.baseVersion);
@@ -194,4 +206,4 @@ function registerTodayDraftRoutes(app, { storage, broadcastWebSocketMessage }) {
     });
 }
 
-module.exports = { localDayKey, dayWindowKeys, registerTodayDraftRoutes };
+module.exports = { localDayKey, dayWindowKeys, nextDayKey, registerTodayDraftRoutes };

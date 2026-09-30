@@ -9,8 +9,8 @@ RUN npm ci --omit=dev
 
 COPY . .
 
-# Install curl for healthcheck, create data/assets dirs, set ownership
-RUN apk add --no-cache curl \
+# Install curl for healthcheck, tzdata for timezone support, create data/assets dirs, set ownership
+RUN apk add --no-cache curl tzdata \
   && mkdir -p /app/data /app/public/Assets \
   && chown -R node:node /app/data /app/public/Assets
 
