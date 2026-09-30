@@ -195,6 +195,17 @@ async function main() {
             md.block.ruler.__rules__.map(r => r.name));
     }
 
+    // normalize fast path: 无行内代码的文档跳过逐段修复 walk，但行为不变；
+    // 且旧拆段 HTML（无反引号、有 <code>）仍必须自愈——判定在 doc 层面，
+    // 不许用源码字符串预检（旧数据就是裸 HTML，会被漏掉）。
+    {
+        editor.setValue('纯文本长文，无行内代码，无批注', false);
+        check('normalize: plain content still round-trips', editor.getValue() === '纯文本长文，无行内代码，无批注', editor.getValue());
+        editor.setValue('<mark>甲</mark><code>beta()</code><mark>丁</mark>', false);
+        check('normalize: backtick-free legacy split still heals',
+            editor.getValue() === '<mark>甲`beta()`丁</mark>', editor.getValue());
+    }
+
     if (failures) {
         console.error(`\n${failures} check(s) failed`);
         process.exit(1);

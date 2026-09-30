@@ -312,6 +312,22 @@ async function main() {
         const actionLabels = [...annoPopover.querySelectorAll('button')].map(b => b.textContent).join(',');
         check('body click still shows edit/cancel actions', actionLabels === '编辑,取消', actionLabels);
         check('body click popover is not the read-only card', !annoPopover.classList.contains('comment-only-popover'));
+
+        // 点击「编辑」展开原地编辑卡片，而不是调原生 window.prompt
+        const editBtn = [...annoPopover.querySelectorAll('button')].find(b => b.textContent === '编辑');
+        editBtn.dispatchEvent(new dom.window.MouseEvent('click', badgeOpts));
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        check('edit opens in-place editing popover', annoPopover.classList.contains('mark-popover-editing'), annoPopover.className);
+        const editInput = annoPopover.querySelector('.mark-popover-edit-input');
+        check('edit input has existing comment', editInput?.value === '测试批注', editInput?.value);
+        const saveBtn = annoPopover.querySelector('.save-btn');
+        check('edit popover has save button', Boolean(saveBtn));
+        // 保存修改
+        editInput.value = '更新后的批注';
+        saveBtn.dispatchEvent(new dom.window.MouseEvent('click', badgeOpts));
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        check('edit saves updated note', editor.getValue().includes('data-note="更新后的批注"'), editor.getValue());
+        check('edit popover closes after save', annoPopover.style.display === 'none', annoPopover.style.display);
     }
 
     // 18. 多条批注各自一个徽标

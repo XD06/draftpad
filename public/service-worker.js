@@ -65,6 +65,18 @@ const CORE_ASSETS = [
   "/managers/time-command.js",
   "/managers/toaster.js",
   "/managers/ws-client.js",
+  "/tiptap-editor.js",
+  "/managers/tiptap-runtime.js",
+  "/managers/tiptap-extensions.js",
+  "/managers/tiptap-selection-menu.js",
+  "/managers/tiptap-file-command.js",
+  "/managers/tiptap-image-interactions.js",
+  "/managers/tiptap-task-item-view.js",
+  "/managers/tiptap-code-block-view.js",
+  "/managers/code-language-catalog.js",
+  "/managers/code-fence-command.js",
+  "/managers/article-block-move.js",
+  "/managers/mermaid-render.js",
 ];
 
 // Fonts and the editor runtime are cached by the normal fetch handler after
@@ -72,6 +84,14 @@ const CORE_ASSETS = [
 // (First-paint parallelism is handled by <link rel=preload> in index.html,
 // which is per-navigation and does not bloat install-time caching.)
 const WARM_ASSETS = [];
+
+// Versioned immutable runtime: vendor bundle + fonts change only with a new
+// BUILD_VERSION (server fingerprints the whole public/ dir into the cache
+// name), so within one cache version they are immutable and safe for
+// cache-first. App code (app.js, managers/*, *.css) stays network-first
+// because it changes without a content hash in the URL.
+const CACHE_FIRST_PATH_PREFIXES = ['/vendor/', '/font/'];
+const isCacheFirstPath = (pathname) => CACHE_FIRST_PATH_PREFIXES.some(prefix => pathname.startsWith(prefix));
 
 const NETWORK_FIRST_STATIC_EXTENSIONS = [".js", ".css", ".json"];
 // How long a navigation/static request may stall on a slow (e.g. home-server
@@ -327,6 +347,13 @@ self.addEventListener("fetch", (event) => {
   }
 
   if (isStaticAsset) {
+    // Immutable vendor/font runtime: serve from cache instantly (PWA warm
+    // start), refresh in background on next navigation if version changed
+    // (version change creates a new cache name, so staleness is impossible).
+    if (isCacheFirstPath(requestUrl.pathname)) {
+      event.respondWith(cacheFirst(event.request));
+      return;
+    }
     if (isNetworkFirstStaticAsset) {
       event.respondWith(
         networkFirstWithTimeout(event.request, {

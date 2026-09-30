@@ -8,6 +8,8 @@ const app = fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8');
 const server = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
 const hybrid = fs.readFileSync(path.join(root, 'public', 'hybrid-editor.js'), 'utf8');
 const editorPerformance = fs.readFileSync(path.join(root, 'public', 'managers', 'editor-performance.js'), 'utf8');
+const indexHtml = fs.readFileSync(path.join(root, 'public', 'index.html'), 'utf8');
+const tiptapEditor = fs.readFileSync(path.join(root, 'public', 'tiptap-editor.js'), 'utf8');
 const readingFont = path.join(root, 'font', 'changerwencai.woff2');
 
 assert(fs.existsSync(readingFont), 'the reading font subset must be present');
@@ -18,6 +20,7 @@ assert(app.includes('STARTUP_NOTE_PREFETCH_LIMIT = 3'), 'startup note prefetch s
 assert(app.includes('slice(0, STARTUP_NOTE_PREFETCH_LIMIT)'), 'startup note prefetch should only request the capped set');
 assert(app.includes('const renderedFromCache = Boolean(cachedBeforeFetch);'), 'a selected cached note should be recognised even when its content is empty');
 assert(app.includes('void refreshFromServer();'), 'cached note selection should not wait for the remote freshness check before returning control to the UI');
+assert(app.includes('listedVersion === freshCachedVersion'), 'a cached snapshot matching the freshly listed notepad version should skip the remote note fetch and second parse');
 assert(app.includes('loadNotes(currentNotepadId, { deferRemote: true })'), 'only directory selection should defer its remote freshness check');
 assert(app.includes('async function loadNotes(notepadId, { deferRemote = false } = {})'), 'explicit load callers should retain synchronous remote confirmation by default');
 assert(app.includes("renderCachedNotepad(notepadId, cachedBeforeFetch.content || '', { updateLocation: false });"), 'cached note rendering should avoid duplicate history updates during a selection');
@@ -26,6 +29,15 @@ assert(app.includes('activeNotepadLoaded && !query'), 'repeated clicks on the ac
 assert(
     /requestAnimationFrame\(\(\) => \{\r?\n\s+if \(token === selectionToken && currentNotepadId === selectedNotepad\.id\) updateToC\(\);/.test(app),
     'table-of-contents work should yield one frame after a note switch'
+);
+assert(
+    indexHtml.includes('rel="modulepreload" href="managers/tiptap-runtime.js"') &&
+    indexHtml.includes('rel="modulepreload" href="managers/tiptap-extensions.js"'),
+    'index.html should modulepreload editor runtime dependencies in parallel with tiptap-editor.js'
+);
+assert(
+    tiptapEditor.includes('this._lastValue = nextValue;'),
+    'tiptap setValue should skip redundant markdown serialization when emit is false'
 );
 assert(server.includes("const compression = require('compression');"), 'server should load response compression middleware');
 assert(server.includes('app.use(compression({ threshold: 1024 }));'), 'server should enable response compression before static routes');

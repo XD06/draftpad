@@ -289,7 +289,7 @@ export class HybridMarkdownEditor {
         if (emit) {
             this.notifyEditorValueChanged(this.getValue());
         } else {
-            this._lastValue = this.getValue();
+            this._lastValue = nextValue;
         }
     }
 
@@ -314,6 +314,19 @@ export class HybridMarkdownEditor {
         const { marks } = state.schema;
         const codeType = marks.code;
         if (!codeType) return;
+        // Fast path：连接只发生在「gap 全是行内代码」的两段之间，文档里没有
+        // 行内代码就不可能有可连对象，直接返回（长文冷载入省掉下面的逐段建
+        // 数组 + 三组扫描）。注意不能用源码字符串预检：豁免之前落盘的旧拆段
+        // 是裸 HTML（<code> 无反引号），code mark 只存在于解析后的文档里。
+        let hasInlineCode = false;
+        state.doc.descendants((node) => {
+            if (node.isText && codeType.isInSet(node.marks)) {
+                hasInlineCode = true;
+                return false;
+            }
+            return true;
+        });
+        if (!hasInlineCode) return;
         // identity(node)：null = 该节点不属于这一组；字符串 = 属于，且用它区分「是不是同一条」
         const groups = [
             marks.annotation && {
