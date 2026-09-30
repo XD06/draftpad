@@ -186,16 +186,17 @@ button.today-drafts-eyebrow:not([disabled]):active {
         radial-gradient(circle at 1px 1px, color-mix(in srgb, var(--muted-text) 8%, transparent) 0.5px, transparent 0.8px),
         radial-gradient(circle at 6px 5px, color-mix(in srgb, var(--muted-text) 4%, transparent) 0.45px, transparent 0.7px);
     background-size: 100% 44px, 9px 9px, 13px 13px;
-    background-attachment: local;
+    background-attachment: scroll;
 }
 
 /* 一条草稿比整页还高（粘贴长文）时不再把内容吞掉：这一页允许纵向滚动兜底。
    纸纹挂在书写区自己身上，配合 background-attachment: local，滚动时纹线与正文
-   严格同步位移，行始终落在同一条节奏上。 */
+   严格同步位移，行始终落在同一条节奏上。非滚动态保持 scroll，严防动页拷贝继承。 */
 .today-drafts-writing-area.is-overflowing {
     overflow-y: auto;
     overscroll-behavior-y: contain;
     -webkit-overflow-scrolling: touch;
+    background-attachment: local;
 }
 
 /* 整页仿真折角卷曲翻页：#today-drafts-base 是平铺在文档流里的整张纸卡
@@ -227,7 +228,8 @@ button.today-drafts-eyebrow:not([disabled]):active {
 
 /* 动页拷贝：与纸卡同款观感，但绝对定位铺满 pager、不接收指针、
    不画自身投影（落影由 flip-fx 与底卡承担）。contain 把 clip-path
-   每帧变化的重绘范围锁在本层内（低端真机的 paint 面积减半）。 */
+   每帧变化的重绘范围锁在本层内。动页背景强制 scroll，避免与
+   clip-path / scaleX(-1) 叠加引发 Chromium GPU 栅格化内存爆炸和卡死。 */
 .today-drafts-flip-layer {
     position: absolute;
     inset: 0;
@@ -242,6 +244,10 @@ button.today-drafts-eyebrow:not([disabled]):active {
     display: none;
 }
 
+.today-drafts-flip-layer .today-drafts-writing-area {
+    background-attachment: scroll !important;
+}
+
 /* 纸背的裁剪容器：镜像翻页/落页扫出的部分在书缘被裁掉，
    任何角度都不会把纸甩出卡片边界（卡片投影画在裁剪容器之外，不受影响） */
 .today-drafts-flip-clip {
@@ -251,6 +257,7 @@ button.today-drafts-eyebrow:not([disabled]):active {
     overflow: hidden;
     border-radius: 1rem;
     pointer-events: none;
+    contain: strict;
 }
 
 /* 纸背：同一份内容的镜像。transform-origin 钉死在左缘，
@@ -260,9 +267,11 @@ button.today-drafts-eyebrow:not([disabled]):active {
     transform-origin: 0 0;
 }
 
-/* 手势期间的合成提升只跟着翻页会话走，平时不占层（动效策略与 Thought 一致） */
-.today-drafts-pager.is-flipping .today-drafts-flip-layer {
-    will-change: clip-path, transform;
+/* will-change 只给 GPU 合成变换（transform），严禁给动态 clip-path：
+   Chromium 对 clip-path 开启 will-change 会为每帧动态形状反复分配
+   巨大 GPU 纹理，导致主线程/GPU 互锁挂起卡死数秒。 */
+.today-drafts-pager.is-flipping #today-drafts-flip-flap {
+    will-change: transform;
 }
 
 .today-drafts-pager.is-flipping {
@@ -274,9 +283,12 @@ button.today-drafts-eyebrow:not([disabled]):active {
     position: absolute;
     top: 0;
     bottom: 0;
+    left: 0;
     z-index: 5;
     pointer-events: none;
     opacity: 0;
+    contain: strict;
+    transform-origin: 0 0;
 }
 
 .today-drafts-flip-fx[hidden] {
@@ -285,6 +297,10 @@ button.today-drafts-eyebrow:not([disabled]):active {
 
 /* 卷起窄条上的拟物光影：折痕侧深压、三分之一处一道圆柱反光，
    整体带一层背光暗色调，让镜像排版读作「纸背」而不是透印文字 */
+#today-drafts-flip-curl {
+    width: 100px;
+}
+
 #today-drafts-flip-curl.is-toward-right {
     background: linear-gradient(90deg,
         rgba(15, 23, 42, 0.44) 0%,
@@ -319,6 +335,7 @@ button.today-drafts-eyebrow:not([disabled]):active {
 /* 折痕两侧的羽化落影：一半盖在掀露的底页上，一半盖在未掀的纸面上 */
 #today-drafts-flip-shadow {
     z-index: 3;
+    width: 100px;
     background: linear-gradient(90deg,
         transparent 0%,
         rgba(15, 23, 42, 0.16) 32%,
@@ -330,6 +347,7 @@ button.today-drafts-eyebrow:not([disabled]):active {
 /* 折痕线本身：一道清晰的深色细缝 */
 #today-drafts-flip-crease {
     z-index: 6;
+    width: 3px;
     background: linear-gradient(90deg,
         transparent 0%,
         rgba(15, 23, 42, 0.52) 50%,

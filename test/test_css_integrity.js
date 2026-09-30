@@ -64,9 +64,18 @@ function checkBlockquoteRules() {
 
 function checkTodayDraftsWritingAreaRules() {
     const todayDraftsCss = fs.readFileSync(path.join(ASSETS, 'today-drafts.css'), 'utf8');
-    check('today drafts writing area has background-attachment: local for synchronous paper line scrolling',
-        /\.today-drafts-writing-area\s*\{[^}]*background-attachment:\s*local/s.test(todayDraftsCss),
-        'missing background-attachment: local on .today-drafts-writing-area');
+    check('today drafts writing area has background-attachment: local on overflowing state for synchronous scrolling',
+        /\.today-drafts-writing-area\.is-overflowing\s*\{[^}]*background-attachment:\s*local/s.test(todayDraftsCss),
+        'missing background-attachment: local on .today-drafts-writing-area.is-overflowing');
+    check('today drafts flip layers explicitly force background-attachment: scroll to protect GPU rasterizer',
+        /\.today-drafts-flip-layer\s+\.today-drafts-writing-area\s*\{[^}]*background-attachment:\s*scroll\s*!important/s.test(todayDraftsCss),
+        'missing background-attachment: scroll !important on .today-drafts-flip-layer .today-drafts-writing-area');
+    check('today drafts flip layer does not declare will-change on clip-path to prevent compositor memory spikes',
+        !/\.today-drafts-flip-layer[^}]*will-change:[^}]*clip-path/s.test(todayDraftsCss),
+        'found prohibited will-change: clip-path on flip layer');
+    check('today drafts flip layer hides properly when hidden attribute is present',
+        /\.today-drafts-flip-layer\[hidden\]\s*\{[^}]*display:\s*none/s.test(todayDraftsCss),
+        'missing display: none on .today-drafts-flip-layer[hidden]');
 }
 
 async function checkEditorContentClasses() {

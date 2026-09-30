@@ -60,6 +60,9 @@ export class TodayDraftsManager {
         this.viewPageIndex = 0;
         this.pageList = [];
         this.pagesByDay = {};
+        this._cachedLineCounts = null;
+        this._cachedLineWidth = 0;
+        this._cachedPageModelKey = null;
         this.resizeRenderQueued = false;
         this.pagerInteraction = null;
         this.flipAnim = null;
@@ -109,6 +112,7 @@ export class TodayDraftsManager {
         window.addEventListener('resize', () => {
             if (!this.isActive || this.resizeRenderQueued) return;
             this.resizeRenderQueued = true;
+            this.invalidateLineMeasurements();
             requestAnimationFrame(() => {
                 this.resizeRenderQueued = false;
                 this.render();
@@ -582,13 +586,23 @@ export class TodayDraftsManager {
         return true;
     }
 
+    invalidateLineMeasurements() {
+        this._cachedLineCounts = null;
+        this._cachedLineWidth = 0;
+        this._cachedPageModelKey = null;
+    }
+
     // 每条草稿实际吃掉几条纸纹只能在真实布局里量（换行取决于宽度与标点）。
     // 三天的行一次性铺进同宽的隐藏 sizer，读一轮 offsetHeight 就拆掉——整趟只一次
     // 强制布局，比按文本猜宽度可靠，也不会出现「量到的和渲染的不是同一套规则」。
+    // 内容与容器宽度未变时直接复用缓存，绝不在翻页或重选页时重复触发整树重排。
     measureLineCounts(groups) {
         if (!this.base || !this.list) return groups.map(items => items.map(() => 1));
         const width = this.list.clientWidth;
         if (!width) return groups.map(items => items.map(() => 1));
+        if (this._cachedLineCounts && this._cachedLineWidth === width) {
+            return this._cachedLineCounts;
+        }
         const today = localDayKey();
         const sizer = document.createElement('ol');
         sizer.className = 'today-drafts-list today-drafts-sizer';
@@ -601,17 +615,27 @@ export class TodayDraftsManager {
         const heights = [...sizer.children].map(node => node.offsetHeight);
         sizer.remove();
         let cursor = 0;
-        return groups.map(items => {
+        const result = groups.map(items => {
             const counts = heights.slice(cursor, cursor + items.length)
                 .map(height => Math.max(1, Math.round(height / TODAY_DRAFT_LINE_UNIT) || 1));
             cursor += items.length;
             return counts;
         });
+        this._cachedLineCounts = result;
+        this._cachedLineWidth = width;
+        return result;
     }
 
     measurePageModel() {
         const days = dayWindowKeys();
         this.pageDays = days;
+        const width = this.list?.clientWidth || 0;
+        const height = this.writingArea?.clientHeight || 0;
+        const formHeight = this.form?.offsetHeight || 0;
+        const modelKey = `${days.join(',')}#${width}#${height}#${formHeight}`;
+        if (this._cachedPageModelKey === modelKey && this.pageList.length > 0) {
+            return;
+        }
         const groups = days.map(day => this.itemsForDay(day));
         const lineCounts = this.measureLineCounts(groups);
         const pagesByDay = {};
@@ -623,6 +647,7 @@ export class TodayDraftsManager {
         });
         this.pagesByDay = pagesByDay;
         this.pageList = flattenTodayDraftPages({ dayKeys: days, pagesByDay });
+        this._cachedPageModelKey = modelKey;
     }
 
     clampView() {
@@ -917,6 +942,7 @@ export class TodayDraftsManager {
     async refreshWindowDrafts() {
         const state = this.store.load();
         this.items = state.items;
+        this.invalidateLineMeasurements();
         this.render();
         try {
             const remote = await this.apiClient.list();
@@ -1076,6 +1102,7 @@ export class TodayDraftsManager {
     }
 
     persist() {
+        this.invalidateLineMeasurements();
         this.store.save({ day: localDayKey(), items: this.items });
     }
 

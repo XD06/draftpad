@@ -114,16 +114,22 @@ async function touchDragOnRow(page, x, y, deltaX) {
         const target = document.elementFromPoint(startX, startY);
         if (!target) return { found: false };
         const row = target.closest('[data-today-draft-id]');
-        const fire = (type, clientX, node) => (node || target).dispatchEvent(new PointerEvent(type, {
-            bubbles: true,
-            cancelable: true,
-            composed: true,
-            pointerId: 4242,
-            pointerType: 'touch',
-            isPrimary: true,
-            clientX,
-            clientY: startY
-        }));
+        const view = document.getElementById('today-drafts-view');
+        const fire = (type, clientX, node) => {
+            const targetNode = (node && node.isConnected)
+                ? node
+                : (target && target.isConnected ? target : view);
+            return targetNode.dispatchEvent(new PointerEvent(type, {
+                bubbles: true,
+                cancelable: true,
+                composed: true,
+                pointerId: 4242,
+                pointerType: 'touch',
+                isPrimary: true,
+                clientX,
+                clientY: startY
+            }));
+        };
         fire('pointerdown', startX);
         fire('pointermove', startX + dx * 0.4);
         fire('pointermove', startX + dx);
@@ -132,14 +138,13 @@ async function touchDragOnRow(page, x, y, deltaX) {
             rowId: row?.dataset.todayDraftId || null,
             swiping: Boolean(row?.classList.contains('is-swiping')),
             swipeX: Number.parseFloat(row?.style.getPropertyValue('--today-draft-swipe-x') || '0') || 0,
-            // 交棒之后翻页图层应该已经亮起（手指还没松开，折痕已经跟着走了）
+            // 翻页图层应该已经亮起（手指还没松开，折痕已经跟着走了）
             flipStarted: document.getElementById('today-drafts-flip-static')?.hidden === false
         };
-        // 松手点按指尖现在的位置重新取元素：older 方向交棒时会重铺底页，原来那个行
+        // 松手点按指尖现在的位置重新取元素：older 方向翻页时会重铺底页，原来那个行
         // 节点已经离开文档。真手指在 view.setPointerCapture 之后即使划到控件外面，
         // pointerup 也由浏览器改派到 view；合成的 touch 事件没有捕获，只能照同一条
         // 规则自己选目标。
-        const view = document.getElementById('today-drafts-view');
         const underFinger = document.elementFromPoint(startX + dx, startY);
         fire('pointerup', startX + dx, underFinger && view?.contains(underFinger) ? underFinger : view);
         return state;
