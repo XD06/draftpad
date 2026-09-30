@@ -234,6 +234,145 @@ module.exports = async function testEditorInput(browser) {
         assert.equal(midLine.blocks.length, 1, `a marker mid-line must not split: ${JSON.stringify(midLine.blocks)}`);
         assert.equal(midLine.blocks[0].type, 'paragraph');
         assert.equal(midLine.blocks[0].text, '第一行\n正文# 不是标题');
+
+        // 分隔线的实时转换（DividerInputShortcut）。回归点：官方 HorizontalRule 的 find 是
+        // `^` 锚 PM 块首，而 Enter 造的是段内 <br>，所以 `第一行` + Enter + `---` 曾经只留
+        // 字面文本，序列化成 `第一行\n---`，**重新解析被 setext 当成标题下划线**（第一行静默
+        // 变二级标题）。规则细节见 test/test_tiptap_divider_input.js。
+        await page.evaluate(() => editor.setValue('第一行', false));
+        await page.waitForTimeout(150);
+        await page.evaluate(() => editor.editor.commands.focus('end'));
+        await page.keyboard.press('Enter');
+        await page.waitForTimeout(200);
+        await page.keyboard.type('---');
+        await page.waitForTimeout(350);
+        const dividerTyped = await page.evaluate(() => {
+            const blocks = [];
+            editor.editor.state.doc.forEach(node => blocks.push({ type: node.type.name, text: node.textContent }));
+            let breaks = 0;
+            editor.editor.state.doc.descendants(node => {
+                if (node.type.name === 'hardBreak') breaks += 1;
+            });
+            return { blocks, breaks, rendered: document.querySelectorAll('#editor .tiptap hr').length, value: editor.getValue() };
+        });
+        assert.equal(dividerTyped.value, '第一行\n\n---', `typing --- must land a thematic break: ${JSON.stringify(dividerTyped)}`);
+        assert.equal(dividerTyped.blocks[1]?.type, 'horizontalRule', JSON.stringify(dividerTyped.blocks));
+        assert.equal(dividerTyped.breaks, 0, 'the soft break must be consumed by the split');
+        assert.equal(dividerTyped.rendered, 1, 'the divider must be a real <hr> in the rendered DOM');
+        await page.evaluate(async () => {
+            editor.setValue(editor.getValue(), false);
+            await new Promise(resolve => setTimeout(resolve, 350));
+        });
+        const dividerReloaded = await page.evaluate(() => {
+            const blocks = [];
+            editor.editor.state.doc.forEach(node => blocks.push({ type: node.type.name, text: node.textContent }));
+            return blocks;
+        });
+        assert.deepEqual(dividerReloaded, dividerTyped.blocks,
+            `typing --- must equal a reload: ${JSON.stringify({ dividerTyped: dividerTyped.blocks, dividerReloaded })}`);
+        // 反向：`***` / `___` 不带尾随空格不接管（护住 ***重点***）
+        await page.evaluate(() => editor.setValue('第一行', false));
+        await page.waitForTimeout(150);
+        await page.evaluate(() => editor.editor.commands.focus('end'));
+        await page.keyboard.press('Enter');
+        await page.waitForTimeout(200);
+        await page.keyboard.type('***重点***');
+        await page.waitForTimeout(350);
+        const emphasisKept = await page.evaluate(() => ({
+            hr: document.querySelectorAll('#editor .tiptap hr').length,
+            value: editor.getValue(),
+        }));
+        assert.equal(emphasisKept.hr, 0, `*** must not become a divider: ${JSON.stringify(emphasisKept)}`);
+        assert(!/^第一行\n\n#/.test(emphasisKept.value.replace(/\*+/g, '*')), JSON.stringify(emphasisKept));
+
+        // 文首手打 --- 当场转正为 frontmatter 块（FrontmatterLeadInputShortcut）：
+        // 与粘贴、setValue 同一存储形态，且退出/序列化都沿用代码块。
+        await page.evaluate(() => editor.setValue('', false));
+        await page.waitForTimeout(150);
+        await page.evaluate(() => editor.editor.commands.focus('start'));
+        await page.keyboard.type('---');
+        await page.waitForTimeout(350);
+        const fmTyped = await page.evaluate(() => {
+            const blocks = [];
+            editor.editor.state.doc.forEach(node => blocks.push({
+                type: node.type.name,
+                language: node.attrs?.language ?? null,
+                text: node.textContent.replace(/[\u200B\uFEFF]/g, ''),
+            }));
+            return {
+                blocks,
+                caret: editor.editor.state.selection.$from.parent.type.name,
+                // NodeView \u7684\u6E32\u67D3\u5F62\u6001\uFF1A\u4EE3\u7801\u5757\u5916\u58F3 + \u8BED\u8A00\u5FBD\u6807 token\uFF08`<code>` \u4E0A\u53EA\u6709 hljs\uFF0C
+                // \u6CA1\u6709 language-* \u2014\u2014 \u522B\u6309 markdown \u89E3\u6790\u51FA\u7684 HTML \u53BB\u65AD\u8A00\uFF09
+                shells: document.querySelectorAll('#editor .tiptap [data-type="code-block"]').length,
+                badge: document.querySelectorAll('#editor .dumbpad-code-language-token[data-language-label="frontmatter"]').length,
+            };
+        });
+        assert.deepEqual(fmTyped.blocks.slice(0, 1), [
+            { type: 'codeBlock', language: 'dumbpad-frontmatter', text: '' },
+        ], `--- at the very start must become the frontmatter block: ${JSON.stringify(fmTyped.blocks)}`);
+        assert.equal(fmTyped.caret, 'codeBlock', 'the caret must land inside the new block');
+        assert.equal(fmTyped.shells, 1, `the block must render one code-block shell: ${JSON.stringify(fmTyped)}`);
+        assert.equal(fmTyped.badge, 1, `the language badge must read frontmatter: ${JSON.stringify(fmTyped)}`);
+        await page.keyboard.type('title: 我的文档标题');
+        await page.waitForTimeout(300);
+        const fmSource = await page.evaluate(() => editor.getValue());
+        assert.equal(fmSource, '---\ntitle: 我的文档标题\n---\n', JSON.stringify(fmSource));
+        await page.evaluate(async (value) => {
+            editor.setValue(value, false);
+            await new Promise(resolve => setTimeout(resolve, 350));
+        }, fmSource);
+        const fmReloaded = await page.evaluate(() => {
+            const blocks = [];
+            editor.editor.state.doc.forEach(node => blocks.push({
+                type: node.type.name,
+                language: node.attrs?.language ?? null,
+                text: node.textContent.replace(/[\u200B\uFEFF]/g, ''),
+            }));
+            return { blocks, value: editor.getValue() };
+        });
+        assert.equal(fmReloaded.blocks[0].type, 'codeBlock', JSON.stringify(fmReloaded.blocks));
+        assert.equal(fmReloaded.blocks[0].language, 'dumbpad-frontmatter', JSON.stringify(fmReloaded.blocks));
+        assert.equal(fmReloaded.value, fmSource, 'typed frontmatter must round-trip through a reload unchanged');
+
+        // 撤销历史：载入文章不是撤销步骤（回归「Ctrl+Z 把整篇清空」）。
+        // 编辑器以 content:'' 创建、正文靠 setContent 灌进来，那一步曾经进历史，
+        // 于是打开文章后按一次 Ctrl+Z 就撤掉载入本身。这里必须用**干净的第二个实例**：
+        // 上面那些用例都在同一个 editor 里打字，撤销栈早就非空，断言 can().undo() 会假失败。
+        await page.evaluate(async () => {
+            const holder = document.createElement('div');
+            holder.id = 'undo-editor';
+            holder.style.height = '400px';
+            document.body.appendChild(holder);
+            const { HybridMarkdownEditor } = await import('/tiptap-editor.js');
+            window.undoEditor = new HybridMarkdownEditor(holder);
+            await undoEditor.whenReady();
+            undoEditor.setValue('# 我的文章\n\n这是正文内容。', false);
+            await new Promise(resolve => setTimeout(resolve, 350));
+        });
+        const undoPre = await page.evaluate(() => ({
+            value: undoEditor.getValue(),
+            canUndo: undoEditor.editor.can().undo(),
+        }));
+        assert.equal(undoPre.canUndo, false, `loading an article must not be undoable: ${JSON.stringify(undoPre)}`);
+        await page.evaluate(() => undoEditor.editor.commands.focus('end'));
+        await page.keyboard.press('Control+z');
+        await page.waitForTimeout(400);
+        assert.equal(await page.evaluate(() => undoEditor.getValue()), '# 我的文章\n\n这是正文内容。',
+            'Ctrl+Z right after opening must not blank the article');
+        await page.evaluate(() => undoEditor.editor.commands.focus('end'));
+        await page.keyboard.type('再写一句话');
+        await page.waitForTimeout(600);
+        await page.keyboard.press('Control+z');
+        await page.waitForTimeout(400);
+        const undoTyped = await page.evaluate(() => undoEditor.getValue());
+        assert.equal(undoTyped, '# 我的文章\n\n这是正文内容。',
+            `a real Ctrl+Z must step back only the typing: ${JSON.stringify(undoTyped)}`);
+        await page.keyboard.press('Control+y');
+        await page.waitForTimeout(400);
+        assert((await page.evaluate(() => undoEditor.getValue())).includes('再写一句话'),
+            'a real Ctrl+Y must redo the typing again');
+
         assert.deepEqual(errors, []);
         console.log('Editor input browser regression passed');
     } finally {

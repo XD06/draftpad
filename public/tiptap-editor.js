@@ -23,7 +23,10 @@ import {
     QuoteBackspaceShortcut,
     SoftBreakBlockRules,
     CodeFenceInputShortcut,
+    DividerInputShortcut,
+    FrontmatterLeadInputShortcut,
     DumbPadMixedTaskListGuard,
+    DumbPadFrontmatterParseRule,
     SearchHitHighlight,
     searchHitPluginKey,
     JumpTargetHighlight,
@@ -113,6 +116,9 @@ export class HybridMarkdownEditor {
                     transformPastedText: true,
                     transformCopiedText: true,
                 }),
+                // 粘贴的 --- 头与 setValue 走同一条解析（frontmatter → 代码块），
+                // 否则首个 --- 变 <hr>、第二个被 setext 吃掉，落库即损坏。
+                DumbPadFrontmatterParseRule,
                 StarterKit.configure({
                     hardBreak: false,
                     // 代码块交给官方 CodeBlockLowlight（PM Decoration 高亮）
@@ -141,6 +147,12 @@ export class HybridMarkdownEditor {
                 SoftBreakBlockRules,
                 // 手打的 ``` 围栏在收尾反引号落下时转正为代码块，见 tiptap-extensions.js
                 CodeFenceInputShortcut,
+                // 分隔线当场成型：软换行后的视觉行首打 `---` 立刻拆块成线。官方规则只锚 PM
+                // 块首，这一档在屏幕上一直是字面文本，而重新解析会被 setext 当成标题下划线
+                // （静默改内容），见 tiptap-extensions.js
+                DividerInputShortcut,
+                // 文章最开头打 --- 当场转正为 frontmatter 块（与粘贴 / setValue 同形态）
+                FrontmatterLeadInputShortcut,
                 HeadingAnchor,
                 // 全局搜索跳转的词级 + 块级命中高亮（PM Decoration，见 tiptap-extensions.js）
                 SearchHitHighlight,
@@ -261,7 +273,13 @@ export class HybridMarkdownEditor {
     setValue(value, emit = true) {
         const nextValue = String(value ?? '');
         this._lastValue = nextValue;
-        this.editor.commands.setContent(this.frontmatterToFence(nextValue), { emitUpdate: false });
+        // 载入事务必须排除出撤销历史。编辑器以 content:'' 创建，正文是靠 setContent
+        // 灌进来的，而它默认进历史——于是「打开文章」自己成了栈底那一步：Ctrl+Z 撤掉的
+        // 就是载入，整篇瞬间变空白（boot textarea 交接、WS 远端更新、源码模式切回都走
+        // 这条路，所以一打开文章按 Ctrl+Z 就中招）。更糟的是撤销能跨文章：在 A 文里
+        // 撤出 B 文的内容，autosave 会把 A 文覆盖掉。
+        this.editor.chain().setMeta('addToHistory', false)
+            .setContent(this.frontmatterToFence(nextValue), { emitUpdate: false }).run();
         this.normalizeAnnotationMarks();
         if (emit) {
             this.notifyEditorValueChanged(this.getValue());

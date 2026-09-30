@@ -701,6 +701,10 @@ function frontmatterRule(state, startLine, endLine, silent) {
         }
     }
     if (closing === -1) return false;
+    // 与 setValue 的 FRONTMATTER_LEAD_RE（`^---\n([\s\S]*?)\n---`）对齐：闭合的 ---
+    // 必须独占一行且前面有内容行，所以 ---\n--- 这种「两条分隔线」不算 frontmatter，
+    // 交回 hr 规则。否则粘贴与落盘映射会互相错开，解析结果在 --- 与围栏之间来回抖。
+    if (closing < startLine + 2) return false;
     if (silent) return true;
     const token = state.push('fence', 'code', 0);
     token.info = 'dumbpad-frontmatter';
@@ -710,6 +714,43 @@ function frontmatterRule(state, startLine, endLine, silent) {
     state.line = closing + 1;
     return true;
 }
+
+const installedFrontmatterRules = new WeakSet();
+
+/**
+ * 把 frontmatter 块规则装进 markdown-it 的 block ruler——**粘贴路径靠它**。
+ *
+ * 为什么需要：`setValue` 有 `frontmatterToFence` 做预处理，粘贴走的是 tiptap-markdown
+ * 的 `clipboardTextParser` → `parser.parse(text)` → `md.render()`，没有那层预处理。
+ * 规则缺席时首个 `---` 解析成 `<hr>`、第二个被 setext 当成标题下划线吃掉，
+ * 「---\ntitle: x\n---」落库变成 `<h2>title: x</h2>` 且少一行 `---`，保存即永久损坏。
+ * 装上之后粘贴与 setValue 走同一条解析：`---` 块 → fence token
+ * （language-dumbpad-frontmatter）→ 代码块，`getValue` 的 `fenceToFrontmatter` 再映射回原文。
+ *
+ * 与 DumbPadMixedTaskListGuard 同套路：只借 `storage.markdown.parse`，不新增节点。
+ * 两点约束：
+ * - `setup` 每次 parse 都会被重跑（tiptap-markdown 在 parse 里遍历扩展），所以必须
+ *   按 markdownit 实例去重，否则 `__rules__` 随粘贴次数线性增长。
+ * - 上面的 `FrontmatterNode`（独立节点方案）至今未注册，不要把它和这个一起注册——
+ *   那会让 `---` 头同时有「fence 双轨」和「自有节点」两套互相冲突的解释。
+ */
+export const DumbPadFrontmatterParseRule = Extension.create({
+    name: 'dumbpadFrontmatterParseRule',
+
+    addStorage() {
+        return {
+            markdown: {
+                parse: {
+                    setup(markdownit) {
+                        if (installedFrontmatterRules.has(markdownit)) return;
+                        installedFrontmatterRules.add(markdownit);
+                        markdownit.block.ruler.before('hr', 'dumbpad_frontmatter', frontmatterRule);
+                    },
+                },
+            },
+        };
+    },
+});
 
 /**
  * 软换行的生效范围：`doc > paragraph` 与 `blockquote > paragraph`。
@@ -980,8 +1021,9 @@ function softBreakRulePosition(state, range) {
  * 内容）。标题/列表/引用/表格里确实可能出现 `<br>`（Shift+Enter 走 `setHardBreak`，它没有
  * depth 守卫），那些块不接管，免得把块结构拆坏。
  *
- * 不覆盖 `---`/`___`：`---` 紧跟在一行文字后面时，markdown 语义是 setext 标题下划线
- * 而不是分隔线，就地拆块会与重新解析打架，属于另一个决策，不在这里顺手改。
+ * 不覆盖 `---`/`___`/`***`：分隔线的实时转换（含「视觉行首的 `---` 会被重新解析当成 setext
+ * 标题下划线」这条最重的违规）由下面的 DividerInputShortcut 专门接管——它要在拆块之后再插
+ * 一个块节点，与这里的「拆块 + 应用块型」不是同一步形状。
  * ``` 围栏跨行、还要整体转块，拆块表达不了，由下面的 CodeFenceInputShortcut 接管。
  */
 export const SoftBreakBlockRules = Extension.create({
@@ -1189,6 +1231,115 @@ export const CodeFenceInputShortcut = Extension.create({
                 },
             }),
         ];
+    },
+});
+
+/**
+ * 分隔线当场成型：软换行后的「视觉行首」打 `---` 也立刻转成分隔线。
+ *
+ * 官方 HorizontalRule 只有一条输入规则 `/^(?:---|—-|___\s|\*\*\*\s)$/`，一个结构性缺口：
+ * `^` 锚 PM 块首，而 Enter 造的是段内 `<br>`（`MdSoftBreak`）不是新块——于是
+ * `甲` + Enter + `---` 在屏幕上永远是字面文本，序列化仍是 `甲\n---`，**重新解析被
+ * setext 当成标题下划线**：`甲` 变成二级标题、`---` 被吃掉。这是「打字时 ≠ 刷新后」
+ * 里最重的一档（静默改内容），也是「有时要刷新才变成分隔线」的真相。
+ *
+ * 为什么按「分隔线」解释而不是当场把上一块变成 H2：拆块后的落盘形态是 `甲\n\n---`
+ * （hr 的 closeBlock 会补空行），重新解析仍是 paragraph + hr，**两个方向都稳定**；
+ * 而 setext 是笔记场景里几乎没人要的结果，实时预览编辑器（Typora 等）同样把行首
+ * `---` 解释成分隔线。粘贴 `甲\n---` 仍按标准 Markdown 解析成 H2——那是另一条入口，
+ * 与打字时机无关，且自身往返稳定。
+ *
+ * 刻意**不**放宽 `___` / `***` 的空格门槛：那是上游留的护身符——`***重点***` 这类强调
+ * 标记正是从三个星号开头，去掉空格要求会把「打一半的强调标记」当场变成分隔线。
+ *
+ * 作用域与 CodeFenceInputShortcut 一致：只有 `doc > paragraph`（代码块内不命中，实测
+ * 官方规则在代码块里也不命中；列表 / 引用 / 标题内不接管），且空选区。软换行分支复用
+ * `softBreakRulePosition`（必须是真 hardBreak 节点，并向前吞掉紧邻的连续软换行）。
+ *
+ * 只补「视觉行首」这一条，不补 PM 块首：块首的第 3 个连字符就已经被官方规则命中，
+ * 用户打不出第 4 个（`----` 的实测结果是分隔线 + 后面段落里一个游离 `-`，两个方向一致），
+ * 所以这里加 `^` 分支只会多一条抢不到的死规则。
+ */
+export const DividerInputShortcut = Extension.create({
+    name: 'dividerInputShortcut',
+
+    addInputRules() {
+        return [
+            // 视觉行首（软换行之后）：删掉「软换行 + 缩进 + 标记」→ 拆块 → 分隔线插到块边界。
+            new InputRule({
+                find: /\n[ \t]*(-{3,}|_{3,}[ \t]|\*{3,}[ \t])$/,
+                handler: ({ state, range, chain }) => {
+                    if (!state.selection.empty) return;
+                    const $caret = state.doc.resolve(range.to);
+                    if ($caret.depth !== 1 || $caret.parent.type.name !== 'paragraph') return;
+                    if (!state.schema.nodes.horizontalRule) return;
+                    const brPos = softBreakRulePosition(state, range);
+                    if (brPos === null) return;
+                    chain()
+                        .deleteRange({ from: brPos, to: range.to })
+                        .splitBlock()
+                        .setHorizontalRule()
+                        .run();
+                },
+            }),
+        ];
+    },
+});
+
+/**
+ * 文章最开头打 `---` 当场转正为 frontmatter 块（language=dumbpad-frontmatter 的代码块），
+ * 与另外两条已有入口同一套存储形态：① 粘贴（`DumbPadFrontmatterParseRule` 的 markdown-it
+ * 块规则）；② `setValue`（`frontmatterToFence` 的 `^---\n…\n---` 预处理）。缺的第三条正是
+ * 用户报的「想手打 frontmatter 却只得到分隔线」。
+ *
+ * 判定门槛（全部满足才接管）：文档**第一个块**、`doc > paragraph`、段落里只有这三个连字符、
+ * 光标在段末、空选区。其它位置的 `---` 仍归 DividerInputShortcut / 官方规则产分隔线——
+ * frontmatter 只可能出现在文首，把范围放窄才不会误伤「文章顶端就想来条分隔线」的写法
+ * （那种写法改用 `*** ` / `___ `，官方规则在块首同样命中）。
+ *
+ * 转正用单个事务里的 `replaceRangeWith`（不是先删后插：文档只有一个空段落时删掉它会留下
+ * 非法的空 doc），光标落进块首——直接开始打 YAML。退出沿用官方 CodeBlock 键位（实测
+ * Mod-Enter 与三连回车都能出块，落盘仍是 `---\n…\n---`）。
+ * 序列化后 `fenceToFrontmatter` 会把它映射回 `---\n…\n---`，空块的落盘形态 `---\n\n---\n`
+ * 与「打字 == 载入」由 test_tiptap_frontmatter_input.js 固化。
+ *
+ * `priority: 110`：输入规则按 priority 降序收集、第一条命中即停（与 SoftBreakBlockRules
+ * 的 101 同一个理由）。实测把它降到 1 就会被官方 HorizontalRule 抢走（文首 `---` 又变回
+ * 分隔线）；与官方同为默认 100 时靠扩展声明顺序恰好也能赢，但那个并列次序是实现细节，
+ * 不该依赖，所以显式写高。
+ */
+export const FrontmatterLeadInputShortcut = Extension.create({
+    name: 'frontmatterLeadInputShortcut',
+
+    priority: 110,
+
+    addInputRules() {
+        return [new InputRule({
+            find: /^---$/,
+            handler: ({ state, range, chain }) => {
+                if (!state.selection.empty) return;
+                const $caret = state.doc.resolve(range.to);
+                if ($caret.depth !== 1 || $caret.parent.type.name !== 'paragraph') return;
+                const codeBlock = state.schema.nodes.codeBlock;
+                if (!codeBlock) return;
+                // 必须是文档第一个块（runner 的 textBefore 有 500 字符窗口，^ 要复核起点）
+                if (range.from !== 1 || $caret.start() !== 1) return;
+                // 段落里只能有这三个连字符：字符交给规则时还没落进文档，
+                // 所以「已插入的前缀 + 光标在段末」才是完整标记的判据。
+                const typed = state.doc.textBetween(1, range.to);
+                if (typed + '-' !== '---') return;
+                if ($caret.parentOffset !== $caret.parent.content.size) return;
+                const blockStart = $caret.before(1);
+                const blockEnd = $caret.after(1);
+                chain().command(({ tr }) => {
+                    tr.replaceRangeWith(blockStart, blockEnd,
+                        codeBlock.create({ language: 'dumbpad-frontmatter' }, null));
+                    tr.setSelection(TextSelection.create(tr.doc, blockStart + 1));
+                    tr.scrollIntoView();
+                    return true;
+                }).run();
+            },
+        })];
     },
 });
 

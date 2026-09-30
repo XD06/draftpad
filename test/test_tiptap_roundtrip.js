@@ -140,6 +140,61 @@ async function main() {
     editor.setValue(structuredOut, false);
     check('structured: idempotent second round', editor.getValue() === structuredOut, editor.getValue());
 
+    // 9. YAML frontmatter：粘贴路径与 setValue 必须走同一条解析。setValue 有
+    //    frontmatterToFence 预处理，粘贴走 tiptap-markdown 的 clipboardTextParser →
+    //    md.render()，没有那层预处理。markdown-it 的 block ruler 里必须有
+    //    dumbpad_frontmatter 规则（DumbPadFrontmatterParseRule），否则首个 --- 解析成
+    //    <hr>、第二个被 setext 当标题下划线吃掉——「---\ntitle: x\n---」落库变成 h2
+    //    且少一行 ---，保存后不可逆。
+    {
+        const fm = '---\ntitle: 我的文档标题\nauthor: 张三\ndate: 2024-01-15\n---\n\n# 我的文档标题\n';
+        const pasteHtml = editor.editor.storage.markdown.parser.parse(fm, { inline: true });
+        check('frontmatter: the paste parse yields a labeled code block, not hr + setext heading',
+            pasteHtml.includes('language-dumbpad-frontmatter') && !/<h2>/.test(pasteHtml), pasteHtml);
+        editor.setValue(fm, false);
+        const setValueOut = editor.getValue();
+        check('frontmatter: setValue restores the --- wrapper byte for byte',
+            setValueOut === fm.trimEnd(), setValueOut);
+        editor.editor.commands.setContent(pasteHtml, false);
+        const pastedOut = editor.getValue();
+        check('frontmatter: pasted content serializes to exactly what setValue produces',
+            pastedOut === setValueOut, { pastedOut, setValueOut });
+        editor.setValue(pastedOut, false);
+        check('frontmatter: reloading the pasted result is stable',
+            editor.getValue() === pastedOut, editor.getValue());
+
+        // 规则必须与 setValue 的 FRONTMATTER_LEAD_RE 同宽：紧邻的两条 --- 是分隔线，
+        // 不是 frontmatter（两边解释不一致会让解析结果在 --- 与围栏之间来回抖）。
+        const twoRulesHtml = editor.editor.storage.markdown.parser.parse('---\n---\n\n正文\n', { inline: true });
+        check('frontmatter: two adjacent --- stay horizontal rules',
+            !twoRulesHtml.includes('dumbpad-frontmatter') && /<hr>/.test(twoRulesHtml), twoRulesHtml);
+        editor.setValue('---\n---\n\n正文\n', false);
+        check('frontmatter: the hr form is idempotent through setValue',
+            editor.getValue() === '---\n\n---\n\n正文', editor.getValue());
+
+        // 只认「文档最前方」的块：正文中间的 --- 与未闭合的 --- 头都不许被吞成代码块。
+        const midDoc = '# 标题\n\n甲\n\n---\n\n乙\n';
+        check('frontmatter: a mid-document --- is still an hr',
+            !editor.editor.storage.markdown.parser.parse(midDoc, { inline: true }).includes('dumbpad-frontmatter'), midDoc);
+        editor.setValue(midDoc, false);
+        check('frontmatter: mid-document hr round-trips',
+            editor.getValue() === '# 标题\n\n甲\n\n---\n\n乙', editor.getValue());
+        const unclosed = '---\ntitle: T\n\n正文\n';
+        check('frontmatter: an unclosed --- head is not swallowed',
+            !editor.editor.storage.markdown.parser.parse(unclosed, { inline: true }).includes('dumbpad-frontmatter'), unclosed);
+
+        // 规则只装一次：tiptap-markdown 每次 parse 都会重跑扩展的 setup，重复注册会让
+        // markdown-it 的 __rules__ 随粘贴次数线性增长。
+        const md = editor.editor.storage.markdown.parser.md;
+        const before = md.block.ruler.__rules__.length;
+        editor.editor.storage.markdown.parser.parse('正文\n', { inline: true });
+        editor.editor.storage.markdown.parser.parse('更多正文\n', { inline: true });
+        check('frontmatter: the block rule is installed exactly once',
+            md.block.ruler.__rules__.length === before
+            && md.block.ruler.__rules__.filter(r => r.name === 'dumbpad_frontmatter').length === 1,
+            md.block.ruler.__rules__.map(r => r.name));
+    }
+
     if (failures) {
         console.error(`\n${failures} check(s) failed`);
         process.exit(1);
