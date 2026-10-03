@@ -302,8 +302,10 @@ module.exports = async function testTodayDraftsPaging(browser) {
         await page.waitForTimeout(700);
         assert.equal((await readSheet(page)).pageIndex, sheet1.pageIndex + 1, 'the edge sweep turned to the next sheet');
 
-        // 从行左端起笔向右扫：整页翻回前一页
-        const leftEdgeX = sweepRow.x + 20;
+        // 从行左端起笔向右扫：整页翻回前一页。起笔点要越过 36px 的复选框热区
+        // （复选框归勾选语义、不参与翻页——今天草稿点按回归钉死了它必须可点），
+        // 但仍留在至少 72px 宽的边缘翻页带之内。
+        const leftEdgeX = sweepRow.x + 44;
         const backSweep = await touchDragOnRow(page, leftEdgeX, edgeY, sweepRow.width * 0.5);
         assert.ok(backSweep.flipStarted, 'a sweep from the left edge turns the sheet back toward the older one');
         await page.waitForTimeout(700);

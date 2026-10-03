@@ -77,6 +77,9 @@ export class TodayDraftsManager {
         this.isComposingDraft = false;
         this.isRendering = false;
         this.pendingRender = false;
+        this.touchRevealRow = null;
+        this.touchRevealTimer = null;
+        this.copyFeedbackTimer = null;
         this.flipFrameBudget = 0;
         this.flipSlowFrames = 0;
         this.bindEvents();
@@ -146,10 +149,45 @@ export class TodayDraftsManager {
         });
         this.list?.addEventListener('click', event => {
             if (event.target.closest('[data-today-draft-link]')) return;
+            // 复制按钮就长在展示态正文末尾（inline），点它不能顺势进入编辑。
+            if (event.target.closest('[data-today-draft-copy]')) return;
             const display = event.target.closest('[data-today-draft-text-display]');
             const row = display?.closest('[data-today-draft-id]');
             if (row) this.beginEditingDraft(row);
         });
+        // 行尾复制按钮：点击把草稿全文写进剪贴板（历史只读行同样可用）。
+        this.list?.addEventListener('click', event => {
+            const button = event.target.closest('[data-today-draft-copy]');
+            if (!button) return;
+            const row = button.closest('[data-today-draft-id]');
+            const item = row ? this.items.find(candidate => candidate.id === row.dataset.todayDraftId) : null;
+            if (!item) return;
+            event.preventDefault();
+            event.stopPropagation();
+            void this.copyDraftText(item.text, row);
+        });
+        // 触摸设备没有 hover：按住草稿行时短暂亮出复制按钮，抬手后保留片刻再隐去，
+        // 隐藏态不参与命中，避免摸黑误触复制。
+        this.list?.addEventListener('pointerdown', event => {
+            if (event.pointerType !== 'touch') return;
+            const row = event.target.closest('[data-today-draft-id]');
+            if (!row) return;
+            if (this.touchRevealRow && this.touchRevealRow !== row) this.touchRevealRow.classList.remove('is-copy-reveal');
+            clearTimeout(this.touchRevealTimer);
+            this.touchRevealRow = row;
+            row.classList.add('is-copy-reveal');
+        });
+        const hideTouchReveal = () => {
+            const row = this.touchRevealRow;
+            if (!row) return;
+            clearTimeout(this.touchRevealTimer);
+            this.touchRevealTimer = setTimeout(() => {
+                row.classList.remove('is-copy-reveal');
+                if (this.touchRevealRow === row) this.touchRevealRow = null;
+            }, 700);
+        };
+        this.list?.addEventListener('pointerup', hideTouchReveal);
+        this.list?.addEventListener('pointercancel', hideTouchReveal);
         this.list?.addEventListener('change', event => {
             const row = event.target.closest('[data-today-draft-id]');
             if (!row || !event.target.matches('[data-today-draft-complete]')) return;
@@ -195,11 +233,20 @@ export class TodayDraftsManager {
             if (!input) return;
             const row = input.closest('[data-today-draft-id]');
             if (!row) return;
-            if (!input.value.trim()) {
-                this.remove(row.dataset.todayDraftId);
-                return;
-            }
-            this.render({ force: true });
+            // 失焦后的清场（删空草稿 / 编辑态还原成展示态）必须让出当前任务：
+            // focusout 由 mousedown 触发，此时指针序列还在半途，同步重绘会换掉
+            // mouseup 落点下的元素，click 直接丢失——表现为复选框点不上、
+            // 链接点不动。先让 click 完成，再在独立任务里收尾。
+            const draftId = row.dataset.todayDraftId;
+            const value = input.value;
+            setTimeout(() => {
+                if (this.isRendering) return;
+                if (!value.trim()) {
+                    this.remove(draftId);
+                    return;
+                }
+                this.render({ force: true });
+            }, 0);
         });
         this.bindDraftSwipeActions();
         this.bindPagerFlipActions();
@@ -233,7 +280,7 @@ export class TodayDraftsManager {
         this.list?.addEventListener('pointerdown', event => {
             if (!event.isPrimary || (event.pointerType === 'mouse' && event.button !== 0) || interaction) return;
             const row = event.target.closest('[data-today-draft-id]');
-            if (!row || event.target.closest('[data-today-draft-complete], .today-draft-check')) return;
+            if (!row || event.target.closest('[data-today-draft-complete], .today-draft-check, [data-today-draft-copy]')) return;
             if (event.target.closest('[data-today-draft-link]')) return;
             const textInput = event.target.closest('[data-today-draft-text]');
             if (textInput && event.pointerType === 'mouse') return;
@@ -399,7 +446,9 @@ export class TodayDraftsManager {
             if (this.pagerInteraction) return;
             // 页眉的「N/M」是点按入口，不参与拖拽：手势一旦认领就会 setPointerCapture，
             // 浏览器会把随后的 click 改派到捕获元素上，按钮自己的点击就丢了（真机实测）。
-            if (event.target.closest('input, textarea, button, a, [contenteditable]')) return;
+            // 复选框的视觉方块是 label 里的 span，不在这份名单里，但它落在纸边翻页
+            // 热区内——同样不认领，否则普通点按也会被捕获改派，勾选永远点不上。
+            if (event.target.closest('input, textarea, button, a, .today-draft-check, [contenteditable]')) return;
             // 行上的横向拖动起手归行操作；从草稿两侧边缘区域起笔才直接翻整页。
             // 中间区域（约 56% 正文区）留给草稿行操作（删除 / 转 Thought），两侧区域（各 22% 或至少 72px）直接翻页。
             // 起手定归属，手势中途绝不交棒变异，避免动效串台。
@@ -420,11 +469,17 @@ export class TodayDraftsManager {
                 invalid: false,
                 box: this.pagerBox()
             };
+            // 认领即捕获：捕获让整条指针流（含 up/cancel）稳定落到 view 上，
+            // Chrome 的原生手势（文字选择等）无法中途 pointercancel 抢走指针。
+            // 代价是 click 被改派到 view，所以上面必须排除一切需要原生点击语义的
+            // 元素（输入框/按钮/链接/复选框）；被认领的普通点按不再触发原生失焦，
+            // 行编辑器要在这里手动 blur（点空白纸面收起编辑态、清掉空草稿的路径）。
             try {
                 this.view?.setPointerCapture?.(event.pointerId);
             } catch {
                 // Pointer capture is an enhancement.
             }
+            if (document.activeElement?.matches?.('[data-today-draft-text]')) document.activeElement.blur();
         });
 
         this.view?.addEventListener('pointermove', event => {
@@ -1077,6 +1132,56 @@ export class TodayDraftsManager {
             row.classList.add('is-copied');
             setTimeout(() => row.classList.remove('is-copied'), 900);
         });
+    }
+
+    // 复制草稿全文到剪贴板：clipboard API 优先；非安全上下文（如局域网 http 访问）
+    // 没有 navigator.clipboard，降级为隐藏 textarea + execCommand。
+    async copyDraftText(text, row = null) {
+        const value = String(text || '');
+        if (!value) return false;
+        let copied = false;
+        try {
+            if (navigator.clipboard?.writeText) {
+                await navigator.clipboard.writeText(value);
+                copied = true;
+            }
+        } catch {
+            copied = false;
+        }
+        if (!copied) {
+            try {
+                const helper = document.createElement('textarea');
+                helper.value = value;
+                helper.setAttribute('readonly', '');
+                helper.style.position = 'fixed';
+                helper.style.opacity = '0';
+                document.body.appendChild(helper);
+                helper.select();
+                copied = document.execCommand('copy');
+                helper.remove();
+            } catch {
+                copied = false;
+            }
+        }
+        if (!copied) {
+            this.toaster?.show('复制失败', 'error', false, 1800);
+            return false;
+        }
+        if (row) {
+            // 反馈前按 id 重新定位：await 剪贴板期间列表可能已被异步刷新重铺，
+            // 拿点击时捕获的节点加类会落在已脱离文档的旧元素上。
+            const liveRow = this.list?.querySelector(`[data-today-draft-id="${CSS.escape(row.dataset.todayDraftId)}"]`) || row;
+            liveRow.classList.add('is-copied');
+            setTimeout(() => liveRow.classList.remove('is-copied'), 900);
+            const button = liveRow.querySelector('[data-today-draft-copy]');
+            if (button) {
+                clearTimeout(this.copyFeedbackTimer);
+                button.classList.add('is-copy-success');
+                this.copyFeedbackTimer = setTimeout(() => button.classList.remove('is-copy-success'), 900);
+            }
+        }
+        this.toaster?.show('已复制到剪贴板', 'success', false, 1600);
+        return true;
     }
 
     update(id, patch, { render = true } = {}) {

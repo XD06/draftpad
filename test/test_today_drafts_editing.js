@@ -111,11 +111,17 @@ async function run() {
     assert.strictEqual(manager.isComposingDraft, false, 'isComposingDraft should be false');
     assert(row2.querySelector('[data-today-draft-text]'), 'compositionend must not wipe textarea');
 
-    // 6. Real blur (focusout) should cleanly transition back to display mode
+    // 6. Real blur (focusout) must NOT rebuild the list inside the event itself:
+    // focusout is triggered by mousedown, the pointer sequence is still in flight,
+    // and a synchronous teardown swaps the element under mouseup — the click is
+    // lost (checkbox toggles stopped working this way). Cleanup is deferred to
+    // its own task.
     textarea.blur();
     textarea.dispatchEvent(new dom.window.Event('focusout', { bubbles: true }));
+    assert(row2.querySelector('[data-today-draft-text]'), 'focusout must not tear down the textarea synchronously');
+    await new Promise(resolve => setTimeout(resolve, 0));
     const rowAfter = manager.list.querySelector('[data-today-draft-id="draft-2"]');
-    assert(rowAfter, 'draft-2 row should exist after render');
+    assert(rowAfter, 'draft-2 row should exist after deferred render');
     const afterBlurTextarea = rowAfter.querySelector('[data-today-draft-text]');
     assert(!afterBlurTextarea, 'blur should tear down the inline textarea');
     const afterBlurDisplay = rowAfter.querySelector('[data-today-draft-text-display]');
