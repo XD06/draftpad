@@ -180,7 +180,7 @@ async function main() {
             && app.includes('data-mark-collapse'),
             null);
         check('toc noise: bold fragments never enter the TOC (mark selector excludes strong)',
-            app.includes("const MARK_SELECTOR = 'mark, .md-mark, u, [data-draw], .has-annotation, [data-note]'")
+            readSource('public/managers/heading-index.js').includes("const TOC_MARK_SELECTOR = 'mark, .md-mark, u, [data-draw], .has-annotation, [data-note]'")
             && !app.includes("type: 'bold'"),
             null);
         check('toc follow: collapse entries do not take part in scroll tracking',

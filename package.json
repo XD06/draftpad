@@ -52,6 +52,8 @@
     "test:tiptap-file-command": "node test/test_tiptap_file_command.js",
     "test:tiptap-slash-menu": "node test/test_tiptap_slash_menu.js",
     "test:tiptap-list-nesting": "node test/test_tiptap_list_nesting.js",
+    "test:toc-marks": "node test/test_toc_marks.js",
+    "test:toc-marks-browser": "node test/browser/toc-marks.js",
     "test:slash-menu-browser": "node test/browser/slash-menu.js",
     "test:tiptap-image-menu": "node test/test_tiptap_image_menu.js",
     "test:tiptap-soft-enter-link": "node test/test_tiptap_soft_enter_link.js",

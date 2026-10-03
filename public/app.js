@@ -22,6 +22,7 @@ import {
     updateSidebarSelection
 } from './sidebar.js';
 import { ArticleMetaFooter } from './managers/article-meta-footer.js';
+import { collectTocMarkEntries } from './managers/heading-index.js';
 import { applyFloatingActionsVisibility } from './managers/floating-actions-config.js';
 import { createCommandSearchManager } from './managers/command-search/command-search-manager.js';
 import { registerResultType } from './managers/command-search/result-type-registry.js';
@@ -1818,61 +1819,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         updateActiveTocItem();
     }
 
-    // 收集各标题区段内的高亮/划线/批注片段，供文章目录作为子条目展示。
-    // 单次 DOM 顺序遍历：遇到标题就切换当前分组，命中装饰元素就归类；
-    // 已收录元素的嵌套后代跳过，避免同一段文字重复出现。
-    // 加粗不进目录（用户要求）：调研类文章的加粗动辄几十处，条目会淹没
-    // 标题层级；且加粗常被当普通强调使用，不像批注/高亮/划线那样自带
-    // "值得回头定位"的语义。
-    function collectTocMarkEntries(toc) {
-        const root = document.querySelector('.vditor-wysiwyg .vditor-reset');
-        const groups = new Map();
-        if (!root || !toc.length) return groups;
-        const MARK_SELECTOR = 'mark, .md-mark, u, [data-draw], .has-annotation, [data-note]';
-        const classify = (el) => {
-            if (el.matches('.has-annotation, [data-note]')) return { type: 'note', badge: 'N', typeLabel: '批注' };
-            if (el.matches('mark, .md-mark')) return { type: 'highlight', badge: 'H', typeLabel: '高亮' };
-            return { type: 'underline', badge: 'U', typeLabel: '划线' };
-        };
-        const accepted = new Set();
-        let currentGroupId = '__preamble__';
-        groups.set(currentGroupId, []);
-        const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
-        let node;
-        while ((node = walker.nextNode())) {
-            if (/^H[1-6]$/.test(node.tagName) && node.dataset.headingId) {
-                currentGroupId = node.dataset.headingId;
-                if (!groups.has(currentGroupId)) groups.set(currentGroupId, []);
-                continue;
-            }
-            if (!node.matches(MARK_SELECTOR)) continue;
-            let nested = false;
-            let ancestor = node.parentElement;
-            while (ancestor && ancestor !== root) {
-                if (accepted.has(ancestor)) { nested = true; break; }
-                ancestor = ancestor.parentElement;
-            }
-            if (nested) continue;
-            const snippet = String(node.textContent || '').replace(/\s+/g, ' ').trim();
-            if (!snippet) continue;
-            accepted.add(node);
-            if (!groups.has(currentGroupId)) groups.set(currentGroupId, []);
-            const info = classify(node);
-            groups.get(currentGroupId).push({
-                el: node,
-                ...info,
-                snippet: snippet.length > 26 ? `${snippet.slice(0, 26)}…` : snippet
-            });
-        }
-        // 没有标题的分组（文首片段）并入第一个标题，避免出现孤儿条目。
-        const preamble = groups.get('__preamble__');
-        if (preamble?.length && toc.length) {
-            const first = groups.get(toc[0].id);
-            if (first) first.unshift(...preamble);
-        }
-        groups.delete('__preamble__');
-        return groups;
-    }
+    // 收集各标题区段内的高亮/划线/批注片段：实现在 managers/heading-index.js
+    // 的 collectTocMarkEntries（纯 DOM 扫描，可单测）。加粗不进目录（用户要求）。
 
     // Edit-mode TOC jump: place the caret at the target heading before
     // focusing, otherwise focus() pulls the viewport back to the old caret

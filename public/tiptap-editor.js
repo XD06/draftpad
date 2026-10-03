@@ -165,6 +165,7 @@ export class HybridMarkdownEditor {
         this.isReadingMode = false;
         this.headingLineBySlug = new Map();
         this.headingIds = [];
+        this._headingAnchorQueued = false;
         this._lastValue = '';
         this.ready = false;
         this.pendingValue = '';
@@ -770,15 +771,23 @@ export class HybridMarkdownEditor {
         // 不进撤销历史、docChanged=false 不会触发保存。id 与上次相同则跳过
         // 派发（app.js 的滚动高亮每帧都会调用本方法，必须幂等）。
         const ids = toc.map(entry => (entry?.id ? entry.id : ''));
-        if (ids.join('\u0001') === this._lastHeadingAnchorIds) return;
-        this._lastHeadingAnchorIds = ids.join('\u0001');
+        const next = ids.join('\u0001');
+        if (next === this._lastHeadingAnchorIds) return;
+        // ready 之前只排队、**不写幂等守卫**：守卫先写上的话，后续（create
+        // 之后才跑的）updateToC 的 sync 会被它挡住不再派发，标题 id 迟迟落不进
+        // DOM，目录的标记扫描整段落空（warm 启动路径下 selectNotepad 的 rAF
+        // 跑在 create 之前，是稳定复现入口）。排队去重防每帧重复排队。
         if (!this.ready) {
+            if (this._headingAnchorQueued) return;
+            this._headingAnchorQueued = true;
             this.whenReady().then(() => {
+                this._headingAnchorQueued = false;
                 this._lastHeadingAnchorIds = null;
                 this.syncRenderedHeadingIds(toc);
             }).catch(() => {});
             return;
         }
+        this._lastHeadingAnchorIds = next;
         this.editor.view.dispatch(this.editor.state.tr.setMeta(headingAnchorPluginKey, ids));
     }
 
