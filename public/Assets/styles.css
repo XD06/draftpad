@@ -5878,6 +5878,112 @@ body.reading-mode-active .editor-main {
     }
 }
 
+/* 嵌入媒体（/file 上传的音视频）：卡片骨架与图片预览（.dumbpad-article-image）
+   同款——同边框、圆角、外边距；内容为原生播放器 + 文件名条（图标/主题色由
+   NodeView 注入 --media-theme）。 */
+.vditor-reset .dumbpad-article-media {
+    display: block;
+    max-width: 100%;
+    margin: 14px 0;
+    overflow: hidden;
+    border: 1px solid color-mix(in srgb, var(--border-color) 82%, transparent);
+    border-radius: 6px;
+    background: color-mix(in srgb, var(--surface-subtle) 86%, var(--textarea-bg));
+    vertical-align: middle;
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+.vditor-reset .dumbpad-article-media video,
+.vditor-reset .dumbpad-article-media audio {
+    display: block;
+    width: 100%;
+}
+
+.vditor-reset .dumbpad-article-media video {
+    max-height: 70vh;
+    background: #000;
+}
+
+.vditor-reset .dumbpad-article-media audio {
+    height: 44px;
+}
+
+.vditor-reset .dumbpad-article-media[data-media-kind="audio"] .dumbpad-article-media-meta {
+    border-top: none;
+    border-bottom: 1px solid color-mix(in srgb, var(--border-color) 70%, transparent);
+}
+
+.vditor-reset .dumbpad-article-media[data-media-kind="video"] .dumbpad-article-media-meta {
+    border-top: 1px solid color-mix(in srgb, var(--border-color) 70%, transparent);
+}
+
+.vditor-reset .dumbpad-article-media-meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 34px;
+    padding: 4px 8px 4px 10px;
+    color: var(--text-color);
+    font-size: 13px;
+    font-weight: 500;
+    line-height: 1.35;
+}
+
+.vditor-reset .dumbpad-article-media-icon {
+    display: inline-flex;
+    flex: 0 0 auto;
+    color: var(--media-theme, var(--muted-text));
+}
+
+.vditor-reset .dumbpad-article-media-name {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.vditor-reset .dumbpad-article-media-download,
+.vditor-reset .dumbpad-article-media-delete {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    padding: 0;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--muted-text);
+    cursor: pointer;
+    transition: background 0.18s ease, color 0.18s ease;
+}
+
+.vditor-reset .dumbpad-article-media-download:hover,
+.vditor-reset .dumbpad-article-media-delete:hover {
+    color: var(--media-theme, var(--primary-color));
+    background: color-mix(in srgb, var(--media-theme, var(--primary-color)) 12%, transparent);
+}
+
+.vditor-reset .dumbpad-article-media-delete:focus-visible,
+.vditor-reset .dumbpad-article-media-download:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--primary-color) 45%, transparent);
+    outline-offset: 1px;
+}
+
+/* 阅读模式不提供删除入口（下载保留）。 */
+.typora-editor-shell.is-reading-mode .dumbpad-article-media-delete {
+    display: none;
+}
+
+@media (max-width: 768px) {
+    .vditor-reset .dumbpad-article-media-meta {
+        font-size: 12.5px;
+    }
+}
+
 /* Links in the article editor — Lute already renders bare URLs (GFM
    autolink) and authored [text](url) as real <a> elements; give them the
    same highlighted, clickable affordance as Thoughts and Today Drafts. */

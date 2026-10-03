@@ -53,6 +53,7 @@ import {
     DumbPadImage,
     TiptapImageInteractions,
 } from './managers/tiptap-image-interactions.js';
+import { DumbPadMedia } from './managers/tiptap-media.js';
 import { buildMarkdownHeadingIndex } from './managers/heading-index.js';
 
 // frontmatter 假代码块按 YAML 高亮（官方插件对未注册语言会回退
@@ -260,6 +261,9 @@ export class HybridMarkdownEditor {
                 // 图片节点由 DumbPadImage 提供（关闭原生 draggable，换位走
                 // 指针拖拽事务）；宽度/类名由 PM Decoration 应用。
                 DumbPadImage,
+                // 嵌入媒体（/file 上传的音视频，内联播放器节点，解析期把
+                // dumbpad-video/audio 占位 img 升级成媒体节点）。
+                DumbPadMedia,
                 Table.configure({ resizable: false }),
                 TableRow,
                 TableHeader,

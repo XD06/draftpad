@@ -1,7 +1,18 @@
 export const MAX_IMAGE_ASSET_SIZE = 50 * 1024 * 1024;
-export const MAX_FILE_ASSET_SIZE = 20 * 1024 * 1024;
+// 与服务端 file-asset-policy 的默认上限一致（/file 插入允许 100MB 以内的文件）。
+export const MAX_FILE_ASSET_SIZE = 100 * 1024 * 1024;
 export const HARD_MAX_FILE_ASSET_SIZE = 100 * 1024 * 1024;
 export const ARTICLE_FILE_ACCEPT = 'image/*,.pdf,.txt,.md,.markdown,.csv,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.mp3,.m4a,.wav,.ogg,.flac,.mp4,.mov,.webm,.zip,.rar,.7z';
+// 可内联播放的媒体集合：与服务端 FILE_TYPES 白名单的可播放子集对齐
+// （其余扩展名走 uploadFile 也会被 415，分类宽了没有意义）。
+const PLAYABLE_VIDEO_EXTENSIONS = ['mp4', 'mov', 'webm'];
+const PLAYABLE_AUDIO_EXTENSIONS = ['mp3', 'm4a', 'wav', 'ogg', 'flac'];
+
+function fileExtension(name) {
+    const base = String(name || '').trim().split(/[\\/]/).pop() || '';
+    const match = base.toLowerCase().match(/\.([a-z0-9]{1,12})$/);
+    return match ? match[1] : '';
+}
 
 function safeName(file) {
     return String(file?.name || 'image').trim() || 'image';
@@ -23,6 +34,18 @@ export function buildUploadName(file) {
 
 export function isImageFile(file) {
     return String(file?.type || '').toLowerCase().startsWith('image/');
+}
+
+/** 视频：mime 是 video/，或扩展名属于可播放白名单（mime 缺失/通用时按扩展名兜底）。 */
+export function isVideoFile(file) {
+    return String(file?.type || '').toLowerCase().startsWith('video/')
+        || PLAYABLE_VIDEO_EXTENSIONS.includes(fileExtension(file?.name));
+}
+
+/** 音频：mime 是 audio/，或扩展名属于可播放白名单。 */
+export function isAudioFile(file) {
+    return String(file?.type || '').toLowerCase().startsWith('audio/')
+        || PLAYABLE_AUDIO_EXTENSIONS.includes(fileExtension(file?.name));
 }
 
 export function getAssetPreviewUrl(attachment = {}) {

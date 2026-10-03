@@ -7,7 +7,7 @@ const {
 } = require('../scripts/file-asset-policy');
 
 function run() {
-    assert.strictEqual(DEFAULT_MAX_FILE_BYTES, 20 * 1024 * 1024, 'ordinary attachments should default to 20 MiB');
+    assert.strictEqual(DEFAULT_MAX_FILE_BYTES, 100 * 1024 * 1024, 'ordinary attachments (media embeds included) should default to 100 MiB');
     assert.strictEqual(MAX_CONFIGURED_FILE_BYTES, 100 * 1024 * 1024, 'ordinary attachments should have a hard 100 MiB ceiling');
     assert.strictEqual(getMaxFileBytes('1048576'), 1048576, 'a valid environment override should be honoured');
     assert.strictEqual(getMaxFileBytes(String(101 * 1024 * 1024)), MAX_CONFIGURED_FILE_BYTES, 'an override above 100 MiB should clamp to the hard ceiling');
@@ -47,8 +47,24 @@ function run() {
         type: 'application/zip',
         size: DEFAULT_MAX_FILE_BYTES + 1
     });
-    assert.strictEqual(tooLarge.ok, false, 'a file exceeding the 20 MiB limit must be rejected');
-    assert.match(tooLarge.error, /20MB/, 'the rejection should report the active configured limit');
+    assert.strictEqual(tooLarge.ok, false, 'a file exceeding the 100 MiB limit must be rejected');
+    assert.match(tooLarge.error, /100MB/, 'the rejection should report the active configured limit');
+
+    const video = validateFileAssetUpload({
+        name: '片段.mp4',
+        type: 'video/mp4',
+        size: 1024
+    });
+    assert.strictEqual(video.ok, true, 'playable video should be accepted for media embeds');
+    assert.strictEqual(video.type, 'video/mp4');
+
+    const audio = validateFileAssetUpload({
+        name: '录音.flac',
+        type: 'application/octet-stream',
+        size: 1024
+    });
+    assert.strictEqual(audio.ok, true, 'audio uploads with a generic browser MIME should be accepted');
+    assert.strictEqual(audio.type, 'audio/flac');
     console.log('File asset policy checks passed');
 }
 

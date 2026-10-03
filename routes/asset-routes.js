@@ -25,6 +25,28 @@ function decodeAssetName(value) {
     }
 }
 
+/**
+ * 单段 Range 头（bytes=a-b / bytes=a- / bytes=-n）→ { start, end }。
+ * 无法解析、越界或多段请求一律返回 null（调用方回退 200 全量，RFC 允许忽略 Range）。
+ */
+function parseByteRange(header, totalLength) {
+    const match = /^bytes=(\d*)-(\d*)$/.exec(String(header || '').trim());
+    if (!match || (match[1] === '' && match[2] === '')) return null;
+    let start;
+    let end;
+    if (match[1] === '') {
+        const suffix = Number(match[2]);
+        if (!Number.isInteger(suffix) || suffix <= 0) return null;
+        start = Math.max(0, totalLength - suffix);
+        end = totalLength - 1;
+    } else {
+        start = Number(match[1]);
+        end = match[2] === '' ? totalLength - 1 : Number(match[2]);
+    }
+    if (!Number.isInteger(start) || !Number.isInteger(end) || start > end || start >= totalLength) return null;
+    return { start, end: Math.min(end, totalLength - 1) };
+}
+
 function createAssetId() {
     return typeof crypto.randomUUID === 'function'
         ? crypto.randomUUID()
@@ -269,12 +291,27 @@ function registerAssetRoutes(app, { storage, originValidationMiddleware, maxFile
         try {
             const asset = await assets.readAsset(id, requestedVariant);
             if (!asset) return res.status(404).json({ error: 'Asset not found' });
+            const isMediaAsset = /^(video|audio)\//i.test(asset.contentType || '');
             res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
             res.type(asset.contentType);
-            if (req.params.variant === 'download' || asset.metadata?.kind === 'file') {
+            // 媒体文件必须 inline 供 <video>/<audio> 引用，其余文件维持
+            // attachment（download 变体永远强制下载）。
+            if (req.params.variant === 'download' || (asset.metadata?.kind === 'file' && !isMediaAsset)) {
                 res.attachment(asset.filename);
             } else {
                 res.setHeader('Content-Disposition', 'inline');
+            }
+            if (isMediaAsset && req.params.variant !== 'download') {
+                // 原生播放器（尤其 iOS Safari）靠 Range 请求探测与拖动进度；
+                // 媒体资产支持 206 分段响应，普通文件与 download 变体不启用。
+                res.setHeader('Accept-Ranges', 'bytes');
+                const range = parseByteRange(req.get('range'), asset.buffer.length);
+                if (range) {
+                    res.status(206);
+                    res.setHeader('Content-Range', `bytes ${range.start}-${range.end}/${asset.buffer.length}`);
+                    res.setHeader('Content-Length', String(range.end - range.start + 1));
+                    return res.end(asset.buffer.subarray(range.start, range.end + 1));
+                }
             }
             res.send(asset.buffer);
         } catch (error) {

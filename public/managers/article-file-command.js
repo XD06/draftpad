@@ -91,3 +91,48 @@ export function buildArticleFileMarkdown(asset = {}) {
     // DumbPadArticleFileLink 的解析期归一化去掉）。
     return `[${name} · ${formatFileSize(size)}](${url} "${title}")`;
 }
+
+export const ARTICLE_VIDEO_TITLE_PREFIX = 'dumbpad-video=1';
+export const ARTICLE_AUDIO_TITLE_PREFIX = 'dumbpad-audio=1';
+
+/**
+ * 嵌入媒体的 title 元数据（dumbpad-video=1 / dumbpad-audio=1 开头，参数风格与
+ * dumbpad-file=1 完全一致）→ { kind, size, type, name }；非媒体 title 返回 null。
+ */
+export function parseMediaTitle(title = '') {
+    const text = String(title || '');
+    const kind = text.startsWith(ARTICLE_VIDEO_TITLE_PREFIX)
+        ? 'video'
+        : text.startsWith(ARTICLE_AUDIO_TITLE_PREFIX) ? 'audio' : null;
+    if (!kind) return null;
+    const read = (key) => {
+        const match = text.match(new RegExp(`(?:^|;)${key}=([^;]*)`));
+        if (!match) return '';
+        try {
+            return decodeURIComponent(match[1]);
+        } catch {
+            return match[1];
+        }
+    };
+    return {
+        kind,
+        size: Math.max(0, Number(read('size')) || 0),
+        type: read('type'),
+        name: read('name'),
+    };
+}
+
+/**
+ * 视频/音频资产的落文形态：`![名 · 大小](original链接 "dumbpad-video=1;…")`。
+ * 复用图片的「title 携带元数据」先例，src 指向 original 变体（服务端对媒体
+ * 返回 inline + Range，供原生播放器引用与拖动进度）。
+ */
+export function buildArticleMediaMarkdown(asset = {}, kind = 'video') {
+    const fallbackName = kind === 'audio' ? '音频' : '视频';
+    const url = String(asset.originalUrl || asset.downloadUrl || '').trim();
+    if (!url) return '';
+    const size = Math.max(0, Number(asset.size) || 0);
+    const type = safeTitlePart(asset.type || (kind === 'audio' ? 'audio/mpeg' : 'video/mp4'));
+    const title = `${kind === 'audio' ? ARTICLE_AUDIO_TITLE_PREFIX : ARTICLE_VIDEO_TITLE_PREFIX};size=${size};type=${type};name=${safeTitlePart(asset.name || '')}`;
+    return `![${escapeMarkdownLabel(asset.name || fallbackName)} · ${formatFileSize(size)}](${url} "${title}")`;
+}

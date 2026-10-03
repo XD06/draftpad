@@ -490,7 +490,7 @@ curl -X POST http://localhost:3000/api/assets/images \
 
 ### POST /api/assets/files
 
-上传一份普通文章附件。请求体是原始二进制内容，不是 JSON 或 Base64。默认单文件最大 `20MiB`，可通过服务端 `ASSET_MAX_FILE_BYTES` 调整。
+上传一份普通文章附件。请求体是原始二进制内容，不是 JSON 或 Base64。默认单文件最大 `100MiB`，可通过服务端 `ASSET_MAX_FILE_BYTES` 调低。
 
 允许 PDF、纯文本/Markdown/CSV、Office 文档、音视频和 ZIP/RAR/7z；HTML、SVG、脚本和可执行文件会被拒绝。服务端会校验扩展名与声明 MIME 的匹配，并且所有普通附件都强制下载，不能以内联页面执行。
 
@@ -522,7 +522,7 @@ curl -X POST http://localhost:3000/api/assets/files \
 | `variant` | 行为 |
 |---|---|
 | `preview` | 仅图片可用，返回 WebP 预览，适合正文渲染 |
-| `original` | 返回上传时的原始字节与原始 MIME；普通附件仍强制下载 |
+| `original` | 返回上传时的原始字节与原始 MIME；普通附件强制下载；**音视频附件**（`video/*`、`audio/*`）以 `Content-Disposition: inline` 返回并支持 `Range` 请求（`206` 分段 + `Accept-Ranges: bytes`），供编辑器内嵌播放器引用 |
 | `download` | 返回原始字节，并带 `Content-Disposition: attachment` |
 
 不存在或非法 id 返回 `404`；`preview`、`original`、`download` 之外的 variant 同样返回 `404`。

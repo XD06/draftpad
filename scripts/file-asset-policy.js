@@ -1,6 +1,8 @@
 'use strict';
 
-const DEFAULT_MAX_FILE_BYTES = 20 * 1024 * 1024;
+// /file 插入允许 100MB 以内的文件（与 ASSET_MAX_FILE_BYTES 的可配上限一致，
+// 环境变量仍可下调；客户端 asset-api-client.js 的默认值须与此保持同步）。
+const DEFAULT_MAX_FILE_BYTES = 100 * 1024 * 1024;
 const MIN_FILE_BYTES = 1;
 const MAX_CONFIGURED_FILE_BYTES = 100 * 1024 * 1024;
 

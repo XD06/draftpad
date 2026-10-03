@@ -12,13 +12,16 @@ import { getFileCategory, getFileIconSvg } from './file-type-icons.js';
 import {
     AssetApiClient,
     ARTICLE_FILE_ACCEPT,
+    isAudioFile,
     isImageFile,
+    isVideoFile,
 } from './asset-api-client.js';
 import {
     FILE_COMMAND,
     DEFAULT_ARTICLE_IMAGE_WIDTH,
     findFileCommandBeforeCursor,
     buildArticleFileMarkdown,
+    buildArticleMediaMarkdown,
     formatFileSize,
     replaceFileCommand,
 } from './article-file-command.js';
@@ -212,6 +215,14 @@ export function createFileCommandController(adapter) {
     let pendingSourceRange = null; // 源码模式：/file 在 textarea 值中的区间
     let fileInput = null;
 
+    /** 落文分类：图片 → 图片 markdown；可播放音视频 → 媒体节点 markdown；其余 → 附件链接。 */
+    function buildArticleUploadMarkdown(file, asset) {
+        if (isImageFile(file)) return buildArticleImageMarkdown(asset);
+        if (isVideoFile(file)) return buildArticleMediaMarkdown(asset, 'video');
+        if (isAudioFile(file)) return buildArticleMediaMarkdown(asset, 'audio');
+        return buildArticleFileMarkdown(asset);
+    }
+
     const getAssetApi = () => {
         if (!adapter.assetApi) {
             adapter.assetApi = new AssetApiClient({ maxFileBytes: adapter.assetMaxFileBytes ?? undefined });
@@ -376,9 +387,7 @@ export function createFileCommandController(adapter) {
             await Promise.all(uploads.map(async ({ item, upload }, index) => {
                 try {
                     const asset = await upload;
-                    markdowns[index] = item.isImage
-                        ? buildArticleImageMarkdown(asset)
-                        : buildArticleFileMarkdown(asset);
+                    markdowns[index] = buildArticleUploadMarkdown(item.file, asset);
                 } catch (error) {
                     console.error(`Failed to upload article ${item.isImage ? 'image' : 'file'}:`, error);
                     updateUploadProgress(item, { phase: 'error', error: error?.message || '上传失败' });
@@ -439,9 +448,7 @@ export function createFileCommandController(adapter) {
         await Promise.all(uploads.map(async (item, index) => {
             try {
                 const asset = await item.upload;
-                markdowns[index] = item.isImage
-                    ? buildArticleImageMarkdown(asset)
-                    : buildArticleFileMarkdown(asset);
+                markdowns[index] = buildArticleUploadMarkdown(files[index], asset);
             } catch (error) {
                 console.error(`Failed to upload article ${item.isImage ? 'image' : 'file'}:`, error);
                 failures.push(files[index]);

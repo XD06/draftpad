@@ -168,6 +168,77 @@ async function run() {
         });
         assert.strictEqual(rejectedFile.status, 415, 'HTML uploads must be rejected');
 
+        // 嵌入媒体（video/audio）：original 变体必须 inline + Accept-Ranges，
+        // Range 请求返回 206 分段；download 变体仍强制 attachment。
+        // 服务端不嗅探媒体内容，任意字节即可验证响应管线。
+        const mediaBytes = Buffer.from('0123456789ABCDEFGHIJ media payload');
+        const mediaUpload = await fetch(`${baseUrl}/api/assets/files`, {
+            method: 'POST',
+            headers: {
+                'content-type': 'application/octet-stream',
+                'x-asset-name': encodeURIComponent('片段.mp4'),
+                'x-asset-type': 'video/mp4'
+            },
+            body: mediaBytes
+        });
+        assert.strictEqual(mediaUpload.status, 201, 'a playable video file should be accepted');
+        const mediaAsset = await mediaUpload.json();
+
+        const mediaOriginal = await fetch(`${baseUrl}${mediaAsset.originalUrl}`);
+        assert.strictEqual(mediaOriginal.status, 200);
+        assert.strictEqual(mediaOriginal.headers.get('content-disposition'), 'inline', 'media originals must be inline so <video>/<audio> can reference them');
+        assert.strictEqual(mediaOriginal.headers.get('accept-ranges'), 'bytes', 'media originals must advertise byte ranges for player seeking');
+
+        const firstTen = await fetch(`${baseUrl}${mediaAsset.originalUrl}`, { headers: { range: 'bytes=0-9' } });
+        assert.strictEqual(firstTen.status, 206, 'a valid byte range should be answered with 206');
+        assert.strictEqual(firstTen.headers.get('content-range'), `bytes 0-9/${mediaBytes.length}`);
+        assert.strictEqual(firstTen.headers.get('content-length'), '10');
+        assert.deepStrictEqual(
+            Buffer.from(await firstTen.arrayBuffer()),
+            mediaBytes.subarray(0, 10),
+            'a ranged media response must carry exactly the requested bytes'
+        );
+
+        const suffixRange = await fetch(`${baseUrl}${mediaAsset.originalUrl}`, { headers: { range: 'bytes=-4' } });
+        assert.strictEqual(suffixRange.status, 206, 'a suffix range should be answered with 206');
+        assert.strictEqual(suffixRange.headers.get('content-range'), `bytes ${mediaBytes.length - 4}-${mediaBytes.length - 1}/${mediaBytes.length}`);
+        assert.deepStrictEqual(
+            Buffer.from(await suffixRange.arrayBuffer()),
+            mediaBytes.subarray(mediaBytes.length - 4),
+            'a suffix range must serve the trailing bytes'
+        );
+
+        const openRange = await fetch(`${baseUrl}${mediaAsset.originalUrl}`, { headers: { range: 'bytes=5-' } });
+        assert.strictEqual(openRange.status, 206, 'an open-ended range should be answered with 206');
+        assert.deepStrictEqual(
+            Buffer.from(await openRange.arrayBuffer()),
+            mediaBytes.subarray(5),
+            'an open-ended range must serve through the end of the asset'
+        );
+
+        const unsatisfiable = await fetch(`${baseUrl}${mediaAsset.originalUrl}`, { headers: { range: 'bytes=99999-' } });
+        assert.strictEqual(unsatisfiable.status, 200, 'an out-of-bounds range should fall back to a full 200 response');
+
+        const mediaDownload = await fetch(`${baseUrl}${mediaAsset.downloadUrl}`);
+        assert.match(mediaDownload.headers.get('content-disposition') || '', /attachment/i, 'media downloads must still force attachment behavior');
+
+        const audioUpload = await fetch(`${baseUrl}/api/assets/files`, {
+            method: 'POST',
+            headers: {
+                'content-type': 'application/octet-stream',
+                'x-asset-name': encodeURIComponent('录音.wav'),
+                'x-asset-type': 'audio/wav'
+            },
+            body: Buffer.from('RIFF audio bytes')
+        });
+        assert.strictEqual(audioUpload.status, 201, 'an audio file should be accepted');
+        const audioAsset = await audioUpload.json();
+        const audioOriginal = await fetch(`${baseUrl}${audioAsset.originalUrl}`);
+        assert.strictEqual(audioOriginal.headers.get('content-disposition'), 'inline', 'audio originals must be inline like video');
+        assert.strictEqual(audioOriginal.headers.get('accept-ranges'), 'bytes', 'audio originals must advertise byte ranges');
+        const audioRanged = await fetch(`${baseUrl}${audioAsset.originalUrl}`, { headers: { range: 'bytes=0-3' } });
+        assert.strictEqual(audioRanged.status, 206, 'audio originals must answer ranges like video');
+
         const list = await fetch(`${baseUrl}/api/assets`);
         assert.strictEqual(list.status, 200, 'GET /api/assets should list stored assets');
         const listBody = await list.json();
