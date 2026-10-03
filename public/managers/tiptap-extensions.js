@@ -1382,6 +1382,136 @@ export const DumbPadTaskList = TaskList.extend({
     },
 });
 
+const installedEmptyTaskItemRules = new WeakSet();
+
+/**
+ * 内核的 github-task-lists 插件只在条目首段文本以 "[ ] "/"[x] "（**带尾随空格**）
+ * 开头时才盖任务章，而 markdown-it 的 inline 解析会把行尾空格剥掉——「空待办」
+ * （`- [ ] `，用户在任务项上回车得到的正是它）的 token 内容只剩 "[ ]"，插件不认，
+ * 条目退化成普通列表 + 字面 "[ ]" 文本，序列化再被转义成 `- \[ \]`：每次保存
+ * 污染一次，嵌套空任务项同样中招。
+ *
+ * 这条 core 规则赶在 github-task-lists 之前，把列表项首段开头**裸收尾**的
+ * `[ ]`/`[x]` 补上尾随空格（只动 token，不碰源码）。插件随后 unshift 复选框并
+ * `slice(3)` 吃掉 "[ ]"，残留的单个空格是空白文本节点，PM 解析时丢弃——条目
+ * 回到「真的空」；往返逐字节稳定（`- [ ] ` → 解析 → 再序列化仍 `- [ ] `）。
+ * 已有后续内容的条目（"[ ] 甲"）本来就带空格，规则原样放过。
+ */
+function padEmptyTaskItemTokens(state) {
+    const tokens = state.tokens;
+    // 与 github-task-lists 的门完全一致：list_item_open > paragraph_open > inline。
+    for (let index = 2; index < tokens.length; index += 1) {
+        if (tokens[index].type !== 'inline'
+            || tokens[index - 1]?.type !== 'paragraph_open'
+            || tokens[index - 2]?.type !== 'list_item_open') continue;
+        const inline = tokens[index];
+        const first = inline.children?.[0];
+        if (!first || first.type !== 'text') continue;
+        if (!/^\[[ xX]\]$/.test(first.content)) continue;
+        first.content = `${first.content} `;
+        inline.content = `${inline.content} `;
+    }
+}
+
+/**
+ * 空任务项解析补丁。必须注册在 DumbPadTaskList 之后：上游 TaskList 的
+ * setup 挂载 github-task-lists，本规则用 ruler.before 显式插到它前面
+ * （setup 每次 parse 重跑，按 markdown-it 实例去重）。上游缺席时（没有
+ * TaskList 扩展就没有任务项）安静跳过。
+ */
+export const DumbPadEmptyTaskItemParseRule = Extension.create({
+    name: 'dumbpadEmptyTaskItemParseRule',
+
+    addStorage() {
+        return {
+            markdown: {
+                parse: {
+                    setup(markdownit) {
+                        if (installedEmptyTaskItemRules.has(markdownit)) return;
+                        installedEmptyTaskItemRules.add(markdownit);
+                        const rules = markdownit.core.ruler.__rules__;
+                        if (rules.some(rule => rule.name === 'github-task-lists')) {
+                            markdownit.core.ruler.before('github-task-lists', 'dumbpad_empty_task_item', padEmptyTaskItemTokens);
+                        } else {
+                            markdownit.core.ruler.after('inline', 'dumbpad_empty_task_item', padEmptyTaskItemTokens);
+                        }
+                    },
+                },
+            },
+        };
+    },
+});
+
+const installedEmptyListMarkerRules = new WeakSet();
+
+const EMPTY_LIST_MARKER_LINE_RE = /^([ \t]*)(?:[-*+]|\d{1,9}[.)])[ \t]*$/;
+const CONTENT_LIST_MARKER_LINE_RE = /^([ \t]*)(?:[-*+]|\d{1,9}[.)])[ \t]+\S/;
+
+function rawLine(state, line) {
+    return state.src.slice(state.bMarks[line], state.eMarks[line]);
+}
+
+/**
+ * 空列表项**不能打断段落**（CommonMark）：前一行是段落文字时，「只有标记的行」
+ * 退化为惰性续行，而单个 `-` 组成的行又恰好是 setext 下划线——`- 甲\n  - ` 重新
+ * 解析变成 `## 甲`（父行被吞成二级标题、空项消失），`甲\n- ` 同理。这是「列表下
+ * 唯一的空嵌套项」（回车 + Tab 的正常打字流落盘形态）的解析入口损坏。
+ *
+ * 这条 block 规则赶在 lheading（setext）之前：当前行是非空文本、下一行**只由单个
+ * 列表标记构成**（`---`/`--`/`***` 等多字符分隔线与 setext 下划线都不匹配，真实的
+ * setext 与 hr 不受影响）时，把当前行就地落成段落再前进一行，空标记行交给列表
+ * 规则——段落已关闭，空条目得以正常起列表（与「标记行前有空行」同一条成功路径）。
+ *
+ * 两条防误伤：
+ * - 当前行自己是列表行时（列表项子状态里 getLines 拿到的原始行仍带标记），空标记
+ *   行必须**严格更深一层**才起火——同层兄弟空项（`- 乙` 之后的 `  - `）本来就解析
+ *   正确，抢过来会把一个列表拆成两个；
+ * - 段落内容用 `getLines(..., state.blkIndent)` 提取，与 paragraph 规则同一调用，
+ *   列表项子状态的标记偏移由 blkIndent 吃掉，`- 甲` 不会整行漏进文本。
+ */
+function emptyListMarkerInterruptRule(state, startLine, endLine, silent) {
+    if (startLine + 1 >= endLine) return false;
+    const currentRaw = rawLine(state, startLine);
+    if (!currentRaw.trim()) return false;
+    const nextRaw = rawLine(state, startLine + 1);
+    const nextMarker = nextRaw.match(EMPTY_LIST_MARKER_LINE_RE);
+    if (!nextMarker) return false;
+    const currentListMarker = currentRaw.match(CONTENT_LIST_MARKER_LINE_RE)
+        ?? currentRaw.match(EMPTY_LIST_MARKER_LINE_RE);
+    if (currentListMarker) {
+        if (nextMarker[1].length <= currentListMarker[1].length) return false;
+    }
+    if (silent) return true;
+    const content = state.getLines(startLine, startLine + 1, state.blkIndent, false).trim();
+    const openToken = state.push('paragraph_open', 'p', 1);
+    openToken.map = [startLine, startLine + 1];
+    const inlineToken = state.push('inline', '', 0);
+    inlineToken.content = content;
+    inlineToken.children = [];
+    inlineToken.map = [startLine, startLine + 1];
+    state.push('paragraph_close', 'p', -1);
+    state.line = startLine + 1;
+    return true;
+}
+
+export const DumbPadEmptyListMarkerParseRule = Extension.create({
+    name: 'dumbpadEmptyListMarkerParseRule',
+
+    addStorage() {
+        return {
+            markdown: {
+                parse: {
+                    setup(markdownit) {
+                        if (installedEmptyListMarkerRules.has(markdownit)) return;
+                        installedEmptyListMarkerRules.add(markdownit);
+                        markdownit.block.ruler.before('lheading', 'dumbpad_empty_list_marker', emptyListMarkerInterruptRule);
+                    },
+                },
+            },
+        };
+    },
+});
+
 /**
  * 混排列表守卫：`- 甲` 与 `- [ ] 乙` 同列表时（不管谁打头、怎么交错），markdown-it
  * 输出**单个** ul.contains-task-list（只有任务项的 li 带 task-list-item 类），而
@@ -1665,5 +1795,209 @@ export const SearchHitHighlight = Extension.create({
                 },
             }),
         ];
+    },
+});
+
+/**
+ * 空列表项的退格 = 清除继承来的列表标记，原地留一条缩进空行（Typora 语义）。
+ *
+ * 手机上没有 Tab，嵌套列表的创建路径必须是「Enter 新条目 → Backspace 清掉继承的
+ * 标记 → 直接键入 `- `/`[ ] `/`1. `」。键入能不能生成嵌套列表取决于落点段落在
+ * listItem 里的孩子序号：schema 里 listItem 的 content 是 `paragraph block*`，
+ * **第一个孩子必须是段落**，所以对首段落做 wrap（bulletList）永远找不到合法包装
+ * （findWrapping 的外围检查 `li.contentMatchAt(0).findWrapping(bulletList)` 返回
+ * null），官方输入规则静默放行，`- ` 以字面文本留在条目里（真机实测复现）。而
+ * **尾部空行**（第二个孩子起）落在 `block*` 段，wrap 完全合法——所以本扩展只负责
+ * 把空项退格成那条尾部空行，键入侧交给官方输入规则，两半拼起来才是完整的无 Tab
+ * 嵌套路径。
+ *
+ * 退格阶梯（每退一次只降一格，光标始终停在行首，不跳到别处）：
+ *   空条目 `2. `          --退格-->  上一条目里的尾部空行（标记没了，缩进保留）
+ *   上一条目的尾部空行     --退格-->  空行退出列表成顶层段落（column 0，「最开头」）
+ *   嵌套空条目（无前兄弟） --退格-->  空行挪进父条目（降一级，内层列表随空项一起消失）
+ * 顶层首个空条目（无前兄弟）不接管：Tiptap 的 lift 本来就是「退出列表成段落」，
+ * 正是阶梯的终点。
+ *
+ * 刻意不接管的事：
+ * - 非空条目的行首退格维持 Tiptap 默认（并入上一条目），Typora 同样如此；
+ * - 顶层列表**非末位**条目的尾部空行不接管（默认并轨语义）：把它拎出列表会拆断
+ *   列表，有序列表的编号会被重排，代价大于收益；
+ * - 嵌套无前兄弟但列表还有其他条目时，只删当前项、空行留在列表之前，绝不吞兄弟。
+ *
+ * 必须注册在扩展列表**末尾**（TiptapSlashMenu 之后）：PM 的 handleKeyDown 按插件
+ * 注册逆序咨询，本扩展要抢在 Tiptap listKeymap 的 Backspace（空项 lift）之前生效。
+ */
+export const DumbPadListBlankLineBackspace = Extension.create({
+    name: 'dumbpadListBlankLineBackspace',
+
+    addProseMirrorPlugins() {
+        const LI_TYPES = ['listItem', 'taskItem'];
+        return [
+            new Plugin({
+                key: new PluginKey('dumbpadListBlankLineBackspace'),
+                props: {
+                    handleKeyDown: (view, event) => {
+                        if (event.key !== 'Backspace' || view.composing) return false;
+                        const { state } = view;
+                        const { selection } = state;
+                        if (!selection.empty) return false;
+                        const { $from } = selection;
+                        const parent = $from.parent;
+                        // 两种目标形态（空条目本体 / 条目尾部空行）都是「空段落的行首」
+                        if (parent.type.name !== 'paragraph') return false;
+                        if (parent.content.size !== 0 || $from.parentOffset !== 0) return false;
+
+                        let liDepth = -1;
+                        for (let d = $from.depth - 1; d >= 1; d--) {
+                            if (LI_TYPES.includes($from.node(d).type.name)) { liDepth = d; break; }
+                        }
+                        if (liDepth < 0) return false;
+                        // 空段落必须是列表项的直接孩子（li > blockquote > p 这类嵌套不接管）
+                        if ($from.depth !== liDepth + 1) return false;
+
+                        const listItem = $from.node(liDepth);
+                        const listDepth = liDepth - 1;
+                        const list = $from.node(listDepth);
+                        if (!['bulletList', 'orderedList', 'taskList'].includes(list.type.name)) return false;
+                        const itemIndex = $from.index(listDepth);
+                        const paragraph = state.schema.nodes.paragraph;
+                        const tr = state.tr;
+
+                        const isEmptyItem = listItem.childCount === 1
+                            && listItem.firstChild.type.name === 'paragraph'
+                            && listItem.firstChild.content.size === 0;
+
+                        if (isEmptyItem) {
+                            if (itemIndex > 0) {
+                                // 并入前一个条目，成为它的尾部空行：删掉整个空 li，在前一个
+                                // li 内容末尾（liFrom-1，位于删除区间之前、位置不受影响）
+                                // 插入空段落。光标落在新空行里 = 原地停留。
+                                const liFrom = $from.before(liDepth);
+                                tr.delete(liFrom, $from.after(liDepth));
+                                tr.insert(liFrom - 1, paragraph.create());
+                                tr.setSelection(TextSelection.create(tr.doc, liFrom));
+                            } else if (LI_TYPES.includes($from.node(listDepth - 1).type.name)) {
+                                // 嵌套列表里的首个空条目：整条内层列表随空项一起消失（列表
+                                // 只有它）或只删它（还有兄弟），空行落在父条目里原列表位置。
+                                const insertAt = $from.before(listDepth);
+                                if (list.childCount > 1) {
+                                    tr.delete($from.before(liDepth), $from.after(liDepth));
+                                } else {
+                                    tr.delete($from.before(listDepth), $from.after(listDepth));
+                                }
+                                tr.insert(insertAt, paragraph.create());
+                                tr.setSelection(TextSelection.create(tr.doc, insertAt + 1));
+                            } else {
+                                // 顶层首个空条目：Tiptap lift = 退出列表成段落，阶梯终点。
+                                return false;
+                            }
+                        } else {
+                            const isTrailingBlank = listItem.childCount >= 2
+                                && $from.index(liDepth) === listItem.childCount - 1;
+                            if (!isTrailingBlank) return false;
+                            const pSpan = $from.after($from.depth) - $from.before($from.depth);
+                            if (LI_TYPES.includes($from.node(listDepth - 1).type.name)) {
+                                // 尾部空行降一级：从条目里挪到外层条目（内层列表保留）
+                                const insertAt = $from.after(listDepth) - pSpan;
+                                tr.delete($from.before($from.depth), $from.after($from.depth));
+                                tr.insert(insertAt, paragraph.create());
+                                tr.setSelection(TextSelection.create(tr.doc, insertAt + 1));
+                            } else {
+                                // 尾部空行退出列表成顶层段落（「回到最开头」）。只在末位
+                                // 条目接管——非末位拎出会拆断列表、重排有序编号。
+                                if (itemIndex !== list.childCount - 1) return false;
+                                const insertAt = $from.after(listDepth) - pSpan;
+                                tr.delete($from.before($from.depth), $from.after($from.depth));
+                                tr.insert(insertAt, paragraph.create());
+                                tr.setSelection(TextSelection.create(tr.doc, insertAt + 1));
+                            }
+                        }
+                        tr.scrollIntoView();
+                        view.dispatch(tr);
+                        return true;
+                    },
+                },
+            }),
+        ];
+    },
+});
+
+/**
+ * 列表项首段落上的 `[ ] ` 就地转待办——修复内核输入规则的「逃逸到根」。
+ *
+ * 用户逐键输入 `- [ ] ` 造嵌套待办时，`- ` 先把空行转成子弹列表，随后的
+ * `[ ] ` 落在**新列表项的第一个段落**上。内核 TaskItem 输入规则此时对首段落
+ * 做 wrap：schema 里 listItem 的 content 是 `paragraph block*`，首孩子必须是
+ * 段落，wrap 永远失败，内核 v3 回退到「抬升 + 重组」——把当前项一路 lift 到
+ * 能 wrap 的层级。列表**嵌套**时这个层级是文档根：taskList 跳出所有容器渲染
+ * 在最左边，整个子弹列表被吞掉（真机+jsdom 双重复现）。
+ *
+ * 本规则以 priority: 101 先于内核规则（100）运行，只接管特征明确的一类场景：
+ * 选区在段落内容起点、段落是 listItem/taskItem 的第一个孩子、外层列表恰好
+ * 只有当前一项（`- ` 刚转出来的新建态）。处理方式是**就地**把整条列表换成
+ * 等价的 taskList（每个子节点原样搬进 taskItem），位置与嵌套层级都不变；
+ * 多条目列表与顶层单条目列表仍走内核路径（内核对它们的拆分/转换语义正确）。
+ * `[x] ` 变体同样接住（大小写沿用解析侧的宽窄约定，x/X 都认）。
+ *
+ * 处理器先删匹配文本再在**删除后的文档**上重新定位列表跨度（删除会让列表
+ * 终点前移），步骤数非空即视为已处理，runner 不再咨询内核规则。
+ */
+export const DumbPadTaskItemInPlaceShortcut = Extension.create({
+    name: 'dumbpadTaskItemInPlaceShortcut',
+
+    priority: 101,
+
+    addInputRules() {
+        return [new InputRule({
+            find: /^\s*(\[([ xX])?\])\s$/,
+            handler: ({ state, range }) => {
+                const { selection } = state;
+                if (!selection.empty) return null;
+                const { $from } = selection;
+                if ($from.parent.type.name !== 'paragraph') return null;
+                // 块首复核：匹配必须从段落内容起点开始（500 字符回看窗口的 ^
+                // 会误中窗口开头而非块首）。
+                if (range.from !== $from.start()) return null;
+                let liDepth = -1;
+                for (let d = $from.depth - 1; d >= 1; d--) {
+                    if (['listItem', 'taskItem'].includes($from.node(d).type.name)) { liDepth = d; break; }
+                }
+                if (liDepth < 0) return null;
+                // 段落必须是列表项的直接孩子，且是**第一个孩子**——尾部空行
+                // （第二个孩子起）落在 block* 段，内核 wrap 本来就成功，不许劫持。
+                if ($from.depth !== liDepth + 1) return null;
+                if ($from.index(liDepth) !== 0) return null;
+                const listDepth = liDepth - 1;
+                const list = $from.node(listDepth);
+                if (!['bulletList', 'orderedList'].includes(list.type.name)) return null;
+                // 只接管新建态：整条列表就是当前这一项
+                if (list.childCount !== 1) return null;
+
+                const taskListType = state.schema.nodes.taskList;
+                const taskItemType = state.schema.nodes.taskItem;
+                if (!taskListType || !taskItemType) return null;
+
+                const tr = state.tr;
+                tr.delete(range.from, range.to);
+                // 删除会让列表跨度终点前移：在删除后的文档上重新定位
+                const $caret = tr.doc.resolve(Math.min(range.from, tr.doc.content.size));
+                const listItem = $caret.node(liDepth);
+                const listNode = $caret.node(listDepth);
+                const children = [];
+                listItem.forEach(child => children.push(child));
+                const taskItemNode = taskItemType.create({ checked: false }, children);
+                const taskListNode = taskListType.create(
+                    { tight: listNode.attrs.tight ?? true },
+                    [taskItemNode],
+                );
+                const listFrom = $caret.before(listDepth);
+                tr.replaceWith(listFrom, $caret.after(listDepth), taskListNode);
+                // replaceWith 对替换区间内部的光标映射不可靠：显式落回
+                // taskItem 首段落的内容起点（taskList 开 1 + taskItem 开 1 +
+                // 段落开 1），后续键入才在待办里。
+                tr.setSelection(TextSelection.create(tr.doc, listFrom + 3));
+                tr.scrollIntoView();
+            },
+        })];
     },
 });

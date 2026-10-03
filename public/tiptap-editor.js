@@ -26,6 +26,8 @@ import {
     DividerInputShortcut,
     FrontmatterLeadInputShortcut,
     DumbPadMixedTaskListGuard,
+    DumbPadEmptyTaskItemParseRule,
+    DumbPadEmptyListMarkerParseRule,
     DumbPadFrontmatterParseRule,
     SearchHitHighlight,
     searchHitPluginKey,
@@ -39,6 +41,8 @@ import {
     headingAnchorPluginKey,
     TimeCommandShortcut,
     TimeMarkerNode,
+    DumbPadListBlankLineBackspace,
+    DumbPadTaskItemInPlaceShortcut,
 } from './managers/tiptap-extensions.js';
 import { TiptapSelectionMenu } from './managers/tiptap-selection-menu.js';
 import { TiptapSlashMenu } from './managers/tiptap-slash-menu.js';
@@ -54,6 +58,97 @@ import { buildMarkdownHeadingIndex } from './managers/heading-index.js';
 // frontmatter 假代码块按 YAML 高亮（官方插件对未注册语言会回退
 // highlightAuto，产生随机着色）。
 lowlight.registerAlias('yaml', 'dumbpad-frontmatter');
+
+const EMPTY_LIST_MARKER_RE = /^([ \t]*)(?:[-*+]|\d{1,9}[.)])[ \t]*$/;
+const LIST_MARKER_LINE_RE = /^([ \t]*)(?:[-*+]|\d{1,9}[.)])[ \t]+/;
+const FENCE_OPEN_RE = /^ {0,3}(`{3,}|~{3,})/;
+
+/**
+ * 空列表项的序列化形态（行首只有标记、没有内容）在 Markdown 里有唯一的解析歧义：
+ * 空条目**不能打断段落**（CommonMark），前一行是段落文字时它会退化成惰性续行，
+ * 而只由 `-` 组成的行又恰好是 setext 标题下划线——`- 甲\n  - ` 重新解析变成
+ * `## 甲`（父行被吞成二级标题、空项消失）。「列表下唯一的空嵌套项」（回车 + Tab
+ * 的正常打字流）和「段落后的空列表」（打字流：回车 + `- ` 后未输入）都会踩中。
+ *
+ * 本归一化在序列化出口为这类行补一个空行（空行关闭段落，空条目即可正常起列表，
+ * 实测该形态往返逐字节稳定）：仅当**空标记行的缩进比上一非空行的列表标记更深**
+ * （新起一层）或上一行不是列表行时触发；同缩进的后续空项（`- 乙` 之后的 `  - `）
+ * 本来就解析正确，不动。幂等：补过空行后上一行是空行，规则不再命中。
+ * 围栏代码块、`$$` 数学块与文首 frontmatter 内部一律跳过。
+ */
+export function normalizeAmbiguousEmptyListMarkers(value = '') {
+    const lines = String(value ?? '').split('\n');
+    let fenceMarker = null;
+    let fenceLength = 0;
+    let inMathBlock = false;
+    // 文首 frontmatter：第 0 行的开栏 --- 不算闭栏，闭栏之后的行重置为
+    // 「块边界」状态（frontmatter 是独立的块，其后的空标记行本就合法）。
+    let inFrontmatter = String(value ?? '').startsWith('---\n');
+    let frontmatterClosed = false;
+    let previousMarkerIndent = -1;
+    let previousBlank = true;
+    const output = [];
+    for (const line of lines) {
+        if (inFrontmatter && !frontmatterClosed) {
+            output.push(line);
+            if (output.length > 1 && line.trim() === '---') {
+                frontmatterClosed = true;
+                previousMarkerIndent = -1;
+                previousBlank = true;
+            } else {
+                previousMarkerIndent = -1;
+                previousBlank = false;
+            }
+            continue;
+        }
+        if (!fenceMarker && !inMathBlock && /^\s*\$\$/.test(line)) {
+            const dollarPairs = (line.match(/\$\$/g) || []).length;
+            if (dollarPairs % 2 === 1) inMathBlock = true;
+            output.push(line);
+            previousMarkerIndent = -1;
+            previousBlank = false;
+            continue;
+        }
+        if (inMathBlock) {
+            output.push(line);
+            const dollarPairs = (line.match(/\$\$/g) || []).length;
+            if (dollarPairs % 2 === 1) {
+                inMathBlock = false;
+                previousMarkerIndent = -1;
+                previousBlank = true;
+            }
+            continue;
+        }
+        const fence = line.match(FENCE_OPEN_RE);
+        if (fenceMarker) {
+            output.push(line);
+            if (fence && fence[1][0] === fenceMarker && fence[1].length >= fenceLength
+                && !line.trim().slice(fence[1].length).includes(fenceMarker)) {
+                fenceMarker = null;
+                previousMarkerIndent = -1;
+                previousBlank = true;
+            }
+            continue;
+        }
+        if (fence) {
+            fenceMarker = fence[1][0];
+            fenceLength = fence[1].length;
+            output.push(line);
+            previousMarkerIndent = -1;
+            previousBlank = false;
+            continue;
+        }
+        const marker = line.match(EMPTY_LIST_MARKER_RE);
+        if (marker && !previousBlank && marker[1].length > previousMarkerIndent) {
+            output.push('');
+        }
+        const listed = line.match(LIST_MARKER_LINE_RE);
+        previousMarkerIndent = listed ? listed[1].length : -1;
+        previousBlank = !line.trim();
+        output.push(line);
+    }
+    return output.join('\n');
+}
 
 export class HybridMarkdownEditor {
     constructor(container, { input, performanceMonitor = null, onCaretChange = null } = {}) {
@@ -170,6 +265,11 @@ export class HybridMarkdownEditor {
                 TableCell,
                 DumbPadTaskList,
                 DumbPadTaskItem.configure({ nested: true }),
+                // 空任务项（- [ ] ）解析补丁：必须在 DumbPadTaskList 之后、赶在
+                // github-task-lists 之前补尾随空格，见 tiptap-extensions.js
+                DumbPadEmptyTaskItemParseRule,
+                // 空列表标记行（- 甲\n  - ）不再被 setext 吞掉父行，见 tiptap-extensions.js
+                DumbPadEmptyListMarkerParseRule,
                 // 混排列表撤 taskList 章（必须在 DumbPadTaskList 之后），见 tiptap-extensions.js
                 DumbPadMixedTaskListGuard,
                 // frontmatter 假代码块按 YAML 高亮，避免官方插件对未注册
@@ -189,6 +289,16 @@ export class HybridMarkdownEditor {
                 // 一切插件：完整键入 "/file" + Enter 仍走旧路径（文本由选择后
                 // 的 deletePendingCommand 删除），菜单主要服务补全与点击/触摸。
                 TiptapSlashMenu.configure({ getContext: () => this }),
+                // 空列表项退格 = 清除继承标记、原地留缩进空行（无 Tab 嵌套路径的
+                // 退格半边，键入半边由官方输入规则在尾部空行上自然生效）。
+                // 必须排在 TiptapSlashMenu 之后（handleKeyDown 逆序咨询），
+                // 抢在 Tiptap listKeymap 的空项 lift 之前，见 tiptap-extensions.js。
+                DumbPadListBlankLineBackspace,
+                // 列表项首段落上的 [ ] 就地转待办（内核规则此时会抬升到根，
+                // 嵌套待办「渲染到最前面」的根因）。priority 101 先于内核
+                // TaskItem 规则咨询，与 SoftBreakBlockRules 同套路，
+                // 见 tiptap-extensions.js。
+                DumbPadTaskItemInPlaceShortcut,
             ],
             content: '',
             autofocus: false,
@@ -266,7 +376,9 @@ export class HybridMarkdownEditor {
         if (this.sourceMode) {
             return this.getSourceTextarea()?.value ?? this._lastValue;
         }
-        return this.fenceToFrontmatter(this.editor.storage.markdown.getMarkdown());
+        // 空标记行归一化（见函数注释）：空列表项的歧义形态在重新解析时会被
+        // setext 吞掉父行，出口补空行让「打字时 == 刷新后」在空条目上也成立。
+        return normalizeAmbiguousEmptyListMarkers(this.fenceToFrontmatter(this.editor.storage.markdown.getMarkdown()));
     }
 
     /**

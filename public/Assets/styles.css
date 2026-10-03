@@ -2599,7 +2599,9 @@ main {
 }
 
 /* 待办列表（Tiptap 官方 TaskItem 渲染的 ul[data-type=taskList]）：
-   去掉普通列表的圆点/序号与 2em 缩进，checkbox 与文字同行。 */
+   去掉普通列表的圆点/序号，checkbox 与文字同行。padding 交给普通列表的
+   缩进规则统一决定（ios-theme 的 1.75em 会盖过这里的 0.6em，特异性更高），
+   文字对齐不依赖具体 padding 值——见下面 label 的负左边距。 */
 .typora-editor-shell .vditor-reset ul[data-type="taskList"] {
     list-style: none;
     padding-left: 0.6em;
@@ -2613,6 +2615,12 @@ main {
 
 .typora-editor-shell .vditor-reset ul[data-type="taskList"] li > label {
     flex: 0 0 auto;
+    /* 复选框整体拉进列表标记的悬挂区（ul 的 padding-left 区），任务文字因此与
+       同层级 bullet/有序列表的文字精确对齐——否则复选框(16px) + 间距(0.65em)
+       会把文字整体顶进内容区，待办天然比列表多出约 26px 一段缩进。
+       负值只由 label 自身的宽度（input 16px + 两侧 margin 0.65em）决定，
+       不硬编码列表缩进，嵌套层级与缩进规则变化都不受影响。 */
+    margin-left: calc(-16px - 0.65em);
     margin-right: 0.35em;
     user-select: none;
     -webkit-user-select: none;
