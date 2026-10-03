@@ -41,6 +41,7 @@ import {
     TimeMarkerNode,
 } from './managers/tiptap-extensions.js';
 import { TiptapSelectionMenu } from './managers/tiptap-selection-menu.js';
+import { TiptapSlashMenu } from './managers/tiptap-slash-menu.js';
 import { createFileCommandController, TiptapArticleUploadProgress } from './managers/tiptap-file-command.js';
 import { DEFAULT_ARTICLE_IMAGE_WIDTH } from './managers/article-file-command.js';
 import {
@@ -180,6 +181,14 @@ export class HybridMarkdownEditor {
                 TiptapImageInteractions,
                 DumbPadArticleFileLink,
                 TiptapArticleUploadProgress,
+                // 斜杠命令菜单（/time、/file，可经 registerSlashCommand 扩展）。
+                // 必须排在扩展列表末尾：PM 的 handleKeyDown 按插件注册的逆序咨询，
+                // 菜单要抢在 SoftEnterShortcut / TimeCommandShortcut 之前处理
+                // Enter/↑↓/Escape；菜单关闭时全部放行，原语义不变。
+                // 注意 directProps（/file 的 editorProps.handleKeyDown）永远先于
+                // 一切插件：完整键入 "/file" + Enter 仍走旧路径（文本由选择后
+                // 的 deletePendingCommand 删除），菜单主要服务补全与点击/触摸。
+                TiptapSlashMenu.configure({ getContext: () => this }),
             ],
             content: '',
             autofocus: false,

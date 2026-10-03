@@ -311,9 +311,15 @@ export function createFileCommandController(adapter) {
         }
         if (pendingPos === null) return;
         const view = adapter.editor.view;
-        const text = adapter.editor.state.doc.textBetween(pendingPos, pendingPos + FILE_COMMAND_LENGTH);
-        if (text === FILE_COMMAND) {
-            view.dispatch(view.state.tr.delete(pendingPos, pendingPos + FILE_COMMAND_LENGTH));
+        const doc = view.state.doc;
+        // 斜杠菜单路径在打开选择器前已删掉命令文本，此时 pendingPos 之后没有
+        // 内容；用户也可能在上传期间继续编辑。位置必须先夹紧到文档范围再取
+        // 文本——textBetween 越界会抛 TypeError 并中断整个上传链（表现为
+        // 「选择器弹了、文件选了、却什么都没发生」）。
+        const pos = Math.max(0, Math.min(pendingPos, doc.content.size));
+        const to = Math.min(pos + FILE_COMMAND_LENGTH, doc.content.size);
+        if (to > pos && doc.textBetween(pos, to) === FILE_COMMAND) {
+            view.dispatch(view.state.tr.delete(pos, to));
         }
         // pendingPos 保留：handleTransaction 会在删除事务里把它映射到位。
     }
@@ -506,5 +512,12 @@ export function createFileCommandController(adapter) {
         handleKeyDown,
         handleTransaction,
         handleSourceKeydown,
+        // 斜杠菜单的 /file 入口（tiptap-slash-menu.js）：菜单已删掉命令文本，
+        // 这里只挂起插入位置并打开选择器。取消上传时 restoreEditorFocus 把
+        // 焦点还编辑器，pendingPos 由 openPicker 的 cancel 路径清空。
+        openPickerAt(pos) {
+            pendingPos = pos;
+            openPicker();
+        },
     };
 }
