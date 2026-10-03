@@ -638,6 +638,73 @@ textarea.today-draft-text {
     opacity: 0;
 }
 
+/* 行尾复制按钮：inline 跟在正文末尾（正是「每条待办的尾部位置」），平时隐藏且
+   不参与命中（防止在它该出现的位置摸黑点成复制），桌面 hover 行、键盘聚焦或
+   触摸按住行（is-copy-reveal）时亮出。历史只读行同样可用——复制非破坏。 */
+.today-draft-copy {
+    display: inline-flex;
+    width: 22px;
+    height: 22px;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    padding: 0;
+    margin-left: 2px;
+    vertical-align: middle;
+    border: 0;
+    border-radius: 5px;
+    background: transparent;
+    color: color-mix(in srgb, var(--muted-text) 88%, var(--text-color));
+    cursor: pointer;
+    user-select: none;
+    -webkit-user-select: none;
+    touch-action: manipulation;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 140ms ease, background-color 140ms ease, color 140ms ease;
+}
+
+.today-draft-row:hover .today-draft-copy,
+.today-draft-row.is-copy-reveal .today-draft-copy,
+.today-draft-copy:focus-visible {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.today-draft-copy:hover {
+    background: color-mix(in srgb, var(--muted-text) 14%, transparent);
+    color: var(--text-color);
+}
+
+.today-draft-copy:active {
+    background: color-mix(in srgb, var(--primary-color) 16%, transparent);
+    color: var(--primary-color);
+}
+
+.today-draft-row.is-copied .today-draft-copy {
+    color: var(--primary-color);
+}
+
+/* 复制成功反馈：勾形短暂替代表形（manager 加/摘 is-copy-success）。
+   成功窗口内保持亮显——哪怕鼠标已经移走，勾也要来得及被看见。 */
+.today-draft-copy .today-draft-copy-check {
+    display: none;
+}
+
+.today-draft-copy.is-copy-success {
+    opacity: 1;
+    pointer-events: auto;
+    color: var(--primary-color);
+}
+
+.today-draft-copy.is-copy-success .today-draft-copy-glyph {
+    display: none;
+}
+
+.today-draft-copy.is-copy-success .today-draft-copy-check {
+    display: block;
+}
+
 #toggle-today-drafts.active {
     background: rgba(var(--primary-rgb), 0.15);
     color: var(--primary-color);

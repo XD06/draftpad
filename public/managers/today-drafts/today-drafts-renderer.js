@@ -75,9 +75,13 @@ export function renderTodayDraftItem(item, { readonly = false } = {}) {
     const textAttrs = readonly
         ? ' aria-hidden="false"'
         : ' data-today-draft-text-display tabindex="0" aria-label="编辑草稿内容"';
+    // 行尾复制按钮：inline 跟在正文末尾，平时隐藏（见 today-drafts.css），
+    // 桌面 hover / 键盘焦点 / 触摸按住行时亮出。历史只读行同样保留——复制非破坏。
+    // 预置两份图形：复制成功后由 manager 切 is-copy-success，勾形短暂替代表形。
+    const copyButton = `<button type="button" class="today-draft-copy" data-today-draft-copy aria-label="复制草稿内容" title="复制草稿内容"><svg class="today-draft-copy-glyph" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" focusable="false"><rect x="9" y="9" width="12.5" height="12.5" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.8"></rect><path d="M14.5 5V4.5A2.5 2.5 0 0 0 12 2H4.5A2.5 2.5 0 0 0 2 4.5V12a2.5 2.5 0 0 0 2.5 2.5H5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"></path></svg><svg class="today-draft-copy-glyph today-draft-copy-check" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" focusable="false"><path d="M20 6 9 17l-5-5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"></path></svg></button>`;
     return `<li class="today-draft-row${completedClass}${readonly ? ' is-readonly' : ''}" data-today-draft-id="${id}">${swipeActions}
         ${check}
-        <span class="today-draft-text today-draft-text-display"${textAttrs}>${text}</span>
+        <span class="today-draft-text today-draft-text-display"${textAttrs}>${text}${copyButton}</span>
         ${timestamp}
     </li>`;
 }
