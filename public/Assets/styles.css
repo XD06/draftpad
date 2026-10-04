@@ -2599,12 +2599,14 @@ main {
 }
 
 /* 待办列表（Tiptap 官方 TaskItem 渲染的 ul[data-type=taskList]）：
-   去掉普通列表的圆点/序号，checkbox 与文字同行。padding 交给普通列表的
-   缩进规则统一决定（ios-theme 的 1.75em 会盖过这里的 0.6em，特异性更高），
-   文字对齐不依赖具体 padding 值——见下面 label 的负左边距。 */
+   去掉普通列表的圆点/序号，checkbox 与文字同行。桌面（≥981）缩进与普通
+   列表一致（ios-theme 的 1.75em，特异性 (0,3,2) 恰好压过这里的 (0,3,1)，
+   数值保持相同语义）；本值实际生效的场景只有 ≤980 的媒体查询覆盖（见下）。
+   负边距只由 label 自身宽度（input 16px + 两侧 margin 0.65em）决定，
+   不硬编码列表缩进，嵌套层级与缩进规则变化都不受影响。 */
 .typora-editor-shell .vditor-reset ul[data-type="taskList"] {
     list-style: none;
-    padding-left: 0.6em;
+    padding-left: 1.75em;
 }
 
 .typora-editor-shell .vditor-reset ul[data-type="taskList"] li {
@@ -2664,6 +2666,20 @@ main {
     min-width: 0;
 }
 
+/* ≤980px（ios-theme 的移动端区间：1.75em 只写在 min-width: 981px 里）：全局
+   reset 已把列表 padding 清零，普通列表的标记本来就悬挂在纸面边缘；待办若
+   再负边距悬挂复选框，会探出纸面 17px 左右——移动端「待办超出编辑器」。
+   复选框改为内联排在文字前，缩进与普通列表（0）一致，任何宽度都不溢出。 */
+@media (max-width: 980px) {
+    .typora-editor-shell .vditor-reset ul[data-type="taskList"] {
+        padding-left: 0;
+    }
+
+    .typora-editor-shell .vditor-reset ul[data-type="taskList"] li > label {
+        margin-left: 0;
+    }
+}
+
 .typora-editor-shell .vditor-reset ul[data-type="taskList"] li > div > p:first-child {
     margin-top: 0;
 }
@@ -2706,6 +2722,44 @@ main {
     animation: article-jump-bar 1.8s ease forwards;
 }
 
+/* 列表条目的落点分区间处理（实测：≥981 有 ios-theme 的 1.75em 悬挂区；
+   901–980 被全局 reset 清零缩进、纸面 padding 只有 10px，但页边距放得下
+   竖条；≤900 连页边距都放不下，.vditor-wysiwyg 会横向裁剪） */
+
+/* 桌面（≥981）：普通条目停在本条目标记悬挂区之外（= 该行最前面的空白），
+   默认的 -12px 会落进悬挂区压住「17.」这类序号数字；待办条目的复选框经
+   负边距（-16px - 0.65em）悬挂在条目内容之外，竖条再往左让出悬挂宽 + 12px。 */
+@media (min-width: 981px) {
+    .typora-editor-shell .vditor-reset li.article-jump-target::before {
+        left: -1.75em;
+    }
+
+    .typora-editor-shell .vditor-reset ul[data-type="taskList"] li.article-jump-target::before {
+        left: calc(-16px - 0.65em - 12px);
+    }
+}
+
+/* 901–980：列表缩进为零，序号悬挂、待办复选框内联，竖条统一停在本行
+   最前方 1.75em（越过序号与复选框），与桌面「停在悬挂区最左」同一语义。 */
+@media (min-width: 901px) and (max-width: 980px) {
+    .typora-editor-shell .vditor-reset li.article-jump-target::before,
+    .typora-editor-shell .vditor-reset ul[data-type="taskList"] li.article-jump-target::before {
+        left: -1.75em;
+    }
+}
+
+/* ≤900：纸面 margin 放不下竖条（会被 .vditor-wysiwyg 裁掉），改用文字变
+   主色 + 一层比搜索块级高亮浅的背景脉冲（同为 1.8s，搜索块是 4s）。 */
+@media (max-width: 900px) {
+    .typora-editor-shell .vditor-reset .article-jump-target::before {
+        display: none;
+    }
+
+    .typora-editor-shell .vditor-reset .article-jump-target {
+        animation: article-jump-flash 1.8s ease, article-jump-tint 1.8s ease;
+    }
+}
+
 @keyframes article-jump-flash {
     0% {
         color: var(--primary-color);
@@ -2735,6 +2789,22 @@ main {
 
     100% {
         opacity: 0;
+    }
+}
+
+/* ≤900 无竖条时的落点背景脉冲：峰值远低于搜索块级高亮（0.3 / 4s），时长
+   与目录跳转闪光一致（1.8s），只作「看一眼落点」的提示不抢正文。 */
+@keyframes article-jump-tint {
+    0% {
+        background-color: rgba(var(--primary-rgb), 0.16);
+    }
+
+    55% {
+        background-color: rgba(var(--primary-rgb), 0.1);
+    }
+
+    100% {
+        background-color: transparent;
     }
 }
 

@@ -99,7 +99,14 @@ function uploadAsset({ url, file, headers = {}, errorMessage, onProgress }) {
                 resolve(data);
                 return;
             }
-            const error = new Error(data?.error || errorMessage);
+            // 服务端或反向代理拒收时响应体多半是 HTML（解析不出 JSON error），
+            // 把状态码透出来：413 最常见于反向代理 client_max_body_size 或
+            // ASSET_MAX_FILE_BYTES 比客户端上限小，直接给出排查线索。
+            const error = new Error(data?.error || (
+                xhr.status === 413
+                    ? `${errorMessage}：文件超过服务器大小限制（HTTP 413，检查反向代理 client_max_body_size 与 ASSET_MAX_FILE_BYTES）`
+                    : `${errorMessage}（HTTP ${xhr.status}）`
+            ));
             error.status = xhr.status;
             reject(error);
         });

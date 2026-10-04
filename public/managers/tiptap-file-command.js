@@ -18,7 +18,6 @@ import {
 } from './asset-api-client.js';
 import {
     FILE_COMMAND,
-    DEFAULT_ARTICLE_IMAGE_WIDTH,
     findFileCommandBeforeCursor,
     buildArticleFileMarkdown,
     buildArticleMediaMarkdown,
@@ -205,7 +204,9 @@ const FILE_COMMAND_LENGTH = FILE_COMMAND.length;
 
 function buildArticleImageMarkdown(asset = {}) {
     const alt = String(asset?.name || '图片').replace(/[[\]\\]/g, '\\$&');
-    return `![${alt}](${asset.previewUrl} "dumbpad-width=${DEFAULT_ARTICLE_IMAGE_WIDTH}")`;
+    // 不写 dumbpad-width 即「自适应」：大图撑满编辑栏、小图保持原尺寸；
+    // 需要固定宽度时用图片尺寸菜单的窄/中/宽档再调。
+    return `![${alt}](${asset.previewUrl})`;
 }
 
 export function createFileCommandController(adapter) {

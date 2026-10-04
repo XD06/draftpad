@@ -455,10 +455,30 @@ async function main() {
     /* ---- 10. 触屏点按（无 click 事件）也能开尺寸菜单 ---- */
     click(sizeMenu().querySelector('[data-image-width="0"]')); // 先关掉上一次的菜单状态
     await wait(20);
-    imageEl().dispatchEvent(pointerEvent('pointerdown', { clientX: 5, clientY: 5, pointerType: 'touch' }));
+    const standaloneDown = pointerEvent('pointerdown', { clientX: 5, clientY: 5, pointerType: 'touch' });
+    imageEl().dispatchEvent(standaloneDown);
+    check('standalone image touch pointerdown is preventDefaulted (no keyboard)',
+        standaloneDown.defaultPrevented === true);
     imageEl().dispatchEvent(pointerEvent('pointerup', { clientX: 5, clientY: 5, pointerType: 'touch' }));
     await wait(30);
     check('touch tap opens size menu', sizeMenu().hidden === false);
+
+    /* ---- 10b. 嵌套在列表里的图片：触屏点按同样 preventDefault（不把焦点交给
+       编辑器弹键盘），无拖拽状态但 pointerup 仍要打开尺寸菜单 ---- */
+    editor.setValue(`- 列表条目内嵌图片 ![嵌套图](${IMAGE_SRC})`, false);
+    await wait(30);
+    // 先收掉上一节留下的菜单，保证下面的断言非平凡
+    document.body.dispatchEvent(new dom.window.MouseEvent('mousedown', { bubbles: true }));
+    await wait(20);
+    check('menu closed before nested tap', sizeMenu().hidden === true);
+    const nestedImageEl = () => container.querySelector('.tiptap li img');
+    const nestedDown = pointerEvent('pointerdown', { clientX: 5, clientY: 5, pointerType: 'touch' });
+    nestedImageEl().dispatchEvent(nestedDown);
+    check('nested image touch pointerdown is preventDefaulted (no keyboard)',
+        nestedDown.defaultPrevented === true);
+    nestedImageEl().dispatchEvent(pointerEvent('pointerup', { clientX: 5, clientY: 5, pointerType: 'touch' }));
+    await wait(30);
+    check('nested image touch tap opens size menu via pointerup', sizeMenu().hidden === false);
 
     // 9d) 目标块是空段落（文末图片 → trailingNode 补的空段落）：落点必须是块边界，
     // 解析成 null 会让拖拽静默失效（posAtDOM 对非叶子块返回的是「块内容起点」）。

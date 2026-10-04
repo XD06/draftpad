@@ -157,9 +157,10 @@ async function main() {
 
     const finalValue = editor.getValue();
     check('/file replaced after upload', !finalValue.includes('：/file'), finalValue);
-    // label 不带 📎（图标由 CSS 提供）；图片默认宽度是「窄」档 360。
+    // label 不带 📎（图标由 CSS 提供）。
     check('file reference markdown inserted', finalValue.includes('[报告.pdf') && finalValue.includes('dumbpad-file=1'), finalValue);
-    check('image markdown uses the small default width', finalValue.includes('![截图.png](/api/df/stub-image "dumbpad-width=360")'), finalValue);
+    // 图片插入默认「自适应」：不写 dumbpad-width，大图撑满编辑栏。
+    check('image markdown defaults to natural width (no width title)', finalValue.includes('![截图.png](/api/df/stub-image)'), finalValue);
     // 顺序：按选择顺序：pdf 在前、图片在后
     check('selection order preserved', finalValue.indexOf('报告.pdf') < finalValue.indexOf('![截图.png]'), finalValue);
     // 插入位置在上传期间编辑的文字之后（位置随事务映射）

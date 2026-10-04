@@ -1,8 +1,5 @@
 export const FILE_COMMAND = '/file';
 export const ARTICLE_FILE_TITLE_PREFIX = 'dumbpad-file=1';
-// 插入图片时的默认显示宽度（px）：与尺寸菜单的「窄」档一致。旧默认 720 在窄屏
-// 上几乎占满纸面，用户在插件菜单里再调小很麻烦，所以默认给一个小尺寸。
-export const DEFAULT_ARTICLE_IMAGE_WIDTH = 360;
 
 function clampOffset(value, offset) {
     return Math.max(0, Math.min(String(value || '').length, Number(offset) || 0));

@@ -227,6 +227,7 @@ class ArticleImageInteractionView {
         this.activeImage = null;
         this.activeFileLink = null;
         this.drag = null;
+        this.tap = null;
         this.lastDragAt = 0;
         this.lastTapAt = 0;
 
@@ -706,10 +707,22 @@ class ArticleImageInteractionView {
         if (!image || !this.view.dom.contains(image)) return;
         if (!isArticleAssetImageSource(image.getAttribute('src'))) return;
         const pos = this.imagePos(image);
-        if (pos === null || !this.isStandaloneImage(pos)) return;
+        const standalone = pos !== null && this.isStandaloneImage(pos);
         // 触屏按下 contenteditable 内的元素会让浏览器移动选区并弹出键盘，
         // 即使用户只想调尺寸/拖拽（与旧 bindArticleImageDragging 一致）。
+        // 所有资产图片都要拦——嵌套在列表里的图片点它同样不能把焦点交给
+        // 编辑器。preventDefault 压掉兼容 mouse 事件（不产生 click），触屏
+        // 点按的菜单统一由 pointerup 的点按路径打开。
         if (event.pointerType !== 'mouse') event.preventDefault();
+        if (!standalone) {
+            // 非顶层独立图片（列表/引用内）不参与拖拽，但触屏点按仍要在
+            // pointerup 弹尺寸菜单，记一个轻量点按状态。
+            if (event.pointerType !== 'mouse') {
+                this.tap = { image, pointerId: event.pointerId };
+                image.setPointerCapture?.(event.pointerId);
+            }
+            return;
+        }
         this.drag = {
             image,
             pointerId: event.pointerId,
@@ -744,7 +757,21 @@ class ArticleImageInteractionView {
 
     onPointerUp(event) {
         const drag = this.drag;
-        if (!drag || drag.pointerId !== event.pointerId) return;
+        if (!drag) {
+            // 嵌套图片的触屏点按（无拖拽状态）：与顶层独立图片同为
+            // pointerup 弹菜单，lastTapAt 让随后补发的兼容事件不再重复进 onClick。
+            const tap = this.tap;
+            if (!tap || tap.pointerId !== event.pointerId) return;
+            this.tap = null;
+            tap.image.releasePointerCapture?.(event.pointerId);
+            if (event.type === 'pointercancel') return;
+            event.preventDefault();
+            event.stopPropagation();
+            this.lastTapAt = Date.now();
+            this.openSizeMenu(tap.image);
+            return;
+        }
+        if (drag.pointerId !== event.pointerId) return;
         this.drag = null;
         drag.image.classList.remove('is-article-image-dragging');
         this.view.dom.classList.remove('is-article-image-drop-target');
