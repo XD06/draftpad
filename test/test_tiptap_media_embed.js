@@ -219,6 +219,27 @@ async function main() {
         === `前文\n\n![片段.mp4 · 2.0 MB](/api/assets/${ASSET_ID}/original "${newTitle}")\n\n后文`,
         editor.getValue());
 
+    /* ---------------- 触屏点按媒体不把焦点交给编辑器 ---------------- */
+    // 触屏 pointerdown 之后浏览器补发的兼容 mousedown 会被 NodeView 的捕获
+    // 监听 preventDefault（阻止 contenteditable 取焦弹软键盘）；桌面鼠标的
+    // mousedown 不拦。原生播放控件响应 click / pointer 事件，不受影响。
+    editor.setValue(videoMd, false);
+    const mediaEl = renderedMedia().querySelector('video');
+    const touchPointerDown = dom.window.document.createEvent('MouseEvent');
+    touchPointerDown.initEvent('pointerdown', true, true);
+    Object.defineProperty(touchPointerDown, 'pointerType', { value: 'touch' });
+    mediaEl.dispatchEvent(touchPointerDown);
+    const compatMouseDown = new dom.window.MouseEvent('mousedown', { bubbles: true, cancelable: true });
+    mediaEl.dispatchEvent(compatMouseDown);
+    check('touch-synthesized mousedown on media is preventDefaulted (no keyboard)',
+        compatMouseDown.defaultPrevented === true);
+    // 等过触屏防抖窗口（700ms）再模拟桌面鼠标按下
+    await new Promise(resolve => setTimeout(resolve, 750));
+    const desktopMouseDown = new dom.window.MouseEvent('mousedown', { bubbles: true, cancelable: true });
+    mediaEl.dispatchEvent(desktopMouseDown);
+    check('desktop mouse mousedown on media is not preventDefaulted',
+        desktopMouseDown.defaultPrevented === false);
+
     console.log(failures ? `\n${failures} check(s) failed` : '\nMedia embed checks passed');
     if (failures) process.exitCode = 1;
 }

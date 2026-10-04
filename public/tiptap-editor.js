@@ -47,6 +47,7 @@ import {
 import { TiptapSelectionMenu } from './managers/tiptap-selection-menu.js';
 import { TiptapSlashMenu } from './managers/tiptap-slash-menu.js';
 import { createFileCommandController, TiptapArticleUploadProgress } from './managers/tiptap-file-command.js';
+import { DEFAULT_ARTICLE_IMAGE_WIDTH } from './managers/article-file-command.js';
 import {
     DumbPadArticleFileLink,
     DumbPadImage,
@@ -956,9 +957,9 @@ export class HybridMarkdownEditor {
         if (!url) return false;
         const isImage = asset.kind === 'image' || /\.(png|jpe?g|gif|webp|svg|avif)$/i.test(url);
         const label = String(asset.name || asset.filename || (isImage ? 'image' : url));
-        // 与 /file 插图保持一致：不写 dumbpad-width 即「自适应」，大图撑满编辑栏。
+        // 与 /file 插图保持一致：默认「窄」档，插入时不占满纸面。
         const markdown = isImage
-            ? `![${label}](${url})`
+            ? `![${label}](${url} "dumbpad-width=${DEFAULT_ARTICLE_IMAGE_WIDTH}")`
             : `[${label}](${url})`;
         this.editor.commands.insertContentAt(this.editor.state.selection.from, markdown);
         this.notifyEditorValueChanged(this.getValue());

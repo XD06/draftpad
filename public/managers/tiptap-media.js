@@ -128,6 +128,17 @@ function buildMediaNodeView({ node, editor, view, getPos }) {
         mediaEl = media;
     }
 
+    // 触屏点按媒体元素时，浏览器会把焦点交给 contenteditable 弹出软键盘。
+    // 只拦「触屏补发的兼容 mousedown」的默认行为（阻止焦点但不产生点击副作用，
+    // 原生播放控件响应 click / pointer 事件不受影响）；桌面鼠标保持原样。
+    let lastTouchPointerDownAt = 0;
+    wrapper.addEventListener('pointerdown', (event) => {
+        if (event.pointerType && event.pointerType !== 'mouse') lastTouchPointerDownAt = Date.now();
+    }, true);
+    wrapper.addEventListener('mousedown', (event) => {
+        if (Date.now() - lastTouchPointerDownAt < 700) event.preventDefault();
+    }, true);
+
     render();
 
     return {

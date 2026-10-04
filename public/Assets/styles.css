@@ -2490,6 +2490,17 @@ main {
     border-radius: 6px;
 }
 
+/* ≤768px 图片缩略化：手机拍摄的竖图按原宽渲染会占掉整屏高度。统一等比压到
+   30vh 高的缩略图——width:auto 抵消宽度标记（移动端容器窄，窄/中/宽档本就
+   都被 max-width 钳到满宽），max-width + max-height 双约束下 <img> 自动保比
+   例。看大图走图片菜单的「查看大图」灯箱（阅读模式点图直接开灯箱）。 */
+@media (max-width: 768px) {
+    .typora-editor-shell .tiptap img {
+        max-height: 30vh;
+        width: auto !important;
+    }
+}
+
 .tiptap-source-textarea {
     width: 100%;
     min-height: 60vh;
