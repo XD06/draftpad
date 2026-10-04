@@ -23,6 +23,7 @@ function registerNoteRoutes(app, context) {
 
     app.get('/api/notes/:id', async (req, res) => {
         try {
+            res.set('Cache-Control', 'no-store, private');
             const { id } = req.params;
 
             const { notepad } = await findNotepadById(id);
@@ -54,6 +55,7 @@ function registerNoteRoutes(app, context) {
     // downloading and parsing the whole document itself.
     app.get('/api/notes/:id/outline', async (req, res) => {
         try {
+            res.set('Cache-Control', 'no-store, private');
             const { id } = req.params;
             const { notepad } = await findNotepadById(id);
             if (!notepad) {

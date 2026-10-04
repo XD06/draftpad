@@ -14,6 +14,7 @@ function registerNotepadRoutes(app, context) {
 
     app.get('/api/notepads', async (req, res) => {
         try {
+            res.set('Cache-Control', 'no-store, private');
             let notepadsList = await loadNotepadsList();
 
             if (req.query.title) {
@@ -150,6 +151,7 @@ function registerNotepadRoutes(app, context) {
     // version/pin state without fetching and filtering the whole collection.
     app.get('/api/notepads/:id', async (req, res) => {
         try {
+            res.set('Cache-Control', 'no-store, private');
             const { notepad } = await findNotepadById(req.params.id);
             if (!notepad) return res.status(404).json({ error: 'Notepad not found' });
             res.json(notepad);
