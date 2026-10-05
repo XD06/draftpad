@@ -27,7 +27,7 @@ import {
     updateSidebarSelection
 } from './sidebar.js';
 import { ArticleMetaFooter } from './managers/article-meta-footer.js';
-import { collectTocMarkEntries } from './managers/heading-index.js';
+import { collectTocSectionEntries } from './managers/heading-index.js';
 import { applyFloatingActionsVisibility } from './managers/floating-actions-config.js';
 import { createCommandSearchManager } from './managers/command-search/command-search-manager.js';
 import { registerResultType } from './managers/command-search/result-type-registry.js';
@@ -1802,9 +1802,43 @@ document.addEventListener('DOMContentLoaded', async () => {
         tocUpdateTimeout = setTimeout(() => updateToC(), 500);
     }
 
-    // 每个标题区段默认列出的片段（划线/高亮/批注）上限，超出折叠为「+N」
-    // 条目，点击展开/收起——批注密集的长文不至于把标题层级淹没。
+    // 每个标题区段默认列出的子条目预算：片段（划线/高亮/批注）3 条、顶层列表
+    // 条目 5 条——批注密集或清单密集的长文不至于把标题层级淹没（标题本体仍
+    // 全量列出，面板自身可滚动）。
     const TOC_MARKS_PER_SECTION = 3;
+    const TOC_LISTS_PER_SECTION = 5;
+    // 按文档序流过、各 kind 独立预算：标记超出折叠为「+N」行；列表**要么全显
+    // 要么收拢**——超出预算时整组折成一行「•N 条列表项」摘要（13 步的清单只露
+    // 前 5 条既没意义、又让每节 6 行的目录在 SOP 文章里重新变臃肿；摘要行让
+    // 每节只占 1 行，点击整组展开）。摘要行与「+N」行同走 data-mark-group 展开。
+    const splitTocSectionEntries = (entries, expanded) => {
+        const listCount = entries.reduce((n, e) => (e.kind === 'list' ? n + 1 : n), 0);
+        const listsAsSummary = !expanded && listCount > TOC_LISTS_PER_SECTION;
+        const shown = [];
+        let hiddenMarks = 0;
+        let markQuota = TOC_MARKS_PER_SECTION;
+        let summaryEmitted = false;
+        for (const entry of entries) {
+            if (entry.kind === 'list') {
+                if (listsAsSummary) {
+                    if (!summaryEmitted) {
+                        summaryEmitted = true;
+                        shown.push({ summary: true, count: listCount });
+                    }
+                    continue;
+                }
+                shown.push(entry);
+                continue;
+            }
+            if (expanded || markQuota > 0) {
+                markQuota -= 1;
+                shown.push(entry);
+            } else {
+                hiddenMarks += 1;
+            }
+        }
+        return { shown, hiddenMarks, listsHiddenAsSummary: listsAsSummary };
+    };
     const tocExpandedMarkGroups = new Set();
     let tocRenderedForNotepadId = null;
 
@@ -1837,39 +1871,56 @@ document.addEventListener('DOMContentLoaded', async () => {
             tocRenderedForNotepadId = currentNotepadId;
         }
 
-        // 目录补充：把各标题区段内的划线/高亮/批注片段列成子条目，
-        // 点击直接跳到那个片段（加粗、有序/无序列表和待办不进目录）。
-        const markGroups = collectTocMarkEntries(toc);
+        // 目录补充：把各标题区段内的划线/高亮/批注片段与顶层列表条目列成
+        // 子条目（文档序混排），点击直接跳到那个片段/条目（加粗不进目录；
+        // 嵌套子列表与引用块/表格里的列表不进——见 collectTocSectionEntries）。
+        // 列表条目复用 mark-entry 类与 data-mark-ref 引用数组：点击跳转、移动端
+        // 关抽屉、滚动跟随（resolveTarget）、「+/−」行不参与跟随，全部走现有管线。
+        const sectionGroups = collectTocSectionEntries(toc);
         let markHtml = '';
         const markRefs = [];
         toc.forEach(item => {
-            const entries = markGroups.get(item.id) || [];
+            const entries = sectionGroups.get(item.id) || [];
             markHtml += `
             <div class="toc-item h${item.level}" data-index="${item.line}" data-heading-id="${escapeHtml(item.id)}">
                 <span class="toc-level-badge" aria-hidden="true">H${item.level}</span>
                 <span class="toc-item-text">${escapeHtml(item.text)}</span>
             </div>`;
             const expanded = tocExpandedMarkGroups.has(item.id);
-            const shown = expanded ? entries : entries.slice(0, TOC_MARKS_PER_SECTION);
+            const collapsed = splitTocSectionEntries(entries, false);
+            const shown = expanded ? entries : collapsed.shown;
+            // 本节含列表条目时文案从「标记」泛化为「条目」（纯标记节保持原话术）。
+            const entriesLabel = entries.some(entry => entry.kind === 'list') ? '条目' : '标记';
             shown.forEach(entry => {
+                if (entry.summary) {
+                    markHtml += `
+                    <div class="toc-item mark-entry list-entry list-summary" data-mark-group="${escapeHtml(item.id)}" title="展开本节 ${entry.count} 条列表项">
+                        <span class="toc-level-badge mark-badge" aria-hidden="true">•</span>
+                        <span class="toc-item-text">${entry.count} 条列表项</span>
+                    </div>`;
+                    return;
+                }
                 const refIndex = markRefs.push(entry.el) - 1;
+                const entryClasses = entry.kind === 'list'
+                    ? `list-entry type-${entry.listType}`
+                    : `type-${entry.type}`;
                 markHtml += `
-                <div class="toc-item mark-entry type-${entry.type}" data-mark-ref="${refIndex}" title="${entry.typeLabel}">
+                <div class="toc-item mark-entry ${entryClasses}" data-mark-ref="${refIndex}" title="${entry.typeLabel}">
                     <span class="toc-level-badge mark-badge" aria-hidden="true">${entry.badge}</span>
                     <span class="toc-item-text">${escapeHtml(entry.snippet)}</span>
                 </div>`;
             });
-            if (entries.length > shown.length) {
+            if (!expanded && collapsed.hiddenMarks > 0) {
                 markHtml += `
-                <div class="toc-item mark-entry mark-more" data-mark-group="${escapeHtml(item.id)}" title="展开本节全部标记">
-                    <span class="toc-level-badge mark-badge" aria-hidden="true">+${entries.length - shown.length}</span>
-                    <span class="toc-item-text">展开全部标记</span>
+                <div class="toc-item mark-entry mark-more" data-mark-group="${escapeHtml(item.id)}" title="展开本节全部${entriesLabel}">
+                    <span class="toc-level-badge mark-badge" aria-hidden="true">+${collapsed.hiddenMarks}</span>
+                    <span class="toc-item-text">展开全部${entriesLabel}</span>
                 </div>`;
-            } else if (expanded && entries.length > TOC_MARKS_PER_SECTION) {
+            } else if (expanded && (collapsed.hiddenMarks > 0 || collapsed.listsHiddenAsSummary)) {
                 markHtml += `
-                <div class="toc-item mark-entry mark-more" data-mark-collapse="${escapeHtml(item.id)}" title="收起本节标记">
+                <div class="toc-item mark-entry mark-more" data-mark-collapse="${escapeHtml(item.id)}" title="收起本节${entriesLabel}">
                     <span class="toc-level-badge mark-badge" aria-hidden="true">−</span>
-                    <span class="toc-item-text">收起标记</span>
+                    <span class="toc-item-text">收起${entriesLabel}</span>
                 </div>`;
             }
         });
@@ -1916,8 +1967,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         updateActiveTocItem();
     }
 
-    // 收集各标题区段内的高亮/划线/批注片段：实现在 managers/heading-index.js
-    // 的 collectTocMarkEntries（纯 DOM 扫描，可单测）。加粗不进目录（用户要求）。
+    // 收集各标题区段内的高亮/划线/批注片段与顶层列表条目：实现在
+    // managers/heading-index.js 的 collectTocSectionEntries（纯 DOM 扫描，可单测）。
+    // 加粗不进目录（用户要求）。
 
     // Edit-mode TOC jump: place the caret at the target heading before
     // focusing, otherwise focus() pulls the viewport back to the old caret
@@ -1965,8 +2017,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     // of the editor viewport. Bound once to the editor scroll container.
     let tocScrollSyncBound = false;
     let lastGeneratedToc = [];
-    // 当前目录渲染持有的片段目标元素（与 .mark-entry 的 data-mark-ref 对应），
-    // 供滚动高亮把划线/高亮/批注子条目也纳入"我正在哪里"的判定。
+    // 当前目录渲染持有的子条目目标元素（与 .mark-entry 的 data-mark-ref 对应；
+    // 划线/高亮/批注片段与顶层列表条目共用），供滚动高亮把它们也纳入
+    // "我正在哪里"的判定。
     let tocMarkRefs = [];
     function setupTocScrollSync() {
         if (tocScrollSyncBound) return;

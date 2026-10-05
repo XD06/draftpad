@@ -2742,7 +2742,8 @@ main {
 /* 目录跳转的落点闪光（JumpTargetHighlight 扩展以 PM Decoration 渲染，编辑/
    阅读模式都能存活；旧 is-jump-target DOM 类在编辑模式会被 PM 的 DOMObserver
    抹掉、从未露面，已废弃）。不做整块背景——左侧主色竖条 + 落点文字短暂变
-   主色再渐回正文色，位置醒目又不糊住正文。 */
+   主色再渐回正文色，位置醒目又不糊住正文。三档视口（≥981 / 901–980 / ≤900）
+   只是竖条停靠的横向位置不同，落点表现（竖条 + 字体色脉冲）全端统一。 */
 .typora-editor-shell .vditor-reset .article-jump-target {
     position: relative;
     animation: article-jump-flash 1.8s ease;
@@ -2761,8 +2762,8 @@ main {
 }
 
 /* 列表条目的落点分区间处理（实测：≥981 有 ios-theme 的 1.75em 悬挂区；
-   901–980 被全局 reset 清零缩进、纸面 padding 只有 10px，但页边距放得下
-   竖条；≤900 连页边距都放不下，.vditor-wysiwyg 会横向裁剪） */
+   901–980 纸面 padding 只有 10px，但卡片外侧还有页边距放得下竖条；
+   ≤900 卡片贴住视口、裁剪沿只隔着 10px padding，竖条须整体收进 padding 区） */
 
 /* 桌面（≥981）：普通条目停在本条目标记悬挂区之外（= 该行最前面的空白），
    默认的 -12px 会落进悬挂区压住「17.」这类序号数字；待办条目的复选框经
@@ -2786,15 +2787,32 @@ main {
     }
 }
 
-/* ≤900：纸面 margin 放不下竖条（会被 .vditor-wysiwyg 裁掉），改用文字变
-   主色 + 一层比搜索块级高亮浅的背景脉冲（同为 1.8s，搜索块是 4s）。 */
+/* ≤900：卡片（.tiptap）自身 overflow-x:auto，左内沿只有 padding 的 10px，
+   默认的 -12px 会越界被裁——竖条收紧到 -9px（实测评定：落点距裁剪沿 1px、
+   距文字/复选框 ≥6px，完整可见），列表条目自带缩进、竖条停在缩进空档。
+   落点表现与桌面统一 = 左侧竖条 + 文字短暂变主色，不再有背景脉冲。
+   标题落点另有一坑：标题级别侧标（> h1–h6::before，(0,3,1)）与竖条共用
+   同一条 ::before，且 ≤980 把该伪元素整体 display:none——移动端标题落点
+   竖条此前从未显示过。选择器加 .tiptap 提到 (0,4,0)，把 display/content/
+   left/top/transform 一并夺回，竖条形态与段落落点完全一致。 */
 @media (max-width: 900px) {
-    .typora-editor-shell .vditor-reset .article-jump-target::before {
-        display: none;
+    .typora-editor-shell .tiptap.vditor-reset .article-jump-target::before {
+        display: block;
+        content: '';
+        left: -9px;
+        top: 0.12em;
+        bottom: 0.12em;
+        transform: none;
     }
 
-    .typora-editor-shell .vditor-reset .article-jump-target {
-        animation: article-jump-flash 1.8s ease, article-jump-tint 1.8s ease;
+    /* 普通列表条目有 2em 缩进：竖条越过悬挂的圆点标记，停在标记左侧。 */
+    .typora-editor-shell .tiptap.vditor-reset li.article-jump-target::before {
+        left: -2em;
+    }
+
+    /* 待办列表 ≤980 已把 padding 清零（复选框内联），与普通条目同位。 */
+    .typora-editor-shell .tiptap.vditor-reset ul[data-type="taskList"] li.article-jump-target::before {
+        left: -9px;
     }
 }
 
@@ -2827,22 +2845,6 @@ main {
 
     100% {
         opacity: 0;
-    }
-}
-
-/* ≤900 无竖条时的落点背景脉冲：峰值远低于搜索块级高亮（0.3 / 4s），时长
-   与目录跳转闪光一致（1.8s），只作「看一眼落点」的提示不抢正文。 */
-@keyframes article-jump-tint {
-    0% {
-        background-color: rgba(var(--primary-rgb), 0.16);
-    }
-
-    55% {
-        background-color: rgba(var(--primary-rgb), 0.1);
-    }
-
-    100% {
-        background-color: transparent;
     }
 }
 
@@ -4937,13 +4939,23 @@ body.reading-mode-active .editor-main {
 
 .article-toc-list .toc-item {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     gap: 8px;
     font-size: 13px;
     line-height: 1.45;
     color: var(--muted-text);
     padding: 5px 8px;
     border-radius: 7px;
+    /* 左侧栏目录 tab 的裸 .toc-item（1735 行）带 white-space:nowrap，选择器
+       同样命中本文目录的行并继承给 .toc-item-text——必须就地翻回 normal，
+       否则折行永远不发生。 */
+    white-space: normal;
+    /* 行是 .article-toc-list（flex column 滚动容器）的子项：文字列一旦
+       overflow:hidden，行的 automatic min size 归 0，长文章内容总高超过
+       容器时每行被 flex-shrink:1 等比压扁成细缝（短文章不溢出故无恙——
+       「长文章目录文字压扁、短文章正常」的根因）。行必须拒绝收缩，溢出
+       交给容器的 overflow-y 滚动。 */
+    flex-shrink: 0;
 }
 
 .article-toc-list .toc-item.h1 {
@@ -5004,6 +5016,7 @@ body.reading-mode-active .editor-main {
     font-weight: 600;
     line-height: 1;
     padding: 3px 0;
+    margin-top: 2px;
     border-radius: 4px;
     color: color-mix(in srgb, var(--text-color) 60%, var(--muted-text));
     background: color-mix(in srgb, var(--muted-text) 14%, transparent);
@@ -5014,12 +5027,17 @@ body.reading-mode-active .editor-main {
     background: rgba(var(--primary-rgb), 0.14);
 }
 
+/* 长标题折行最多 2 行（约 25–28 个汉字可见，超出在第二行截断），短条目
+   仍单行、行高不变。多行省略号的两代实现在这个 Chrome 上都不可用：
+   legacy `display:-webkit-box` 已被移除（computed 降级为 flow-root，
+   `-webkit-line-clamp` 退化成「裁到 1 行」的 bug 行为），标准 `line-clamp`
+   尚未启用——先用 max-height 裁剪，浏览器启用标准属性后可一行升级。徽标
+   随 align-items: flex-start 顶对齐贴首行，margin-top 做视觉居中微调。 */
 .article-toc-list .toc-item-text {
     flex: 1;
     min-width: 0;
     overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    max-height: 2.9em;
 }
 
 .article-toc-list .toc-item.h1 .toc-item-text {

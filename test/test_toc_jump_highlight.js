@@ -7,7 +7,7 @@
  * 该词在全文第一次出现的位置，常常不是被点击的标题）；flash 默认关闭（搜索跳转
  * 的 landHit 路径不受影响）；docChanged 后装饰经 mapping 跟随；2.2s 后摘除。
  * 目录侧的折叠上限、表格加粗降噪、移动端页面滚动监听与远端写入后重建目录是
- * 源码断言（collectTocMarkEntries/updateToC 是 app.js 闭包私有，jsdom 不可达）。
+ * 源码断言（collectTocSectionEntries/updateToC 是 app.js 闭包私有，jsdom 不可达）。
  */
 const { JSDOM } = require('jsdom');
 const fs = require('fs');
@@ -178,6 +178,12 @@ async function main() {
             app.includes('TOC_MARKS_PER_SECTION')
             && app.includes('data-mark-group')
             && app.includes('data-mark-collapse'),
+            null);
+        check('toc lists: top-level list entries ride the same sub-entry pipeline with their own cap',
+            app.includes('TOC_LISTS_PER_SECTION')
+            && app.includes('collectTocSectionEntries(toc)')
+            && app.includes('list-entry')
+            && readSource('public/managers/heading-index.js').includes("kind: 'list'"),
             null);
         check('toc noise: bold fragments never enter the TOC (mark selector excludes strong)',
             readSource('public/managers/heading-index.js').includes("const TOC_MARK_SELECTOR = 'mark, .md-mark, u, [data-draw], .has-annotation, [data-note]'")
