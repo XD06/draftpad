@@ -1814,15 +1814,26 @@ export const SearchHitHighlight = Extension.create({
  * 退格阶梯（每退一次只降一格，光标始终停在行首，不跳到别处）：
  *   空条目 `2. `          --退格-->  上一条目里的尾部空行（标记没了，缩进保留）
  *   上一条目的尾部空行     --退格-->  空行退出列表成顶层段落（column 0，「最开头」）
- *   嵌套空条目（无前兄弟） --退格-->  空行挪进父条目（降一级，内层列表随空项一起消失）
+ *   嵌套空条目（无前兄弟） --退格-->  连同内层列表一起消费掉，光标上并到上一层的
+ *                                文字末尾（内层列表独占时整条消失，否则只删本项）
  * 顶层首个空条目（无前兄弟）不接管：Tiptap 的 lift 本来就是「退出列表成段落」，
  * 正是阶梯的终点。
+ *
+ * 嵌套分支刻意「上并」而不是把空行挪进父条目：挪出来的空行会顺着阶梯退出列表，
+ * 而列表下方的空行退格走 PM 默认并入（光标跳进最后一个条目的文字尾部，再退格
+ * 开始吃字）——文字被吃空后本分支又把空行抽回列表上方，首尾相接成环：连续退格
+ * 时光标在「列表下方空行」与「条目文字尾部」两处之间循环跳动，每圈吞掉一个
+ * 字符（真机逐步复现）。上并让删除流单调向上、有限步终止；「挪空行」只在上面
+ * 的 itemIndex > 0 并入分支保留，那里空行不回流，不成环。无 Tab 嵌套路径不受
+ * 影响（它用的是并入分支 + 键入侧输入规则；误键 `[ ] ` 后的撤销改由
+ * Enter→Backspace 两键重建空行）。
  *
  * 刻意不接管的事：
  * - 非空条目的行首退格维持 Tiptap 默认（并入上一条目），Typora 同样如此；
  * - 顶层列表**非末位**条目的尾部空行不接管（默认并轨语义）：把它拎出列表会拆断
  *   列表，有序列表的编号会被重排，代价大于收益；
- * - 嵌套无前兄弟但列表还有其他条目时，只删当前项、空行留在列表之前，绝不吞兄弟。
+ * - 嵌套无前兄弟但列表还有其他条目时，只删当前项、光标落到前一条目文字末尾，
+ *   绝不吞兄弟。
  *
  * 必须注册在扩展列表**末尾**（TiptapSlashMenu 之后）：PM 的 handleKeyDown 按插件
  * 注册逆序咨询，本扩展要抢在 Tiptap listKeymap 的 Backspace（空项 lift）之前生效。
@@ -1846,6 +1857,23 @@ export const DumbPadListBlankLineBackspace = Extension.create({
                         // 两种目标形态（空条目本体 / 条目尾部空行）都是「空段落的行首」
                         if (parent.type.name !== 'paragraph') return false;
                         if (parent.content.size !== 0 || $from.parentOffset !== 0) return false;
+
+                        // 阶梯终点之后：顶层空行紧跟列表时，退格 = 删除空行并把光标并入
+                        // 列表最后一个文字块末尾。不接管的话 PM 的 joinBackward 会把空行
+                        // 重新吸回列表条目（列表 + 空段边界的连接点选在 li 层），与上方
+                        // 的退出步首尾相接：退格在「条目内空行 ↔ 顶层空行」之间原地循环，
+                        // 按键等于失灵（真机逐步复现）。显式并入让删除流单调终止。
+                        if ($from.depth === 1 && $from.index(0) > 0) {
+                            const prev = $from.node(0).child($from.index(0) - 1);
+                            if (['bulletList', 'orderedList', 'taskList'].includes(prev.type.name)) {
+                                const tr = state.tr;
+                                tr.delete($from.before(1), $from.after(1));
+                                tr.setSelection(TextSelection.near(tr.doc.resolve($from.before(1)), -1));
+                                tr.scrollIntoView();
+                                view.dispatch(tr);
+                                return true;
+                            }
+                        }
 
                         let liDepth = -1;
                         for (let d = $from.depth - 1; d >= 1; d--) {
@@ -1877,16 +1905,27 @@ export const DumbPadListBlankLineBackspace = Extension.create({
                                 tr.insert(liFrom - 1, paragraph.create());
                                 tr.setSelection(TextSelection.create(tr.doc, liFrom));
                             } else if (LI_TYPES.includes($from.node(listDepth - 1).type.name)) {
-                                // 嵌套列表里的首个空条目：整条内层列表随空项一起消失（列表
-                                // 只有它）或只删它（还有兄弟），空行落在父条目里原列表位置。
-                                const insertAt = $from.before(listDepth);
+                                // 嵌套列表里的首个空条目：连同内层列表一起消费掉（列表
+                                // 只有它）或只删它（还有兄弟），光标落在消费点之前最近
+                                // 的块内内容端（通常是文字尾或紧邻的空行行首）。不把空行
+                                // 挪进父条目——那会与「退出列表 → PM 默认并入」首尾相接
+                                // 成环（见扩展头注释）。near 兜底覆盖「消费点前是另一个
+                                // 列表」这类非文字块边界。
+                                const joinAfter = (pos) => {
+                                    const $join = tr.doc.resolve(pos);
+                                    if ($join.parent.inlineContent) {
+                                        tr.setSelection(TextSelection.create(tr.doc, pos));
+                                    } else {
+                                        tr.setSelection(TextSelection.near($join, -1));
+                                    }
+                                };
                                 if (list.childCount > 1) {
                                     tr.delete($from.before(liDepth), $from.after(liDepth));
+                                    joinAfter($from.before(liDepth) - 1);
                                 } else {
                                     tr.delete($from.before(listDepth), $from.after(listDepth));
+                                    joinAfter($from.before(listDepth) - 1);
                                 }
-                                tr.insert(insertAt, paragraph.create());
-                                tr.setSelection(TextSelection.create(tr.doc, insertAt + 1));
                             } else {
                                 // 顶层首个空条目：Tiptap lift = 退出列表成段落，阶梯终点。
                                 return false;

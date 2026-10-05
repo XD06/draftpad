@@ -4,6 +4,8 @@
  * 2) 非空条目行首退格 = lift 一层（光标停留原地），再退 = 退出列表成段落，再退 = 并入上一行；
  * 3) 空项退格 = 清除继承的列表标记、并入上一条目成为尾部空行（光标原地、缩进保留），
  *    再退 = 逐级降一层，顶层末位再退 = 退出列表成顶层段落（「回到最开头」）；
+ *    嵌套空条目退格 = 连同内层列表一起消费、光标上并到父条目文字末尾（连续退格
+ *    单调终止，不再与「退出列表 → PM 默认并入」成环跳两处 + 吃字）；
  * 4) 无 Tab 嵌套流：Enter → Backspace → 直接键入 `- `/`[ ] ` 即得嵌套列表（手机路径）；
  * 5) 空任务项解析补丁（- [ ] 不再退化为字面 "[ ]" 文本）；
  * 6) 空列表标记行解析补丁（- 甲\n  - 不再被 setext 吞成二级标题）；
@@ -213,13 +215,72 @@ async function main() {
         editor.editor.state.selection.$from.depth === 1
         && editor.editor.state.selection.$from.parent.type.name === 'paragraph',
         null);
-    // 嵌套空条目（无前兄弟）退格 = 空行挪进父条目（降一级）
+    // 嵌套空条目（无前兄弟）退格 = 连同内层列表一起消费，光标落在消费点前最近的
+    // 块内内容端。不再「挪空行进父条目」：那会与「退出列表 → PM 默认并入」首尾
+    // 相接成环，连续退格时光标在「列表下方空行」与「条目文字尾部」两处循环跳动、
+    // 每圈吞一个字符（真机逐步复现，见连续退格回归）。
     editor.setValue('- 甲\n\n  - ', false);
     caretInEmptyItem();
     press('Backspace');
-    check('backspace on a nested empty item moves the blank line into the parent item',
-        /listItem > paragraph( > text)? > paragraph > paragraph$/.test(shape()),
-        { shape: shape() });
+    check('backspace on a nested empty item consumes it with the inner list',
+        editor.getValue() === '- 甲'
+        && /listItem > paragraph > text > paragraph$/.test(shape()),
+        { value: editor.getValue(), shape: shape() });
+    // fixture 的 `\n\n` 是序列化器为嵌套列表补的空行，解析后的条目内并无独立
+    // 空行块，所以光标落在父条目文字末尾（真机连续退格流同款落点）。
+    check('the caret joins the parent item text end (monotonic upward, no blank re-entry)',
+        editor.editor.state.selection.$from.parent.type.name === 'paragraph'
+        && editor.editor.state.selection.$from.parent.textContent === '甲'
+        && editor.editor.state.selection.$from.parentOffset === 1,
+        { text: editor.editor.state.selection.$from.parent.textContent,
+            offset: editor.editor.state.selection.$from.parentOffset });
+    // 连续退格回归（真机「光标在两处循环跳动、每圈吃一个字」）：嵌套待办被退格
+    // 吃空后必须连同内层列表一起上并消费——消费瞬间文档恰为「顶层单条目、无空行」，
+    // 且整条删除流有限步终止，空行不再回流到列表内外。jsdom 没有 beforeinput
+    // 管线（Tiptap 在真浏览器上经 beforeinput 删字），吃字步用直接事务模拟，
+    // 阶梯步仍走真实 keydown 分发。
+    const eatCharBackward = () => {
+        const { state } = editor.editor;
+        const { $from } = state.selection;
+        if ($from.parentOffset === 0) return false;
+        const tr = state.tr.delete($from.pos - 1, $from.pos);
+        tr.setSelection(TextSelection.create(tr.doc, $from.pos - 1));
+        view.dispatch(tr.scrollIntoView());
+        return true;
+    };
+    editor.setValue('- [ ] p1\n  - [ ] c1', false);
+    caretEndOfText('c1');
+    press('Enter');
+    check('fixture: enter appends an empty nested sibling',
+        editor.getValue() === '- [ ] p1\n  - [ ] c1\n  - [ ] ',
+        { value: editor.getValue() });
+    press('Backspace');  // 空兄弟并入 c1 成为尾部空行
+    press('Backspace');  // 尾部空行降一级 → p1 条目
+    press('Backspace');  // 退出列表 → 顶层空行
+    press('Backspace');  // PM 默认：顶层空行并入 c1 文字尾
+    check('ladder walked to the join without touching any text',
+        editor.getValue() === '- [ ] p1\n  - [ ] c1'
+        && editor.editor.state.selection.$from.parent.textContent === 'c1',
+        { value: editor.getValue(), text: editor.editor.state.selection.$from.parent.textContent });
+    eatCharBackward();   // 吃 "1"
+    eatCharBackward();   // 吃 "c" → c1 被吃空
+    press('Backspace');  // 消费：内层列表整体消失，光标上并 p1 文字尾
+    check('the emptied nested item is consumed with its list (no blank re-entry, single taskList)',
+        editor.getValue() === '- [ ] p1'
+        && shape().split('taskList').length === 2,
+        { value: editor.getValue(), shape: shape() });
+    check('at the consume step the caret joins the parent text end',
+        editor.editor.state.selection.$from.parent.type.name === 'paragraph'
+        && editor.editor.state.selection.$from.parent.textContent === 'p1'
+        && editor.editor.state.selection.$from.parentOffset === 2,
+        { text: editor.editor.state.selection.$from.parent.textContent,
+            offset: editor.editor.state.selection.$from.parentOffset });
+    eatCharBackward();   // 吃 "1"
+    eatCharBackward();   // 吃 "p" → p1 被吃空
+    press('Backspace');  // 顶层首个空条目不接管：Tiptap lift 退出列表
+    check('continuous backspace terminates with the whole structure consumed (no two-place loop)',
+        editor.getValue() === '',
+        { value: editor.getValue() });
     // 顶层首个空条目（无前兄弟）不接管：Tiptap lift = 退出列表
     editor.setValue('- ', false);
     caretInEmptyItem();
