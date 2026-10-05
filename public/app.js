@@ -1,3 +1,8 @@
+/**
+ * Coordinates article editing, local snapshots and remote synchronization.
+ * Editing statistics remain independent of content versions and conflict handling.
+ * Updates the article footer from server-confirmed metadata.
+ */
 import { WSClient } from './managers/ws-client.js';
 import { ToastManager } from './managers/toaster.js';
 import StorageManager from './managers/storage.js';
@@ -607,6 +612,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (detail.notepadId !== currentNotepadId) return;
         const remoteVersion = Number(detail.version);
         const isSavedUpdate = Number.isFinite(remoteVersion);
+        if (isSavedUpdate) applyNoteEditStats(currentNotepadId, detail);
         const isOwnAck = detail.userId === userId || (detail.saveId && pendingNoteSaveIds.has(detail.saveId));
         if (detail.saveId) pendingNoteSaveIds.delete(detail.saveId);
         if (isOwnAck) {
@@ -631,7 +637,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (noteContentMatches(detail, editor.value)) {
                 hasUnsavedChanges = false;
                 setCurrentNoteVersion(currentNotepadId, remoteVersion);
-                touchNotepadUpdatedAt(currentNotepadId);
+                touchNotepadUpdatedAt(currentNotepadId, detail.updatedAt);
                 cacheSyncedNote(currentNotepadId, editor.value, { version: remoteVersion });
                 dirtyConflictNotepadIds.delete(currentNotepadId);
                 hideNoteConflictToast();
@@ -652,7 +658,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 });
             if (merge.ok) {
                 setCurrentNoteVersion(currentNotepadId, remoteVersion);
-                touchNotepadUpdatedAt(currentNotepadId);
+                touchNotepadUpdatedAt(currentNotepadId, detail.updatedAt);
                 dirtyConflictNotepadIds.delete(currentNotepadId);
                 hideNoteConflictToast();
                 if (merge.content === remoteContent) {
@@ -692,7 +698,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         editor.applyRemoteValue(detail.content || '');
         isApplyingRemoteUpdate = false;
         setCurrentNoteVersion(currentNotepadId, remoteVersion);
-        touchNotepadUpdatedAt(currentNotepadId);
+        touchNotepadUpdatedAt(currentNotepadId, detail.updatedAt);
         cacheSyncedNote(currentNotepadId, detail.content || '', { version: remoteVersion });
         dirtyConflictNotepadIds.delete(currentNotepadId);
         setStartupSyncStatus('synced', '已同步');
@@ -1473,6 +1479,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 if (listed && Number.isFinite(remoteVersion)
                     && remoteVersion >= Number(listed.version || 0)) {
                     Object.assign(listed, remote);
+                    updateArticleMeta();
                 }
 
                 const localVersion = Number(currentNoteVersion);
@@ -1570,15 +1577,26 @@ document.addEventListener('DOMContentLoaded', async () => {
         articleMetaFooter.setMeta({
             createdAt: Number(notepad?.createdAt) || 0,
             updatedAt: Number(notepad?.updatedAt) || 0,
-            revision: Number(notepad?.version) || 1
+            editCount: notepad?.editCount,
+            editCountStartedAt: notepad?.editCountStartedAt
         });
     }
 
     // The server stamps updatedAt on every save; mirror it locally so the
     // watermark stays honest between list reloads.
-    function touchNotepadUpdatedAt(notepadId) {
+    function touchNotepadUpdatedAt(notepadId, updatedAt) {
         const notepad = currentNotepads.find(n => n.id === notepadId);
-        if (notepad) notepad.updatedAt = Date.now();
+        if (notepad) notepad.updatedAt = Number(updatedAt) > 0 ? Number(updatedAt) : Date.now();
+        updateArticleMeta();
+    }
+
+    function applyNoteEditStats(notepadId, data) {
+        const notepad = currentNotepads.find(note => note.id === notepadId);
+        if (!notepad || Number(data.version) < Number(notepad.version || 1)) return;
+        if (!Number.isSafeInteger(data.editCount) || data.editCount < 0) return;
+        notepad.editCount = data.editCount;
+        notepad.editCountStartedAt = data.editCountStartedAt;
+        if (Number(data.updatedAt) > 0) notepad.updatedAt = Number(data.updatedAt);
         updateArticleMeta();
     }
 
@@ -1708,6 +1726,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 }
                 const data = await fetchNoteData(notepadId);
                 if (loadingNotepadId !== notepadId) return;
+                applyNoteEditStats(notepadId, data);
 
                 const cachedNote = getCachedNote(notepadId);
                 if (cachedNote?.dirty && currentNotepadId === notepadId) {
@@ -2366,10 +2385,16 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     async function saveNotes(content, isAutoSave, showStatus = true, retryCount = 0, targetNotepadId = currentNotepadId, expectedRevision = null, options = null) {
         const queueKey = isValidNotepadId(targetNotepadId) ? targetNotepadId : currentNotepadId;
+        const cachedEdit = getCachedNote(queueKey);
+        const saveOptions = {
+            ...options,
+            editSessionId: cachedEdit?.editSessionId,
+            previousEditSessionId: cachedEdit?.previousEditSessionId
+        };
         const previousSave = saveNotesInFlight.get(queueKey) || Promise.resolve();
         const queuedSave = previousSave
             .catch(() => undefined)
-            .then(() => performSaveNotes(content, isAutoSave, showStatus, retryCount, targetNotepadId, expectedRevision, options));
+            .then(() => performSaveNotes(content, isAutoSave, showStatus, retryCount, targetNotepadId, expectedRevision, saveOptions));
         saveNotesInFlight.set(queueKey, queuedSave);
         try {
             return await queuedSave;
@@ -2398,7 +2423,11 @@ document.addEventListener('DOMContentLoaded', async () => {
                 : currentNotepads.find(n => n.id === targetNotepadId)?.version;
             saveId = createSaveId();
             pendingNoteSaveIds.add(saveId);
-            const payload = { content, userId, saveId };
+            const payload = {
+                content, userId, saveId,
+                editSessionId: options?.editSessionId,
+                previousEditSessionId: options?.previousEditSessionId
+            };
             if (Number.isFinite(baseVersion)) payload.baseVersion = baseVersion;
             const payloadText = JSON.stringify(payload);
             // 卸载兜底 flush 的请求要带 keepalive 才能在页面关闭后送达；
@@ -2425,7 +2454,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             setCurrentNoteVersion(targetNotepadId, result.version);
             // 服务端对内容未变化的保存返回 unchanged 且不刷 updatedAt，
             // 本地镜像保持一致，水印的更新时间才不会虚高。
-            if (!result.unchanged) touchNotepadUpdatedAt(targetNotepadId);
+            if (!result.unchanged) touchNotepadUpdatedAt(targetNotepadId, result.updatedAt);
+            applyNoteEditStats(targetNotepadId, result);
             const savedContentStillCurrent = currentNotepadId === targetNotepadId && editor.value === content;
             if (showStatus) {
                 if (isAutoSave && savedContentStillCurrent) {
@@ -2715,7 +2745,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     function debouncedSave(content) {
         const targetNotepadId = currentNotepadId;
         const revision = editorRevision;
-        cacheDirtyNote(targetNotepadId, content);
+        cacheDirtyNote(targetNotepadId, content, { recordActivity: true });
         setStartupSyncStatus('cached', '本地已保留');
         clearTimeout(saveTimeout);
         const elapsedSinceSave = Date.now() - lastSaveTime;

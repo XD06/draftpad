@@ -88,6 +88,9 @@ function createWebSocketHub({ server, validateOrigin, pin, cookieName, authServi
             version,
             saveId: meta.saveId,
             contentHash: meta.contentHash,
+            editCount: meta.editCount,
+            editCountStartedAt: meta.editCountStartedAt,
+            updatedAt: meta.updatedAt,
             source: meta.source || 'save'
         });
     }

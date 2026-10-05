@@ -6,6 +6,10 @@
 
 ## [Unreleased]
 
+### 调整
+
+- **文章修改次数改为连续编辑会话计数**：正文首次成功保存立即计一次，持续修改只计一次，连续一分钟无正文变化后再修改才开启下一次；计数独立于同步版本，重命名、置顶、重复保存、冲突失败和远端拉取不增加次数。沿用现有自动保存、写锁和元数据写入，无新增 S3 请求。旧文章不转换历史版本，首次有效正文修改从 1 开始，底部悬停提示统计起点。正文响应和 WebSocket 同步计数及服务端更新时间。新增 `test:note-edit-sessions` 与 `test:note-edit-sessions-browser` 回归。
+
 ### 新增
 
 - **文章嵌入媒体：/file 上传的短视频与音频以内联播放器嵌入正文**：`/file` 上传音视频文件后不再落成附件 chip，而是插入可内联播放的媒体节点——视频是「原生播放器 + 文件名条（图标 · 文件名 · 大小 · 下载 · 删除）」的卡片，视觉骨架与图片预览同款（同边框/圆角/外边距）；音频是紧凑卡片（信息条在上、原生音频控件在下）。新增节点模块 `public/managers/tiptap-media.js`（`DumbPadMedia`，节点名 `articleMedia`，内联原子节点）：markdown 形态沿用「title 携带元数据」先例（图片 `dumbpad-width`、附件 `dumbpad-file`），视频/音频分别为 `![名 · 大小](original链接 "dumbpad-video=1;size=..;type=..;name=..")` 与 `dumbpad-audio=1`，序列化往返逐字节稳定（label 的名字/大小从 title 参数再生）；解析侧经 `storage.markdown.parse.updateDOM` 把 marked 渲染的占位 `<img>` 改名成 `<video>/<audio>` 再由节点 `parseHTML` 收编（`setValue` 与 `insertContentAt` 两条路径都生效），`dumbpad-width` 图片、`dumbpad-file` 附件链接与无元数据裸图不受影响。NodeView 用 `stopEvent` 把原生控件事件留给浏览器（点播放/进度不进 PM 管线），文件名条下载/删除按钮自持监听（删除走 PM 事务，可撤销；阅读模式隐藏删除只留下载），点卡片其余部分仍是节点选区（Backspace 可删）；src/title 变化（撤销/重做）只重建 wrapper 内部、绝不整体替换（PM 持有的 DOM 引用不能脱链）。服务端配套：`routes/asset-routes.js` 对 `video/*`、`audio/*` 资产的 `original` 变体改为 `Content-Disposition: inline` 并支持 HTTP Range（`Accept-Ranges: bytes` + `206` 分段响应，iOS Safari 播放靠它），普通文件与 `download` 变体维持 attachment 行为不变。**插入大小上限放宽到 100MB**：`file-asset-policy.js` 与 `asset-api-client.js` 的默认上限从 20MB 提到 100MB（`ASSET_MAX_FILE_BYTES` 仍可下调，可配上限本就是 100MB），客户端/服务端双侧校验，超限上传以中文报错响亮失败。旧数据兼容：既有音视频附件链接维持 chip 形态与音视频图标，不迁移。回归：新增 `npm run test:tiptap-media-embed`（jsdom 35 项：落文助手/元数据解析/文件分类/setValue 升级与逐字节往返/insertContentAt/三类不误伤/删除按钮/属性变更重建）并入 `npm test`，真机 `npm run test:media-embed-browser`（真实上传 → 页内 MediaRecorder 现场录制 webm 与 Node 合成 PCM WAV 作为夹具 → `<video>/<audio>` 真实播放断言 currentTime 前进 → 页面内 Range 请求 206 → 删除按钮）；`npm run test:asset-routes`、`npm run test:file-asset-policy` 同步扩展（媒体 inline/Range/413 报错文案/音视频白名单）。

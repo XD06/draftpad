@@ -3,6 +3,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { sanitizeFilename } = require('../scripts/notepad-migration');
 const { applyNoteEdit, applyNoteEdits, statusForEditError, buildOutline } = require('../scripts/note-edits');
+const { recordNoteEdit, getNoteEditStats } = require('../scripts/note-edit-stats');
 
 function hashContent(content) {
     return crypto.createHash('sha256').update(String(content || '')).digest('hex');
@@ -44,7 +45,7 @@ function registerNoteRoutes(app, context) {
                 maxAge: pageHistoryCookieAge
             });
 
-            res.json({ content: notes, version: notepad?.version || 1 });
+            res.json({ content: notes, version: notepad?.version || 1, ...getNoteEditStats(notepad) });
         } catch (err) {
             res.status(500).json({ error: 'Error reading notes' });
         }
@@ -92,7 +93,7 @@ function registerNoteRoutes(app, context) {
                     // 存），也不再广播。这同时覆盖 stale 重试与 baseVersion
                     // 跟手时的 noop 保存（打字后又在防抖窗口内撤销等）。
                     if (currentContent === content) {
-                        return { unchanged: true, version: notepad.version || 1 };
+                        return { unchanged: true, version: notepad.version || 1, ...getNoteEditStats(notepad) };
                     }
                     if (Number.isFinite(clientVersion) && (notepad.version || 1) > clientVersion) {
                         return { conflict: true, currentVersion: notepad.version || 1 };
@@ -109,14 +110,16 @@ function registerNoteRoutes(app, context) {
                 const data = await storage.readNotepadsMeta();
                 const targetNotepad = data.notepads.find(n => n.id === id);
                 let version = targetNotepad?.version || 1;
+                let editStats = getNoteEditStats(targetNotepad);
                 if (targetNotepad) {
                     targetNotepad.updatedAt = Date.now();
                     if (!targetNotepad.createdAt) targetNotepad.createdAt = Date.now();
                     targetNotepad.version = (targetNotepad.version || 1) + 1;
                     version = targetNotepad.version;
+                    editStats = recordNoteEdit(targetNotepad, req.body.editSessionId, req.body.previousEditSessionId);
                     await storage.saveNotepadsMeta(data);
                 }
-                return { version };
+                return { version, ...editStats };
             });
 
             if (result.conflict) {
@@ -131,13 +134,14 @@ function registerNoteRoutes(app, context) {
                     version: result.version,
                     saveId,
                     contentHash,
-                    unchanged: true
+                    unchanged: true,
+                    ...getNoteEditStats(result)
                 });
             }
 
-            broadcastUpdate(id, content, senderId, result.version, { saveId, contentHash });
+            broadcastUpdate(id, content, senderId, result.version, { saveId, contentHash, ...getNoteEditStats(result) });
             scheduleIndexNotepads();
-            res.json({ success: true, version: result.version, saveId, contentHash });
+            res.json({ success: true, version: result.version, saveId, contentHash, ...getNoteEditStats(result) });
         } catch (err) {
             res.status(500).json({ error: 'Error saving notes' });
         }
@@ -179,7 +183,7 @@ function registerNoteRoutes(app, context) {
                 }
 
                 if (!edit.modified) {
-                    return { content: edit.content, modified: false, version: notepad.version || 1 };
+                    return { content: edit.content, modified: false, version: notepad.version || 1, ...getNoteEditStats(notepad) };
                 }
 
                 await storage.writeNoteContent(notepad, edit.content);
@@ -187,16 +191,19 @@ function registerNoteRoutes(app, context) {
                 const data = await storage.readNotepadsMeta();
                 const targetNotepad = data.notepads.find(n => n.id === id);
                 let savedVersion = notepad.version || 1;
+                let editStats = getNoteEditStats(notepad);
                 if (targetNotepad) {
                     targetNotepad.updatedAt = Date.now();
                     targetNotepad.version = (targetNotepad.version || 1) + 1;
                     savedVersion = targetNotepad.version;
+                    editStats = recordNoteEdit(targetNotepad, req.body.editSessionId, req.body.previousEditSessionId);
                     await storage.saveNotepadsMeta(data);
                 }
                 return {
                     content: edit.content,
                     modified: true,
                     version: savedVersion,
+                    ...editStats,
                     matchCount: edit.matchCount,
                     replaced: edit.replaced,
                     section: edit.section
@@ -210,15 +217,15 @@ function registerNoteRoutes(app, context) {
             }
 
             if (result.modified) {
-                broadcastUpdate(id, result.content, senderId, result.version, { contentHash: hashContent(result.content) });
+                broadcastUpdate(id, result.content, senderId, result.version, { contentHash: hashContent(result.content), ...getNoteEditStats(result) });
                 scheduleIndexNotepads();
-                const body = { success: true, content: result.content, modified: true, version: result.version };
+                const body = { success: true, content: result.content, modified: true, version: result.version, ...getNoteEditStats(result) };
                 if (result.matchCount !== undefined) body.matchCount = result.matchCount;
                 if (result.replaced !== undefined) body.replaced = result.replaced;
                 if (result.section !== undefined) body.section = result.section;
                 return res.json(body);
             }
-            res.json({ success: true, content: result.content, modified: false, version: result.version });
+            res.json({ success: true, content: result.content, modified: false, version: result.version, ...getNoteEditStats(result) });
         } catch (err) {
             console.error('Error patching notes:', err);
             res.status(500).json({ error: 'Error patching notes' });
@@ -262,7 +269,7 @@ function registerNoteRoutes(app, context) {
                 }
 
                 if (!batch.modified) {
-                    return { content: batch.content, modified: false, version: notepad.version || 1, results: batch.results };
+                    return { content: batch.content, modified: false, version: notepad.version || 1, results: batch.results, ...getNoteEditStats(notepad) };
                 }
 
                 await storage.writeNoteContent(notepad, batch.content);
@@ -270,13 +277,15 @@ function registerNoteRoutes(app, context) {
                 const data = await storage.readNotepadsMeta();
                 const targetNotepad = data.notepads.find(n => n.id === id);
                 let savedVersion = notepad.version || 1;
+                let editStats = getNoteEditStats(notepad);
                 if (targetNotepad) {
                     targetNotepad.updatedAt = Date.now();
                     targetNotepad.version = (targetNotepad.version || 1) + 1;
                     savedVersion = targetNotepad.version;
+                    editStats = recordNoteEdit(targetNotepad, req.body.editSessionId, req.body.previousEditSessionId);
                     await storage.saveNotepadsMeta(data);
                 }
-                return { content: batch.content, modified: true, version: savedVersion, results: batch.results };
+                return { content: batch.content, modified: true, version: savedVersion, results: batch.results, ...editStats };
             });
 
             if (result.errorStatus) {
@@ -286,11 +295,11 @@ function registerNoteRoutes(app, context) {
             }
 
             if (result.modified) {
-                broadcastUpdate(id, result.content, senderId, result.version, { contentHash: hashContent(result.content) });
+                broadcastUpdate(id, result.content, senderId, result.version, { contentHash: hashContent(result.content), ...getNoteEditStats(result) });
                 scheduleIndexNotepads();
-                return res.json({ success: true, content: result.content, modified: true, version: result.version, results: result.results });
+                return res.json({ success: true, content: result.content, modified: true, version: result.version, results: result.results, ...getNoteEditStats(result) });
             }
-            res.json({ success: true, content: result.content, modified: false, version: result.version, results: result.results });
+            res.json({ success: true, content: result.content, modified: false, version: result.version, results: result.results, ...getNoteEditStats(result) });
         } catch (err) {
             console.error('Error applying note edits:', err);
             res.status(500).json({ error: 'Error applying note edits' });

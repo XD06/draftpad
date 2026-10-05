@@ -284,6 +284,12 @@ curl -X POST http://localhost:3000/api/upload \
 
 Note 是某个 Notepad 的正文内容。保存接口使用 `baseVersion` 做乐观并发保护。
 
+文章底部的修改次数独立于 `version`：`editCount` 统计成功保存的连续编辑过程，`editCountStartedAt` 是该文章首次启用统计的服务端时间。旧文章不把 `version - 1` 转换成新计数，首次有效正文修改从 1 开始；修改次数悬停提示说明统计起点。重命名和置顶仍更新同步版本，但不增加 `editCount`。
+
+浏览器在每次实际正文变化时更新本地会话活动；连续 60 秒无正文变化后更换 `editSessionId`，并携带上一会话的 `previousEditSessionId`。保存、PATCH 和批量编辑均可附带这两个可选字段（会话 ID 为 1～128 个字母、数字、下划线或连字符，非法值按缺省处理）。同一已记录会话的有效保存只计一次，即使持续输入导致请求间隔超过一分钟；新会话引用已记录的上一会话时，按输入停顿而非保存延迟开启下一次计数。不同设备一分钟内开始的会话合并为同一轮；未携带会话 ID 的旧客户端/API 调用按服务端有效正文保存之间的 60 秒间隔分轮。
+
+正文 GET、成功保存/PATCH/批量编辑响应以及保存产生的 `notes_update` 广播附带 `editCount`、`editCountStartedAt`、`updatedAt`；统计未启动时正文响应的起点为 `null`、次数为 0。统计只在原正文写锁内随已有元数据保存，不新增轮询、心跳或对象存储请求，也不参与 `baseVersion` 校验。缓存只保留最后正文快照，离线期间未上传的中间编辑轮次无法还原。
+
 ### GET /api/notes/:id
 
 读取正文。
@@ -329,7 +335,9 @@ Note 是某个 Notepad 的正文内容。保存接口使用 `baseVersion` 做乐
 {
   "content": "# Updated",
   "baseVersion": 1,
-  "userId": "browser-tab-id"
+  "userId": "browser-tab-id",
+  "editSessionId": "editing-session-id",
+  "previousEditSessionId": "previous-editing-session-id"
 }
 ```
 
@@ -338,7 +346,10 @@ Note 是某个 Notepad 的正文内容。保存接口使用 `baseVersion` 做乐
 ```json
 {
   "success": true,
-  "version": 2
+  "version": 2,
+  "editCount": 1,
+  "editCountStartedAt": 1800000000000,
+  "updatedAt": 1800000000000
 }
 ```
 

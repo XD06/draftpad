@@ -66,6 +66,7 @@ S3 key 结构：
 - 重命名 notepad：校验 `baseVersion`，更新元数据和内容文件名，广播 `notepad_change`；前端可先局部更新列表，失败时回滚。
 - 保存正文：校验 `baseVersion`，写正文文件，更新 `updatedAt/version`，广播带 `saveId/contentHash/version` 的 `notes_update`。
 - PATCH 正文：校验 `baseVersion`，按 action 修改正文，更新 `updatedAt/version`，广播 `notes_update`。
+- 修改次数：正文有效保存/PATCH/批量编辑在原写锁内更新独立 `editCount`，不改变同步版本规则。浏览器连续一分钟无实际正文变化才换编辑会话；同会话的频繁保存只计一次。响应和正文广播附带计数、统计起点与服务端更新时间，接收更新本身不增加计数。重命名、置顶、noop 和冲突失败均不计入。旧文章从首次有效正文修改开始统计，不由历史版本估算。
 - 删除 notepad：先写入垃圾桶 payload，再删除活动元数据和正文文件，广播 `notepad_change`；前端可先从列表移除，失败时回滚。
 - 恢复 notepad：从垃圾桶 payload 写回元数据和正文；若 id 或标题冲突，生成恢复用 id/标题，然后从垃圾桶移除该记录。
 

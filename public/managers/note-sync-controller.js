@@ -1,4 +1,10 @@
+/**
+ * Retains local note snapshots, merge bases and editing activity across reloads.
+ * Editing session identifiers are statistics only, separate from sync versions.
+ * Preserves session activity with the existing startup cache.
+ */
 const DEFAULT_STARTUP_CACHE_KEY = 'dumbpad_startup_cache_v1';
+const EDIT_SESSION_IDLE_MS = 60000;
 // 缓存格式版本：2。升版一次性作废 v1 缓存（含编辑器内核切换期间
 // 写入的假脏笔记），loadStartupCache 对旧版本返回 null 即完成迁移。
 const STARTUP_CACHE_VERSION = 2;
@@ -45,7 +51,9 @@ export default class NoteSyncController {
                 name: notepad.name,
                 createdAt: notepad.createdAt,
                 updatedAt: notepad.updatedAt,
-                version: notepad.version
+                version: notepad.version,
+                editCount: notepad.editCount,
+                editCountStartedAt: notepad.editCountStartedAt
             }))
         });
     }
@@ -60,6 +68,19 @@ export default class NoteSyncController {
             dirty,
             savedAt: Date.now()
         };
+        if (previousNote.editSessionId) nextNote.editSessionId = previousNote.editSessionId;
+        if (previousNote.previousEditSessionId) nextNote.previousEditSessionId = previousNote.previousEditSessionId;
+        if (Number.isFinite(previousNote.lastEditedAt)) nextNote.lastEditedAt = previousNote.lastEditedAt;
+        if (options.recordActivity && previousNote.content !== nextNote.content) {
+            const now = Date.now();
+            if (!nextNote.editSessionId || !Number.isFinite(nextNote.lastEditedAt)
+                || now - nextNote.lastEditedAt >= EDIT_SESSION_IDLE_MS || now < nextNote.lastEditedAt) {
+                nextNote.previousEditSessionId = nextNote.editSessionId;
+                nextNote.editSessionId = globalThis.crypto?.randomUUID?.()
+                    || `${now}-${Math.random().toString(36).slice(2)}`;
+            }
+            nextNote.lastEditedAt = now;
+        }
         const explicitBase = typeof options.baseContent === 'string' ? options.baseContent : null;
         const retainedBase = previousNote.dirty && typeof previousNote.baseContent === 'string'
             ? previousNote.baseContent
@@ -78,10 +99,11 @@ export default class NoteSyncController {
         });
     }
 
-    cacheDirtyNote(notepadId, content, { version, baseContent, notepads = [] } = {}) {
+    cacheDirtyNote(notepadId, content, { version, baseContent, recordActivity = false, notepads = [] } = {}) {
         return this.cacheNote(notepadId, content, {
             version,
             baseContent,
+            recordActivity,
             dirty: true
         }, { notepads });
     }

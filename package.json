@@ -91,6 +91,8 @@
     "test:today-drafts-reveal": "node test/test_today_drafts_reveal.js",
     "test:thought-modules": "npm run test:thought-ai-status && npm run test:thought-attachments && npm run test:thought-card-renderer && npm run test:thought-editor && npm run test:thought-quick-add && npm run test:thought-relations-panel && npm run test:thought-relations-state && npm run test:thought-swipe && npm run test:thought-motion && npm run test:thought-tags && npm run test:thought-text-formatting && npm run test:time-command && npm run test:hybrid-editor-time-command",
     "test:note-sync": "node test/test_note_sync_controller.js",
+    "test:note-edit-sessions": "node test/test_note_edit_sessions.js",
+    "test:note-edit-sessions-browser": "node test/browser/note-edit-sessions.js",
     "test:hybrid-display-sanitizer": "node test/test_hybrid_display_sanitizer.js",
     "test:notepad-title-task": "node test/test_notepad_title_task_styles.js",
     "test:notepad-pinning": "node test/test_notepad_pinning.js",

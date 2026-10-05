@@ -1,6 +1,6 @@
 /**
  * ArticleMetaFooter renders the article record watermark (created / updated /
- * revision count) anchored just below the article card's bottom edge.
+ * editing session count) anchored just below the article card's bottom edge.
  * It lives entirely OUTSIDE Vditor: the node is a child of .editor-main, never
  * of the .vditor-wysiwyg scroll container, so it cannot shift the article
  * layout, the scroll geometry, or the boot->vditor card handoff. It only reads
@@ -46,7 +46,7 @@ export class ArticleMetaFooter {
         if (!this.el) return;
         const createdAt = Number(meta?.createdAt);
         const updatedAt = Number(meta?.updatedAt);
-        const revision = Number(meta?.revision);
+        const editCount = Number(meta?.editCount);
         const segments = [];
         if (Number.isFinite(createdAt) && createdAt > 0) {
             segments.push({ label: '创建', value: this.formatTime(createdAt) });
@@ -56,11 +56,13 @@ export class ArticleMetaFooter {
         if (Number.isFinite(updatedAt) && updatedAt > 0 && updatedAt !== createdAt) {
             segments.push({ label: '更新', value: this.formatTime(updatedAt) });
         }
-        const edits = Number.isFinite(revision) ? Math.max(0, revision - 1) : 0;
+        const edits = Number.isSafeInteger(editCount) ? Math.max(0, editCount) : 0;
         if (edits > 0) {
-            segments.push({ label: '修改', value: `${edits} 次` });
+            const since = Number(meta?.editCountStartedAt);
+            const title = `正文连续一分钟无修改后计为下一次编辑${since > 0 ? `；自 ${this.formatTime(since)} 起统计` : ''}`;
+            segments.push({ label: '修改', value: `${edits} 次`, title });
         }
-        const key = segments.map(segment => `${segment.label}${segment.value}`).join('|');
+        const key = segments.map(segment => `${segment.label}${segment.value}${segment.title || ''}`).join('|');
         if (key !== this.metaKey) {
             this.metaKey = key;
             this.renderSegments(segments);
@@ -90,7 +92,7 @@ export class ArticleMetaFooter {
             }
             const item = document.createElement('span');
             item.className = 'article-meta-item';
-            item.title = `${segment.label} ${segment.value}`;
+            item.title = segment.title || `${segment.label} ${segment.value}`;
             const label = document.createElement('span');
             label.className = 'article-meta-label';
             label.textContent = segment.label;
