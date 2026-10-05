@@ -2691,14 +2691,41 @@ main {
     }
 }
 
-.typora-editor-shell .vditor-reset ul[data-type="taskList"] li > div > p:first-child {
+/* 列表/待办条目的行距不变式：Typora 式退格阶梯（DumbPadListBlankLineBackspace：
+   空条目 ↔ 条目内空行 ↔ 退出列表）的每一步都会改变「前一个段落是否
+   :last-child」，而 index.css 的 p:last-child{margin-bottom:0} 以同特异性+后序
+   在移动端压过 .tiptap p 的 1em——条目内段落 margin 随阶梯状态在 0 和 16.5px
+   间翻转，退格时光标垂直来回跳（真机 390px 实测 142.6→159.1→142.6）；
+   不变式：条目内段落（直接 p 与 taskItem 的 div>p）的垂直 margin 必须恒定
+   （:last-child 与否一个样），且「条目内段落间隙 X」必须等于「兄弟条目间隙」
+   （既有 li+li 节奏：桌面 0.32em / 移动 0.25em）——两者不等时，空条目被消费
+   成条目内空行的那一步光标恰好漂移差额（初版把 X 钉 0 后桌面多条目列表实测
+   −5.27px ≈ li+li 的 0.32em；待办因 li+li 已被归零而恰好躲过，即「待办不跳、
+   列表微跳」）。统一为同一 X 后：普通列表条目间隙 max(p 的 X, li+li 的 X)=X
+   观感不变（沿用移动端被认可密度，桌面 33.7/移动 31.8）；taskItem 是 flex，
+   X 被 label+div 框吸收，故必须保留下面 li[data-checked] + li 的归零，否则
+   待办间隙变 2X——代价是待办行距从 1×行高增至行高+X，与普通列表统一
+   （桌面 28.4→33.7、移动 27.7→31.8）。(0,4,2) 特异性同时压过 index.css 的
+   p:last-child 归零与 li p{margin-top:16px}，两端阶梯每步 ΔY 恒定。 */
+.typora-editor-shell .tiptap.ProseMirror.vditor-reset li > p,
+.typora-editor-shell .tiptap.ProseMirror.vditor-reset li > div > p {
+    margin-top: 0;
+    margin-bottom: 0.25em;
+}
+
+@media (min-width: 981px) {
+    .typora-editor-shell .tiptap.ProseMirror.vditor-reset li > p,
+    .typora-editor-shell .tiptap.ProseMirror.vditor-reset li > div > p {
+        margin-bottom: 0.32em;
+    }
+}
+.typora-editor-shell .vditor-reset ul[data-type="taskList"] li[data-checked] + li {
     margin-top: 0;
 }
-
-.typora-editor-shell .vditor-reset ul[data-type="taskList"] li > div > p:last-child {
+.typora-editor-shell .tiptap.ProseMirror.vditor-reset ul,
+.typora-editor-shell .tiptap.ProseMirror.vditor-reset ol {
     margin-bottom: 0;
 }
-
 /* 勾选完成的待办：文字删除线 + 淡灰（直接命中 div 与内部 p，
    否则 .vditor-reset p 的直接颜色规则会把继承的灰色顶掉） */
 .typora-editor-shell .vditor-reset ul[data-type="taskList"] li[data-checked="true"] > div,
