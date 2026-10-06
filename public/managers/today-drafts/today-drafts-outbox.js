@@ -128,16 +128,11 @@ export default class TodayDraftsOutbox {
         }
 
         const latest = this.load();
-        const remaining = [];
-        for (const item of latest) {
-            if (succeeded.has(item.id)) continue;
-            const failed = failures.get(item.id);
-            if (failed) {
-                if (failed.attempts <= 10) remaining.push(failed);
-            } else {
-                remaining.push(item);
-            }
-        }
+        // 失败项永远留在队列（attempts 只作诊断）：静默丢弃等于丢掉用户离线
+        // 输入；重试节奏由 manager 的退避计时收敛，不会因此打爆网络。
+        const remaining = latest
+            .filter(item => !succeeded.has(item.id))
+            .map(item => failures.get(item.id) || item);
         this.save(remaining);
         return { saved, remaining };
     }

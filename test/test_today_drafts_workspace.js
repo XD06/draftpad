@@ -268,6 +268,8 @@ function run() {
     assert(todayManagerSource.includes('this.confirmationManager'), 'today drafts deletion should be guarded by the universal confirmation manager');
     assert(todayManagerSource.includes('this.movingDraftIds'), 'a draft being moved into Thought should not be transferred twice');
     assert(todayManagerSource.includes('mergeRemoteItems') && todayManagerSource.includes('retryOutbox'), 'today drafts should merge server state and retry local pending writes');
+    assert(todayManagerSource.includes('this.scheduleSync(this.syncBackoffMs)'), 'a fully failed sync round must schedule its own follow-up so offline edits are not stranded until the next keystroke or reconnect');
+    assert(todayManagerSource.includes('if (this.form?.requestSubmit)'), 'Enter submits through the form once instead of the always-falsy requestSubmit() || add() double path');
     assert(appSource.includes('createTodayDraftThought(draft.text)'), 'the application should transfer a left-swiped today draft into Thought');
     assert(todayStyles.includes('grid-template-columns: 36px minmax(0, 1fr);'), 'today draft rows carry no timestamp track: wrapped text must reach both ends of the ruled line');
     assert(/\.today-draft-text-display::before\s*\{[^}]*float:\s*right;[^}]*width:\s*var\(--today-draft-time-gutter\)/.test(todayStyles), 'only the first line yields room for the timestamp, through a right float');

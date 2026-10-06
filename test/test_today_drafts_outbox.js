@@ -50,6 +50,27 @@ async function run() {
     assert.strictEqual(result.saved[0].result.draft.version, 4, 'successful replay should expose the saved server record');
     assert.strictEqual(outbox.load().length, 0, 'successful replay should clear the queue item');
 
+    // 失败的队列项永远留在队列里：静默丢弃等于丢掉用户离线输入。
+    // 旧实现 attempts > 10 时把条目无声移出队列，之后远端旧文本会覆盖本地新文本。
+    const offlineDraft = { id: 'today-offline-1', text: 'queued offline', completed: false, version: 2, updatedAt: 300, day: '2026-08-02' };
+    outbox.enqueueUpsert(offlineDraft);
+    const offlineApi = {
+        put: async () => {
+            throw Object.assign(new Error('network down'), { status: 0 });
+        },
+        delete: async () => {
+            throw Object.assign(new Error('network down'), { status: 0 });
+        },
+        get: async () => offlineDraft
+    };
+    for (let round = 0; round < 15; round += 1) {
+        const roundResult = await outbox.retry(offlineApi);
+        assert.strictEqual(roundResult.remaining.length, 1, `failed round ${round + 1} must keep the queued edit`);
+        assert.strictEqual(roundResult.remaining[0].attempts, round + 1, 'failed attempts are tracked for diagnostics');
+        assert.strictEqual(roundResult.remaining[0].lastError, 'network down', 'the last error message is kept for diagnostics');
+    }
+    assert.strictEqual(outbox.load().length, 1, 'attempts beyond any cap must never silently drop queued edits');
+
     console.log('Today drafts outbox checks passed');
 }
 

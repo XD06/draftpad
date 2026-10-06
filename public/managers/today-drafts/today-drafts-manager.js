@@ -30,7 +30,9 @@ export class TodayDraftsManager {
         outbox = new TodayDraftsOutbox(),
         onMoveToThought = async () => false,
         confirmationManager = null,
-        toaster = null
+        toaster = null,
+        syncRetryBaseMs = 3000,
+        syncRetryMaxMs = 60000
     } = {}) {
         this.store = store;
         this.apiClient = apiClient;
@@ -74,6 +76,10 @@ export class TodayDraftsManager {
         this.syncTimer = null;
         this.syncInFlight = false;
         this.syncQueued = false;
+        // 离线/服务器不可达时失败同步轮次的指数退避（基值与上限可注入，测试用）。
+        this.syncRetryBaseMs = syncRetryBaseMs;
+        this.syncRetryMaxMs = syncRetryMaxMs;
+        this.syncBackoffMs = syncRetryBaseMs;
         this.isComposingDraft = false;
         this.isRendering = false;
         this.pendingRender = false;
@@ -141,7 +147,12 @@ export class TodayDraftsManager {
             // Enter 提交；Shift+Enter 留给软换行；中文输入法确认回车不提交。
             if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return;
             event.preventDefault();
-            this.form?.requestSubmit?.() || this.add(this.input.value);
+            // requestSubmit 走 form submit 单一路径；只有缺该 API 的旧浏览器才直接 add。
+            if (this.form?.requestSubmit) {
+                this.form.requestSubmit();
+                return;
+            }
+            this.add(this.input.value);
         });
         this.form?.addEventListener('submit', event => {
             event.preventDefault();
@@ -1257,11 +1268,16 @@ export class TodayDraftsManager {
             this.syncQueued = true;
             return;
         }
-        if (this.outbox.load().length === 0) return;
+        if (this.outbox.load().length === 0) {
+            this.syncBackoffMs = this.syncRetryBaseMs;
+            return;
+        }
         this.syncInFlight = true;
         this.syncQueued = false;
+        let progressed = false;
         try {
             const result = await this.outbox.retry(this.apiClient);
+            progressed = result.saved.length > 0;
             for (const saved of result.saved) {
                 if (saved.item.kind === 'delete') continue;
                 const remote = saved.result?.draft;
@@ -1278,13 +1294,22 @@ export class TodayDraftsManager {
             this.render();
         } catch (error) {
             console.info('Today drafts sync will retry later:', error?.message || error);
-            // Network/server failure: nothing else will trigger a retry while
-            // the user idles on the tab (ws_connected only fires on reconnect),
-            // so schedule one ourselves. Backoff keeps this cheap while offline.
-            if (this.outbox.load().length > 0) this.scheduleSync(3000);
         } finally {
             this.syncInFlight = false;
-            if (this.syncQueued && this.outbox.load().length > 0) {
+            const pending = this.outbox.load().length;
+            if (pending > 0) {
+                // outbox.retry 把每一项的网络错误吞进 remaining 而非抛出，所以失败的
+                // 轮次必须在这里自己安排下一轮，否则队列要搁浅到下一次按键 / ws 重连 /
+                // 切页才有人管。连续全败按指数退避封顶；有进展则回到基值。
+                if (progressed) this.syncBackoffMs = this.syncRetryBaseMs;
+                this.scheduleSync(this.syncBackoffMs);
+                if (!progressed) {
+                    this.syncBackoffMs = Math.min(this.syncRetryMaxMs, this.syncBackoffMs * 2);
+                }
+            } else {
+                this.syncBackoffMs = this.syncRetryBaseMs;
+            }
+            if (this.syncQueued && pending > 0) {
                 this.syncQueued = false;
                 this.scheduleSync(0);
             }

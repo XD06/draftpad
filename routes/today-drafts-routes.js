@@ -56,19 +56,31 @@ function registerTodayDraftRoutes(app, { storage, broadcastWebSocketMessage }) {
     // 宽容窗口：考虑全球时区差异（UTC-12 到 UTC+14，时差范围最多跨 ±1 天）。
     // 客户端若处于比服务端快的时区（如东八区相较于 UTC），其本地「今天」在服务端视角为「明天」。
     // 淘汰历史草稿时保留 oldest（服务器 3 天前）；允许快时区客户端当前日 latest（服务器明天）。
-    function withinWindow(item, oldest, latest) {
+    // 窗口边界只在这里定义，三个 handler 共用，避免规则漂移。
+    function windowBounds(now = new Date()) {
+        return {
+            today: localDayKey(now),
+            oldest: dayWindowKeys(now)[0],
+            latest: nextDayKey(now, 1)
+        };
+    }
+
+    function withinWindow(item, { oldest, latest }) {
         return Boolean(item) && isDayKey(item.day) && item.day >= oldest && item.day <= latest;
     }
 
+    // 锁内读取 + 窗口过滤。GET 侧把淘汰与非法项落盘；PUT/DELETE 在各自的
+    // 写回里顺带收窄——两者都不在这里落盘，落盘节奏归调用方。
+    async function readActiveItems() {
+        const bounds = windowBounds();
+        const all = await storage.readTodayDrafts();
+        return { bounds, all, items: all.filter(item => withinWindow(item, bounds)) };
+    }
+
     async function readWindowDrafts() {
-        const nowDate = new Date();
-        const today = localDayKey(nowDate);
-        const [oldest] = dayWindowKeys(nowDate);
-        const latest = nextDayKey(nowDate, 1);
         return storage.withTodayDraftWriteLock(async () => {
-            const all = await storage.readTodayDrafts();
-            const active = all
-                .filter(item => withinWindow(item, oldest, latest))
+            const { bounds: { today }, all, items } = await readActiveItems();
+            const active = items
                 .map(item => normalizeTodayDraft(item, today))
                 .filter(Boolean)
                 .sort((left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id));
@@ -119,12 +131,7 @@ function registerTodayDraftRoutes(app, { storage, broadcastWebSocketMessage }) {
 
         try {
             const result = await storage.withTodayDraftWriteLock(async () => {
-                const nowDate = new Date();
-                const today = localDayKey(nowDate);
-                const [oldest] = dayWindowKeys(nowDate);
-                const latest = nextDayKey(nowDate, 1);
-                const all = await storage.readTodayDrafts();
-                const active = all.filter(item => withinWindow(item, oldest, latest));
+                const { bounds: { today, oldest, latest }, items: active } = await readActiveItems();
                 const index = active.findIndex(item => item.id === id);
                 const existing = index >= 0 ? normalizeTodayDraft(active[index], today) : null;
                 const requestedVersion = Number(req.body?.baseVersion);
@@ -177,12 +184,7 @@ function registerTodayDraftRoutes(app, { storage, broadcastWebSocketMessage }) {
         }
         try {
             const result = await storage.withTodayDraftWriteLock(async () => {
-                const nowDate = new Date();
-                const today = localDayKey(nowDate);
-                const [oldest] = dayWindowKeys(nowDate);
-                const latest = nextDayKey(nowDate, 1);
-                const all = await storage.readTodayDrafts();
-                const active = all.filter(item => withinWindow(item, oldest, latest));
+                const { bounds: { today }, items: active } = await readActiveItems();
                 const existing = active.find(item => item.id === id);
                 if (!existing) return { error: 'Today draft not found', status: 404 };
                 const requestedVersion = Number(req.body?.baseVersion);
