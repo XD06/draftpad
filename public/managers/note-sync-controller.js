@@ -5,6 +5,8 @@
  */
 const DEFAULT_STARTUP_CACHE_KEY = 'dumbpad_startup_cache_v1';
 const EDIT_SESSION_IDLE_MS = 60000;
+const CACHE_RETRY_INTERVAL_MS = 30000;
+const CACHE_WRITE_DEBOUNCE_MS = 250;
 // 缓存格式版本：2。升版一次性作废 v1 缓存（含编辑器内核切换期间
 // 写入的假脏笔记），loadStartupCache 对旧版本返回 null 即完成迁移。
 const STARTUP_CACHE_VERSION = 2;
@@ -14,18 +16,28 @@ export default class NoteSyncController {
         if (!storageManager) throw new Error('NoteSyncController requires storageManager');
         this.storageManager = storageManager;
         this.key = key;
+        this.cache = undefined;
+        this.cacheRetryAt = 0;
+        this.cacheWriteTimer = null;
+        this.cacheNeedsPersist = false;
     }
 
     loadStartupCache() {
+        if (this.cache !== undefined) return this.cache;
         const cache = this.storageManager.load(this.key);
-        if (!cache || cache.version !== STARTUP_CACHE_VERSION || !Array.isArray(cache.notepads)) return null;
-        return {
+        if (!cache || cache.version !== STARTUP_CACHE_VERSION || !Array.isArray(cache.notepads)) {
+            this.cache = null;
+            return this.cache;
+        }
+        this.cache = {
             ...cache,
             notes: cache.notes && typeof cache.notes === 'object' ? cache.notes : {}
         };
+        return this.cache;
     }
 
-    saveStartupCache(patch = {}) {
+    saveStartupCache(patch = {}, { defer = false } = {}) {
+        if (!defer) this.flushPendingCacheWrite();
         const previous = this.loadStartupCache() || { version: STARTUP_CACHE_VERSION, notes: {}, notepads: [] };
         const next = {
             ...previous,
@@ -37,8 +49,70 @@ export default class NoteSyncController {
             },
             savedAt: Date.now()
         };
-        this.storageManager.save(this.key, next);
-        return next;
+        this.cache = next;
+        if (defer) {
+            this.cacheNeedsPersist = true;
+            if (!this.cacheWriteTimer) {
+                this.persistCachedState();
+                if (typeof globalThis.setTimeout !== 'function') return this.cache;
+                this.cacheWriteTimer = globalThis.setTimeout(() => {
+                    this.cacheWriteTimer = null;
+                    if (this.cacheNeedsPersist) this.persistCachedState();
+                }, CACHE_WRITE_DEBOUNCE_MS);
+            }
+            return this.cache;
+        }
+        this.persistCachedState();
+        return this.cache;
+    }
+
+    flushPendingCacheWrite() {
+        if (this.cacheWriteTimer) {
+            if (typeof globalThis.clearTimeout === 'function') {
+                globalThis.clearTimeout(this.cacheWriteTimer);
+            }
+            this.cacheWriteTimer = null;
+        }
+        if (this.cacheNeedsPersist) this.persistCachedState();
+    }
+
+    persistCachedState() {
+        if (!this.cache) return;
+        const persisted = this.persistStartupCache(this.cache);
+        if (persisted) this.cache = persisted;
+        this.cacheNeedsPersist = !persisted;
+    }
+
+    persistStartupCache(cache) {
+        if (Date.now() < this.cacheRetryAt) return null;
+        if (this.trySaveStartupCache(cache)) return cache;
+
+        const compacted = this.compactStartupCache(cache, true);
+        if (compacted !== cache && this.trySaveStartupCache(compacted)) return compacted;
+
+        const minimal = this.compactStartupCache(cache, false);
+        if (minimal !== compacted && this.trySaveStartupCache(minimal)) return minimal;
+
+        this.cacheRetryAt = Date.now() + CACHE_RETRY_INTERVAL_MS;
+        return null;
+    }
+
+    trySaveStartupCache(cache) {
+        try {
+            return this.storageManager.save(this.key, cache) !== false;
+        } catch (error) {
+            return false;
+        }
+    }
+
+    compactStartupCache(cache, keepCurrentClean) {
+        const currentNotepadId = cache.currentNotepadId;
+        const notes = Object.fromEntries(Object.entries(cache.notes || {}).filter(([id, note]) => {
+            if (note?.dirty || note?.conflict) return true;
+            return keepCurrentClean && id === currentNotepadId;
+        }));
+        if (Object.keys(notes).length === Object.keys(cache.notes || {}).length) return cache;
+        return { ...cache, notes };
     }
 
     cacheNotepads({ currentNotepadId, noteHistory, notepads }) {
@@ -96,7 +170,7 @@ export default class NoteSyncController {
                 ...(previous.notes || {}),
                 [notepadId]: nextNote
             }
-        });
+        }, { defer: options.deferPersist === true });
     }
 
     cacheDirtyNote(notepadId, content, { version, baseContent, recordActivity = false, notepads = [] } = {}) {
@@ -104,7 +178,8 @@ export default class NoteSyncController {
             version,
             baseContent,
             recordActivity,
-            dirty: true
+            dirty: true,
+            deferPersist: recordActivity
         }, { notepads });
     }
 

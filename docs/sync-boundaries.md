@@ -29,7 +29,7 @@
 | AI relation | `relations/*.json` 中 `source=ai` | 派生数据 | 建议同步 | 是 | 可通过 `relations-rebuild` 重建。 |
 | AgentRun | `agent-runs/<runId>.json`、`agent-runs/active-index.json` | 派生数据 | 可选 | 是 | 用户主动“找回相关内容”的运行状态、最小审计摘要和结构化引用；不保存 Prompt、工具原始结果或文本增量。 |
 | 搜索索引 | `indexes/*.json` | 派生数据 | 可选 | 是 | 用于加速搜索，启动或迁移后可重建。 |
-| 前端启动缓存 | localStorage `dumbpad_startup_cache` | 本机缓存 | 否 | 是 | 只用于快速首屏和离线兜底，不是同步真相。 |
+| 前端启动缓存 | localStorage `dumbpad_startup_cache` | 本机缓存 | 否 | 是 | 只用于快速首屏和离线兜底，不是同步真相；容量不足时只淘汰可重建的 clean 正文快照，保留 dirty 内容及合并基线。 |
 
 ## 3. 存储后端边界
 
@@ -79,6 +79,7 @@ Notepad 的前端启动缓存只用于：
 - `public/app.js` 将缓存正文版本、当前编辑器基准版本和已确认的远端版本分开保存；启动缓存不能改写 `currentNotepads[].version`，面板的“服务端版本”只读取成功的列表/元数据/正文响应。尚未确认时显示“未确认/正在确认”，网络失败时保留“上次确认”标记，不冒充已同步。
 - 选择文章、启动完成、打开同步面板，以及网络恢复、WebSocket 重连、页面回前台都会对账当前文章；对账请求 `GET /api/notepads/:id`，只有远端版本高于当前正文基准才请求正文。每篇文章的对账 Promise 复用，普通入口 10 秒节流，明确恢复事件/用户打开面板可强制绕过节流；已有正文加载会被等待，避免重复 GET。
 - 正文和元数据同步 GET 使用 `cache: 'no-store'`，服务端对应 GET 返回 `Cache-Control: no-store, private`。启动不预取其他文章正文，用户切换文章时再按需读取；对账后台网络失败静默保留本地内容并允许下一次恢复事件重试。
+- 启动缓存写入失败时先重试原缓存，再移除非当前文章的 clean 正文快照；仍超限时再移除当前 clean 快照。dirty/conflict 正文及 `baseContent` 不参与裁剪，缓存暂时降级后按冷却间隔自动重试，不影响服务端正文保存。
 
 启动缓存不是多端合并协议，不能覆盖服务端较新版本。
 

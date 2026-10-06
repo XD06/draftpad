@@ -36,6 +36,23 @@ function createMemoryStorage(initial = {}) {
     };
 }
 
+function createQuotaStorage(initial, limit) {
+    const store = new Map(Object.entries(initial));
+    return {
+        load(key) {
+            return store.has(key) ? JSON.parse(JSON.stringify(store.get(key))) : null;
+        },
+        save(key, value) {
+            if (JSON.stringify(value).length > limit) return false;
+            store.set(key, JSON.parse(JSON.stringify(value)));
+            return true;
+        },
+        dump(key) {
+            return store.get(key);
+        }
+    };
+}
+
 function run() {
     const NoteSyncController = loadNoteSyncController();
     const storageManager = createMemoryStorage();
@@ -156,6 +173,38 @@ function run() {
         notepadExists: true
     });
     assert(decision.ok === true, 'canSyncDirtyNote should allow clean dirty note retry');
+
+    const cacheKey = 'dumbpad_startup_cache_v1';
+    const quotaStorage = createQuotaStorage({
+        [cacheKey]: {
+            version: 2,
+            currentNotepadId: 'dirty',
+            notepads: [{ id: 'clean-old' }, { id: 'clean-new' }, { id: 'dirty' }],
+            notes: {
+                'clean-old': { content: 'old'.repeat(900), dirty: false, savedAt: 1 },
+                'clean-new': { content: 'new'.repeat(900), dirty: false, savedAt: 2 },
+                dirty: {
+                    content: 'local'.repeat(180),
+                    baseContent: 'base'.repeat(180),
+                    dirty: true,
+                    version: 8,
+                    savedAt: 3
+                }
+            }
+        }
+    }, 3600);
+    const quotaSync = new NoteSyncController({ storageManager: quotaStorage });
+    quotaSync.cacheDirtyNote('dirty', 'local'.repeat(200), {
+        version: 8,
+        baseContent: 'base'.repeat(200)
+    });
+    const compacted = quotaStorage.dump(cacheKey);
+    assert(compacted.notes.dirty.content === 'local'.repeat(200),
+        'quota recovery should preserve dirty note content');
+    assert(compacted.notes.dirty.baseContent === 'base'.repeat(200),
+        'quota recovery should preserve dirty merge base');
+    assert(!compacted.notes['clean-old'] && !compacted.notes['clean-new'],
+        'quota recovery should evict clean note snapshots');
 
     console.log('Note sync controller checks passed');
 }
