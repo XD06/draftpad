@@ -5007,6 +5007,12 @@ body.reading-mode-active .editor-main {
     background: rgba(207, 91, 82, 0.14);
 }
 
+/* 列表条目徽标的绿系专属色：与标记的 N/H/U 三色区分，无序/有序/待办同族。 */
+.article-toc-list .toc-item.list-entry .mark-badge {
+    color: #2f855a;
+    background: rgba(47, 133, 90, 0.14);
+}
+
 .toc-level-badge {
     flex: 0 0 auto;
     min-width: 22px;
@@ -5025,6 +5031,18 @@ body.reading-mode-active .editor-main {
 .article-toc-list .toc-item.h1 .toc-level-badge {
     color: var(--primary-color);
     background: rgba(var(--primary-rgb), 0.14);
+}
+
+/* 标题徽标的层级色阶：H1 primary 最醒目（上），H2 次、H3 再次，H4–H6 保持
+   中性灰——同一色相内浓淡分层，层级一眼可辨又不会五颜六色。 */
+.article-toc-list .toc-item.h2 .toc-level-badge {
+    color: color-mix(in srgb, var(--primary-color) 72%, var(--muted-text));
+    background: rgba(var(--primary-rgb), 0.08);
+}
+
+.article-toc-list .toc-item.h3 .toc-level-badge {
+    color: color-mix(in srgb, var(--primary-color) 45%, var(--muted-text));
+    background: rgba(var(--primary-rgb), 0.05);
 }
 
 /* 长标题折行最多 2 行（约 25–28 个汉字可见，超出在第二行截断），短条目
@@ -5050,6 +5068,10 @@ body.reading-mode-active .editor-main {
     color: color-mix(in srgb, var(--text-color) 88%, var(--muted-text));
 }
 
+.article-toc-list .toc-item.h3 .toc-item-text {
+    color: color-mix(in srgb, var(--text-color) 74%, var(--muted-text));
+}
+
 .article-toc-list .toc-item:hover {
     color: var(--primary-color);
     background: rgba(var(--primary-rgb), 0.06);
@@ -5063,6 +5085,27 @@ body.reading-mode-active .editor-main {
 .article-toc-list .toc-item.active .toc-item-text {
     color: var(--primary-color);
     font-weight: 600;
+}
+
+/* 折叠行（「+N」「N 条列表项」）与收起行的 chevron：箭头朝向暗示「可展开
+   （▸）→ 已展开可收起（▾）」。文字本身不铺满整行（flex:0 0 auto），chevron
+   紧贴文本右缘——若被 flex:1 的文字推到行最右端，中间隔着大片空白形同隐形
+   （真机返工教训）；伪元素渲染、不进 textContent（真机断言按行文案匹配）。 */
+.article-toc-list .toc-item.mark-more .toc-item-text {
+    flex: 0 0 auto;
+}
+
+.article-toc-list .toc-item.mark-more::after {
+    content: '▸';
+    flex: 0 0 auto;
+    align-self: center;
+    font-size: 10px;
+    line-height: 1;
+    color: var(--muted-text);
+}
+
+.article-toc-list .toc-item.mark-more[data-mark-collapse]::after {
+    content: '▾';
 }
 
 .article-toc-empty {

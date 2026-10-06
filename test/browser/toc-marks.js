@@ -4,7 +4,9 @@
 // 载入后标记条目就在目录里，刷新后仍在；文章形态用任务项内嵌标记（用户实际场景）。
 // 「列表区」另覆盖列表条目能力：≤5 条小列表内联（任务区 4 条待办）、超预算列表整组
 // 折成「N 条列表项」摘要行、点击整组展开/收起、点列表条目跳转后目标 li 挂上
-// article-jump-target（PM Decoration 在编辑模式存活）。
+// article-jump-target（PM Decoration 在编辑模式存活）；点展开的子条目不收起（豁免），
+// 点标题行/目录外才自动收起；折叠行 chevron（▸/▾）与 ≡ 摘要徽标、列表徽标绿系、
+// 标题徽标层级色阶各有 computed 断言。
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const express = require('express');
@@ -50,6 +52,12 @@ const ARTICLE = [
     '## 标记区',
     '',
     '文本 ==高亮一== 与 ==高亮二==，<span data-draw style="text-decoration:underline blue;text-decoration-thickness:2px;">划线一</span> 与 <span data-draw style="text-decoration:underline blue;text-decoration-thickness:2px;">划线二</span> 四处标记、无列表。',
+    '',
+    '## 层级演示',
+    '',
+    '### 三级标题示例',
+    '',
+    '##### 五级标题示例',
     '',
     PRESSURE_SECTIONS,
     '## 第二节',
@@ -143,17 +151,44 @@ async function main() {
             // 展开「列表区」的摘要行 → 7 条全部内联
             document.querySelector('#article-toc-list [data-mark-group="列表区"]').click();
         });
-        const expanded = await readToc();
+        const opened = await readToc();
         check('summary row expands the whole list (0 → 7 inline) and leaves a 收起 row',
-            expanded.lists === 11 && expanded.more === 14, expanded);
+            opened.lists === 11 && opened.more === 14, opened);
         const expandedLabels = await page.evaluate(() => {
             const collapseRow = document.querySelector('#article-toc-list [data-mark-collapse] .toc-item-text');
             return collapseRow?.textContent || '';
         });
         check('expanded list section collapse row says 收起条目', expandedLabels === '收起条目', expandedLabels);
 
+        await page.evaluate(() => document.querySelector('#article-toc-list [data-mark-collapse]').click());
+        const collapsed = await readToc();
+        check('collapse row restores the summary form', collapsed.lists === 4 && collapsed.more === 15, collapsed);
+
+        // 点击其他目录行：展开组应自动收起（document 捕获守门 + 行内跳转照常）
+        const expandListSection = () => page.evaluate(() => {
+            document.querySelector('#article-toc-list [data-mark-group="列表区"]').click();
+        });
+        await expandListSection();
         await page.evaluate(() => {
-            // 展开态点最后一条列表条目（步骤七）→ 跳转 + 落点闪光
+            Array.from(document.querySelectorAll('#article-toc-list .toc-item[data-heading-id]'))[0].click();
+        });
+        await page.waitForTimeout(50);
+        const afterTocRowClick = await readToc();
+        check('clicking another TOC row collapses the expanded section',
+            afterTocRowClick.lists === 4 && afterTocRowClick.more === 15, afterTocRowClick);
+
+        // 点击编辑器正文：同样自动收起
+        await expandListSection();
+        await page.evaluate(() => document.querySelector('.tiptap h1')?.click());
+        await page.waitForTimeout(50);
+        const afterBodyClick = await readToc();
+        check('clicking the editor body collapses the expanded section',
+            afterBodyClick.lists === 4 && afterBodyClick.more === 15, afterBodyClick);
+
+        // 子条目行是豁免区：展开态点列表条目 = 正在使用这个展开组，
+        // 守门不得收起；跳转 + 落点闪光照常
+        await expandListSection();
+        await page.evaluate(() => {
             const rows = Array.from(document.querySelectorAll('#article-toc-list .list-entry[data-mark-ref]'));
             rows[rows.length - 1].click();
         });
@@ -164,10 +199,37 @@ async function main() {
         });
         check('clicking a list TOC entry jumps and flashes the target list item (PM decoration)',
             landed.count === 1 && landed.text.includes('步骤七'), landed);
+        await page.waitForTimeout(50);
+        const afterJump = await readToc();
+        check('clicking an expanded sub-entry does NOT collapse the section (entry rows are exempt)',
+            afterJump.lists === 11 && afterJump.more === 14, afterJump);
 
-        await page.evaluate(() => document.querySelector('#article-toc-list [data-mark-collapse]').click());
-        const collapsed = await readToc();
-        check('collapse row restores the summary form', collapsed.lists === 4 && collapsed.more === 15, collapsed);
+        const visuals = await page.evaluate(() => {
+            const moreRow = document.querySelector('#article-toc-list .mark-more');
+            const chevron = moreRow ? getComputedStyle(moreRow, '::after').content : null;
+            const summaryBadge = document.querySelector('#article-toc-list .list-summary .mark-badge');
+            const listBadge = document.querySelector('#article-toc-list .list-entry[data-mark-ref] .mark-badge');
+            const headingBadges = ['h2', 'h3', 'h5'].map(level => {
+                const row = document.querySelector(`#article-toc-list .toc-item.${level}`);
+                return row?.querySelector('.toc-level-badge')
+                    ? getComputedStyle(row.querySelector('.toc-level-badge')).color
+                    : null;
+            });
+            return {
+                chevron,
+                summaryBadge: summaryBadge?.textContent || null,
+                listBadgeColor: listBadge ? getComputedStyle(listBadge).color : null,
+                headingBadges,
+            };
+        });
+        check('fold rows show a chevron; summary badge differs from entry badge; list badge green; heading tiers differ',
+            typeof visuals.chevron === 'string' && visuals.chevron.includes('▸')
+            && visuals.summaryBadge === '≡'
+            && visuals.listBadgeColor === 'rgb(47, 133, 90)'
+            && visuals.headingBadges.every(b => b !== null)
+            && visuals.headingBadges[0] !== visuals.headingBadges[1]
+            && visuals.headingBadges[1] !== visuals.headingBadges[2],
+            visuals);
 
         await page.reload();
         await page.waitForSelector('.tiptap', { timeout: 8000 });

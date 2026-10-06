@@ -1841,6 +1841,20 @@ document.addEventListener('DOMContentLoaded', async () => {
     };
     const tocExpandedMarkGroups = new Set();
     let tocRenderedForNotepadId = null;
+    // 「+N / N 条列表项」展开后，在展开内容以外点击（编辑器正文、页面任意处、
+    // 其他标题行）自动收起：document 捕获阶段守门，只在有展开组时动作。点在
+    // 子条目行上（.mark-entry——划线/高亮/批注片段、列表条目、展开/摘要/收起行）
+    // 例外：这些行是展开组的内容与操作入口，点击是「选中/跳转」，收掉刚展开的
+    // 组会打断浏览；标题行与目录外任意点击才收起。监听在捕获阶段执行，行内
+    // onclick 的跳转闭包不受影响；重渲染延迟到本事件循环之外（同步 innerHTML
+    // 重建会把被点行从 DOM 摘下来）。
+    document.addEventListener('click', (event) => {
+        if (!tocExpandedMarkGroups.size) return;
+        const clicked = event.target instanceof Element ? event.target : null;
+        if (clicked?.closest(`#article-toc-list .mark-entry`)) return;
+        tocExpandedMarkGroups.clear();
+        setTimeout(() => updateToC(), 0);
+    }, true);
 
     // In-article TOC (文章内目录): rendered into the right sidebar column on
     // desktop and into the same element when it slides in as a mobile drawer.
@@ -1895,7 +1909,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 if (entry.summary) {
                     markHtml += `
                     <div class="toc-item mark-entry list-entry list-summary" data-mark-group="${escapeHtml(item.id)}" title="展开本节 ${entry.count} 条列表项">
-                        <span class="toc-level-badge mark-badge" aria-hidden="true">•</span>
+                        <span class="toc-level-badge mark-badge" aria-hidden="true">≡</span>
                         <span class="toc-item-text">${entry.count} 条列表项</span>
                     </div>`;
                     return;

@@ -185,6 +185,11 @@ async function main() {
             && app.includes('list-entry')
             && readSource('public/managers/heading-index.js').includes("kind: 'list'"),
             null);
+        check('toc lists: clicking outside the expanded rows auto-collapses (capture guard, deferred re-render)',
+            app.includes('tocExpandedMarkGroups.clear()')
+            && app.includes('.closest(`#article-toc-list .mark-entry`)')
+            && /setTimeout\(\(\) => updateToC\(\), 0\)/.test(app),
+            null);
         check('toc noise: bold fragments never enter the TOC (mark selector excludes strong)',
             readSource('public/managers/heading-index.js').includes("const TOC_MARK_SELECTOR = 'mark, .md-mark, u, [data-draw], .has-annotation, [data-note]'")
             && !app.includes("type: 'bold'"),
