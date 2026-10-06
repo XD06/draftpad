@@ -32,6 +32,10 @@ export function createTodayDraft(text, now = Date.now()) {
     };
 }
 
+function isDayKey(value) {
+    return /^\d{4}-\d{2}-\d{2}$/.test(String(value || ''));
+}
+
 export class TodayDraftsStore {
     constructor({ storage = globalThis.localStorage, now = () => new Date() } = {}) {
         this.storage = storage;
@@ -49,7 +53,11 @@ export class TodayDraftsStore {
             if (saved && Array.isArray(saved.items) && windowKeys.has(saved.day)) {
                 const items = saved.items
                     .filter(item => String(item?.text || '').trim())
-                    .map(item => ({ ...item, day: windowKeys.has(item?.day) ? item.day : saved.day }))
+                    // 只有缺失/非法 day 的旧格式条目才归到缓存标记日；过期的 day 保持
+                    // 原值交给下一行窗口过滤淘汰。若用窗口成员判断兜底，过期条目会被
+                    // 「救」成最近一次写缓存的日子（标记日随每次 persist 刷新，永远比
+                    // 最老条目新鲜）——永不过期，还会经 merge 当 local-only 重新上传复活。
+                    .map(item => ({ ...item, day: isDayKey(item?.day) ? item.day : saved.day }))
                     .filter(item => windowKeys.has(item.day));
                 return { day: today, items };
             }

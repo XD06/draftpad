@@ -54,7 +54,9 @@ function run() {
     };
     const monday = new Date('2026-08-03T10:00:00');
     const store = new TodayDraftsStore({ storage: localStorage, now: () => monday });
-    const draft = createTodayDraft('立即处理', 100);
+    // 时间戳用 monday：createTodayDraft 的 day 由 createdAt 推出，合法 day 视为权威
+    // （滑出窗口即过期淘汰），不能再依赖旧缓存救援把远古 day 改写成标记日。
+    const draft = createTodayDraft('立即处理', monday.getTime());
     assert(draft.text === '立即处理' && draft.completed === false, 'new today drafts should be simple incomplete text rows');
     store.save({ day: localDayKey(monday), items: [draft] });
     assert(store.load().items.length === 1, 'today drafts should survive within the same day');
@@ -64,6 +66,34 @@ function run() {
 
     const lastWeekStore = new TodayDraftsStore({ storage: localStorage, now: () => new Date('2026-08-10T09:00:00') });
     assert(lastWeekStore.load().items.length === 0, 'drafts older than the 3-day window should be dropped on load');
+
+    // 过期草稿不得被缓存标记日「救回」：只有缺失/非法 day 的旧格式条目才继承标记日。
+    // 若用窗口成员判断兜底，标记日随每次 persist 刷新、永远比最老条目新鲜，过期草稿
+    // 会被改写成标记日而永不过期，还会经 merge 当 local-only 重新上传复活。
+    let rollingNow = new Date('2026-10-01T10:00:00');
+    const rollingStorage = new Map();
+    const rollingStore = new TodayDraftsStore({
+        storage: {
+            getItem: key => rollingStorage.get(key) || null,
+            setItem: (key, value) => rollingStorage.set(key, value)
+        },
+        now: () => rollingNow
+    });
+    rollingStore.save({ items: [{ id: 'aged-out', text: '三天前的草稿', completed: false, day: localDayKey(rollingNow), version: 3, createdAt: 1, updatedAt: 1 }] });
+    let rollingItems = rollingStore.load().items;
+    assert(rollingItems.length === 1, 'a draft is kept while its day stays inside the window');
+    rollingNow = new Date('2026-10-03T10:00:00');
+    rollingItems = rollingStore.load().items;
+    assert(rollingItems.length === 1, 'the cache marker may be fresher than the oldest draft without hiding expiry');
+    rollingStore.save({ items: rollingItems });
+    rollingNow = new Date('2026-10-04T10:00:00');
+    rollingItems = rollingStore.load().items;
+    assert(rollingItems.length === 0 && rollingItems.length !== 1,
+        'a draft whose day slid out of the window must be dropped, never re-dated onto the cache marker');
+    rollingStore.save({ items: [{ id: 'legacy-no-day', text: '旧格式草稿', completed: false, version: 1, createdAt: 1, updatedAt: 1 }] });
+    rollingItems = rollingStore.load().items;
+    assert(rollingItems.length === 1 && rollingItems[0].day === localDayKey(rollingNow),
+        'a legacy draft without a day still inherits the cache marker day');
 
     assert(JSON.stringify(dayWindowKeys(monday)) === JSON.stringify(['2026-08-01', '2026-08-02', '2026-08-03']),
         'the retention window should list today plus the two previous days from oldest to newest');
