@@ -131,6 +131,8 @@ Personal security V1 的初次设置用旧 PIN 或一次性 `AUTH_BOOTSTRAP_TOKE
 
 Notepad 是文章元数据；正文内容通过 Note API 读写。
 
+文章同步使用的 GET 接口（文章列表、单篇元数据、正文和正文大纲）均返回 `Cache-Control: no-store, private`，客户端不应将响应当作可长期缓存的数据源。
+
 ### GET /api/notepads
 
 读取文章列表。

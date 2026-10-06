@@ -773,6 +773,7 @@ async function run() {
 
         result = await request('/api/notepads');
         assert(result.response.ok, 'GET /api/notepads should succeed');
+        assert(result.response.headers.get('cache-control') === 'no-store, private', 'GET /api/notepads should disable intermediary caching');
         assert(Array.isArray(result.body.notepads_list), 'notepads_list should be an array');
 
         result = await request('/api/notepads', {
@@ -785,6 +786,7 @@ async function run() {
 
         result = await request(`/api/notepads/${notepadId}`);
         assert(result.response.ok, 'GET /api/notepads/:id should return one Notepad metadata record');
+        assert(result.response.headers.get('cache-control') === 'no-store, private', 'GET /api/notepads/:id should disable intermediary caching');
         assert(result.body.id === notepadId && result.body.name === 'API Regression Note', 'single Notepad metadata should match the created record');
         assert(result.body.version === 1, 'single Notepad metadata should expose the current optimistic-concurrency version');
 
@@ -793,8 +795,13 @@ async function run() {
 
         result = await request(`/api/notes/${notepadId}`);
         assert(result.response.ok, 'GET /api/notes/:id should succeed');
+        assert(result.response.headers.get('cache-control') === 'no-store, private', 'GET /api/notes/:id should disable intermediary caching');
         assert(result.body.content === 'hello', 'created note content should be readable');
         assert(result.body.version === 1, 'created note should expose version 1');
+
+        result = await request(`/api/notes/${notepadId}/outline`);
+        assert(result.response.ok, 'GET /api/notes/:id/outline should succeed');
+        assert(result.response.headers.get('cache-control') === 'no-store, private', 'GET /api/notes/:id/outline should disable intermediary caching');
 
         result = await request(`/api/notes/${notepadId}`, {
             method: 'PATCH',

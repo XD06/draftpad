@@ -76,6 +76,9 @@ Notepad 的前端启动缓存只用于：
 - 保存失败时保留本地脏内容。
 - 恢复在线或 WebSocket 重连后尝试 `syncCurrentDirtyNote()`。
 - 设置同步面板展示当前 note 的 dirty/conflict 状态、版本、缓存时间和缓存中的 dirty note 列表。
+- `public/app.js` 将缓存正文版本、当前编辑器基准版本和已确认的远端版本分开保存；启动缓存不能改写 `currentNotepads[].version`，面板的“服务端版本”只读取成功的列表/元数据/正文响应。尚未确认时显示“未确认/正在确认”，网络失败时保留“上次确认”标记，不冒充已同步。
+- 选择文章、启动完成、打开同步面板，以及网络恢复、WebSocket 重连、页面回前台都会对账当前文章；对账请求 `GET /api/notepads/:id`，只有远端版本高于当前正文基准才请求正文。每篇文章的对账 Promise 复用，普通入口 10 秒节流，明确恢复事件/用户打开面板可强制绕过节流；已有正文加载会被等待，避免重复 GET。
+- 正文和元数据同步 GET 使用 `cache: 'no-store'`，服务端对应 GET 返回 `Cache-Control: no-store, private`。启动不预取其他文章正文，用户切换文章时再按需读取；对账后台网络失败静默保留本地内容并允许下一次恢复事件重试。
 
 启动缓存不是多端合并协议，不能覆盖服务端较新版本。
 
@@ -202,8 +205,8 @@ Notepad、Thought 和 Today Draft 使用 `version/baseVersion` 做乐观并发�
 启动顺序建议：
 
 1. 读取前端启动缓存，快速显示上次 notepad 列表和当前内容。
-2. 后台请求 `/api/notepads` 和 `/api/notes/:id`。
-3. 服务端返回后比较版本，较新则更新 UI 和缓存。
+2. 后台请求不缓存的 `/api/notepads`；选择文章时先显示缓存，再等待已有正文加载并请求当前文章元数据。
+3. 服务端返回后比较版本，较新才请求 `/api/notes/:id` 并更新 UI 和缓存；版本相同跳过正文读取。
 4. 如果本地有 dirty 内容，恢复在线后尝试保存；遇到 409 不自动覆盖。
 5. Thought 视图打开时再请求 `/api/thoughts`，不阻塞 Notepad 首屏。
 6. AI 状态、relation 面板按需请求，或通过 WebSocket 轻量刷新。

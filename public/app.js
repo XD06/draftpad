@@ -321,6 +321,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     let currentNotepadId = 'default';
     let currentNoteVersion = null;
     let currentNotepads = []; 
+    const remoteNoteStates = new Map();
+    const noteLoadsInFlight = new Map();
     const CARET_POSITIONS_KEY = 'dumbpad_caret_positions_v1';
     let pendingCaretRestoreNotepadId = null;
     let directorySearchQuery = '';
@@ -417,6 +419,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             <span class="sync-status-icon" aria-hidden="true">${getStartupSyncIcon(kind)}</span>
             <span class="sync-status-text">${escapeHtml(label)}</span>
         `;
+        if (settingsConflictSection && !settingsConflictSection.hidden) updateSettingsConflictSection();
     }
 
     function getStartupSyncKind(state, text = '') {
@@ -595,7 +598,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (navigator.onLine) wsClient.connect();
     window.addEventListener('online', () => {
         wsClient.connect();
-        loadNotepads({ loadCurrentNote: false })
+        loadNotepads({ loadCurrentNote: false, silent: true })
             .then(() => reconcileCurrentNote('online', { force: true }))
             .then(syncCurrentDirtyNote)
             .catch(err => {
@@ -612,7 +615,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (detail.notepadId !== currentNotepadId) return;
         const remoteVersion = Number(detail.version);
         const isSavedUpdate = Number.isFinite(remoteVersion);
-        if (isSavedUpdate) applyNoteEditStats(currentNotepadId, detail);
+        if (isSavedUpdate) {
+            confirmRemoteNoteVersion(currentNotepadId, remoteVersion);
+            applyNoteEditStats(currentNotepadId, detail);
+        }
         const isOwnAck = detail.userId === userId || (detail.saveId && pendingNoteSaveIds.has(detail.saveId));
         if (detail.saveId) pendingNoteSaveIds.delete(detail.saveId);
         if (isOwnAck) {
@@ -706,18 +712,18 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
 
     window.addEventListener('notepad_change', () => {
-        loadNotepads({ loadCurrentNote: false })
+        loadNotepads({ loadCurrentNote: false, silent: true })
             .then(() => reconcileCurrentNote('notepad_change', { force: true }))
             .catch(err => console.warn('Error syncing after notepad change:', err));
     });
 
-    async function fetchWithPin(url, options = {}) {
+    async function fetchWithPin(url, options = {}, { silent = false } = {}) {
         options.credentials = 'same-origin';
         try {
             return await fetch(url, options); 
         } catch (error) {
             console.warn(error);
-            toaster.show(error?.message || String(error), "error", true);
+            if (!silent) toaster.show(error?.message || String(error), "error", true);
             throw error;
         }
     }
@@ -1389,9 +1395,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (editor.value !== (content || '')) editor.value = content || '';
         markEditorPerformanceContent(editorPerformanceSwitchToken);
         isApplyingRemoteUpdate = false;
-        hasUnsavedChanges = false;
         const cachedNote = loadStartupCache()?.notes?.[notepadId];
         const noteIsDirty = !!cachedNote?.dirty;
+        hasUnsavedChanges = noteIsDirty;
         if (Number.isFinite(Number(cachedNote?.version))) {
             // The cached version belongs to the cached body only. Do not copy
             // it into currentNotepads: that list was refreshed from the server
@@ -1433,45 +1439,91 @@ document.addEventListener('DOMContentLoaded', async () => {
         return true;
     }
 
-    async function fetchNoteData(notepadId) {
+    async function fetchNoteData(notepadId, { silent = false } = {}) {
         const response = await fetchWithPin('/api/notes/' + encodeURIComponent(notepadId), {
             cache: 'no-store'
-        });
+        }, { silent });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        return response.json();
+        const data = await response.json();
+        confirmRemoteNoteVersion(notepadId, data?.version);
+        return data;
     }
 
-    async function fetchNotepadMeta(notepadId) {
+    async function fetchNotepadMeta(notepadId, { silent = false } = {}) {
         const response = await fetchWithPin('/api/notepads/' + encodeURIComponent(notepadId), {
             cache: 'no-store'
-        });
+        }, { silent });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        return response.json();
+        const data = await response.json();
+        confirmRemoteNoteVersion(notepadId, data?.version);
+        return data;
     }
 
-    let currentReconcilePromise = null;
-    let currentReconcileNotepadId = null;
-    let lastReconcileAt = 0;
-    let lastReconcileNotepadId = null;
+    function getRemoteNoteState(notepadId) {
+        return remoteNoteStates.get(notepadId) || null;
+    }
+
+    function confirmRemoteNoteVersion(notepadId, version) {
+        if (!isValidNotepadId(notepadId)) return false;
+        const nextVersion = Number(version);
+        if (!Number.isFinite(nextVersion) || nextVersion < 1) return false;
+        const previous = getRemoteNoteState(notepadId);
+        if (Number.isFinite(Number(previous?.version)) && Number(previous.version) > nextVersion) return false;
+        remoteNoteStates.set(notepadId, {
+            version: nextVersion,
+            checkedAt: Date.now(),
+            status: 'confirmed'
+        });
+        if (notepadId === currentNotepadId && settingsConflictSection && !settingsConflictSection.hidden) {
+            updateSettingsConflictSection();
+        }
+        return true;
+    }
+
+    function markRemoteNoteChecking(notepadId) {
+        const previous = getRemoteNoteState(notepadId);
+        remoteNoteStates.set(notepadId, {
+            ...(previous || {}),
+            status: 'checking'
+        });
+        if (notepadId === currentNotepadId && settingsConflictSection && !settingsConflictSection.hidden) {
+            updateSettingsConflictSection();
+        }
+    }
+
+    function markRemoteNoteCheckFailed(notepadId) {
+        const previous = getRemoteNoteState(notepadId);
+        remoteNoteStates.set(notepadId, {
+            ...(previous || {}),
+            status: 'error'
+        });
+        if (notepadId === currentNotepadId && settingsConflictSection && !settingsConflictSection.hidden) {
+            updateSettingsConflictSection();
+        }
+    }
+
+    const reconcileStates = new Map();
     const RECONCILE_MIN_INTERVAL_MS = 10000;
 
     function reconcileCurrentNote(reason = 'manual', { force = false } = {}) {
         const notepadId = currentNotepadId;
         if (!isValidNotepadId(notepadId) || !navigator.onLine) return Promise.resolve(false);
-        if (currentReconcilePromise && currentReconcileNotepadId === notepadId) {
-            return currentReconcilePromise;
-        }
-        if (!force && lastReconcileNotepadId === notepadId
-            && Date.now() - lastReconcileAt < RECONCILE_MIN_INTERVAL_MS) {
+        const state = reconcileStates.get(notepadId) || { promise: null, lastSuccessAt: 0 };
+        reconcileStates.set(notepadId, state);
+        if (state.promise) return state.promise;
+        if (!force && state.lastSuccessAt > 0
+            && Date.now() - state.lastSuccessAt < RECONCILE_MIN_INTERVAL_MS) {
             return Promise.resolve(false);
         }
 
-        lastReconcileAt = Date.now();
-        lastReconcileNotepadId = notepadId;
-        currentReconcileNotepadId = notepadId;
-        currentReconcilePromise = (async () => {
+        markRemoteNoteChecking(notepadId);
+        const runPromise = (async () => {
             try {
-                const remote = await fetchNotepadMeta(notepadId);
+                const pendingLoad = noteLoadsInFlight.get(notepadId);
+                if (pendingLoad) await pendingLoad;
+                if (currentNotepadId !== notepadId) return false;
+
+                const remote = await fetchNotepadMeta(notepadId, { silent: true });
                 if (currentNotepadId !== notepadId) return false;
 
                 const remoteVersion = Number(remote?.version);
@@ -1487,7 +1539,11 @@ document.addEventListener('DOMContentLoaded', async () => {
                     || !Number.isFinite(localVersion)
                     || remoteVersion > localVersion) {
                     setStartupSyncStatus('syncing', '检查远端更新');
-                    await loadNotes(notepadId, { forceRemote: true });
+                    const loaded = await loadNotes(notepadId, { forceRemote: true, silent: true });
+                    if (!loaded) {
+                        if (currentNotepadId === notepadId) markRemoteNoteCheckFailed(notepadId);
+                        return false;
+                    }
                 } else {
                     const cached = getCachedNote(notepadId);
                     if (!cached?.dirty && !cached?.conflict && !dirtyConflictNotepadIds.has(notepadId)) {
@@ -1496,14 +1552,19 @@ document.addEventListener('DOMContentLoaded', async () => {
                 }
                 return true;
             } catch (error) {
+                markRemoteNoteCheckFailed(notepadId);
                 console.warn(`[sync] current note reconcile failed reason=${reason}:`, error);
                 return false;
-            } finally {
-                currentReconcilePromise = null;
-                currentReconcileNotepadId = null;
             }
         })();
-        return currentReconcilePromise;
+        let trackedPromise;
+        trackedPromise = runPromise.then(result => {
+            state.lastSuccessAt = result ? Date.now() : 0;
+            if (state.promise === trackedPromise) state.promise = null;
+            return result;
+        });
+        state.promise = trackedPromise;
+        return trackedPromise;
     }
 
     let notePrefetchRun = 0;
@@ -1657,16 +1718,18 @@ document.addEventListener('DOMContentLoaded', async () => {
         return getStartupNotepadId(notepadsList) || getFallbackNotepadId(notepadsList);
     }
 
-    async function loadNotepads({ loadCurrentNote = true } = {}) {
+    async function loadNotepads({ loadCurrentNote = true, silent = false } = {}) {
         try {
             if (!navigator.onLine) {
                 setStartupSyncStatus('error', '服务器不可用，本地可读');
                 return;
             }
             setStartupSyncStatus('syncing', '同步中');
-            const response = await fetchWithPin('/api/notepads');
+            const response = await fetchWithPin('/api/notepads', { cache: 'no-store' }, { silent });
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
             const data = await response.json();
             currentNotepads = Array.isArray(data.notepads_list) ? data.notepads_list : [];
+            currentNotepads.forEach(notepad => confirmRemoteNoteVersion(notepad.id, notepad.version));
             renderSidebar(currentNotepads, currentNotepadId, selectNotepad, deleteNotepadById, renameNotepadById, toggleNotepadPin, directorySearchQuery);
             updateArticleMeta();
             
@@ -1685,10 +1748,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     }
 
-    let loadingNotepadId = null;
     const dirtyConflictNotepadIds = new Set();
-    async function loadNotes(notepadId, { deferRemote = false } = {}) {
-        const forceRemote = arguments[1]?.forceRemote === true;
+    async function loadNotes(notepadId, {
+        deferRemote = false,
+        forceRemote = false,
+        silent = false
+    } = {}) {
         if (!findNotepadByIdOrName(currentNotepads, notepadId)) return;
         const cachedBeforeFetch = getCachedNote(notepadId);
         const renderedFromCache = Boolean(cachedBeforeFetch);
@@ -1697,15 +1762,21 @@ document.addEventListener('DOMContentLoaded', async () => {
             // editor isn't ready yet) instead of blocking on the editor engine.
             renderCachedNotepad(notepadId, cachedBeforeFetch.content || '', { updateLocation: false });
         }
-        await ensureEditor();
-        if (!navigator.onLine) {
-            setStartupSyncStatus('error', '服务器不可用，本地可读');
-            return;
+        const pendingLoad = noteLoadsInFlight.get(notepadId);
+        if (pendingLoad) {
+            if (renderedFromCache && deferRemote) return true;
+            return pendingLoad;
         }
-        if (loadingNotepadId === notepadId) return; // Prevent redundant loading
-        loadingNotepadId = notepadId;
+
         const refreshFromServer = async () => {
             try {
+                await ensureEditor();
+                if (!navigator.onLine) {
+                    setStartupSyncStatus('error', '服务器不可用，本地可读');
+                    return false;
+                }
+                if (currentNotepadId !== notepadId) return false;
+
                 // Version-match short-circuit: the notepad list (freshly
                 // fetched in loadNotepads) already carries each note's
                 // version. When the local snapshot matches it and holds no
@@ -1722,15 +1793,17 @@ document.addEventListener('DOMContentLoaded', async () => {
                     && Number.isFinite(listedVersion) && Number.isFinite(freshCachedVersion)
                     && listedVersion === freshCachedVersion) {
                     setStartupSyncStatus('synced', '已同步');
-                    return;
+                    return true;
                 }
-                const data = await fetchNoteData(notepadId);
-                if (loadingNotepadId !== notepadId) return;
+                const data = await fetchNoteData(notepadId, { silent });
+                if (currentNotepadId !== notepadId) return false;
                 applyNoteEditStats(notepadId, data);
 
                 const cachedNote = getCachedNote(notepadId);
                 if (cachedNote?.dirty && currentNotepadId === notepadId) {
-                    setCurrentNoteVersion(notepadId, cachedNote.version);
+                    currentNoteVersion = Number.isFinite(Number(cachedNote.version))
+                        ? Number(cachedNote.version)
+                        : null;
                     if (Number(data.version) > Number(cachedNote.version || 0)) {
                         if ((data.content || '') === (cachedNote.content || '')) {
                             dirtyConflictNotepadIds.delete(notepadId);
@@ -1739,7 +1812,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                             hasUnsavedChanges = false;
                             hideNoteConflictToast();
                             setStartupSyncStatus('synced', '已同步');
-                            return;
+                            return true;
                         }
                         cacheConflictNote(notepadId, cachedNote.content || '', {
                             localVersion: cachedNote.version,
@@ -1747,12 +1820,12 @@ document.addEventListener('DOMContentLoaded', async () => {
                         });
                         dirtyConflictNotepadIds.add(notepadId);
                         setStartupSyncStatus('error', '有远端更新，本地已保留');
-                        return;
+                        return true;
                     }
                     dirtyConflictNotepadIds.delete(notepadId);
                     cacheDirtyNote(notepadId, cachedNote.content || '', { version: cachedNote.version });
                     setStartupSyncStatus('cached', '本地未同步');
-                    return;
+                    return true;
                 }
 
                 if (editor.value !== (data.content || '')) {
@@ -1766,6 +1839,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     // DOM，片段条目会丢失。写入后补一次重建（防抖）。
                     debouncedUpdateToC();
                 }
+                if (currentNotepadId !== notepadId) return false;
                 restoreEditorCaretForNotepad(notepadId);
                 markEditorPerformanceContent(editorPerformanceSwitchToken);
                 hasUnsavedChanges = false;
@@ -1780,20 +1854,26 @@ document.addEventListener('DOMContentLoaded', async () => {
                     updateSidebarSelection(notepadId);
                     renderRecentFiles(notepadId, currentNotepads, selectNotepad, deleteNotepadById, renameNotepadById, toggleNotepadPin);
                 }
+                return true;
             } catch (err) {
                 console.warn('Error loading notes:', err);
                 setStartupSyncStatus('error', '服务器不可用，本地可读');
+                return false;
             } finally {
-                if (loadingNotepadId === notepadId) loadingNotepadId = null;
                 updateArticleMeta();
             }
         };
 
+        const loadPromise = refreshFromServer();
+        const trackedLoad = loadPromise.finally(() => {
+            if (noteLoadsInFlight.get(notepadId) === trackedLoad) noteLoadsInFlight.delete(notepadId);
+        });
+        noteLoadsInFlight.set(notepadId, trackedLoad);
         if (renderedFromCache && deferRemote) {
-            void refreshFromServer();
-            return;
+            void trackedLoad;
+            return true;
         }
-        await refreshFromServer();
+        return trackedLoad;
     }
 
     let tocUpdateTimeout;
@@ -2323,6 +2403,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 renderCachedNotepad(newNotepad.id, initialContent);
                 setCurrentNoteVersion(newNotepad.id, newNotepad.version || 1);
             }
+            confirmRemoteNoteVersion(newNotepad.id, newNotepad.version || 1);
             toaster.show(`New notepad: ${newNotepad.name}`, 'success');
             return newNotepad;
         } catch (err) {
@@ -2386,6 +2467,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 });
             }
             Object.assign(notepad, result);
+            confirmRemoteNoteVersion(id, result.version);
             renderNotepadLists(currentNotepadId);
             if (currentNotepadId === id) {
                 updateUrlWithNotepad(result.name);
@@ -2434,6 +2516,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 });
             }
             Object.assign(notepad, result);
+            confirmRemoteNoteVersion(id, result.version);
             if (!result.pinned) delete notepad.pinnedAt;
             renderNotepadLists(currentNotepadId);
             wsClient.sendUpdate('notepad_change', { action: 'pin', notepadId: id, pinned: result.pinned === true });
@@ -2518,6 +2601,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             clearTimeout(saveRetryTimeout);
             saveRetryTimeout = null;
             lastSaveTime = Date.now();
+            confirmRemoteNoteVersion(targetNotepadId, result.version);
             setCurrentNoteVersion(targetNotepadId, result.version);
             // 服务端对内容未变化的保存返回 unchanged 且不刷 updatedAt，
             // 本地镜像保持一致，水印的更新时间才不会虚高。
@@ -2549,6 +2633,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             console.warn('Error saving notes:', err);
             if (err?.status === 409) {
                 const remoteVersion = Number(err?.payload?.currentVersion);
+                confirmRemoteNoteVersion(targetNotepadId, remoteVersion);
                 const currentContent = currentNotepadId === targetNotepadId ? editor.value : content;
                 const cachedNote = getCachedNote(targetNotepadId);
                 try {
@@ -2671,26 +2756,45 @@ document.addEventListener('DOMContentLoaded', async () => {
         const hasLocalContent = !!cachedNote?.dirty;
         const isConflict = dirtyConflictNotepadIds.has(currentNotepadId) || !!cachedNote?.conflict;
         const isOffline = !navigator.onLine || startupSyncSnapshot.label.includes('服务器不可用');
-        const serverVersion = Number.isFinite(Number(currentNoteVersion)) ? currentNoteVersion : null;
-        const localVersion = Number.isFinite(Number(cachedNote?.version)) ? cachedNote.version : serverVersion;
-        const remoteVersion = Number.isFinite(Number(cachedNote?.remoteVersion))
-            ? Number(cachedNote.remoteVersion)
-            : serverVersion;
+        const remoteState = getRemoteNoteState(currentNotepadId);
+        const remoteVersion = Number.isFinite(Number(remoteState?.version)) ? Number(remoteState.version) : null;
+        const remoteStatus = remoteState?.status || 'unknown';
+        const remoteVersionLabel = remoteStatus === 'checking'
+            ? '正在确认'
+            : remoteVersion == null
+                ? '未确认'
+                : remoteStatus === 'error'
+                    ? `${remoteVersion}（上次确认）`
+                    : String(remoteVersion);
+        const localVersion = Number.isFinite(Number(cachedNote?.version))
+            ? cachedNote.version
+            : (Number.isFinite(Number(currentNoteVersion)) ? currentNoteVersion : null);
+        const remoteNotConfirmed = remoteVersion == null || remoteStatus === 'checking' || remoteStatus === 'error';
+        const isSyncing = startupSyncSnapshot.state === 'syncing' || remoteStatus === 'checking';
         const summaryKind = isConflict
             ? 'conflict'
             : hasLocalContent
                 ? 'dirty'
                 : isOffline
                     ? 'offline'
-                    : startupSyncSnapshot.kind === 'unsynced'
-                        ? 'error'
-                        : 'synced';
+                    : isSyncing
+                        ? 'syncing'
+                        : remoteNotConfirmed
+                            ? 'error'
+                            : startupSyncSnapshot.kind === 'unsynced'
+                                ? 'error'
+                                : 'synced';
         const summaryText = {
             synced: '已同步',
             dirty: '本地未同步',
             conflict: '远端冲突',
             offline: '服务器不可用',
-            error: '需要处理'
+            syncing: '正在同步',
+            error: remoteStatus === 'checking'
+                ? '正在确认远端'
+                : remoteStatus === 'error'
+                    ? '远端确认失败'
+                    : '远端版本待确认'
         }[summaryKind] || '同步状态';
 
         settingsConflictSection.hidden = false;
@@ -2700,7 +2804,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             settingsSyncSummary.textContent = summaryText;
         }
         if (settingsLocalVersion) settingsLocalVersion.textContent = localVersion ?? '-';
-        if (settingsServerVersion) settingsServerVersion.textContent = remoteVersion ?? '-';
+        if (settingsServerVersion) settingsServerVersion.textContent = remoteVersionLabel;
         if (settingsCacheTime) settingsCacheTime.textContent = formatCacheTime(cachedNote?.savedAt);
         if (settingsDirtyNotes) {
             const dirtyNotes = getDirtyCachedNotes();
@@ -2730,7 +2834,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (!hasLocalContent) {
             settingsConflictContent.value = '';
             const name = getCurrentNotepadName();
-            settingsConflictMessage.textContent = `${name} 当前状态：${startupSyncSnapshot.label || '已同步'}。没有本地保留内容。`;
+            const statusLabel = remoteNotConfirmed
+                ? remoteVersionLabel
+                : (startupSyncSnapshot.label || '已同步');
+            settingsConflictMessage.textContent = `${name} 当前状态：${statusLabel}。没有本地保留内容。`;
             return;
         }
 
@@ -2744,6 +2851,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     function openSettingsModal(options = {}) {
         settingsManager.loadSettings();
         updateSettingsConflictSection();
+        void reconcileCurrentNote('settings', { force: true }).then(() => updateSettingsConflictSection());
         refreshCloudStatus(false);
         refreshTrashList(false);
         refreshAssetsList(false);
@@ -3135,6 +3243,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         await loadNotes(currentNotepadId, { deferRemote: true });
         if (token !== selectionToken) return;
         activeNotepadLoaded = true;
+        void reconcileCurrentNote('selection');
         restoreEditorCaretForNotepad(currentNotepadId);
 
         requestAnimationFrame(() => {
@@ -3916,6 +4025,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         loadAppConfig();
         await loadNotepads({ loadCurrentNote: startsInEditor });
         if (startsInEditor) await syncCurrentDirtyNote();
+        if (startsInEditor) void reconcileCurrentNote('startup');
         applySettings(appSettings);
         registerServiceWorker().catch(() => {});
         await router.init();

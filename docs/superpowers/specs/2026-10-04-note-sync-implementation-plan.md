@@ -416,3 +416,14 @@ npm run check
 > **缓存版本与服务端版本彻底分离；恢复事件只做当前文章版本对账；版本变化才拉正文；dirty 内容继续走冲突保护；自动保存缩短到 2 秒但增加最小间隔；启动取消全库正文预取。**
 
 这套方案不改变数据结构、不改 S3 存储层、不依赖全量同步，能够优先解决“PWA 始终停在旧版本”和“必须手动触发才同步”两个核心问题，同时控制请求数量和冲突风险。
+
+## 10. 实施复核（2026-10-06）
+
+本方案已按最小修改原则完成收尾，实际实现以代码为准：
+
+- `public/app.js` 新增按文章隔离的 `remoteNoteStates` 与 `noteLoadsInFlight`。缓存正文只更新当前编辑器基准，不更新 `currentNotepads[].version`；远端列表、元数据、正文、保存回执和带版本的 WebSocket 事件才会写入已确认远端状态。
+- `reconcileCurrentNote()` 等待同一文章已有的正文加载 Promise，再读取元数据；同版本不重复读取正文，远端版本更高才进入现有 dirty/冲突保护路径。普通入口 10 秒节流，恢复类入口和面板使用 `force`，但只跳过节流，不绕过版本和冲突保护。
+- 对账网络请求使用静默错误路径；同步面板显示“未确认”“正在确认”或“上次确认”，不把 `currentNoteVersion`/缓存版本当作服务端实时版本。启动、切文、面板和恢复生命周期入口均已接入。
+- `test/test_note_sync_reconciliation.js` 覆盖 38→42、同版短路、in-flight 去重、已有正文加载等待、dirty 保护、失败立即重试和切文守卫；`test/browser/notepad-sync.js` 使用真实 Chrome 覆盖生命周期与面板。API Cache-Control 和启动不预取均有回归断言。
+
+浏览器回归使用 `serviceWorkers: 'block'` 的普通页面模拟真实生命周期；Service Worker API 绕过规则仍由 `npm run test:pwa-cache` 单独验证。未修改 `public/service-worker.js`、存储层、S3 对象布局、附件路径或编辑器文件。
