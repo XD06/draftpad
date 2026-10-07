@@ -117,7 +117,7 @@ button.today-drafts-eyebrow:not([disabled]):active {
     align-items: start;
     margin: 0;
     padding-bottom: 3px;
-    border-bottom: 1px solid color-mix(in srgb, var(--border-color) 74%, transparent);
+    /*border-bottom: 1px solid color-mix(in srgb, var(--border-color) 74%, transparent);*/
     box-sizing: border-box;
 }
 
