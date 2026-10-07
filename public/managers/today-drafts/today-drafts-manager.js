@@ -1232,9 +1232,28 @@ export class TodayDraftsManager {
         this.syncTimer = setTimeout(() => this.retryOutbox(), delay);
     }
 
+    // 已滑出窗口的 day 即过期：合法但早于窗口最旧一天。明天（快时钟宽容）
+    // 与缺失/非法 day 不算过期，沿用旧路径（服务端盖章今天），避免误丢离线新建。
+    isRetiredDraftDay(day) {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(String(day || ''))) return false;
+        return String(day) < dayWindowKeys()[0];
+    }
+
+    // 已过期的 upsert 不得重放：服务端会把窗口外新建盖章成今天，等于把本该
+    // 清除的旧文本复活成今天。delete 保留（服务端 404 即视为成功，不会复活）。
+    pruneRetiredOutbox() {
+        const queued = this.outbox.load();
+        const kept = queued.filter(item => item.kind !== 'upsert' || !this.isRetiredDraftDay(item.draft?.day));
+        if (kept.length !== queued.length) this.outbox.save(kept);
+    }
+
     mergeRemoteItems(remoteItems) {
         const localById = new Map(this.items.map(item => [item.id, item]));
-        const remoteById = new Map((Array.isArray(remoteItems) ? remoteItems : []).map(item => [item.id, item]));
+        // 远端里已滑出本地窗口的直接丢弃：多设备时钟差会让服务端窗口比本地宽，
+        // 收下它们只会让"昨天/前天"混入别处的旧数据。
+        const remoteById = new Map((Array.isArray(remoteItems) ? remoteItems : [])
+            .filter(item => !this.isRetiredDraftDay(item?.day))
+            .map(item => [item.id, item]));
         const merged = [];
 
         for (const remote of remoteById.values()) {
@@ -1250,16 +1269,23 @@ export class TodayDraftsManager {
         }
 
         for (const local of localById.values()) {
+            // 本地独有但已过期：直接丢弃，绝不重新上传。上报即复活（服务端盖章今天），
+            // 正是"该清除的旧草稿出现在昨天/今天"的来源。队列里的同 id upsert 由下面的 prune 清掉。
+            if (this.isRetiredDraftDay(local?.day)) continue;
             merged.push(local);
             this.outbox.enqueueUpsert(local);
         }
 
         this.items = merged.sort((left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id));
+        this.pruneRetiredOutbox();
         this.persist();
         this.render();
     }
 
     async retryOutbox() {
+        // 先清过期：store.load 已把过期条目滤出内存，但 outbox 是独立存储，
+        // 不清就会把它们带着旧 day 重放，服务端盖章今天后复活。
+        this.pruneRetiredOutbox();
         // A sync already running: remember that another run was requested and
         // let the in-flight one chain it in its finally block. Returning here
         // without rescheduling is what used to strand edits queued while a

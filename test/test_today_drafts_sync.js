@@ -9,6 +9,12 @@ function localDayKey(date = new Date()) {
     return `${year}-${month}-${day}`;
 }
 
+function dayOffset(offset) {
+    const shifted = new Date();
+    shifted.setDate(shifted.getDate() + offset);
+    return localDayKey(shifted);
+}
+
 async function run() {
     const dom = new JSDOM(`<!DOCTYPE html>
 <html>
@@ -99,6 +105,51 @@ async function run() {
     assert.strictEqual(outboxItems.length, 0, 'a succeeding round clears the queue');
     assert.strictEqual(manager.syncBackoffMs, 20, 'backoff resets once the queue drains');
     await new Promise(resolve => setTimeout(resolve, 120));
+
+    // 过期草稿不得经合并/重试复活：本地独有但已滑出窗口的不再上传，
+    // 远端里已滑出本地窗口的不收，队列里过期 day 的 upsert 直接丢弃
+    // （否则服务端把窗口外新建盖章成今天，旧文本就在昨天/今天复活）。
+    const enqueued = [];
+    const prunableQueue = [
+        { id: 'q-expired', kind: 'upsert', draftId: 'expired-local', draft: { id: 'expired-local', text: '四天前的旧草稿', day: dayOffset(-5), version: 1, updatedAt: 1 }, attempts: 0 },
+        { id: 'q-yesterday', kind: 'upsert', draftId: 'yesterday-local', draft: { id: 'yesterday-local', text: '昨天的草稿', day: dayOffset(-1), version: 0, updatedAt: 2 }, attempts: 0 }
+    ];
+    const mergeOutbox = {
+        load: () => prunableQueue.slice(),
+        save: next => {
+            prunableQueue.length = 0;
+            prunableQueue.push(...next);
+        },
+        enqueueUpsert: draft => enqueued.push(draft.id),
+        enqueueDelete: () => {},
+        hasPending: () => false,
+        retry: async () => ({ saved: [], remaining: [] })
+    };
+    const mergeManager = new TodayDraftsManager({
+        store: { load: () => ({ day: localDayKey(), items: [] }), save: () => {} },
+        outbox: mergeOutbox,
+        apiClient,
+        syncRetryBaseMs: 20,
+        syncRetryMaxMs: 40
+    });
+    mergeManager.items = [
+        { id: 'expired-local', text: '四天前的旧草稿', completed: false, day: dayOffset(-5), version: 1, createdAt: 1, updatedAt: 1 },
+        { id: 'yesterday-local', text: '昨天的草稿', completed: false, day: dayOffset(-1), version: 0, createdAt: 2, updatedAt: 2 }
+    ];
+    mergeManager.mergeRemoteItems([
+        { id: 'ancient-remote', text: '别处的旧草稿', completed: false, day: dayOffset(-9), version: 1, createdAt: 0, updatedAt: 0 },
+        { id: 'remote-today', text: '今天的远端草稿', completed: false, day: dayOffset(0), version: 1, createdAt: 3, updatedAt: 3 }
+    ]);
+    const mergedIds = mergeManager.items.map(item => item.id);
+    assert(!mergedIds.includes('expired-local'), 'a local-only draft past the window must be dropped, never re-uploaded');
+    assert(!mergedIds.includes('ancient-remote'), 'a remote draft past the local window must not be adopted');
+    assert(mergedIds.includes('yesterday-local') && mergedIds.includes('remote-today'), 'in-window drafts still merge both ways');
+    assert.deepStrictEqual(enqueued, ['yesterday-local'], 'only the in-window local-only draft may be queued for upload');
+    assert.deepStrictEqual(prunableQueue.map(item => item.draftId), ['yesterday-local'], 'a queued upsert with a retired day must be discarded, not replayed');
+    assert.strictEqual(mergeManager.isRetiredDraftDay(dayOffset(-3)), true, 'the day before the 3-day window is retired');
+    assert.strictEqual(mergeManager.isRetiredDraftDay(dayOffset(-2)), false, 'the oldest day inside the window is kept');
+    assert.strictEqual(mergeManager.isRetiredDraftDay(dayOffset(1)), false, 'an ahead-clock tomorrow is tolerated, not retired');
+    assert.strictEqual(mergeManager.isRetiredDraftDay('not-a-day'), false, 'a missing or malformed day never counts as retired');
 
     console.log('Today drafts sync retry backoff checks passed');
 }

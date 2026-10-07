@@ -6,6 +6,10 @@
 
 ## [Unreleased]
 
+### 修复
+
+- **今日草稿过期内容不再经同步复活到昨天/今天**：`mergeRemoteItems` 把服务端已清理（本地无）的条目当离线新建重新上传、`retryOutbox` 重放过期 `day` 的队列项，服务端按「窗口外盖章今天」收下——旧文本就以今天/昨天的身份复活。现合并与重试前统一按本地窗口过滤：合法 `day` 早于窗口最旧一天即过期，本地独有直接丢弃、远端过期不收、队列里过期 `day` 的 upsert 直接丢弃（delete 保留）；明天（快时钟宽容）与缺失/非法 `day` 不算过期。回归：`test:today-drafts-sync` 新增过期合并/剪枝断言。
+
 ### 调整
 
 - **文章正文同步对账自动化与 PWA 旧缓存修复**：启动缓存的正文版本不再污染服务端文章列表版本；启动、切文、打开同步面板、网络恢复、WebSocket 重连和页面回前台会自动对账当前文章。对账先读取不缓存的文章元数据，远端版本确实更新时才读取正文，已有正文加载和同文章并发对账复用 Promise，dirty 内容继续进入既有冲突保护而不被静默覆盖。同步面板区分本地版本与已确认的服务端版本，未确认/失败时不再显示缓存版本冒充远端；后台对账网络失败不弹重复 toast，下一次恢复事件可重试。启动不再预取其他文章正文。回归：`npm run test:note-sync`、`npm run test:notepad-sync-browser`、`npm run test:api`、`npm run test:pwa-cache`、`npm run test:startup-performance`。
