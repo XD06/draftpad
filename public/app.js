@@ -29,6 +29,7 @@ import {
 import { ArticleMetaFooter } from './managers/article-meta-footer.js';
 import { collectTocSectionEntries } from './managers/heading-index.js';
 import { applyFloatingActionsVisibility } from './managers/floating-actions-config.js';
+import { deriveArticleTitle, DEFAULT_NOTEPAD_NAME_RE } from './managers/article-title.js';
 import { createCommandSearchManager } from './managers/command-search/command-search-manager.js';
 import { registerResultType } from './managers/command-search/result-type-registry.js';
 
@@ -309,6 +310,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     // 输入停止多久后才真正同步（本地缓存每击即写，POST 只在静默后发生）。
     const NOTE_SAVE_DEBOUNCE_MS = 2000;
     const MIN_AUTO_SAVE_INTERVAL_MS = 3000;
+    // 未命名文章（名字仍是 Notepad N 占位符）的标题自动跟随：输入停止后按内容
+    // 推导临时标题（最高级标题 > 首句截断，见 managers/article-title.js）并静默
+    // 重命名；用户手动重命名成功即永久退出跟随（renameNotepad 里清记录）。
+    const AUTO_TITLE_DEBOUNCE_MS = 600;
+    let autoTitleTimeout = null;
+    /** notepadId → 最近一次自动设置的标题；用于区分「自动跟随」与「手动命名」。 */
+    const autoTitleNames = new Map();
     // Monotonically increasing local edit revision.  Retry callbacks capture
     // the revision they were created for and must never replay stale content
     // after the editor has changed.
@@ -2035,6 +2043,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 }
                 const target = markRefs[Number(el.dataset.markRef)];
                 if (!target || !target.isConnected) return;
+                flashTocEntry(el);
                 editorInstance.scrollRenderedElementIntoView(target, { flash: true });
                 if (window.matchMedia('(max-width: 980px)').matches) {
                     setArticleTocDrawerVisible(false);
@@ -2045,6 +2054,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         tocList.querySelectorAll('.toc-item:not(.mark-entry)').forEach(el => {
             el.onclick = () => {
                 const index = parseInt(el.dataset.index);
+                flashTocEntry(el);
                 if (!editor.isReadingMode) {
                     focusEditorHeading(el.dataset.headingId || '', index);
                 } else {
@@ -2105,6 +2115,19 @@ document.addEventListener('DOMContentLoaded', async () => {
         } else {
             scrollToHeading();
         }
+    }
+
+    // 目录条目点击跳转后的文字闪光：行底色与数字徽标已有高亮，正文文字补一个
+    // 与编辑器落点闪光（article-jump-flash）同节奏的颜色脉冲（样式见 styles.css
+    // 的 toc-entry-text-flash）。只改类名，不动布局；updateToC 重渲染即清。
+    function flashTocEntry(entry) {
+        if (!entry?.isConnected) return;
+        entry.classList.remove('jump-flash');
+        // 同一条目连点时强制重启动画：reflow 后再挂类。
+        void entry.offsetWidth;
+        entry.classList.add('jump-flash');
+        clearTimeout(entry._tocFlashTimer);
+        entry._tocFlashTimer = setTimeout(() => entry.classList.remove('jump-flash'), 2000);
     }
 
     // Highlight the sidebar TOC entry for the heading currently near the top
@@ -2359,13 +2382,16 @@ document.addEventListener('DOMContentLoaded', async () => {
         const previousNotepadId = currentNotepadId;
         const now = Date.now();
         const initialContent = String(content || '');
+        // 带内容建文（导入/粘贴）时直接以最高级标题/首句命名；无名可推才用占位符。
+        const derivedTitle = initialContent ? deriveArticleTitle(initialContent) : '';
         const optimisticNotepad = {
             id: createClientNotepadId(),
-            name: `Notepad ${currentNotepads.length + 1}`,
+            name: derivedTitle || `Notepad ${currentNotepads.length + 1}`,
             version: 1,
             createdAt: now,
             updatedAt: now
         };
+        if (derivedTitle) autoTitleNames.set(optimisticNotepad.id, derivedTitle);
 
         currentNotepads = [
             optimisticNotepad,
@@ -2468,6 +2494,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
             Object.assign(notepad, result);
             confirmRemoteNoteVersion(id, result.version);
+            // 手动重命名后标题不再自动跟随内容（无论新名与推导结果是否巧合一致）。
+            autoTitleNames.delete(id);
             renderNotepadLists(currentNotepadId);
             if (currentNotepadId === id) {
                 updateUrlWithNotepad(result.name);
@@ -2488,6 +2516,103 @@ document.addEventListener('DOMContentLoaded', async () => {
                 : 'Error renaming notepad';
             toaster.show(message, 'error', true);
         }
+    }
+
+    /* ---------------- 未命名文章的标题自动跟随 ---------------- */
+
+    /** 用 replaceState 同步 ?id=（自动重命名随打字高频发生，不能刷历史栈）。 */
+    function replaceUrlWithNotepad(notepadName) {
+        if (!notepadName) return;
+        try {
+            const url = new URL(window.location);
+            url.searchParams.set('id', notepadName);
+            window.history.replaceState({ notepadName }, '', url.toString());
+        } catch (_) { /* URL 不可解析时保持原样 */ }
+    }
+
+    /**
+     * 该文章的标题是否应跟随内容：名字还是 Notepad N 占位符，或当前名字正是
+     * 本会话自动设置的。判定必须发生在 debouncedSave 的 cacheDirtyNote 之前——
+     * 「名字 == 上一次缓存内容的推导标题」说明一直在自动跟随（刷新后由启动缓存
+     * 恢复该判断），缓存一旦被本次输入覆盖就再也对不上了。
+     */
+    function isAutoTitleCandidate(notepadId) {
+        const notepad = findNotepadByIdOrName(currentNotepads, notepadId);
+        if (!notepad) return false;
+        const currentName = String(notepad.name || '');
+        if (DEFAULT_NOTEPAD_NAME_RE.test(currentName)) return true;
+        if (autoTitleNames.get(notepadId) === currentName) return true;
+        const previousContent = getCachedNote(notepadId)?.content;
+        return typeof previousContent === 'string'
+            && previousContent !== ''
+            && deriveArticleTitle(previousContent) === currentName;
+    }
+
+    /** 输入防抖窗口结束后落名：静默复用与 renameNotepad 完全相同的 PUT 契约。 */
+    async function applyAutoTitleRename(notepadId, content) {
+        const notepad = findNotepadByIdOrName(currentNotepads, notepadId);
+        if (!notepad) return;
+        const nextName = deriveArticleTitle(content);
+        if (!nextName || nextName === String(notepad.name || '')) return;
+        const previous = { name: notepad.name, version: notepad.version };
+        notepad.name = nextName;
+        notepad.updatedAt = Date.now();
+        notepad.version = (notepad.version || 1) + 1;
+        autoTitleNames.set(notepadId, nextName);
+        renderNotepadLists(notepadId);
+        if (notepadId === currentNotepadId) {
+            replaceUrlWithNotepad(nextName);
+            applyCurrentNotepadTitle();
+        }
+        try {
+            const response = await fetchWithPin(`/api/notepads/${notepadId}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: nextName, baseVersion: previous.version }),
+            }, { silent: true });
+            const result = await response.json().catch(() => ({}));
+            if (!response.ok) throw Object.assign(new Error(result?.error || 'Auto rename failed'), { status: response.status });
+            Object.assign(notepad, result);
+            autoTitleNames.set(notepadId, result.name || nextName);
+            confirmRemoteNoteVersion(notepadId, result.version);
+            renderNotepadLists(notepadId);
+            if (notepadId === currentNotepadId) {
+                replaceUrlWithNotepad(result.name || nextName);
+                applyCurrentNotepadTitle();
+            }
+            wsClient.sendUpdate('notepad_change', { action: 'rename', notepadId, newName: result.name || nextName });
+        } catch (err) {
+            console.warn('Auto title rename skipped:', err);
+            // 静默回滚（版本冲突/离线都很常见），下次输入会带新版本再试。
+            notepad.name = previous.name;
+            notepad.version = previous.version;
+            autoTitleNames.set(notepadId, previous.name);
+            renderNotepadLists(notepadId);
+            if (notepadId === currentNotepadId) {
+                replaceUrlWithNotepad(previous.name);
+                applyCurrentNotepadTitle();
+            }
+        }
+    }
+
+    /**
+     * 输入后调度标题跟随。资格判定在此同步完成（早于 cacheDirtyNote 覆盖缓存），
+     * 触发时仅复核名字未被并发改动（如 600ms 窗口内的手动重命名）。
+     */
+    function scheduleAutoTitle(notepadId, content) {
+        if (!isValidNotepadId(notepadId) || typeof content !== 'string' || !content.trim()) return;
+        const notepad = findNotepadByIdOrName(currentNotepads, notepadId);
+        if (!notepad) return;
+        const candidateName = String(notepad.name || '');
+        const eligible = isAutoTitleCandidate(notepadId);
+        clearTimeout(autoTitleTimeout);
+        autoTitleTimeout = setTimeout(() => {
+            autoTitleTimeout = null;
+            const latest = findNotepadByIdOrName(currentNotepads, notepadId);
+            // 名字在窗口内被手动改掉（或其他设备改名）就放弃这一轮。
+            if (!eligible || !latest || String(latest.name || '') !== candidateName) return;
+            void applyAutoTitleRename(notepadId, content);
+        }, AUTO_TITLE_DEBOUNCE_MS);
     }
 
     async function toggleNotepadPin(id, pinned) {
@@ -2920,6 +3045,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     function debouncedSave(content) {
         const targetNotepadId = currentNotepadId;
         const revision = editorRevision;
+        // 标题跟随的资格判定要读「上一次内容」的缓存快照，必须赶在
+        // cacheDirtyNote 用本次输入覆盖缓存之前。
+        scheduleAutoTitle(targetNotepadId, content);
         cacheDirtyNote(targetNotepadId, content, { recordActivity: true });
         setStartupSyncStatus('cached', '本地已保留');
         clearTimeout(saveTimeout);

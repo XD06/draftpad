@@ -2126,6 +2126,14 @@ main {
         margin: 0 auto;
         padding: 10px 10px 64px;
     }
+
+    /* 移动端整页滚动、祖先高度 auto，min-height 百分比解析为 0；「一屏」改用
+       与三栏容器相同的视口定义并外扩 5px（.three-column-layout min-height
+       calc(100vh - 140px)，135 = 140 - 5px，实测卡片下沿与视口的余量刚好），
+       短文时卡片同样占满第一屏。 */
+    body:not(.thoughts-mode) .typora-editor-shell .vditor-wysiwyg .tiptap {
+        min-height: calc(100vh - 135px);
+    }
 }
 
 .hybrid-editor-scroller {
@@ -2424,7 +2432,11 @@ main {
 .typora-editor-shell .tiptap {
     width: 100%;
     max-width: 800px;
-    min-height: 60vh;
+    /* 卡片至少占满一屏：100% = 滚动容器 .vditor-wysiwyg 的内容盒高度，减去卡片
+       自身 64px 的顶部让位 margin，短文时不再是一小块编辑区（与旧 vditor 卡片
+       min-height: 100% 的行为一致）。仅桌面内滚动可解析该百分比；移动端整页
+       滚动、百分比取 0，由 ≤980 媒体查询里的视口单位值接管。 */
+    min-height: calc(100% - 64px);
     /* 顶部让位：与移动端 margin: 64px auto 0 一致，避免卡片滑到 sticky 顶栏下面 */
     margin: 64px auto 0;
     padding: 38px 40px 110px;
@@ -2743,9 +2755,19 @@ main {
    阅读模式都能存活；旧 is-jump-target DOM 类在编辑模式会被 PM 的 DOMObserver
    抹掉、从未露面，已废弃）。不做整块背景——左侧主色竖条 + 落点文字短暂变
    主色再渐回正文色，位置醒目又不糊住正文。三档视口（≥981 / 901–980 / ≤900）
-   只是竖条停靠的横向位置不同，落点表现（竖条 + 字体色脉冲）全端统一。 */
+   只是竖条停靠的横向位置不同，落点表现（竖条 + 字体色脉冲）全端统一。
+   颜色脉冲必须同时挂在落点块与其全部后代上：标题的文字长在动画元素本体上，
+   改 color 就够；列表/引用块的文字长在内层 p 里，而 .vditor-reset p,li 有
+   自己的 color 声明把继承的动画值顶掉（实测：只有序号::marker 变黄、正文
+   不变）——后代同挂 article-jump-flash 才整条变黄。 */
 .typora-editor-shell .vditor-reset .article-jump-target {
     position: relative;
+    animation: article-jump-flash 1.8s ease;
+}
+
+/* 后代只补颜色脉冲，不动定位（relative 只留在落点块本体，避免改变
+   绝对定位后代的包含块归属）。 */
+.typora-editor-shell .vditor-reset .article-jump-target * {
     animation: article-jump-flash 1.8s ease;
 }
 
@@ -2825,9 +2847,9 @@ main {
         color: var(--primary-color);
     }
 
-    100% {
-        color: var(--text-color);
-    }
+    /* 100% 缺省 = 隐式回落到各元素自己的常驻色：li/p 是 --text-color，
+       blockquote 是它的 color-mix 浅灰，正文里的链接是主色。写死一个
+       结尾色会先往那个色插值、类摘除时再跳回常驻色（实测引用块会跳）。 */
 }
 
 @keyframes article-jump-bar {
@@ -5085,6 +5107,25 @@ body.reading-mode-active .editor-main {
 .article-toc-list .toc-item.active .toc-item-text {
     color: var(--primary-color);
     font-weight: 600;
+}
+
+/* 目录条目点击跳转的文字闪光：行底色与数字徽标已有高亮（hover/.active 与
+   层级徽标色），但后随文字此前保持各自的灰阶——补一个与编辑器落点闪光
+   （article-jump-flash）同节奏（1.8s，前 55% 保持主色再渐回）的颜色脉冲，
+   让「跳到的是这一条」在目录侧同样可读。只动 .toc-item-text 的颜色：
+   keyframes 不写 100%，隐式回落到各层级自己的文字色（h1/h2/h3/mark 各不同）。 */
+.article-toc-list .toc-item.jump-flash .toc-item-text {
+    animation: toc-entry-text-flash 1.8s ease;
+}
+
+@keyframes toc-entry-text-flash {
+    0% {
+        color: var(--primary-color);
+    }
+
+    55% {
+        color: var(--primary-color);
+    }
 }
 
 /* 折叠行（「+N」「N 条列表项」）与收起行的 chevron：箭头朝向暗示「可展开

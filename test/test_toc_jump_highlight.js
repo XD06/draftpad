@@ -204,6 +204,31 @@ async function main() {
             /replaySearchJumpAfterContentWrite\(\);\s*\n\s*\/\/[\s\S]*?\*\/\s*\n\s*debouncedUpdateToC\(\);/.test(app)
             || (app.includes('replaySearchJumpAfterContentWrite();') && app.includes('debouncedUpdateToC();')),
             null);
+        check('toc flash: clicked entry text flashes (jump-flash on both jump paths + keyframes)',
+            app.includes('function flashTocEntry(entry)')
+            && /el\.onclick = \(\) => \{\s*\n\s*const index = parseInt\(el\.dataset\.index\);\s*\n\s*flashTocEntry\(el\);/.test(app)
+            && /if \(!target \|\| !target\.isConnected\) return;\s*\n\s*flashTocEntry\(el\);/.test(app)
+            && /\.article-toc-list \.toc-item\.jump-flash \.toc-item-text \{/.test(readSource('public/Assets/styles.css'))
+            && readSource('public/Assets/styles.css').includes('@keyframes toc-entry-text-flash'),
+            null);
+        /* 编辑器落点闪光必须覆盖块内文字：列表/引用块的文字长在内层 p 里，
+           而 .vditor-reset p,li 自带 color 声明把继承的动画值顶掉（真机实测：
+           只有 ::marker 序号变黄、文字不变）——后代也要挂 article-jump-flash。
+           relative 只留落点本体，防止改变绝对定位后代的包含块。 */
+        const editorFlashCss = readSource('public/Assets/styles.css');
+        check('jump flash: descendant text pulses too (list/quote inner text)',
+            /\.typora-editor-shell \.vditor-reset \.article-jump-target \* \{[\s\S]{0,80}animation: article-jump-flash 1\.8s ease;/.test(editorFlashCss)
+            && /\.typora-editor-shell \.vditor-reset \.article-jump-target \{[\s\S]{0,80}position: relative;[\s\S]{0,80}animation: article-jump-flash/.test(editorFlashCss)
+            && !/\.article-jump-target \* \{[\s\S]{0,80}position: relative;/.test(editorFlashCss),
+            null);
+        const flashKeyframesAt = editorFlashCss.indexOf('@keyframes article-jump-flash');
+        const flashKeyframes = flashKeyframesAt > -1
+            ? editorFlashCss.slice(flashKeyframesAt, editorFlashCss.indexOf('}', editorFlashCss.indexOf('55%', flashKeyframesAt)) + 1)
+            : '';
+        check('jump flash: keyframes fall back to each element resting color (no forced end color)',
+            /0% \{[\s\S]*55% \{/.test(flashKeyframes)
+            && !/\b100% \{/.test(flashKeyframes),
+            null);
     }
 
     if (failures) {

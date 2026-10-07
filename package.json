@@ -29,6 +29,7 @@
     "test:code-block-presentation": "node test/test_code_block_presentation.js",
     "test:seed-demo": "node test/test_seed_demo_data.js",
     "test:article-block-move": "node test/test_article_block_move.js",
+    "test:article-title": "node test/test_article_title.js",
     "test:file-asset-policy": "node test/test_file_asset_policy.js",
     "test:thought-card-renderer": "node test/test_thought_card_renderer.js",
     "test:thought-editor": "node test/test_thought_editor.js",

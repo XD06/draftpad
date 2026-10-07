@@ -1540,8 +1540,11 @@ main {
            padding empty space INSIDE the white card. Putting the breathing room
            on the scroll container means a short note leaves a clean gap below
            the card, and a long note never scrolls its last line flush against
-           the bottom edge. */
-        padding-bottom: 80px;
+           the bottom edge. 64px == the card's own 64px top margin (margin 在
+           百分比 min-height 之外），短文时卡片上下留白一样宽、卡片正好贴满
+           「一屏」（styles.css 的 .tiptap min-height: calc(100% - 64px) 依赖
+           这个值与顶部对齐，改这里必须两边同步）。 */
+        padding-bottom: 64px;
     }
 
     body:not(.thoughts-mode) .typora-editor-shell .vditor-wysiwyg pre.vditor-reset,
