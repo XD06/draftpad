@@ -303,7 +303,7 @@ function run() {
     assert(appSource.includes('createTodayDraftThought(draft.text)'), 'the application should transfer a left-swiped today draft into Thought');
     assert(todayStyles.includes('grid-template-columns: 36px minmax(0, 1fr);'), 'today draft rows carry no timestamp track: wrapped text must reach both ends of the ruled line');
     assert(/\.today-draft-text-display::before\s*\{[^}]*float:\s*right;[^}]*width:\s*var\(--today-draft-time-gutter\)/.test(todayStyles), 'only the first line yields room for the timestamp, through a right float');
-    assert(/\.today-draft-time\s*\{[^}]*position:\s*absolute;[^}]*right:\s*6px;/.test(todayStyles), 'the timestamp is a paper-edge annotation, not a grid column that shortens every line');
+    assert(/\.today-draft-time\s*\{[^}]*position:\s*absolute;[^}]*right:\s*0(px)?;/.test(todayStyles), 'the timestamp is a paper-edge annotation, not a grid column that shortens every line');
     assert(/\.today-draft-row:has\(textarea\) \.today-draft-time\s*\{[^}]*opacity:\s*0;/.test(todayStyles), 'inline editing cannot reserve a first line, so the timestamp must step aside');
     assert(todayStyles.includes('min-height: 44px;'), 'text rows should align with the notebook ruling');
     assert(todayStyles.includes('transparent 43px,'), 'the ruled-paper background must match the 44px draft row rhythm');

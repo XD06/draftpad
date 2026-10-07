@@ -393,7 +393,7 @@ button.today-drafts-eyebrow:not([disabled]):active {
    时间戳不进网格（见 .today-draft-time）：第三列 auto 会让每一行正文都比纸纹线
    短掉一个时间宽度（实测 38px），且空时间戳的行是 35px，右边界连行间都不齐。 */
 .today-draft-row {
-    --today-draft-time-gutter: 44px;
+    --today-draft-time-gutter: 38px;
     position: relative;
     display: grid;
     grid-template-columns: 36px minmax(0, 1fr);
@@ -562,6 +562,7 @@ button.today-drafts-eyebrow:not([disabled]):active {
     margin: 0;
     white-space: pre-wrap;
     overflow-wrap: anywhere;
+    word-break: break-all;
     box-sizing: border-box;
 }
 
@@ -596,6 +597,7 @@ textarea.today-draft-text {
     box-sizing: border-box;
     white-space: pre-wrap;
     overflow-wrap: anywhere;
+    word-break: break-all;
 }
 
 .today-draft-text-display:focus-visible {
@@ -608,6 +610,7 @@ textarea.today-draft-text {
     cursor: pointer;
     text-decoration: none;
     overflow-wrap: anywhere;
+    word-break: break-all;
 }
 
 .today-draft-link:hover,
@@ -622,7 +625,7 @@ textarea.today-draft-text {
 .today-draft-time {
     position: absolute;
     top: 0;
-    right: 6px;
+    right: 0px;
     min-width: 3.2em;
     color: color-mix(in srgb, var(--muted-text) 82%, transparent);
     font-size: 11px;
