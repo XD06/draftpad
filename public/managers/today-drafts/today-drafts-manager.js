@@ -13,6 +13,9 @@ const FLIP_RELEASE_MS = 340;
 const FLIP_CURL_RATIO = 0.22;
 // 折痕两侧羽化落影的宽度（占纸宽比例，上限 56px）
 const FLIP_FEATHER_RATIO = 0.07;
+// 长页的纸背只保留纸面，不再复制整棵草稿 DOM，避免移动端翻页时同时栅格化
+// 三份长内容。
+const FLIP_LITE_CARD_HTML_LIMIT = 9000;
 
 function prefersReducedMotion() {
     return Boolean(window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches);
@@ -851,13 +854,23 @@ export class TodayDraftsManager {
         const movingPage = current.dir === 'older' ? this.currentPage() : targetPage;
         const isHistory = movingPage.day !== localDayKey();
         const cardHtml = this.buildFlipCardHtml(movingPage);
-        for (const layer of [this.flipStatic, this.flipFlap]) {
-            layer.hidden = false;
-            layer.innerHTML = cardHtml;
-            layer.classList.toggle('is-history', isHistory);
-            layer.style.clipPath = '';
-            layer.style.transform = '';
+        const liteFlap = cardHtml.length > FLIP_LITE_CARD_HTML_LIMIT;
+        this.flipStatic.hidden = false;
+        this.flipStatic.innerHTML = cardHtml;
+        this.flipStatic.classList.toggle('is-history', isHistory);
+        this.flipStatic.style.clipPath = '';
+        this.flipStatic.style.transform = '';
+
+        this.flipFlap.hidden = false;
+        this.flipFlap.replaceChildren();
+        if (!liteFlap) {
+            const staticCard = this.flipStatic.firstElementChild;
+            if (staticCard) this.flipFlap.append(staticCard.cloneNode(true));
         }
+        this.flipFlap.classList.toggle('is-history', isHistory);
+        this.flipFlap.classList.toggle('is-lite', liteFlap);
+        this.flipFlap.style.clipPath = '';
+        this.flipFlap.style.transform = '';
         if (current.dir === 'older') {
             // 掀页前先把目标整卡（含页眉）铺进文档流底层，随折痕推进逐渐露出
             this.applyPageToBase(targetPage);
