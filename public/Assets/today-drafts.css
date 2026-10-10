@@ -248,14 +248,20 @@ button.today-drafts-eyebrow:not([disabled]):active {
     background-attachment: scroll !important;
 }
 
-/* 动页不重复栅格化纸纹；底层纸面仍保留完整纹理，折痕与阴影负责方向感。 */
-.today-drafts-pager.is-flipping .today-drafts-flip-layer .today-drafts-writing-area {
-    background-image: none !important;
-}
-
-/* 超长页的轻量纸背只需要一张纸，不复制正文节点。 */
+/* 超长页的轻量纸背不复制正文节点，但保留与正面一致的纸纹。 */
 .today-drafts-flip-layer.is-lite {
     background-color: color-mix(in srgb, var(--header-bg) 84%, var(--bg-color));
+    background-image:
+        repeating-linear-gradient(
+            to bottom,
+            transparent 0,
+            transparent 43px,
+            color-mix(in srgb, var(--muted-text) 38%, transparent) 43px,
+            color-mix(in srgb, var(--muted-text) 38%, transparent) 44px
+        ),
+        radial-gradient(circle at 1px 1px, color-mix(in srgb, var(--muted-text) 8%, transparent) 0.5px, transparent 0.8px),
+        radial-gradient(circle at 6px 5px, color-mix(in srgb, var(--muted-text) 4%, transparent) 0.45px, transparent 0.7px);
+    background-size: 100% 44px, 9px 9px, 13px 13px;
 }
 
 /* 纸背的裁剪容器：镜像翻页/落页扫出的部分在书缘被裁掉，

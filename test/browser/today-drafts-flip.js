@@ -13,17 +13,15 @@ function localDayKey(offsetDays = 0) {
 module.exports = async function testTodayDraftsFlip(browser) {
     const app = express();
     const root = path.resolve(__dirname, '../..');
+    let fixtureItems = [
+        { id: 'd-older', text: '前天的草稿记录', completed: true, day: localDayKey(2), createdAt: Date.now() - 172800000 },
+        { id: 'd-yest', text: '昨天的草稿记录，包含重点备忘', completed: false, day: localDayKey(1), createdAt: Date.now() - 86400000 },
+        { id: 'd-today', text: '今天的草稿任务', completed: false, day: localDayKey(0), createdAt: Date.now() }
+    ];
 
     // Serve public
     app.get('/api/config', (_req, res) => res.json({ hiddenFloatingActions: [] }));
-    app.get('/api/today-drafts', (_req, res) => res.json({
-        day: localDayKey(0),
-        items: [
-            { id: 'd-older', text: '前天的草稿记录', completed: true, day: localDayKey(2), createdAt: Date.now() - 172800000 },
-            { id: 'd-yest', text: '昨天的草稿记录，包含重点备忘', completed: false, day: localDayKey(1), createdAt: Date.now() - 86400000 },
-            { id: 'd-today', text: '今天的草稿任务', completed: false, day: localDayKey(0), createdAt: Date.now() }
-        ]
-    }));
+    app.get('/api/today-drafts', (_req, res) => res.json({ day: localDayKey(0), items: fixtureItems }));
     app.use(express.static(path.join(root, 'public')));
 
     const server = await new Promise(resolve => {
@@ -112,13 +110,16 @@ module.exports = async function testTodayDraftsFlip(browser) {
         // Verify the returning sheet is visible and mirroring around the crease
         const returnState = await page.evaluate(() => {
             const flap = document.getElementById('today-drafts-flip-flap');
+            const writingArea = flap?.querySelector('.today-drafts-writing-area');
             return {
                 flapHidden: flap ? flap.hidden : true,
-                flapTransform: flap ? flap.style.transform : ''
+                flapTransform: flap ? flap.style.transform : '',
+                paperTexture: writingArea ? getComputedStyle(writingArea).backgroundImage : ''
             };
         });
         assert.strictEqual(returnState.flapHidden, false, 'returning sheet must be visible during the return gesture');
         assert.ok(returnState.flapTransform.includes('scaleX(-1)'), 'returning sheet must mirror around the crease');
+        assert.ok(returnState.paperTexture.includes('repeating-linear-gradient'), `the moving paper must retain its ruled texture, got ${returnState.paperTexture}`);
 
         await page.mouse.up();
         await page.waitForTimeout(600);
@@ -128,6 +129,35 @@ module.exports = async function testTodayDraftsFlip(browser) {
             return eyebrow ? eyebrow.textContent : '';
         });
         assert.ok(restoredDay.includes('today'), 'leftward flip must have restored view to today');
+
+        fixtureItems = [
+            { id: 'd-older', text: '前天的草稿记录', completed: true, day: localDayKey(2), createdAt: Date.now() - 172800000 },
+            { id: 'd-yest', text: '昨天的草稿记录', completed: false, day: localDayKey(1), createdAt: Date.now() - 86400000 },
+            { id: 'd-long', text: '很长的今日草稿内容。'.repeat(1200), completed: false, day: localDayKey(0), createdAt: Date.now() }
+        ];
+        await page.evaluate(() => localStorage.clear());
+        await page.reload();
+        await page.waitForTimeout(500);
+        const longBox = await page.locator('#today-drafts-pager').boundingBox();
+        const longStartX = longBox.x + longBox.width * 0.05;
+        const longStartY = longBox.y + longBox.height * 0.55;
+        await page.mouse.move(longStartX, longStartY);
+        await page.mouse.down();
+        await page.mouse.move(longStartX + 280, longStartY, { steps: 12 });
+        await page.waitForTimeout(120);
+        const liteFlap = await page.evaluate(() => {
+            const flap = document.getElementById('today-drafts-flip-flap');
+            return {
+                lite: flap?.classList.contains('is-lite'),
+                childCount: flap?.children.length,
+                paperTexture: getComputedStyle(flap).backgroundImage
+            };
+        });
+        assert.equal(liteFlap.lite, true, 'very long page uses the lightweight paper back');
+        assert.equal(liteFlap.childCount, 0, 'lightweight paper back does not duplicate long draft content');
+        assert.ok(liteFlap.paperTexture.includes('repeating-linear-gradient'), 'lightweight paper back retains ruled paper texture');
+        await page.mouse.up();
+        await page.waitForTimeout(500);
 
         assert.deepEqual(errors, []);
         console.log('Today drafts flip browser regression passed');

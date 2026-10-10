@@ -864,8 +864,9 @@ export class TodayDraftsManager {
         this.flipFlap.hidden = false;
         this.flipFlap.replaceChildren();
         if (!liteFlap) {
-            const staticCard = this.flipStatic.firstElementChild;
-            if (staticCard) this.flipFlap.append(staticCard.cloneNode(true));
+            for (const child of this.flipStatic.children) {
+                this.flipFlap.append(child.cloneNode(true));
+            }
         }
         this.flipFlap.classList.toggle('is-history', isHistory);
         this.flipFlap.classList.toggle('is-lite', liteFlap);
