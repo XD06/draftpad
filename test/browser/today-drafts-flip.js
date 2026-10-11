@@ -133,7 +133,7 @@ module.exports = async function testTodayDraftsFlip(browser) {
         fixtureItems = [
             { id: 'd-older', text: '前天的草稿记录', completed: true, day: localDayKey(2), createdAt: Date.now() - 172800000 },
             { id: 'd-yest', text: '昨天的草稿记录', completed: false, day: localDayKey(1), createdAt: Date.now() - 86400000 },
-            { id: 'd-long', text: '很长的今日草稿内容。'.repeat(1200), completed: false, day: localDayKey(0), createdAt: Date.now() }
+            { id: 'd-long', text: '很长的即时草稿内容。'.repeat(1200), completed: false, day: localDayKey(0), createdAt: Date.now() }
         ];
         await page.evaluate(() => localStorage.clear());
         await page.reload();

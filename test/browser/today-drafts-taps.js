@@ -1,10 +1,12 @@
-// 今日草稿点按类行为的真机回归（jsdom 证不了指针捕获与真实 click 链路）：
+// 即时草稿点按类行为的真机回归（jsdom 证不了指针捕获与真实 click 链路）：
 // 1) 复选框可点：无编辑器时直接点、行编辑器开着时点，都必须完成勾选（真机根因：
 //    翻页手势 down 就捕获指针 + 失焦同步重绘，把进行中的 click 吃掉了）；
 // 2) 空草稿不残留：行内 Enter 产生的空草稿，点空白纸面失焦后被删除（真机根因：
 //    手势捕获把 click 改派到 view，编辑器失焦从不发生）；
 // 3) 认领点按可以捕获指针但不产生翻页副作用，真正的翻页拖拽照常落页；
-// 4) 行尾复制按钮：桌面 hover 亮出、点击写剪贴板 + toast；触摸按住行短暂亮出。
+// 4) 行尾复制按钮：桌面 hover 亮出、点击写剪贴板 + toast；
+// 5) 长按行唤出操作菜单（复制 / 转为 Thought / 转为文章 / 删除）：按住不动才开、
+//    抬手不关、点动作才关；按住后横向移动即取消（横拖只归翻页）。
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const express = require('express');
@@ -168,19 +170,58 @@ async function main() {
     const successShown = await page.$eval('#today-drafts-base [data-today-draft-id="t1"] [data-today-draft-copy]', el => el.classList.contains('is-copy-success'));
     assert.equal(successShown, true, 'copy success must swap the icon to the checkmark');
 
-    // ---- 4b. 触摸按住行：复制按钮短暂亮出 ----
-    await page.evaluate(() => {
+    // ---- 4b. 触摸长按行：唤出操作菜单（真实指针管线 + 真实捕获时序） ----
+    const longPress = await page.evaluate(async () => {
         const row = document.querySelector('#today-drafts-base [data-today-draft-id="t2"]');
         const rect = row.getBoundingClientRect();
-        const options = { bubbles: true, cancelable: true, pointerId: 7, isPrimary: true, pointerType: 'touch', clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2 };
+        const x = rect.left + rect.width / 2;
+        const y = rect.top + rect.height / 2;
+        const options = { bubbles: true, cancelable: true, composed: true, pointerId: 7, isPrimary: true, pointerType: 'touch', clientX: x, clientY: y };
         row.dispatchEvent(new PointerEvent('pointerdown', options));
+        await new Promise(resolve => setTimeout(resolve, 560));
+        const menu = document.querySelector('.tdam');
+        const open = Boolean(menu && !menu.hidden);
+        const actions = [...document.querySelectorAll('.tdam__btn')].map(button => button.dataset.tdamAction);
+        const highlighted = row.classList.contains('is-menu-target');
+        // 松手不关菜单：菜单要留在原地等用户选动作
         row.dispatchEvent(new PointerEvent('pointerup', options));
+        await new Promise(resolve => setTimeout(resolve, 80));
+        const stillOpen = Boolean(document.querySelector('.tdam') && !document.querySelector('.tdam').hidden);
+        return { open, actions, highlighted, stillOpen };
     });
-    const revealedNow = await page.$eval('#today-drafts-base [data-today-draft-id="t2"]', row => row.classList.contains('is-copy-reveal'));
-    assert.equal(revealedNow, true, 'touch press must reveal the copy button');
-    await page.waitForTimeout(900);
-    const revealedLater = await page.$eval('#today-drafts-base [data-today-draft-id="t2"]', row => row.classList.contains('is-copy-reveal'));
-    assert.equal(revealedLater, false, 'touch reveal must clear after the linger window');
+    assert.equal(longPress.open, true, 'holding still on a row must open the action menu');
+    assert.equal(longPress.highlighted, true, 'the row under the menu must highlight');
+    assert.deepEqual(longPress.actions, ['copy', 'thought', 'article', 'plan', 'delete'],
+        'the today menu offers copy, Thought, article, the plan placeholder and delete');
+    assert.equal(longPress.stillOpen, true, 'lifting the finger must not close the menu');
+
+    await page.click('.tdam__btn[data-tdam-action="copy"]');
+    await page.waitForTimeout(250);
+    assert.equal(await page.evaluate(() => navigator.clipboard.readText()), 'WiFi和我',
+        'the menu copy action must write that draft into the clipboard');
+    assert.equal(await page.evaluate(() => {
+        const menu = document.querySelector('.tdam');
+        return !menu || menu.hidden;
+    }), true, 'choosing an action must close the menu');
+    assert.equal(await page.$eval('#today-drafts-base [data-today-draft-id="t2"]', row => row.classList.contains('is-menu-target')), false,
+        'closing the menu must clear the row highlight');
+
+    // ---- 4c. 长按后横向拖动即取消：横拖只翻页，不会弹出菜单 ----
+    const dragCancel = await page.evaluate(async () => {
+        const row = document.querySelector('#today-drafts-base [data-today-draft-id="t2"]');
+        const rect = row.getBoundingClientRect();
+        const x = rect.left + rect.width / 2;
+        const y = rect.top + rect.height / 2;
+        const options = { bubbles: true, cancelable: true, composed: true, pointerId: 9, isPrimary: true, pointerType: 'touch', clientX: x, clientY: y };
+        row.dispatchEvent(new PointerEvent('pointerdown', options));
+        row.dispatchEvent(new PointerEvent('pointermove', { ...options, clientX: x + 26 }));
+        await new Promise(resolve => setTimeout(resolve, 560));
+        const menu = document.querySelector('.tdam');
+        const opened = Boolean(menu && !menu.hidden);
+        row.dispatchEvent(new PointerEvent('pointerup', { ...options, clientX: x + 26 }));
+        return opened;
+    });
+    assert.equal(dragCancel, false, 'moving past the tolerance must cancel the long-press instead of opening the menu');
 
     assert.deepEqual(errors, [], 'no page errors expected');
     await browser.close();

@@ -64,7 +64,7 @@ function createTodayDraftSearchProvider({ storage }) {
                 const text = String(draft?.text || '');
                 if (!documentMatches({ title: text, content: text, tags: [] }, keywords)) continue;
 
-                const title = text.split('\n').find(line => line.trim()) || '今日草稿';
+                const title = text.split('\n').find(line => line.trim()) || '即时草稿';
                 const found = findLineOccurrences(
                     text.split('\n').map(line => ({ text: line })),
                     keywords,

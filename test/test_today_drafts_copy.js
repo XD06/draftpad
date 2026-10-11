@@ -1,8 +1,10 @@
-// 今日草稿行尾复制按钮 + 失焦让路（click 保命）的 jsdom 回归：
+// 即时草稿行尾复制按钮 + 长按菜单 + 失焦让路（click 保命）的 jsdom 回归：
 // 1) 渲染器在可编辑行与历史只读行的展示态正文末尾都带复制按钮；
 // 2) 点复制按钮 = 写剪贴板 + toast + 行高亮，且不得顺势进入行编辑；
 //    clipboard API 不可用/被拒时降级 execCommand，失败要响亮报错；
-// 3) 触摸按住行亮出复制按钮（is-copy-reveal），抬手后短暂保留再收；
+// 3) 长按行唤出横向图标菜单（复制 / 转为 Thought / 转为文章 / 计划占位 / 删除），
+//    移动超过容差即取消（把按压让回翻页），抬手不关、选动作才关；转为 Thought /
+//    文章是复制语义，本机草稿必须保留；计划是占位、只提示不动数据；
 // 4) 失焦清场必须让出当前任务：focusout 同步阶段不许重建列表（否则进行中的
 //    click 目标被换掉——复选框点不上、空草稿失焦清除失效的真机根因）；
 // 5) 翻页手势不认领复选框/复制按钮起笔（.today-draft-check / button 排除名单），
@@ -110,11 +112,15 @@ async function run() {
     };
     const fakeApi = { list: async () => ({ day: localDayKey(), items: [] }) };
 
+    const thoughtCalls = [];
     const manager = new TodayDraftsManager({
         store: fakeStore,
         outbox: fakeOutbox,
         apiClient: fakeApi,
-        toaster
+        toaster,
+        // 转为 Thought / 文章必须只在应用层建目标，本机草稿不得被移走。
+        onMoveToThought: async draft => { thoughtCalls.push(draft.id); return true; },
+        onMoveToArticle: async () => true
     });
 
     // ---- 2. 点复制按钮：写剪贴板 + toast，不进编辑态 ----
@@ -160,14 +166,66 @@ async function run() {
     assert(toastCalls.length > toastCountBefore, 'total copy failure must surface a toast');
     assert(toastCalls.at(-1)[1] === 'error', 'total copy failure must be reported as an error');
 
-    // ---- 3. 触摸按住行亮出复制按钮，抬手后收起 ----
-    const touchRow = manager.list.querySelector('[data-today-draft-id="draft-1"]');
-    touchRow.dispatchEvent(pointerEvent(dom, 'pointerdown', { pointerType: 'touch', clientX: 200, clientY: 20 }));
-    assert(touchRow.classList.contains('is-copy-reveal'), 'touch pointerdown must reveal the copy button');
-    touchRow.dispatchEvent(pointerEvent(dom, 'pointerup', { pointerType: 'touch', clientX: 200, clientY: 20 }));
-    assert(touchRow.classList.contains('is-copy-reveal'), 'reveal lingers briefly after pointerup');
-    await new Promise(resolve => setTimeout(resolve, 800));
-    assert(!touchRow.classList.contains('is-copy-reveal'), 'reveal must clear after the linger window');
+    // ---- 3. 长按行唤出操作菜单（替代原横滑手势），点动作后关闭 ----
+    const longPressRow = manager.list.querySelector('[data-today-draft-id="draft-1"]');
+    const longPressTarget = longPressRow.querySelector('[data-today-draft-text-display]');
+    longPressTarget.dispatchEvent(pointerEvent(dom, 'pointerdown', { clientX: 200, clientY: 20 }));
+    assert(!manager.menu.isOpen, 'the menu must wait for the long-press delay, not open on touch-down');
+    await new Promise(resolve => setTimeout(resolve, 520));
+    assert(manager.menu.isOpen, 'holding still past the delay must open the action menu');
+    assert(longPressRow.classList.contains('is-menu-target'), 'the row under the menu must highlight');
+    const menuActions = [...document.querySelectorAll('.tdam__btn')].map(button => button.dataset.tdamAction);
+    assert.deepStrictEqual(menuActions, ['copy', 'thought', 'article', 'plan', 'delete'],
+        'the today menu offers copy, Thought, article, the plan placeholder and delete');
+    document.getElementById('today-drafts-view').dispatchEvent(pointerEvent(dom, 'pointerup', { clientX: 200, clientY: 20 }));
+    assert(manager.menu.isOpen, 'lifting the finger must not close the menu');
+    // 2c 把 clipboard 与 execCommand 都打成了必败，这里先恢复一条可用路径再点菜单。
+    Object.defineProperty(dom.window.navigator, 'clipboard', {
+        configurable: true,
+        value: { writeText: async value => { clipboardWrites.push(value); } }
+    });
+    clipboardWrites.length = 0;
+    document.querySelector('.tdam__btn[data-tdam-action="copy"]').click();
+    await new Promise(resolve => setTimeout(resolve, 0));
+    assert.deepStrictEqual(clipboardWrites, ['第一条要复制的内容'], 'the menu copy action must write the draft text');
+    assert(!manager.menu.isOpen, 'choosing an action must close the menu');
+    assert(!longPressRow.classList.contains('is-menu-target'), 'closing the menu must clear the row highlight');
+
+    // ---- 3b. 移动即取消：横拖不弹菜单（让位给翻页） ----
+    longPressTarget.dispatchEvent(pointerEvent(dom, 'pointerdown', { clientX: 200, clientY: 20 }));
+    document.getElementById('today-drafts-view').dispatchEvent(pointerEvent(dom, 'pointermove', { clientX: 260, clientY: 22 }));
+    await new Promise(resolve => setTimeout(resolve, 520));
+    assert(!manager.menu.isOpen, 'a pointer that moves past the tolerance must cancel the long-press');
+    document.getElementById('today-drafts-view').dispatchEvent(pointerEvent(dom, 'pointerup', { clientX: 260, clientY: 22 }));
+
+    // ---- 3c. 转为 Thought / 文章 = 复制：本机草稿必须保留 ----
+    const pressRow = async () => {
+        longPressTarget.dispatchEvent(pointerEvent(dom, 'pointerdown', { clientX: 200, clientY: 20 }));
+        await new Promise(resolve => setTimeout(resolve, 520));
+    };
+    await pressRow();
+    document.querySelector('.tdam__btn[data-tdam-action="thought"]').click();
+    await new Promise(resolve => setTimeout(resolve, 0));
+    assert.deepStrictEqual(thoughtCalls, ['draft-1'], '转为 Thought must create the Thought through the app callback');
+    assert(manager.items.some(item => item.id === 'draft-1'),
+        '转为 Thought must KEEP the draft in the pad (copy semantics, not move)');
+    assert(manager.list.querySelector('[data-today-draft-id="draft-1"]'), 'the kept draft must still be rendered');
+    assert(toastCalls.some(([message]) => message === '已转为 Thought，草稿保留'), 'keeping the draft must be surfaced as a toast');
+
+    await pressRow();
+    document.querySelector('.tdam__btn[data-tdam-action="article"]').click();
+    await new Promise(resolve => setTimeout(resolve, 0));
+    assert(manager.items.some(item => item.id === 'draft-1'),
+        '转为文章 must KEEP the draft in the pad (copy semantics, not move)');
+    assert(toastCalls.some(([message]) => message === '已转为文章，草稿保留'), 'keeping the draft must be surfaced as a toast');
+
+    // ---- 3d. 计划是占位：点了只提示开发中，不动数据 ----
+    await pressRow();
+    document.querySelector('.tdam__btn[data-tdam-action="plan"]').click();
+    await new Promise(resolve => setTimeout(resolve, 0));
+    assert(toastCalls.some(([message, type]) => message === '计划功能开发中' && type === 'info'),
+        'the plan action must be a placeholder that only announces it is not built yet');
+    assert(manager.items.length === 2, 'the plan placeholder must not touch the drafts');
 
     // ---- 4. 失焦清场让路：focusout 同步阶段不重建列表 ----
     const display = manager.list.querySelector('[data-today-draft-id="draft-1"] [data-today-draft-text-display]');

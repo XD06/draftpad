@@ -1,6 +1,9 @@
 // 触摸区域按起笔划分：
-// 草稿中间位置（约占中央 56% 宽度的正文区）起笔触发草稿行操作（左滑转 Thought / 右滑删除）；
-// 纸张两侧边缘（两端各占约 22% 宽度，或至少 72px 宽的舒适大拇指翻页区）起笔触发整页翻页。
+// 纸张两侧边缘（两端各占约 22% 宽度，或至少 72px 宽的舒适大拇指翻页区）起笔，
+// 翻页手势才认领指针（认领会让 click 改派到 view，纸边起笔不需要原生点击）；
+// 草稿行中间约 56% 的正文区起笔不认领，保住「点正文进编辑」的原生 click。
+// 行操作已改为长按唤出图标菜单（见 today-drafts-manager.js 的 startDraftLongPress），
+// 与翻页不再争抢横向手势，这里只剩「该不该认领翻页」这一条判据。
 // 起手定归属，手势中途绝不交棒变异，保证动效不串台、操作可预期。
 export const TODAY_DRAFT_PAGER_EDGE_RATIO = 0.22;
 export const TODAY_DRAFT_PAGER_MIN_EDGE = 72;
@@ -30,24 +33,8 @@ export function isTodayDraftPagerEdge({
         return true;
     }
 
-    // 保证中间至少保留 30% 宽度给草稿行操作
+    // 保证中间至少保留 30% 宽度给「点正文进编辑」
     const maxBand = rowWidth * 0.35;
     const band = Math.min(maxBand, Math.max(0, targetEdge));
     return x - left <= band || right - x <= band;
-}
-
-export function getTodayDraftSwipeState(distance, threshold, maxSwipe) {
-    const safeThreshold = Math.max(1, Number(threshold) || 1);
-    const safeMaxSwipe = Math.max(safeThreshold, Number(maxSwipe) || safeThreshold);
-    const rawDistance = Number(distance) || 0;
-    const swipeX = Math.min(safeMaxSwipe, Math.max(-safeMaxSwipe, rawDistance));
-    const progress = Math.min(1, Math.abs(swipeX) / safeThreshold);
-
-    return {
-        swipeX,
-        progress,
-        ready: progress >= 1,
-        direction: swipeX < 0 ? 'thought' : swipeX > 0 ? 'delete' : null,
-        actionOpacity: Math.min(1, Math.max(0, (progress - 0.12) / 0.6))
-    };
 }

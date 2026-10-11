@@ -34,9 +34,9 @@ function run() {
         'public/managers/today-drafts/today-drafts-renderer.js',
         ['formatTodayDraftTime', 'renderTodayDrafts', 'renderTodayDraftItem']
     );
-    const { getTodayDraftSwipeState, isTodayDraftPagerEdge, TODAY_DRAFT_PAGER_EDGE, TODAY_DRAFT_PAGER_EDGE_RATIO, TODAY_DRAFT_PAGER_MIN_EDGE } = loadModule(
+    const { isTodayDraftPagerEdge, TODAY_DRAFT_PAGER_EDGE, TODAY_DRAFT_PAGER_EDGE_RATIO, TODAY_DRAFT_PAGER_MIN_EDGE } = loadModule(
         'public/managers/today-drafts/today-drafts-swipe.js',
-        ['getTodayDraftSwipeState', 'isTodayDraftPagerEdge', 'TODAY_DRAFT_PAGER_EDGE', 'TODAY_DRAFT_PAGER_EDGE_RATIO', 'TODAY_DRAFT_PAGER_MIN_EDGE']
+        ['isTodayDraftPagerEdge', 'TODAY_DRAFT_PAGER_EDGE', 'TODAY_DRAFT_PAGER_EDGE_RATIO', 'TODAY_DRAFT_PAGER_MIN_EDGE']
     );
     const { ImportTargetRegistry } = loadModule(
         'public/managers/import-target-registry.js',
@@ -113,24 +113,17 @@ function run() {
     const morning = new Date(2026, 7, 3, 9, 5).getTime();
     assert(formatTodayDraftTime(morning) === '09:05', 'today draft timestamps should use a compact local HH:mm format');
     assert(renderTodayDraftItem({ id: 'draft-time', text: '有时间的草稿', createdAt: morning }).includes('<time'), 'each today draft should render its creation time');
-    const leftSwipe = getTodayDraftSwipeState(-72, 64, 92);
-    assert(leftSwipe.direction === 'thought' && leftSwipe.ready, 'left swipes should prepare a move into Thought');
-    assert(leftSwipe.swipeX === -72, 'left swipes should keep their signed direction for the row transform');
-    const rightSwipe = getTodayDraftSwipeState(72, 64, 92);
-    assert(rightSwipe.direction === 'delete' && rightSwipe.ready, 'right swipes should prepare a local delete');
-    assert(rightSwipe.swipeX === 72, 'right swipes should keep their signed direction for the row transform');
-    const idleSwipe = getTodayDraftSwipeState(0, 64, 92);
-    assert(idleSwipe.direction === null && !idleSwipe.ready && idleSwipe.actionOpacity === 0, 'an untouched row must not expose either swipe action');
-    // 纸边翻页热区与中间行操作区划分：
-    // 行两端各占约 22% 宽度（至少 72px）起笔归翻整页，中间约 56% 留给行操作。
+    // 纸边翻页热区：行两端各占约 22% 宽度（至少 72px）起笔归翻页手势认领，
+    // 中间约 56% 不认领，保住「点正文进编辑」的原生 click。行操作已改长按菜单，
+    // 所以这里只剩「该不该认领翻页」一条判据。
     const rowRect = { left: 100, right: 460, width: 360 };
-    assert(TODAY_DRAFT_PAGER_EDGE === 72, 'the pager edge band should be a single shared constant for both gesture owners');
+    assert(TODAY_DRAFT_PAGER_EDGE === 72, 'the pager edge band should be a single shared constant');
     assert(TODAY_DRAFT_PAGER_EDGE_RATIO === 0.22, 'the edge ratio covers comfortable thumb reach from both screen sides');
     assert(isTodayDraftPagerEdge({ clientX: 110, rect: rowRect }), 'a drag starting on the left edge of a row belongs to the pager');
     assert(isTodayDraftPagerEdge({ clientX: 450, rect: rowRect }), 'a drag starting on the right edge of a row belongs to the pager');
     assert(isTodayDraftPagerEdge({ clientX: 179, rect: rowRect }), 'the edge band includes boundary reach (79px on 360px row)');
     assert(!isTodayDraftPagerEdge({ clientX: 181, rect: rowRect }), 'moving into the central region goes back to the row');
-    assert(!isTodayDraftPagerEdge({ clientX: 280, rect: rowRect }), 'the middle of a row keeps the row swipe actions');
+    assert(!isTodayDraftPagerEdge({ clientX: 280, rect: rowRect }), 'the middle of a row is not claimed, so tapping text still edits it');
     assert(!isTodayDraftPagerEdge({ clientX: 90, rect: rowRect }) && !isTodayDraftPagerEdge({ clientX: 470, rect: rowRect }),
         'a pointer outside the row is not claimed by that row');
     assert(isTodayDraftPagerEdge({ clientX: 120, rect: { left: 100, right: 130 } }),
@@ -140,10 +133,7 @@ function run() {
         'an unmeasurable rect or pointer must not hijack the row');
     const readonlyRendered = renderTodayDrafts([{ id: 'draft-old', text: '昨天的记录', day: '2026-08-02' }], { readonly: true });
     assert(readonlyRendered.includes('is-readonly'), 'historical-day rows should render read-only');
-    assert(readonlyRendered.includes('加入今日') && readonlyRendered.includes('转为 Thought') && !readonlyRendered.includes('松开删除'),
-        'historical-day rows offer copy-to-today and copy-to-thought swipes, never delete');
-    assert(readonlyRendered.indexOf('转为 Thought') < readonlyRendered.indexOf('加入今日'),
-        'historical rows put 转为 Thought on the left-swipe slot and 加入今日 on the right-swipe slot');
+    assert(!readonlyRendered.includes('today-draft-swipe-action'), 'historical-day rows no longer render swipe action layers');
     assert(readonlyRendered.includes('disabled'), 'historical-day completion controls should not be togglable');
     assert(readonlyRendered.includes('data-today-draft-text-display') === false, 'historical-day text should not enter the editing affordance');
 
@@ -173,6 +163,7 @@ function run() {
     const todayStyles = fs.readFileSync(path.join(ROOT, 'public', 'Assets', 'today-drafts.css'), 'utf8');
     const todayManagerSource = fs.readFileSync(path.join(ROOT, 'public', 'managers', 'today-drafts', 'today-drafts-manager.js'), 'utf8');
     const todayRendererSource = fs.readFileSync(path.join(ROOT, 'public', 'managers', 'today-drafts', 'today-drafts-renderer.js'), 'utf8');
+    const todayMenuSource = fs.readFileSync(path.join(ROOT, 'public', 'managers', 'today-drafts', 'today-draft-action-menu.js'), 'utf8');
     assert(appSource.includes('new WorkspaceRouter'), 'top-level view routing should be centrally coordinated');
     const routerSource = fs.readFileSync(path.join(ROOT, 'public', 'managers', 'workspace-router.js'), 'utf8');
     assert(routerSource.includes("editorView.style.display = isEditor ? 'flex' : 'none'"), 'returning to the editor must restore the existing three-column flex layout');
@@ -196,7 +187,8 @@ function run() {
     assert(todayManagerSource.includes("document.createElement('textarea')"), 'row editing should swap the display for a wrapping textarea');
     assert(todayManagerSource.includes('scrollHeight'), 'both composers should auto-grow with their content');
     assert(todayManagerSource.includes('event.isComposing'), 'IME confirm Enter must not submit or split drafts');
-    assert(indexSource.includes('<p class="today-drafts-subtitle">保留最近 3 天，左右滑动翻页。</p>'), 'today drafts should explain the 3-day window and paging under the title');
+    assert(indexSource.includes('<p class="today-drafts-subtitle">保留最近 3 天 · 左右滑动翻页 · 长按草稿操作</p>'), 'today drafts should explain the 3-day window, paging and the long-press menu under the title');
+    assert(todayManagerSource.includes('<p class="today-drafts-subtitle">保留最近 3 天 · 左右滑动翻页 · 长按草稿操作</p>'), 'the flip card mirror must repeat the same subtitle as the live page');
     assert(indexSource.includes('id="today-drafts-pager"') && indexSource.includes('id="today-drafts-flip-static"') && indexSource.includes('id="today-drafts-flip-flap"'),
         'the flip pager should own the whole paper card plus the static and mirrored curl copies');
     const pagerIndex = indexSource.indexOf('id="today-drafts-pager"');
@@ -205,7 +197,7 @@ function run() {
     const writingIndex = indexSource.indexOf('id="today-drafts-writing-area"');
     assert(baseCardIndex > pagerIndex && headerIndex > baseCardIndex && writingIndex > headerIndex,
         'the flip pager must wrap the entire paper card so the title turns together with the page');
-    assert(indexSource.includes('<h2>今日草稿<button type="button" class="today-drafts-eyebrow" id="today-drafts-eyebrow">'),
+    assert(indexSource.includes('<h2>即时草稿<button type="button" class="today-drafts-eyebrow" id="today-drafts-eyebrow">'),
         'the page counter beside the title is the tap-to-turn-page control, so it must be a real button');
     assert(/button\.today-drafts-eyebrow\s*\{[^}]*margin:\s*-10px -8px -10px -1px;/.test(todayStyles),
         'the button grows its touch target with padding paid back by negative margins, leaving the title row pixel-identical');
@@ -215,7 +207,7 @@ function run() {
     assert(/\.today-drafts-eyebrow\s*\{[^}]*vertical-align:\s*-0\.22em/.test(todayStyles), 'the date subscript should hang at the title baseline');
     assert(!indexSource.includes('<footer class="today-drafts-footer">'), 'today drafts should not repeat the lifetime hint at the bottom of the page');
     assert(!indexSource.includes('today-drafts-add'), 'today drafts should submit through Enter without a separate add button');
-    assert(!indexSource.includes('today-drafts-clear-completed'), 'today drafts should not retain a global clear-completed action once rows support swipe actions');
+    assert(!indexSource.includes('today-drafts-clear-completed'), 'today drafts should not retain a global clear-completed action now that rows expose their own action menu');
     assert(indexSource.includes('id="clipboard-import-dialog"'), 'the clipboard import dialog should be present in the app shell');
     assert(indexSource.includes('<div class="clipboard-import-header">'), 'the clipboard dialog heading must be isolated from global app-header styles');
     assert(swSource.includes('/managers/today-drafts/today-drafts-manager.js'), 'the PWA should cache the today drafts manager');
@@ -223,6 +215,7 @@ function run() {
     assert(swSource.includes('/managers/today-drafts/today-drafts-outbox.js'), 'the PWA should cache the today draft sync outbox');
     assert(swSource.includes('/managers/today-drafts/today-drafts-paging.js'), 'the PWA should cache the today draft paging helper');
     assert(swSource.includes('/managers/today-drafts/today-drafts-swipe.js'), 'the PWA should cache the today draft swipe helper');
+    assert(swSource.includes('/managers/today-drafts/today-draft-action-menu.js'), 'the PWA should cache the today draft action menu');
     assert(swSource.includes('/managers/clipboard-import-coordinator.js'), 'the PWA should cache the clipboard import coordinator');
     assert(todayStyles.includes('@media (min-width: 981px)'), 'desktop today drafts must define their own safe inset below the fixed app header');
     assert(todayStyles.includes('height: calc(100dvh - 24px);'), 'desktop today drafts should fill the available application height');
@@ -236,8 +229,9 @@ function run() {
     assert(/\.today-draft-text-display\s*\{[^}]*line-height:\s*44px;/.test(todayStyles), 'each wrapped text line should sit on one 44px ruled band');
     assert(/\.today-draft-text-display\s*\{[^}]*text-indent:\s*36px;[^}]*white-space:\s*pre-wrap;/.test(todayStyles), 'the first line keeps the checkbox indent while wrapped lines start flush at the paper edge');
     assert(/\.today-draft-check\s*\{[^}]*z-index:\s*1;/.test(todayStyles), 'the checkbox must stay clickable above the flush text box');
-    assert(todayStyles.includes('.today-draft-row.is-readonly .today-draft-swipe-action--delete'), 'the historical left-slot swipe is a copy action and must not wear the destructive red');
-    assert(todayManagerSource.includes('copyDraftToThought'), 'historical rows should expose the right-swipe copy-to-thought action');
+    assert(todayStyles.includes('.tdam__bar') && todayStyles.includes('.tdam__btn') && todayStyles.includes('.tdam__tail'), 'the long-press action menu must ship its own glass bar, buttons and pointer tail');
+    assert(!todayStyles.includes('.today-draft-swipe-action'), 'the removed swipe action layer must not linger in the stylesheet');
+    assert(todayManagerSource.includes('copyDraftToThought'), 'historical rows should expose the copy-to-thought action');
     assert(/\.today-drafts-header\s*\{[\s\S]*?margin:\s*0;[\s\S]*?padding:\s*0 0 4px;/.test(todayStyles), 'the title group should connect to the writing paper without the former footer-sized gap');
     assert(todayStyles.includes('repeating-linear-gradient'), 'the empty writing area should retain subtle ruled-paper lines');
     assert(todayManagerSource.includes("this.writingArea?.classList.toggle('is-empty', todayItems.length === 0);"), 'the composer should move between the first and next available line as today items change');
@@ -250,8 +244,8 @@ function run() {
         'a single draft taller than a sheet keeps its tail reachable by scrolling');
     assert(todayManagerSource.includes('this.goToDraft(draft.id)'), 'adding a draft jumps to the page that received it');
     assert(todayManagerSource.includes('page.pageCount > 1'), 'a multi-page day shows which sheet of the day is open');
-    assert((todayManagerSource.match(/isTodayDraftPagerEdge\(/g) || []).length >= 2,
-        'the row gesture and the pager must agree on the paper-edge band through one shared predicate');
+    assert(todayManagerSource.includes('isTodayDraftPagerEdge('),
+        'the pager claims the paper-edge band through the shared predicate so mid-row taps keep native editing');
     assert(!todayManagerSource.includes("closest('[data-today-draft-id], input, textarea"),
         'the pager may no longer hand every row drag to the row owner');
     assert(todayManagerSource.includes('flipToAdjacentPage()') && todayManagerSource.includes("this.eyebrow?.addEventListener('click'"),
@@ -259,9 +253,31 @@ function run() {
     assert(!todayManagerSource.includes('handOffRowSwipeToFlip'),
         'mid-drag handoff is removed: gestures are strictly isolated to prevent animation corruption');
     assert(!todayManagerSource.includes('isTodayDraftFlipHandoff'),
-        'row swipes stay row actions and never morph into page turns mid-flight');
-    assert((todayManagerSource.match(/classList\.remove\('is-swiping', 'is-swipe-ready', 'is-swipe-thought', 'is-swipe-delete'\)/g) || []).length >= 1,
-        'resetting row swipe must wipe the action classes clean');
+        'a held press stays a row action and never morphs into a page turn mid-flight');
+    assert(todayManagerSource.includes('startDraftLongPress') && todayManagerSource.includes('DRAFT_LONG_PRESS_MS'),
+        'row actions open through a long-press timer instead of a competing horizontal swipe');
+    assert(todayManagerSource.includes('cancelDraftLongPress'),
+        'moving or lifting the pointer must cancel the long-press so it never competes with page turning');
+    assert(!todayManagerSource.includes('is-swiping') && !todayManagerSource.includes('is-swipe-ready') && !todayManagerSource.includes('today-draft-swipe-x'),
+        'the removed swipe gesture leaves no action-class or custom-property residue behind');
+    assert(todayManagerSource.includes('openDraftMenu') && todayManagerSource.includes('this.menu.open('),
+        'the manager should delegate row actions to the shared action menu component');
+    assert(todayManagerSource.includes("['copy', 'thought', 'article', 'plan', 'delete']"),
+        'the today menu offers copy, Thought, article, the placeholder plan action and delete');
+    assert(todayManagerSource.includes("['today', 'copy', 'thought', 'article']"),
+        'the historical menu swaps delete for 加入今日');
+    assert(todayManagerSource.includes("'计划功能开发中'"), 'the plan action is a placeholder, mirroring the 反思 placeholder');
+    assert(!todayManagerSource.includes('moveDraftToThought') && !todayManagerSource.includes('moveDraftToArticle'),
+        'converting to Thought/article must copy, never move the draft out of the pad');
+    assert(todayManagerSource.includes('已转为 Thought，草稿保留') && todayManagerSource.includes('已转为文章，草稿保留'),
+        'converting must tell the user the draft was kept');
+    assert(todayManagerSource.includes('this.onMoveToArticle'), 'turning a draft into an article should stay behind an application-level callback');
+    assert(todayManagerSource.includes('contextmenu'),
+        'desktop right-click opens the same action menu as the touch long-press');
+    assert(todayMenuSource.includes('tdam-idea') && todayMenuSource.includes('tdam-note') && todayMenuSource.includes('tdam-copy') && todayMenuSource.includes('tdam-delete') && todayMenuSource.includes('tdam-plan'),
+        'the action menu ships the ported icon sprite for every offered action');
+    assert(!todayRendererSource.includes('today-draft-swipe-action'),
+        'the row renderer no longer emits swipe action layers');
     assert(!todayManagerSource.includes('const pagerBox ='), 'the pager geometry has a single definition shared by gestures');
     assert(todayManagerSource.includes('copyDraftToToday'), 'historical rows should expose the copy-to-today action');
     assert(todayManagerSource.includes('completed: item.completed === true'), 'copying a historical draft into today should preserve its completion state');
@@ -293,7 +309,7 @@ function run() {
     assert(!rendered.includes('data-today-draft-remove'), 'today drafts should not render a per-row delete action');
     assert(!todayRendererSource.includes('data-today-draft-remove'), 'single-draft deletion should remain outside the paper row renderer');
     assert(!todayManagerSource.includes('data-today-draft-remove'), 'the manager should not restore removed row-level delete controls');
-    assert(todayManagerSource.includes('bindDraftSwipeActions'), 'today draft rows should bind their own directional swipe actions');
+    assert(todayManagerSource.includes('this.menu.open('), 'today draft rows should open the shared long-press action menu');
     assert(todayManagerSource.includes('this.onMoveToThought'), 'moving a draft into Thought should stay behind an application-level callback');
     assert(todayManagerSource.includes('this.confirmationManager'), 'today drafts deletion should be guarded by the universal confirmation manager');
     assert(todayManagerSource.includes('this.movingDraftIds'), 'a draft being moved into Thought should not be transferred twice');
@@ -317,9 +333,9 @@ function run() {
     assert(!todayStyles.includes('left: 36px;'), 'the writing surface must not cut through content with a full-height margin line');
     assert(!todayStyles.includes('box-shadow: inset 2px 0'), 'editing a row must not add a competing vertical focus stripe');
     assert(todayStyles.includes('border-radius: 2px;'), 'today draft completion controls should use a square checkbox');
-    assert(todayStyles.includes('touch-action: pan-y;'), 'today draft rows should preserve vertical page scrolling while enabling horizontal swipes');
-    assert(todayStyles.includes('.today-draft-swipe-action--thought'), 'today draft rows should expose a left-swipe Thought affordance');
-    assert(todayStyles.includes('.today-draft-swipe-action--delete'), 'today draft rows should expose a right-swipe delete affordance');
+    assert(todayStyles.includes('touch-action: pan-y;'), 'today draft rows should preserve vertical page scrolling for the long-press gesture');
+    assert(todayStyles.includes('.today-draft-row.is-menu-target'), 'the row under the open action menu should highlight while the menu is open');
+    assert(todayStyles.includes('-webkit-touch-callout: none'), 'long-press must not trigger the native iOS text-selection callout');
     assert(todayStyles.includes('transform: translate(-50%, -65%) rotate(-45deg);'), 'the completion mark should be centered within the square rather than positioned with fixed offsets');
     assert(!todayStyles.includes('.today-draft-text:focus-visible,'), 'row editing should avoid a detached input outline');
     assert(todayManagerSource.includes('hasActiveDraftInput'), 'today drafts manager should detect active draft input to protect editing');

@@ -1,14 +1,15 @@
 /**
- * 今日草稿分页的真机回归：jsdom 量不到换行与纸高，所以「一天超过一张纸」只能在
+ * 即时草稿分页的真机回归：jsdom 量不到换行与纸高，所以「一天超过一张纸」只能在
  * 真实布局里证明。钉住三件事：
  * 1) 纸面上不吞内容——每一页都完整落在书写区内，不需要滚动（旧的 overflow:hidden
  *    把超出纸面的行剪掉，用户完全看不见，这是本次改动要修的用户可见缺陷）；
  * 2) 翻页序列完整且有序：把当天所有页依次翻完，行 id 拼起来正好等于当天的草稿
  *    顺序，不重、不漏、不乱；跨日边界仍接得上；
  * 3) 单条草稿比一张纸还高时，那一页允许纵向滚动兜住尾巴；
- * 4) 手势归属：行中间起笔的短滑归行（删除 / 转 Thought），行两端 32px 内起笔或
- *    横扫过纸宽 45% 的长扫归翻页，页眉「N/M」按钮点一下翻向更新的一页
- *    （末页回到第 1 页，单日一页时禁用）。
+ * 4) 手势归属：行操作已改为长按唤出图标菜单，横向手势只归翻页——行两端约 22%
+ *    宽（至少 72px）的边缘带起笔或纸面空白处起笔翻整页，行中间正文区不认领翻页
+ *    （保住「点正文进编辑」），横拖在那里是惰性的；页眉「N/M」按钮点一下翻向
+ *    更新的一页（末页回到第 1 页，单日一页时禁用）。
  */
 const assert = require('node:assert/strict');
 const path = require('node:path');
@@ -93,7 +94,7 @@ function eyebrowBox(page) {
 }
 
 async function swipe(page, box, direction) {
-    // 抓纸页眉那一横条：正文行已经铺满整张纸，而行的横向滑动仍归「删除 / 转 Thought」。
+    // 抓纸页眉那一横条：正文行铺满整张纸，写在这一条上起笔才稳定落到纸面而非行内。
     const startY = box.y + 34;
     // 页眉的「N/M」是点按入口，不参与拖拽（手势会 setPointerCapture，随后的 click 被
     // 改派到捕获元素上），所以起笔点钉在它两侧外侧：左滑从右来、右滑从左来。
@@ -229,8 +230,8 @@ module.exports = async function testTodayDraftsPaging(browser) {
         assert.ok(afterAdd.lastRowText.includes(NEW_TEXT), `the last row of the opened sheet is the new draft: ${afterAdd.lastRowText}`);
         assert.ok(afterAdd.lastRowOnPaper, 'the sheet that received the new draft keeps it on the paper');
 
-        // 正文行上的横向拖拽归行自己（触摸是删除 / 转 Thought，鼠标落在正文上退化成选中
-        // 文字），翻页只认非行区域（页眉、纸边）的拖拽。放在最后检查：松手会顺带点开该行。
+        // 行内正文上的鼠标横拖不会翻页：中间正文区不认领翻页手势，鼠标拖拽退化成
+        // 选中文字。放在最后检查：松手会顺带点开该行。
         const rowBox = await firstRowBox(page);
         const rowY = rowBox.y + rowBox.height / 2;
         const middleX = rowBox.x + rowBox.width * 0.5;
@@ -242,13 +243,13 @@ module.exports = async function testTodayDraftsPaging(browser) {
         await page.mouse.up();
         assert.equal(duringRowDrag.pageIndex, afterAdd.pageIndex, 'dragging across the text of a row does not turn the sheet');
 
-        // 手势归属的另一半：行内两端各 32px 起笔翻整页，中间留给行操作。
-        // 草稿铺满整页时纸面几乎没有空白，没有这条带子就没有能翻页的落点。
+        // 中间正文区起笔的触摸横拖同样不翻页、也不触发行操作：行操作已改长按菜单，
+        // 中间区域不再是「行滑动」，只是不认领翻页手势，横拖在这里是惰性的。
         const middleDrag = await touchDragOnRow(page, middleX, rowY, -60);
         assert.ok(middleDrag.found && middleDrag.rowId, 'the middle of a row is still a draft row');
-        assert.ok(middleDrag.swiping && middleDrag.swipeX < 0,
-            `a touch drag from the middle of a row belongs to that row (swipeX=${middleDrag.swipeX})`);
-        assert.equal((await readSheet(page)).pageIndex, afterAdd.pageIndex, 'the row-owned middle drag never turns the sheet');
+        assert.ok(!middleDrag.swiping && middleDrag.swipeX === 0, 'the removed swipe leaves no row transform behind');
+        assert.ok(!middleDrag.flipStarted, 'a touch drag from the middle of a row never silently turns the sheet');
+        assert.equal((await readSheet(page)).pageIndex, afterAdd.pageIndex, 'the middle drag leaves the sheet where it was');
 
         // 末页点页码 = 回到第 1 页，正好把视图送回可以试纸边拖拽的位置。
         await tapCounter(page);
@@ -289,8 +290,8 @@ module.exports = async function testTodayDraftsPaging(browser) {
         assert.equal(backToToday.day, 'today', 'history returns to today');
         assert.equal(backToToday.pageIndex, 1, 'history lands on the first sheet it left');
 
-        // 区域划分：从行两端（边缘翻页热区）起笔翻整页，行中间起笔归行自身操作。
-        // 起手定归属，动效绝不交棒串台。
+        // 区域划分：从行两端（边缘翻页热区）起笔翻整页；行中间起笔既不翻页也不触发
+        // 行操作（行操作已改长按菜单），起手定归属，动效绝不交棒串台。
         const sheet1 = await readSheet(page);
         const sweepRow = await firstRowBox(page);
         // 从行右端起笔向左扫：整页翻向下一页
@@ -313,18 +314,16 @@ module.exports = async function testTodayDraftsPaging(browser) {
         assert.deepEqual(afterSweeps.rowIds, sheet1.rowIds,
             'edge page turns moved nothing but the sheet: no draft was deleted or turned into a Thought');
 
-        // 行中间起笔：归行自身操作，绝不会在中途中断变成翻页
+        // 行中间起笔：既不翻页也不删（行操作走长按菜单，横拖在这里是惰性的）
         const middleRow = await firstRowBox(page);
         const middleSwipe = await touchDragOnRow(page,
             middleRow.x + middleRow.width * 0.5, middleRow.y + middleRow.height / 2, middleRow.width * 0.36);
-        assert.ok(middleSwipe.swiping && middleSwipe.rowId, 'a swipe from the middle is strictly owned by that row');
-        assert.ok(!middleSwipe.flipStarted, 'a middle swipe never leaks into page flip');
-        const confirmBtn = await page.waitForSelector('#confirmation-confirm', { timeout: 1500 }).catch(() => null);
-        if (confirmBtn) await confirmBtn.click();
+        assert.ok(!middleSwipe.swiping && middleSwipe.rowId, 'a middle drag is no longer owned by a row swipe');
+        assert.ok(!middleSwipe.flipStarted, 'a middle drag never leaks into page flip');
         await page.waitForTimeout(400);
-        const afterDelete = await readSheet(page);
-        assert.ok(!afterDelete.rowIds.includes(middleSwipe.rowId), 'the middle swipe still deletes exactly that draft');
-        assert.equal(afterDelete.pageIndex, sheet1.pageIndex, 'the middle swipe never turned the sheet');
+        const afterMiddle = await readSheet(page);
+        assert.deepEqual(afterMiddle.rowIds, afterSweeps.rowIds, 'the middle drag deleted nothing');
+        assert.equal(afterMiddle.pageIndex, afterSweeps.pageIndex, 'the middle drag never turned the sheet');
 
         assert.deepEqual(errors, []);
         console.log('Today drafts paging browser regression passed');

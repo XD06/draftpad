@@ -13,6 +13,7 @@ export const CONFIGURABLE_FLOATING_ACTIONS = [
     'clipboard-import-trigger',
     'toggle-reflections',
     'toggle-thoughts',
+    'toggle-plan',
 ];
 
 /**

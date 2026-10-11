@@ -34,6 +34,7 @@ const CORE_ASSETS = [
   "/managers/editor-performance.js",
   "/managers/heading-index.js",
   "/managers/thoughts.js",
+  "/managers/today-drafts/today-draft-action-menu.js",
   "/managers/today-drafts/today-drafts-manager.js",
   "/managers/today-drafts/today-drafts-api-client.js",
   "/managers/today-drafts/today-drafts-outbox.js",

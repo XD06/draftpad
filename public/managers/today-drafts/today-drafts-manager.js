@@ -1,14 +1,19 @@
 import { createTodayDraft, dayWindowKeys, localDayKey, TodayDraftsStore } from './today-drafts-store.js';
 import { escapeTodayDraftHtml, renderTodayDrafts } from './today-drafts-renderer.js';
-import { getTodayDraftSwipeState, isTodayDraftPagerEdge } from './today-drafts-swipe.js';
+import { isTodayDraftPagerEdge } from './today-drafts-swipe.js';
 import { TODAY_DRAFT_LINE_UNIT, findTodayDraftPageByRow, flattenTodayDraftPages, paginateTodayDraftRows } from './today-drafts-paging.js';
 import TodayDraftsApiClient from './today-drafts-api-client.js';
 import TodayDraftsOutbox from './today-drafts-outbox.js';
+import { TodayDraftActionMenu } from './today-draft-action-menu.js';
 
 const DAY_LABELS = ['2d ago', 'yest', 'today'];
 // 行程达纸宽 25% 判落页（older 折痕左缘→右缘、newer 反向）
 const FLIP_COMMIT_RATIO = 0.25;
 const FLIP_RELEASE_MS = 340;
+// 长按唤出操作菜单：按住不动 DRAFT_LONG_PRESS_MS 后开菜单；任一方向移动超过
+// DRAFT_LONG_PRESS_TOLERANCE 像素即取消，把这次按压让回翻页 / 纵向滚动。
+const DRAFT_LONG_PRESS_MS = 480;
+const DRAFT_LONG_PRESS_TOLERANCE = 10;
 // 卷起窄条的最大宽度（占纸宽比例）：起手与落页时收拢为 0，中段最宽
 const FLIP_CURL_RATIO = 0.22;
 // 折痕两侧羽化落影的宽度（占纸宽比例，上限 56px）
@@ -32,6 +37,7 @@ export class TodayDraftsManager {
         apiClient = new TodayDraftsApiClient(),
         outbox = new TodayDraftsOutbox(),
         onMoveToThought = async () => false,
+        onMoveToArticle = async () => false,
         confirmationManager = null,
         toaster = null,
         syncRetryBaseMs = 3000,
@@ -41,6 +47,7 @@ export class TodayDraftsManager {
         this.apiClient = apiClient;
         this.outbox = outbox;
         this.onMoveToThought = onMoveToThought;
+        this.onMoveToArticle = onMoveToArticle;
         this.confirmationManager = confirmationManager;
         this.toaster = toaster;
         this.view = document.getElementById('today-drafts-view');
@@ -58,7 +65,7 @@ export class TodayDraftsManager {
         this.flipCrease = document.getElementById('today-drafts-flip-crease');
         this.eyebrow = document.getElementById('today-drafts-eyebrow');
         this.items = this.store.load().items;
-        // 翻页的当前视图日；历史日只读（右滑可重新加入今日），只有今天可以编辑。
+        // 翻页的当前视图日；历史日只读（长按菜单里的「加入今日」可复制回今天），只有今天可以编辑。
         this.viewDay = localDayKey();
         // 一天的内容超过一张纸时按页纵向切开，viewPageIndex 是当天内的页码（0 起）。
         // pageList / pagesByDay 每次 render 都在真实布局里量出来。
@@ -74,6 +81,11 @@ export class TodayDraftsManager {
         this.flipFrameRaf = null;
         this.pendingFlipFrame = null;
         this.movingDraftIds = new Set();
+        // 长按行唤出的操作菜单（横向图标条），portaled 到 body，靠行的 rect 定位。
+        this.menu = new TodayDraftActionMenu();
+        this.menuRow = null;
+        // 进行中的长按候选：{ row, id, pointerId, startX, startY, timer }。
+        this.draftPress = null;
         this.isActive = false;
         this.dayTimer = null;
         this.syncTimer = null;
@@ -86,9 +98,13 @@ export class TodayDraftsManager {
         this.isComposingDraft = false;
         this.isRendering = false;
         this.pendingRender = false;
-        this.touchRevealRow = null;
-        this.touchRevealTimer = null;
         this.copyFeedbackTimer = null;
+        // 长按成立后抑制紧随其后的 click（桌面鼠标抬起仍会补一个原生 click），
+        // 避免顺势把该行切成行内编辑。由捕获阶段的 click 监听消费，另留安全兜底时限。
+        this.suppressDraftClick = false;
+        this.suppressDraftClickTimer = null;
+        // 菜单锚定的草稿 id：整页重铺后按它把浮层重新锚到同一行上。
+        this.menuAnchorId = null;
         this.flipFrameBudget = 0;
         this.flipSlowFrames = 0;
         this.bindEvents();
@@ -98,6 +114,8 @@ export class TodayDraftsManager {
         // 表现为「页面卡死」。可见性丢失与窗口失焦时无条件清场，代价为零——
         // 正常路径下这些时刻不会有进行中的手势。
         const abortFlipSession = () => {
+            this.cancelDraftLongPress();
+            this.menu.close();
             if (!this.pagerInteraction && !this.flipAnim && !this.flipFrameRaf) return;
             this.pagerInteraction = null;
             this.pendingRender = false;
@@ -110,6 +128,10 @@ export class TodayDraftsManager {
             if (document.hidden) abortFlipSession();
         });
         window.addEventListener('blur', abortFlipSession);
+        // 长按候选的兜底取消：指针在任何地方抬起或被系统取消都要收掉计时器，
+        // 否则一次中途离开纸面的按压会在纸外凭空弹出菜单。
+        document.addEventListener('pointerup', () => this.cancelDraftLongPress(), true);
+        document.addEventListener('pointercancel', () => this.cancelDraftLongPress(), true);
         // On (re)connect, flush anything queued while offline AND pull the
         // retention window from the server: updates pushed by other devices
         // while this client was disconnected never arrived, so without a
@@ -180,28 +202,15 @@ export class TodayDraftsManager {
             event.stopPropagation();
             void this.copyDraftText(item.text, row);
         });
-        // 触摸设备没有 hover：按住草稿行时短暂亮出复制按钮，抬手后保留片刻再隐去，
-        // 隐藏态不参与命中，避免摸黑误触复制。
-        this.list?.addEventListener('pointerdown', event => {
-            if (event.pointerType !== 'touch') return;
+        // 桌面端右键（含键盘 ContextMenu 键 / Shift+F10）唤出与长按同一套操作菜单：
+        // 长按是触摸端入口、右键是桌面端入口，两条路径都落到 openDraftMenu。
+        this.list?.addEventListener('contextmenu', event => {
+            if (event.target.closest('input, textarea, a, [data-today-draft-copy], [data-today-draft-check]')) return;
             const row = event.target.closest('[data-today-draft-id]');
             if (!row) return;
-            if (this.touchRevealRow && this.touchRevealRow !== row) this.touchRevealRow.classList.remove('is-copy-reveal');
-            clearTimeout(this.touchRevealTimer);
-            this.touchRevealRow = row;
-            row.classList.add('is-copy-reveal');
+            event.preventDefault();
+            this.openDraftMenu({ row, id: row.dataset.todayDraftId });
         });
-        const hideTouchReveal = () => {
-            const row = this.touchRevealRow;
-            if (!row) return;
-            clearTimeout(this.touchRevealTimer);
-            this.touchRevealTimer = setTimeout(() => {
-                row.classList.remove('is-copy-reveal');
-                if (this.touchRevealRow === row) this.touchRevealRow = null;
-            }, 700);
-        };
-        this.list?.addEventListener('pointerup', hideTouchReveal);
-        this.list?.addEventListener('pointercancel', hideTouchReveal);
         this.list?.addEventListener('change', event => {
             const row = event.target.closest('[data-today-draft-id]');
             if (!row || !event.target.matches('[data-today-draft-complete]')) return;
@@ -262,172 +271,10 @@ export class TodayDraftsManager {
                 this.render({ force: true });
             }, 0);
         });
-        this.bindDraftSwipeActions();
         this.bindPagerFlipActions();
     }
 
-    bindDraftSwipeActions() {
-        let interaction = null;
-        let suppressNextClick = false;
-
-        const releasePointer = (event, row = interaction?.row) => {
-            const pointerId = event?.pointerId ?? interaction?.pointerId;
-            if (!row || pointerId === undefined) return;
-            try {
-                if (!row.hasPointerCapture || row.hasPointerCapture(pointerId)) {
-                    row.releasePointerCapture?.(pointerId);
-                }
-            } catch {
-                // A cancelled touch can release capture before its cleanup event.
-            }
-        };
-
-        const resetSwipe = event => {
-            const row = interaction?.row;
-            releasePointer(event, row);
-            row?.classList.remove('is-swiping', 'is-swipe-ready', 'is-swipe-thought', 'is-swipe-delete');
-            row?.style.removeProperty('--today-draft-swipe-x');
-            row?.style.removeProperty('--today-draft-swipe-opacity');
-            interaction = null;
-        };
-
-        this.list?.addEventListener('pointerdown', event => {
-            if (!event.isPrimary || (event.pointerType === 'mouse' && event.button !== 0) || interaction) return;
-            const row = event.target.closest('[data-today-draft-id]');
-            if (!row || event.target.closest('[data-today-draft-complete], .today-draft-check, [data-today-draft-copy]')) return;
-            if (event.target.closest('[data-today-draft-link]')) return;
-            const textInput = event.target.closest('[data-today-draft-text]');
-            if (textInput && event.pointerType === 'mouse') return;
-            if (event.pointerType === 'mouse' && event.target.closest('[data-today-draft-text-display]')) return;
-            // 纸边那一条留给翻整页（见 today-drafts-swipe.js 的 TODAY_DRAFT_PAGER_EDGE）：
-            // 这里不认领，pointerdown 会继续冒泡到 pager 的翻页手势。
-            if (isTodayDraftPagerEdge({ clientX: event.clientX, rect: row.getBoundingClientRect() })) return;
-
-            interaction = {
-                row,
-                id: row.dataset.todayDraftId,
-                pointerId: event.pointerId,
-                startX: event.clientX,
-                startY: event.clientY,
-                deltaX: 0,
-                isDragging: false,
-                threshold: Math.max(64, row.offsetWidth * 0.28),
-                maxSwipe: Math.max(92, row.offsetWidth * 0.38)
-            };
-            try {
-                row.setPointerCapture?.(event.pointerId);
-            } catch {
-                // Pointer capture is an enhancement; touch-action still protects vertical scrolling.
-            }
-        });
-
-        this.list?.addEventListener('pointermove', event => {
-            if (!interaction || event.pointerId !== interaction.pointerId) return;
-            const { row, startX, startY } = interaction;
-            interaction.deltaX = event.clientX - startX;
-            const deltaY = Math.abs(event.clientY - startY);
-            if (!interaction.isDragging && Math.abs(interaction.deltaX) > 14 && Math.abs(interaction.deltaX) > deltaY * 1.3) {
-                interaction.isDragging = true;
-                if (document.activeElement?.matches?.('[data-today-draft-text]')) document.activeElement.blur();
-                row.classList.add('is-swiping');
-            }
-            if (!interaction.isDragging) return;
-
-            event.preventDefault();
-            const state = getTodayDraftSwipeState(interaction.deltaX, interaction.threshold, interaction.maxSwipe);
-            row.style.setProperty('--today-draft-swipe-x', `${state.swipeX}px`);
-            row.style.setProperty('--today-draft-swipe-opacity', String(state.actionOpacity));
-            row.classList.toggle('is-swipe-ready', state.ready);
-            row.classList.toggle('is-swipe-thought', state.direction === 'thought');
-            row.classList.toggle('is-swipe-delete', state.direction === 'delete');
-        });
-
-        const finishSwipe = async event => {
-            if (!interaction || event.pointerId !== interaction.pointerId) return;
-            const current = interaction;
-            const historyView = this.viewDay !== localDayKey();
-            const state = getTodayDraftSwipeState(current.deltaX, current.threshold, current.maxSwipe);
-            const action = current.isDragging && state.ready ? state.direction : null;
-            if (current.isDragging) {
-                suppressNextClick = true;
-                setTimeout(() => {
-                    suppressNextClick = false;
-                }, 0);
-            }
-            releasePointer(event, current.row);
-
-            if (!action) {
-                resetSwipe();
-                return;
-            }
-
-            interaction = null;
-            current.row.classList.remove('is-swiping');
-            current.row.classList.add('is-swipe-ready', action === 'thought' ? 'is-swipe-thought' : 'is-swipe-delete');
-            if (historyView) {
-                // 历史页两个方向都是复制，原记录留在历史日：
-                // 右滑 = 重新加入今日（保留完成状态）；左滑 = 转为 Thought。
-                if (action === 'thought') {
-                    await this.copyDraftToThought(current.id);
-                } else {
-                    this.copyDraftToToday(current.id);
-                }
-                current.row.classList.remove('is-swipe-ready', 'is-swipe-thought', 'is-swipe-delete');
-                current.row.style.removeProperty('--today-draft-swipe-x');
-                current.row.style.removeProperty('--today-draft-swipe-opacity');
-                return;
-            }
-            if (action === 'delete') {
-                const confirmed = this.confirmationManager
-                    ? await this.confirmationManager.show({
-                        title: '确认删除',
-                        message: '确定要删除这条草稿吗？此操作无法撤销。',
-                        confirmText: '确定删除',
-                        confirmType: 'danger'
-                    })
-                    : true;
-                if (!confirmed) {
-                    current.row.classList.remove('is-swipe-ready', 'is-swipe-delete');
-                    current.row.style.removeProperty('--today-draft-swipe-x');
-                    current.row.style.removeProperty('--today-draft-swipe-opacity');
-                    return;
-                }
-                current.row.classList.add('is-swipe-departing');
-                await new Promise(resolve => setTimeout(resolve, 160));
-                this.remove(current.id);
-                return;
-            }
-
-            const item = this.items.find(candidate => candidate.id === current.id);
-            if (!item || this.movingDraftIds.has(current.id)) return;
-            this.movingDraftIds.add(current.id);
-            try {
-                const moved = await this.onMoveToThought({ ...item });
-                if (moved) {
-                    this.remove(current.id);
-                    return;
-                }
-            } catch (error) {
-                console.warn('Failed to move today draft into Thought:', error);
-            } finally {
-                this.movingDraftIds.delete(current.id);
-            }
-            current.row.classList.remove('is-swipe-ready', 'is-swipe-thought');
-            current.row.style.removeProperty('--today-draft-swipe-x');
-            current.row.style.removeProperty('--today-draft-swipe-opacity');
-        };
-
-        this.list?.addEventListener('pointerup', finishSwipe);
-        this.list?.addEventListener('pointercancel', resetSwipe);
-        this.list?.addEventListener('click', event => {
-            if (!suppressNextClick) return;
-            suppressNextClick = false;
-            event.preventDefault();
-            event.stopPropagation();
-        }, true);
-    }
-
-    pagerBox() {
+pagerBox() {
         const rect = this.pager?.getBoundingClientRect();
         return {
             left: rect?.left || 0,
@@ -463,10 +310,12 @@ export class TodayDraftsManager {
             // 复选框的视觉方块是 label 里的 span，不在这份名单里，但它落在纸边翻页
             // 热区内——同样不认领，否则普通点按也会被捕获改派，勾选永远点不上。
             if (event.target.closest('input, textarea, button, a, .today-draft-check, [contenteditable]')) return;
-            // 行上的横向拖动起手归行操作；从草稿两侧边缘区域起笔才直接翻整页。
-            // 中间区域（约 56% 正文区）留给草稿行操作（删除 / 转 Thought），两侧区域（各 22% 或至少 72px）直接翻页。
-            // 起手定归属，手势中途绝不交棒变异，避免动效串台。
+            // 行操作已从横滑改为长按（见 startDraftLongPress）：按住不动唤出图标菜单，
+            // 横向拖动一概归翻页，两者不再争抢同一个手势。
             const rowUnderPointer = event.target.closest('[data-today-draft-id]');
+            if (rowUnderPointer) this.startDraftLongPress(event, rowUnderPointer);
+            // 从草稿两侧边缘区域起笔才认领翻页；中间正文区不认领，保住原生点击
+            // （点正文进编辑）——长按候选不依赖认领，上面已经起好了计时器。
             if (rowUnderPointer && !isTodayDraftPagerEdge({
                 clientX: event.clientX,
                 rect: rowUnderPointer.getBoundingClientRect()
@@ -497,6 +346,12 @@ export class TodayDraftsManager {
         });
 
         this.view?.addEventListener('pointermove', event => {
+            // 长按候选：任一方向移动超过容差就取消，把这次按压让回翻页 / 纵向滚动。
+            if (this.draftPress && event.pointerId === this.draftPress.pointerId
+                && (Math.abs(event.clientX - this.draftPress.startX) > DRAFT_LONG_PRESS_TOLERANCE
+                    || Math.abs(event.clientY - this.draftPress.startY) > DRAFT_LONG_PRESS_TOLERANCE)) {
+                this.cancelDraftLongPress();
+            }
             const current = this.pagerInteraction;
             if (!current || event.pointerId !== current.pointerId) return;
             current.deltaX = event.clientX - current.startX;
@@ -528,6 +383,7 @@ export class TodayDraftsManager {
         });
 
         const finishFlipGesture = event => {
+            if (this.draftPress && event.pointerId === this.draftPress.pointerId) this.cancelDraftLongPress();
             const current = this.pagerInteraction;
             if (!current || event.pointerId !== current.pointerId) return;
             this.pagerInteraction = null;
@@ -558,6 +414,7 @@ export class TodayDraftsManager {
 
         this.view?.addEventListener('pointerup', finishFlipGesture);
         this.view?.addEventListener('pointercancel', event => {
+            if (this.draftPress && event.pointerId === this.draftPress.pointerId) this.cancelDraftLongPress();
             const current = this.pagerInteraction;
             if (!current || event.pointerId !== current.pointerId) return;
             this.pagerInteraction = null;
@@ -570,11 +427,172 @@ export class TodayDraftsManager {
             }
         });
         this.view?.addEventListener('click', event => {
-            if (!suppressNextClick) return;
+            if (!suppressNextClick && !this.suppressDraftClick) return;
             suppressNextClick = false;
+            this.clearDraftClickSuppression();
             event.preventDefault();
             event.stopPropagation();
         }, true);
+    }
+
+    // 抑制/解除长按后补发的 click。**不能**用 setTimeout(0) 立刻解除：桌面鼠标
+    // 的 click 在 pointerup 之后的独立任务里才到，0ms 定时器会赶在它前面把标志清掉，
+    // 于是长按抬手的 click 照样把该行切成编辑态（真机复现）。
+    suppressTrailingDraftClick() {
+        this.suppressDraftClick = true;
+        clearTimeout(this.suppressDraftClickTimer);
+        // 兜底：若那个 click 一直没来（例如指针被系统取消），别把用户之后的正常点击也吞掉。
+        this.suppressDraftClickTimer = setTimeout(() => this.clearDraftClickSuppression(), 800);
+    }
+
+    clearDraftClickSuppression() {
+        this.suppressDraftClick = false;
+        clearTimeout(this.suppressDraftClickTimer);
+        this.suppressDraftClickTimer = null;
+    }
+
+    // ---- 长按行的操作菜单 --------------------------------------------------
+
+    // 长按候选：按下即起计时器。是否认领指针不影响它（未认领时事件照常冒泡到
+    // view），但被认领的按压后续事件会改派到 view——所以取消动作同时挂在
+    // view 的 move/up/cancel 与 document 的兜底监听上。
+    startDraftLongPress(event, row) {
+        this.cancelDraftLongPress();
+        const press = {
+            row,
+            id: row.dataset.todayDraftId,
+            pointerId: event.pointerId,
+            startX: event.clientX,
+            startY: event.clientY,
+            timer: null
+        };
+        press.timer = setTimeout(() => {
+            if (this.draftPress !== press) return;
+            this.draftPress = null;
+            this.openDraftMenu(press);
+        }, DRAFT_LONG_PRESS_MS);
+        this.draftPress = press;
+    }
+
+    cancelDraftLongPress() {
+        if (!this.draftPress) return;
+        clearTimeout(this.draftPress.timer);
+        this.draftPress = null;
+    }
+
+    // 长按成立：收掉这次按压的尾巴（抑制随后的 click，别顺势进编辑），把还没成形的
+    // 翻页手势让给菜单，然后浮出图标条。动作集合按当前日是「今天」还是历史只读分叉。
+    openDraftMenu(press) {
+        const item = this.items.find(candidate => candidate.id === press.id);
+        if (!item) return;
+        if (this.pagerInteraction && !this.pagerInteraction.isDragging) {
+            const pointerId = this.pagerInteraction.pointerId;
+            this.pagerInteraction = null;
+            try {
+                if (this.view?.hasPointerCapture?.(pointerId)) this.view.releasePointerCapture(pointerId);
+            } catch {
+                // A cancelled pointer can release capture before its cleanup event.
+            }
+        }
+        navigator.vibrate?.(8);
+        const isHistory = (item.day || localDayKey()) !== localDayKey();
+        this.menuAnchorId = press.id;
+        // 先开菜单再挂高亮/抑制：open() 内部会先 close() 上一个菜单，而 close 会
+        // 触发 onClose 清场——若反过来，刚挂上的高亮与 click 抑制都会被自己清掉。
+        this.menu.open({
+            anchorEl: press.row,
+            actionIds: isHistory
+                ? ['today', 'copy', 'thought', 'article']
+                : ['copy', 'thought', 'article', 'plan', 'delete'],
+            onSelect: actionId => this.handleDraftMenuAction(actionId, item, press.row),
+            onClose: () => {
+                this.menuRow?.classList.remove('is-menu-target');
+                this.menuRow = null;
+                this.menuAnchorId = null;
+                this.clearDraftClickSuppression();
+            }
+        });
+        this.suppressTrailingDraftClick();
+        this.menuRow = press.row;
+        press.row.classList.add('is-menu-target');
+    }
+
+    handleDraftMenuAction(action, item, row) {
+        switch (action) {
+            case 'copy':
+                return this.copyDraftText(item.text, row);
+            case 'today':
+                return this.copyDraftToToday(item.id);
+            // 转为 Thought / 文章都是**复制**语义：内容进 Thought / 新建文章，
+            // 但即时草稿本里的原记录必须保留（用户明确要求，今天页与历史页一致）。
+            case 'thought':
+                return this.copyDraftToThought(item.id);
+            case 'article':
+                return this.copyDraftToArticle(item.id);
+            case 'plan':
+                // 占位：计划功能尚未实现，提示语与全局「反思」占位一致。
+                this.toaster?.show('计划功能开发中', 'info', false, 2200);
+                return undefined;
+            case 'delete':
+                return this.confirmRemoveDraft(item.id);
+            default:
+                return undefined;
+        }
+    }
+
+    // 「转为 Thought」只复制不删除：原记录留在草稿本里（今天页与历史页同语义）。
+    async copyDraftToThought(id) {
+        const item = this.items.find(candidate => candidate.id === id);
+        if (!item || this.movingDraftIds.has(id)) return false;
+        this.movingDraftIds.add(id);
+        try {
+            const moved = await this.onMoveToThought({ ...item });
+            if (moved) {
+                this.flashCopiedRow(id);
+                this.toaster?.show('已转为 Thought，草稿保留', 'success', false, 2400);
+            }
+            return moved;
+        } catch (error) {
+            console.warn('Failed to copy draft into Thought:', error);
+            return false;
+        } finally {
+            this.movingDraftIds.delete(id);
+        }
+    }
+
+    // 「转为文章」同样只复制不删除：新建的 Notepad 拿到正文，草稿本里的记录保留。
+    async copyDraftToArticle(id) {
+        const item = this.items.find(candidate => candidate.id === id);
+        if (!item || this.movingDraftIds.has(id)) return false;
+        this.movingDraftIds.add(id);
+        try {
+            const moved = await this.onMoveToArticle({ ...item });
+            if (moved) {
+                this.flashCopiedRow(id);
+                this.toaster?.show('已转为文章，草稿保留', 'success', false, 2400);
+            }
+            return moved;
+        } catch (error) {
+            console.warn('Failed to copy draft into an article:', error);
+            return false;
+        } finally {
+            this.movingDraftIds.delete(id);
+        }
+    }
+
+    // 删除前二次确认：复用通用 ConfirmationManager，取消则原地不动。
+    async confirmRemoveDraft(id) {
+        const confirmed = this.confirmationManager
+            ? await this.confirmationManager.show({
+                title: '确认删除',
+                message: '确定要删除这条草稿吗？此操作无法撤销。',
+                confirmText: '确定删除',
+                confirmType: 'danger'
+            })
+            : true;
+        if (!confirmed) return false;
+        this.remove(id);
+        return true;
     }
 
     // ---- 分页：一张纸 = 书写区高度 ÷ 44px 纸纹行 ---------------------------
@@ -778,8 +796,8 @@ export class TodayDraftsManager {
             : '';
         return `<div class="today-drafts-header">
                 <div>
-                    <h2>今日草稿<span class="today-drafts-eyebrow">${escapeTodayDraftHtml(this.eyebrowText(page))}</span></h2>
-                    <p class="today-drafts-subtitle">保留最近 3 天，左右滑动翻页。</p>
+                    <h2>即时草稿<span class="today-drafts-eyebrow">${escapeTodayDraftHtml(this.eyebrowText(page))}</span></h2>
+                    <p class="today-drafts-subtitle">保留最近 3 天 · 左右滑动翻页 · 长按草稿操作</p>
                 </div>
                 <div class="today-drafts-status"><span>${escapeTodayDraftHtml(countText)}</span></div>
             </div>
@@ -1005,6 +1023,8 @@ export class TodayDraftsManager {
         this.toggleButton?.classList.remove('active');
         this.hideFlipLayers();
         this.pagerInteraction = null;
+        this.cancelDraftLongPress();
+        this.menu.close();
         if (this.pager) {
             this.pager.style.transform = '';
             this.pager.style.transition = '';
@@ -1120,7 +1140,7 @@ export class TodayDraftsManager {
         return this.add(text);
     }
 
-    // 历史页右滑：把同一行文本复制成一条今天的草稿，原记录留在历史日。
+    // 历史页菜单「加入今日」：把同一行文本复制成一条今天的草稿，原记录留在历史日。
     // 完成状态原样保留；短暂高亮源行 + toast 作为落点反馈（不跳页，不打断浏览）。
     copyDraftToToday(id) {
         const item = this.items.find(candidate => candidate.id === id);
@@ -1128,26 +1148,8 @@ export class TodayDraftsManager {
         const added = this.add(item.text, { keepView: true, completed: item.completed === true });
         if (!added) return null;
         this.flashCopiedRow(id);
-        this.toaster?.show(item.completed ? '已重新加入今日草稿（已完成）' : '已重新加入今日草稿', 'success', false, 2200);
+        this.toaster?.show(item.completed ? '已重新加入即时草稿（已完成）' : '已重新加入即时草稿', 'success', false, 2200);
         return added;
-    }
-
-    // 历史页左滑：把文本转成一条 Thought（复用今天页的 onMoveToThought 回调），
-    // 与「重新加入今日」对称——只复制不删除，历史行保留并闪一下确认。
-    async copyDraftToThought(id) {
-        const item = this.items.find(candidate => candidate.id === id);
-        if (!item || this.movingDraftIds.has(id)) return false;
-        this.movingDraftIds.add(id);
-        try {
-            const moved = await this.onMoveToThought({ ...item });
-            if (moved) this.flashCopiedRow(id);
-            return moved;
-        } catch (error) {
-            console.warn('Failed to copy historical draft into Thought:', error);
-            return false;
-        } finally {
-            this.movingDraftIds.delete(id);
-        }
     }
 
     flashCopiedRow(id) {
@@ -1486,6 +1488,20 @@ export class TodayDraftsManager {
             this.writingArea?.classList.toggle('is-empty', todayItems.length === 0);
             this.setHeaderStats(this.viewDay);
             this.syncPageOverflow();
+            // 菜单锚在行上，整页重铺会替换掉那一行：按 id 把浮层重新锚到同一行上，
+            // 而不是收掉菜单——收掉会把正在被点击的按钮一起清掉，click 直接丢失
+            // （桌面端「点菜单没反应」的真机根因）。行真的不在了才关闭。
+            if (this.menu.isOpen && this.menuAnchorId) {
+                const anchor = this.list?.querySelector(`[data-today-draft-id="${CSS.escape(this.menuAnchorId)}"]`);
+                if (anchor) {
+                    this.menuRow?.classList.remove('is-menu-target');
+                    this.menuRow = anchor;
+                    anchor.classList.add('is-menu-target');
+                    this.menu.reanchor(anchor);
+                } else {
+                    this.menu.close();
+                }
+            }
         } finally {
             this.isRendering = false;
         }

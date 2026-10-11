@@ -44,25 +44,8 @@ export function renderTodayDraftItem(item, { readonly = false } = {}) {
     const timestamp = time
         ? `<time class="today-draft-time" datetime="${dateTime}" title="创建于 ${time}">${time}</time>`
         : '<span class="today-draft-time" aria-hidden="true"></span>';
-    // 历史日只读：不可删除、不可编辑；右滑「重新加入今日」（复制进今天，
-    // 保留完成状态），左滑「转为 Thought」（动作位沿用删除侧的位置，但语义非破坏）。
-    const swipeActions = readonly ? `
-        <span class="today-draft-swipe-action today-draft-swipe-action--thought" aria-hidden="true">
-            <svg viewBox="0 0 24 24" width="18" height="18"><path d="M5 12h14m-6-6 6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg>
-            <span>转为 Thought</span>
-        </span>
-        <span class="today-draft-swipe-action today-draft-swipe-action--delete" aria-hidden="true">
-            <svg viewBox="0 0 24 24" width="18" height="18"><path d="M12 5v14m-7-7h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path></svg>
-            <span>加入今日</span>
-        </span>` : `
-        <span class="today-draft-swipe-action today-draft-swipe-action--thought" aria-hidden="true">
-            <svg viewBox="0 0 24 24" width="18" height="18"><path d="M12 5v14m-7-7h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path></svg>
-            <span>转为 Thought</span>
-        </span>
-        <span class="today-draft-swipe-action today-draft-swipe-action--delete" aria-hidden="true">
-            <svg viewBox="0 0 24 24" width="18" height="18"><path d="M4 7h16M10 11v6m4-6v6M9 7l1-2h4l1 2m-7 0 1 13h6l1-13" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"></path></svg>
-            <span>松开删除</span>
-        </span>`;
+    // 历史日只读：不可删除、不可编辑；操作（复制 / 加入今日 / 转为 Thought /
+    // 转为文章）全部走长按唤出的操作菜单，行内不再渲染滑动动作层。
     const check = readonly
         ? `<span class="today-draft-check is-readonly" aria-hidden="true">
             <input type="checkbox" disabled${completed}>
@@ -76,10 +59,11 @@ export function renderTodayDraftItem(item, { readonly = false } = {}) {
         ? ' aria-hidden="false"'
         : ' data-today-draft-text-display tabindex="0" aria-label="编辑草稿内容"';
     // 行尾复制按钮：inline 跟在正文末尾，平时隐藏（见 today-drafts.css），
-    // 桌面 hover / 键盘焦点 / 触摸按住行时亮出。历史只读行同样保留——复制非破坏。
+    // 桌面 hover / 键盘焦点时亮出。历史只读行同样保留——复制非破坏。
+    // 触摸端不亮它：长按归操作菜单，菜单里自带复制。
     // 预置两份图形：复制成功后由 manager 切 is-copy-success，勾形短暂替代表形。
     const copyButton = `<button type="button" class="today-draft-copy" data-today-draft-copy aria-label="复制草稿内容" title="复制草稿内容"><svg class="today-draft-copy-glyph" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" focusable="false"><rect x="9" y="9" width="12.5" height="12.5" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.8"></rect><path d="M14.5 5V4.5A2.5 2.5 0 0 0 12 2H4.5A2.5 2.5 0 0 0 2 4.5V12a2.5 2.5 0 0 0 2.5 2.5H5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"></path></svg><svg class="today-draft-copy-glyph today-draft-copy-check" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" focusable="false"><path d="M20 6 9 17l-5-5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"></path></svg></button>`;
-    return `<li class="today-draft-row${completedClass}${readonly ? ' is-readonly' : ''}" data-today-draft-id="${id}">${swipeActions}
+    return `<li class="today-draft-row${completedClass}${readonly ? ' is-readonly' : ''}" data-today-draft-id="${id}">
         ${check}
         <span class="today-draft-text today-draft-text-display"${textAttrs}>${text}${copyButton}</span>
         ${timestamp}

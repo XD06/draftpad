@@ -40,7 +40,7 @@ async function run() {
         jump: result => jumps.thought.push([result.id])
     });
     registerResultType('today_draft', {
-        label: '今日草稿',
+        label: '即时草稿',
         badgeClass: 'badge-today-draft',
         jump: result => jumps.todayDraft.push([result.id])
     });
@@ -139,7 +139,7 @@ async function run() {
     assert(fetchCalls[0].includes(encodeURIComponent('部署 笔记')), 'query should be URL-encoded');
 
     const headers = [...results.querySelectorAll('.command-group-header')].map(el => el.textContent);
-    assert.deepStrictEqual(headers, ['当前文章 · 3 处匹配', '文章', 'Thought', '今日草稿'], 'current article pins to the top, then domain groups in server order');
+    assert.deepStrictEqual(headers, ['当前文章 · 3 处匹配', '文章', 'Thought', '即时草稿'], 'current article pins to the top, then domain groups in server order');
 
     const matchItems = [...results.querySelectorAll('.command-item-match')];
     assert.strictEqual(matchItems.length, 3, 'all current article occurrences expand into individual entries');

@@ -18,7 +18,8 @@ const CONFIGURABLE_IDS = [
     'toggle-today-drafts',
     'clipboard-import-trigger',
     'toggle-reflections',
-    'toggle-thoughts'
+    'toggle-thoughts',
+    'toggle-plan'
 ];
 const PROTECTED_IDS = ['fab-toggle-group', 'scroll-helper'];
 const ALL_IDS = [...PROTECTED_IDS.slice(0, 1), ...CONFIGURABLE_IDS, ...PROTECTED_IDS.slice(1)];
@@ -86,7 +87,7 @@ async function bootServer(hiddenFloatingActions) {
 function readState() {
     const ids = [
         'fab-toggle-group', 'toggle-article-toc', 'copy-all', 'toggle-today-drafts',
-        'clipboard-import-trigger', 'toggle-reflections', 'toggle-thoughts', 'scroll-helper'
+        'clipboard-import-trigger', 'toggle-reflections', 'toggle-thoughts', 'toggle-plan', 'scroll-helper'
     ];
     return Object.fromEntries(ids.map(id => {
         const el = document.getElementById(id);
@@ -131,7 +132,7 @@ async function openEditorPage(browser, port, expectedHidden, warnings) {
         await page.waitForFunction(hidden => {
             const wanted = new Set(hidden);
             return ['toggle-article-toc', 'copy-all', 'toggle-today-drafts',
-                'clipboard-import-trigger', 'toggle-reflections', 'toggle-thoughts'].every(id => {
+                'clipboard-import-trigger', 'toggle-reflections', 'toggle-thoughts', 'toggle-plan'].every(id => {
                 const el = document.getElementById(id);
                 return el && el.hidden === wanted.has(id);
             });
@@ -162,8 +163,8 @@ module.exports = async function testFloatingActionsConfig() {
     };
     try {
         // 1) Default: the clipboard quick-record entry is collapsed and the
-        //    reflections button shows; Thoughts keeps the supplied filled
-        //    clipboard-check icon and renders at the same box as its neighbours.
+        //    reflections + plan placeholders show; Thoughts wears the supplied
+        //    filled idea icon and renders at the same box as its neighbours.
         let { port } = await boot(undefined);
         let warnings = [];
         let page = await openEditorPage(browser, port, ['clipboard-import-trigger'], warnings);
@@ -182,14 +183,18 @@ module.exports = async function testFloatingActionsConfig() {
         assert.equal(s1['toggle-thoughts'].display, 'flex', 'thoughts must stay visible by default');
         assert.equal(s1['toggle-thoughts'].size, '34x34', 'thoughts keeps the shared button box');
         assert.equal(s1['toggle-thoughts'].viewBox, '0 0 1024 1024',
-            'thoughts uses the supplied filled clipboard-check icon');
-        assert.equal(s1['toggle-thoughts'].paths, 1, 'the clipboard-check icon is a single path');
+            'thoughts uses the supplied filled idea icon');
+        assert.equal(s1['toggle-thoughts'].paths, 3, 'the idea icon is drawn with three paths');
+        assert.equal(s1['toggle-plan'].viewBox, '0 0 1024 1024', 'the new plan placeholder uses the supplied filled icon');
+        assert.equal(s1['toggle-plan'].paths, 1, 'the plan icon is a single path');
+        assert.equal(s1['toggle-plan'].display, 'flex', 'the plan placeholder is part of the default toolbar');
         assert.equal(s1['toggle-thoughts'].svgSize, '20x20', 'the new icon must render at the toolbar icon size');
         assert.equal(s1['toggle-thoughts'].ink.split('x')[0] > 10, true,
             'the icon must paint real geometry, got ' + s1['toggle-thoughts'].ink);
         assert.match(s1['toggle-thoughts'].fill, /^(color\(srgb|rgb)/, 'fill should resolve like currentColor');
         assert.match(s1['toggle-thoughts'].pathFill, /^(color\(srgb|oklab|rgb)/, 'the path must not hardcode #000000; it inherits currentColor');
-        assert.equal(s1['copy-all'].fill, 'none', 'the untouched stroke icons must not have been restyled');
+        assert.equal(s1['clipboard-import-trigger'].fill, 'none',
+            'the entries without a counterpart keep their original stroke icon (untouched)');
         assert.ok(Number(s1['toggle-thoughts'].ink.split('x')[0]) > 10,
             'the icon must paint real geometry, got ' + s1['toggle-thoughts'].ink);
 
@@ -199,6 +204,11 @@ module.exports = async function testFloatingActionsConfig() {
         await page.waitForFunction(() => [...document.querySelectorAll('.toast.info')]
             .some(toast => toast.textContent.includes('反思功能开发中')), null, { timeout: 4000 });
         assert.equal(await page.evaluate(() => location.hash), '', 'the reflections stub must not navigate yet');
+        // The plan entry is the second stub, wired the same way: toast only, never navigate.
+        await page.click('#toggle-plan');
+        await page.waitForFunction(() => [...document.querySelectorAll('.toast.info')]
+            .some(toast => toast.textContent.includes('计划功能开发中')), null, { timeout: 4000 });
+        assert.equal(await page.evaluate(() => location.hash), '', 'the plan stub must not navigate yet');
         assert.deepEqual(warnings.filter(w => /pageerror/.test(w)), [], 'no page errors on the default boot');
         await close(page);
 
@@ -215,7 +225,7 @@ module.exports = async function testFloatingActionsConfig() {
         assert.equal(s2['toggle-thoughts'].hiddenAttr, true, 'a blacklisted id hides its button whatever the casing');
         assert.equal(s2['toggle-thoughts'].display, 'none', 'the blacklisted button must leave the toolbar');
         assert.ok(s2['toggle-thoughts'] !== null, 'hiding must keep the DOM node, not remove it');
-        assert.equal(s2['toggle-thoughts'].paths, 1, 'the hidden button keeps its markup so the config is reversible');
+        assert.equal(s2['toggle-thoughts'].paths, 3, 'the hidden button keeps its markup so the config is reversible');
         assert.equal(s2['scroll-helper'].display, 'flex', 'scroll-helper is shell-critical and must stay visible');
         assert.equal(s2['clipboard-import-trigger'].display, 'flex',
             'an explicit value replaces the default, so the collapsed entry shows again');

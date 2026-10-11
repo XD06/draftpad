@@ -527,6 +527,12 @@ document.addEventListener('DOMContentLoaded', async () => {
                             if (!moved) return false;
                             await workspaceRouter?.navigate('thoughts');
                             return true;
+                        },
+                        // 「转为文章」：新建一篇 Notepad（正文 = 草稿文本）并切到编辑器。
+                        // 与剪贴板导入的 article 目标同一路径，保证行为一致。
+                        onMoveToArticle: async draft => {
+                            await workspaceRouter?.navigate('editor');
+                            return createNotepad({ content: draft.text, throwOnError: true });
                         }
                     });
                     return todayDraftsManager;
@@ -534,7 +540,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 .catch(error => {
                     todayDraftsManagerLoader = null;
                     console.warn('Failed to load today drafts:', error);
-                    toaster.show('今日草稿加载失败', 'error', true);
+                    toaster.show('即时草稿加载失败', 'error', true);
                     throw error;
                 });
         }
@@ -3251,7 +3257,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
         registry.register({
             id: 'today',
-            confirmLabel: '保存到今日草稿',
+            confirmLabel: '保存到即时草稿',
             importText: async text => {
                 await workspaceRouter?.navigate('today');
                 const manager = await ensureTodayDraftsManager();
@@ -3435,7 +3441,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             jump: (result, ctx) => revealThoughtFromSearch(result.id, ctx.keywords)
         });
         registerResultType('today_draft', {
-            label: '今日草稿',
+            label: '即时草稿',
             badgeClass: 'badge-today-draft',
             jump: result => revealTodayDraftFromSearch(result.id)
         });
@@ -3465,6 +3471,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         // 把 DUMBPAD_HIDDEN_FLOATING_ACTIONS 置空就会露出来，不需要改这里的代码。
         document.getElementById('toggle-reflections')?.addEventListener('click', () => {
             toaster.show('反思功能开发中', 'info', false, 2200);
+        });
+
+        // 计划（placeholder）：与「反思」同样先占位，点击只提示开发中；要隐藏它同样走
+        // DUMBPAD_HIDDEN_FLOATING_ACTIONS 黑名单，不需要改代码。
+        document.getElementById('toggle-plan')?.addEventListener('click', () => {
+            toaster.show('计划功能开发中', 'info', false, 2200);
         });
 
         copyAllBtn.addEventListener('click', async () => {

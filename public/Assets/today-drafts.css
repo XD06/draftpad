@@ -417,42 +417,30 @@ button.today-drafts-eyebrow:not([disabled]):active {
     align-items: start;
     box-sizing: border-box;
     touch-action: pan-y;
-    transform: translate3d(var(--today-draft-swipe-x, 0), 0, 0);
-    transition: transform 160ms ease, opacity 160ms ease, background-color 400ms ease;
+    transition: opacity 160ms ease, background-color 400ms ease;
 }
 
 .today-draft-row.is-copied {
     background-color: color-mix(in srgb, var(--primary-color) 10%, transparent);
 }
 
-.today-draft-row.is-swiping {
-    transition: none;
-    will-change: transform;
+/* 长按唤出操作菜单时高亮当前行，松手前就能看清操作对象（菜单自带独立浮层）。 */
+.today-draft-row.is-menu-target {
+    background-color: color-mix(in srgb, var(--primary-color) 9%, transparent);
 }
 
-.today-draft-row.is-swipe-thought {
-    border-color: color-mix(in srgb, var(--primary-color) 44%, var(--border-color));
+/* 长按是行操作入口，必须压掉浏览器自带的文字选择/呼叫菜单（iOS 长按会弹
+   look-up 气泡并选中文字）。只压在展示态上：行内编辑的 textarea 仍要可选可编辑。 */
+.today-draft-row {
+    -webkit-touch-callout: none;
 }
 
-.today-draft-row.is-swipe-delete {
-    border-color: color-mix(in srgb, #d94743 48%, var(--border-color));
+.today-draft-text-display {
+    user-select: none;
+    -webkit-user-select: none;
 }
 
-/* 历史页的左侧动作位不是删除，是「转为 Thought」：去掉破坏性的红色语义。 */
-.today-draft-row.is-readonly .today-draft-swipe-action--delete {
-    color: var(--primary-color);
-}
-
-.today-draft-row.is-readonly.is-swipe-delete {
-    border-color: color-mix(in srgb, var(--primary-color) 44%, var(--border-color));
-}
-
-.today-draft-row.is-swipe-departing {
-    opacity: 0;
-    transform: translate3d(45%, 0, 0);
-}
-
-/* 历史日只读：没有滑动动作，复选框与文本都不可交互，整页轻微降饱和。 */
+/* 历史日只读：复选框与文本都不可交互，整页轻微降饱和。 */
 .today-draft-row.is-readonly {
     touch-action: pan-y;
 }
@@ -471,36 +459,6 @@ button.today-drafts-eyebrow:not([disabled]):active {
 
 .today-drafts-page.is-history {
     opacity: 0.92;
-}
-
-.today-draft-swipe-action {
-    position: absolute;
-    top: 50%;
-    z-index: 0;
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    color: var(--primary-color);
-    font-size: 11px;
-    font-weight: 650;
-    line-height: 1;
-    opacity: var(--today-draft-swipe-opacity, 0);
-    pointer-events: none;
-    transform: translate3d(calc(-1 * var(--today-draft-swipe-x, 0px)), -50%, 0);
-}
-
-.today-draft-swipe-action--thought {
-    right: 12px;
-}
-
-.today-draft-swipe-action--delete {
-    left: 12px;
-    color: #d94743;
-}
-
-.today-draft-row.is-swipe-thought .today-draft-swipe-action--delete,
-.today-draft-row.is-swipe-delete .today-draft-swipe-action--thought {
-    opacity: 0;
 }
 
 .today-draft-check {
@@ -658,8 +616,8 @@ textarea.today-draft-text {
 }
 
 /* 行尾复制按钮：inline 跟在正文末尾（正是「每条待办的尾部位置」），平时隐藏且
-   不参与命中（防止在它该出现的位置摸黑点成复制），桌面 hover 行、键盘聚焦或
-   触摸按住行（is-copy-reveal）时亮出。历史只读行同样可用——复制非破坏。 */
+   不参与命中（防止在它该出现的位置摸黑点成复制），桌面 hover 行或键盘聚焦时亮出。
+   历史只读行同样可用——复制非破坏。触摸端不亮它：长按归操作菜单，菜单里自带复制。 */
 .today-draft-copy {
     display: inline-flex;
     width: 22px;
@@ -684,7 +642,6 @@ textarea.today-draft-text {
 }
 
 .today-draft-row:hover .today-draft-copy,
-.today-draft-row.is-copy-reveal .today-draft-copy,
 .today-draft-copy:focus-visible {
     opacity: 1;
     pointer-events: auto;
@@ -1002,8 +959,6 @@ body.clipboard-import-open {
    与行级过渡全部立即到位（manager 侧同步跳帧，CSS 侧关掉过渡）。 */
 @media (prefers-reduced-motion: reduce) {
     .today-draft-row,
-    .today-draft-row.is-swiping,
-    .today-draft-row.is-swipe-departing,
     .today-drafts-pager {
         transition: none;
     }
@@ -1020,5 +975,147 @@ body.clipboard-import-open {
     }
     100% {
         background: transparent;
+    }
+}
+
+/* ================= 行操作菜单（长按草稿行浮出的横向图标条） =================
+   独立命名空间 tdam-，挂在 body 上（position:fixed 相对视口），不参与纸张的
+   overflow 裁剪。材质/图标色全部走主题变量，深浅色自动跟随。 */
+.tdam {
+    --tdam-surface-a: color-mix(in srgb, var(--header-bg) 96%, #fff);
+    --tdam-surface-b: color-mix(in srgb, var(--header-bg) 88%, var(--bg-color));
+    --tdam-border: color-mix(in srgb, var(--border-color) 82%, transparent);
+    --tdam-gloss: color-mix(in srgb, #fff 88%, transparent);
+    --tdam-icon: var(--text-color);
+    --tdam-hover: color-mix(in srgb, var(--muted-text) 15%, transparent);
+    --tdam-split: color-mix(in srgb, var(--border-color) 92%, transparent);
+    --tdam-danger: #d94743;
+    --tdam-radius: 22px;
+    --tdam-btn: 40px;
+    --tdam-icon-size: 20px;
+    position: fixed;
+    z-index: 2500;
+    display: block;
+    line-height: 1;
+}
+
+.tdam[hidden] {
+    display: none;
+}
+
+.tdam.is-open {
+    animation: tdam-pop 0.24s cubic-bezier(0.22, 1.15, 0.36, 1) both;
+}
+
+@keyframes tdam-pop {
+    from {
+        opacity: 0;
+        transform: scale(0.94);
+    }
+    to {
+        opacity: 1;
+        transform: scale(1);
+    }
+}
+
+.tdam-sprite {
+    position: absolute;
+    width: 0;
+    height: 0;
+    overflow: hidden;
+}
+
+.tdam__bar {
+    position: relative;
+    display: flex;
+    align-items: center;
+    padding: 5px;
+    border-radius: var(--tdam-radius);
+    width: max-content;
+    background: linear-gradient(180deg, var(--tdam-surface-a), var(--tdam-surface-b));
+    border: 0.5px solid var(--tdam-border);
+    box-shadow: 0 12px 26px rgba(15, 23, 42, 0.18), 0 2px 6px rgba(15, 23, 42, 0.08);
+}
+
+/* 上缘 0.7px 高光：玻璃厚度感的关键，别删。 */
+.tdam__bar::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    pointer-events: none;
+    box-shadow: inset 0 0.7px 0 var(--tdam-gloss);
+}
+
+.tdam__btn {
+    width: var(--tdam-btn);
+    height: var(--tdam-btn);
+    flex: 0 0 auto;
+    border: 0;
+    background: transparent;
+    border-radius: 14px;
+    display: grid;
+    place-items: center;
+    color: var(--tdam-icon);
+    cursor: pointer;
+    transition: background 0.15s ease, transform 0.11s ease;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.tdam--danger {
+    color: var(--tdam-danger);
+}
+
+.tdam__btn:hover {
+    background: var(--tdam-hover);
+}
+
+.tdam__btn:focus-visible {
+    outline: 2px solid currentColor;
+    outline-offset: -3px;
+}
+
+.tdam__btn:active {
+    transform: scale(0.87);
+    background: var(--tdam-hover);
+}
+
+.tdam__ic {
+    width: var(--tdam-icon-size);
+    height: var(--tdam-icon-size);
+    display: block;
+    fill: currentColor;
+    stroke: none;
+}
+
+.tdam__split {
+    width: 1px;
+    height: 19px;
+    margin: 0 4px;
+    flex: 0 0 auto;
+    background: var(--tdam-split);
+    border-radius: 1px;
+}
+
+/* 小尖角指向被长按的行：默认在条的下缘（菜单浮在行上方），翻到下方时移到上缘。 */
+.tdam__tail {
+    position: absolute;
+    bottom: -5px;
+    left: 50%;
+    width: 12px;
+    height: 12px;
+    border-radius: 2.5px;
+    background: var(--tdam-surface-b);
+    transform: rotate(45deg);
+}
+
+.tdam.tdam--below .tdam__tail {
+    bottom: auto;
+    top: -5px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .tdam.is-open {
+        animation: none;
     }
 }

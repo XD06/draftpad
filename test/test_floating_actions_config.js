@@ -189,6 +189,10 @@ function assertWiring() {
         appSource.includes("getElementById('toggle-reflections')") && appSource.includes('反思功能开发中'),
         'the reflections placeholder should be wired to a "coming soon" toast'
     );
+    assert(
+        appSource.includes("getElementById('toggle-plan')") && appSource.includes('计划功能开发中'),
+        'the plan placeholder should be wired to a "coming soon" toast'
+    );
 
     const styles = fs.readFileSync(path.join(ROOT, 'public', 'Assets', 'styles.css'), 'utf8');
     assert(
