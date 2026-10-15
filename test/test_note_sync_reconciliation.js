@@ -29,6 +29,8 @@ function harness() {
         Date: { now: () => now }, console: { warn: noOperation }, navigator: { onLine: true },
         currentNotepadId: 'note', currentNoteVersion: 38,
         currentNotepads: [{ id: 'note', name: 'Note', version: 42 }],
+        renderedEditorNotepadId: null, renderedEditorContent: null,
+        pendingEditorValue: 'cached 38',
         remoteNoteStates: new Map(), noteLoadsInFlight: new Map(),
         editor: { value: 'cached 38' }, editorInstance: {}, bootEditorActive: false,
         isApplyingRemoteUpdate: false, hasUnsavedChanges: false,

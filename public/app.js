@@ -109,6 +109,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     let editorInstance = null;
     let editorLoader = null;
     let pendingEditorValue = '';
+    let renderedEditorNotepadId = null;
+    let renderedEditorContent = null;
     let runtimeConfig = {};
 
     // Instant boot editor — a plain <textarea> the user can type into while the
@@ -142,6 +144,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             pendingEditorValue = val || '';
             if (editorInstance) editorInstance.setValue(pendingEditorValue, false);
             else if (bootEditorActive && bootEditor) bootEditor.value = pendingEditorValue;
+            renderedEditorNotepadId = currentNotepadId;
+            renderedEditorContent = pendingEditorValue;
         },
         // Like `value = ...`, but keeps the caret where the user is typing when the
         // new content arrives from a background sync/merge (issue #5). Falls back
@@ -160,6 +164,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                     bootEditor.setSelectionRange(Math.min(start, max), Math.min(end, max));
                 }
             }
+            renderedEditorNotepadId = currentNotepadId;
+            renderedEditorContent = pendingEditorValue;
         },
         focus: () => (editorInstance ? editorInstance.focus() : (bootEditorActive ? bootEditor?.focus() : undefined)),
         get selectionStart() {
@@ -1405,8 +1411,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     function renderCachedNotepad(notepadId, content, { updateLocation = true } = {}) {
         if (!findNotepadByIdOrName(currentNotepads, notepadId)) return false;
         currentNotepadId = notepadId;
+        const nextContent = content || '';
         isApplyingRemoteUpdate = true;
-        if (editor.value !== (content || '')) editor.value = content || '';
+        const alreadyRendered = renderedEditorNotepadId === notepadId
+            && renderedEditorContent === nextContent
+            && pendingEditorValue === nextContent;
+        if (!alreadyRendered) editor.value = nextContent;
+        renderedEditorNotepadId = notepadId;
+        renderedEditorContent = nextContent;
         markEditorPerformanceContent(editorPerformanceSwitchToken);
         isApplyingRemoteUpdate = false;
         const cachedNote = loadStartupCache()?.notes?.[notepadId];
@@ -1842,8 +1854,14 @@ document.addEventListener('DOMContentLoaded', async () => {
                     return true;
                 }
 
-                if (editor.value !== (data.content || '')) {
-                    editor.value = data.content || '';
+                const nextContent = data.content || '';
+                const alreadyRendered = renderedEditorNotepadId === notepadId
+                    && renderedEditorContent === nextContent
+                    && pendingEditorValue === nextContent;
+                if (!alreadyRendered) {
+                    editor.value = nextContent;
+                    renderedEditorNotepadId = notepadId;
+                    renderedEditorContent = nextContent;
                     // 远端内容真正写入编辑器：若有未完成的搜索跳转（或刚
                     // 成功但高亮被这次写入抹掉），在窗口内重放一次。
                     replaySearchJumpAfterContentWrite();
@@ -2308,6 +2326,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                     },
                     input: (value) => {
                         pendingEditorValue = value || '';
+                        renderedEditorNotepadId = currentNotepadId;
+                        renderedEditorContent = pendingEditorValue;
                         if (isApplyingRemoteUpdate) return;
                         hasUnsavedChanges = true;
                         editorRevision += 1;
@@ -2328,7 +2348,11 @@ document.addEventListener('DOMContentLoaded', async () => {
                     pendingEditorValue = bootEditor.value;
                 }
                 const handedOffValue = pendingEditorValue;
-                if (pendingEditorValue) editorInstance.setValue(pendingEditorValue, false);
+                if (pendingEditorValue) {
+                    editorInstance.setValue(pendingEditorValue, false);
+                    renderedEditorNotepadId = currentNotepadId;
+                    renderedEditorContent = pendingEditorValue;
+                }
                 editorInstance.setReadingMode(isReadingMode);
                 if (pendingCaretRestoreNotepadId) restoreEditorCaretForNotepad(pendingCaretRestoreNotepadId);
                 if (bootWasActive) {

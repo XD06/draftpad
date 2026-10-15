@@ -24,6 +24,8 @@ assert(initializeStart >= 0, 'initializeApp should be discoverable');
 assert(!app.slice(loadNotepadsStart, loadNotesStart).includes('prefetchNotepadNotes('), 'startup list loading should not prefetch other note bodies');
 assert(!app.slice(initializeStart).includes('prefetchNotepadNotes('), 'application startup should not prefetch other note bodies');
 assert(app.includes('const renderedFromCache = Boolean(cachedBeforeFetch);'), 'a selected cached note should be recognised even when its content is empty');
+assert(app.includes('const alreadyRendered = renderedEditorNotepadId === notepadId'), 'cached article switches should reuse the in-memory raw Markdown snapshot');
+assert(app.includes('const alreadyRendered = renderedEditorNotepadId === notepadId') && app.includes('pendingEditorValue === nextContent'), 'article loading should compare the in-memory rendered snapshot without serializing the rich editor');
 assert(app.includes('void trackedLoad;'), 'cached note selection should not wait for the remote freshness check before returning control to the UI');
 assert(app.includes('listedVersion === freshCachedVersion'), 'a cached snapshot matching the freshly listed notepad version should skip the remote note fetch and second parse');
 assert(app.includes('loadNotes(currentNotepadId, { deferRemote: true })'), 'only directory selection should defer its remote freshness check');
