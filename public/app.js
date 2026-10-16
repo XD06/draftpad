@@ -632,9 +632,14 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     window.addEventListener('notes_update', (event) => {
         const detail = event.detail || {};
-        if (detail.notepadId !== currentNotepadId) return;
         const remoteVersion = Number(detail.version);
         const isSavedUpdate = Number.isFinite(remoteVersion);
+        if (detail.notepadId !== currentNotepadId) {
+            // Remember invalidations even when another article is open. The
+            // cached body must not look fresh when returning within ten seconds.
+            if (isSavedUpdate) confirmRemoteNoteVersion(detail.notepadId, remoteVersion);
+            return;
+        }
         if (isSavedUpdate) {
             confirmRemoteNoteVersion(currentNotepadId, remoteVersion);
             applyNoteEditStats(currentNotepadId, detail);
@@ -1352,12 +1357,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         return noteSyncController.saveStartupCache(patch);
     }
 
-    function cacheNotepads(noteHistory, selectedId = currentNotepadId) {
+    function cacheNotepads(noteHistory, selectedId = currentNotepadId, { deferPersist = false } = {}) {
         if (!Array.isArray(currentNotepads) || currentNotepads.length === 0) return;
         noteSyncController.cacheNotepads({
             currentNotepadId: selectedId,
             noteHistory: isValidNotepadId(noteHistory) ? noteHistory : selectedId,
-            notepads: currentNotepads
+            notepads: currentNotepads,
+            deferPersist
         });
     }
 
@@ -1537,7 +1543,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         const state = reconcileStates.get(notepadId) || { promise: null, lastSuccessAt: 0 };
         reconcileStates.set(notepadId, state);
         if (state.promise) return state.promise;
-        if (!force && state.lastSuccessAt > 0
+        const knownRemoteVersion = Number(getRemoteNoteState(notepadId)?.version);
+        const localVersion = Number(currentNoteVersion);
+        const hasKnownRemoteUpdate = Number.isFinite(knownRemoteVersion)
+            && (!Number.isFinite(localVersion) || knownRemoteVersion > localVersion);
+        if (!force && !hasKnownRemoteUpdate && state.lastSuccessAt > 0
             && Date.now() - state.lastSuccessAt < RECONCILE_MIN_INTERVAL_MS) {
             return Promise.resolve(false);
         }
@@ -1814,9 +1824,11 @@ document.addEventListener('DOMContentLoaded', async () => {
                 const listed = findNotepadByIdOrName(currentNotepads, notepadId);
                 const listedVersion = Number(listed?.version);
                 const freshCachedVersion = Number(freshCached?.version);
+                const knownRemoteVersion = Number(getRemoteNoteState(notepadId)?.version);
                 if (!forceRemote && freshCached && !freshCached.dirty && !freshCached.conflict
                     && !dirtyConflictNotepadIds.has(notepadId)
                     && Number.isFinite(listedVersion) && Number.isFinite(freshCachedVersion)
+                    && !(Number.isFinite(knownRemoteVersion) && knownRemoteVersion > freshCachedVersion)
                     && listedVersion === freshCachedVersion) {
                     setStartupSyncStatus('synced', '已同步');
                     return true;
@@ -3378,7 +3390,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         flushPendingNoteSave();
         saveEditorCaretForNotepad(currentNotepadId, editorInstance?.getPersistentCaretSnapshot?.());
         currentNotepadId = selectedNotepad.id;
-        cacheNotepads(null, currentNotepadId);
+        cacheNotepads(null, currentNotepadId, { deferPersist: true });
         activeNotepadLoaded = false;
         applyCurrentNotepadTitle();
         
@@ -3774,6 +3786,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         window.addEventListener('pagehide', () => {
             saveEditorCaretForNotepad(currentNotepadId, editorInstance?.getPersistentCaretSnapshot?.());
+            noteSyncController.flushPendingCacheWrite();
             // 防抖加长后，关闭/切后台时把还在窗口内的输入立即送出
             // （keepalive 让请求在页面卸载后仍能完成；失败由本地脏缓存
             // + 下次启动同步兜底）。
@@ -3782,6 +3795,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         document.addEventListener('visibilitychange', () => {
             if (document.visibilityState === 'hidden') {
+                noteSyncController.flushPendingCacheWrite();
                 flushPendingNoteSave();
                 return;
             }

@@ -205,6 +205,39 @@ function run() {
         'quota recovery should preserve dirty merge base');
     assert(!compacted.notes['clean-old'] && !compacted.notes['clean-new'],
         'quota recovery should evict clean note snapshots');
+    assert(quotaSync.getCachedNote('clean-old')?.content === 'old'.repeat(900),
+        'disk quota recovery must retain loaded clean articles in session memory');
+    assert(quotaSync.getCachedNote('clean-new')?.content === 'new'.repeat(900),
+        'session cache must retain more than the most recently persisted article');
+    quotaSync.cacheNotepads({
+        currentNotepadId: 'clean-old', noteHistory: 'clean-old',
+        notepads: [{ id: 'clean-old' }, { id: 'clean-new' }, { id: 'dirty' }]
+    });
+    assert(quotaSync.getCachedNote('clean-new')?.content === 'new'.repeat(900),
+        'switching articles under storage pressure must not discard other session snapshots');
+    const reloadedSync = new NoteSyncController({ storageManager: quotaStorage });
+    assert(reloadedSync.getCachedNote('dirty')?.baseContent === 'base'.repeat(200),
+        'a new session must still recover the dirty merge base from compacted disk storage');
+
+    let delayedWrites = 0;
+    const delayedStorage = createMemoryStorage();
+    const delayedSave = delayedStorage.save.bind(delayedStorage);
+    delayedStorage.save = (key, value) => {
+        delayedWrites += 1;
+        return delayedSave(key, value);
+    };
+    const delayedSync = new NoteSyncController({ storageManager: delayedStorage });
+    delayedSync.cacheNotepads({
+        currentNotepadId: 'a', noteHistory: 'a', notepads: [{ id: 'a' }], deferPersist: true
+    });
+    delayedSync.cacheNotepads({
+        currentNotepadId: 'b', noteHistory: 'b', notepads: [{ id: 'a' }, { id: 'b' }], deferPersist: true
+    });
+    assert(delayedWrites === 0, 'deferred article selection must not synchronously serialize the startup cache');
+    delayedSync.flushPendingCacheWrite();
+    assert(delayedWrites === 1, 'flushing deferred selection metadata should persist the latest state once');
+    assert(delayedStorage.dump('dumbpad_startup_cache_v1').currentNotepadId === 'b',
+        'the deferred write must persist the newest selected article');
 
     console.log('Note sync controller checks passed');
 }

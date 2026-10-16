@@ -196,6 +196,25 @@ async function run() {
     assert.equal(switchBack.requests.filter(request => request.url === '/api/notes/note').length, 1);
     switchBack.dom.window.close();
 
+    const knownUpdate = harness();
+    await knownUpdate.context.reconcileCurrentNote('startup');
+    knownUpdate.remote(43);
+    knownUpdate.context.confirmRemoteNoteVersion('note', 43);
+    await knownUpdate.context.loadNotes('note', { deferRemote: true });
+    await Promise.all([...knownUpdate.context.noteLoadsInFlight.values()]);
+    assert.equal(knownUpdate.context.editor.value, 'remote 43',
+        'a WebSocket-confirmed version must invalidate the stale list/cache version match');
+    knownUpdate.remote(44);
+    knownUpdate.context.confirmRemoteNoteVersion('note', 44);
+    await knownUpdate.context.reconcileCurrentNote('selection');
+    assert.equal(knownUpdate.context.editor.value, 'remote 44',
+        'a known remote update must bypass the ten-second reconciliation interval');
+    assert.equal(knownUpdate.requests.filter(request => request.url.startsWith('/api/notes/')).length, 3,
+        'each newly confirmed remote version should fetch one fresh body');
+    assert.equal(knownUpdate.context.confirmRemoteNoteVersion('note', 43), false,
+        'an older notification must never lower the confirmed remote version');
+    knownUpdate.dom.window.close();
+
     console.log('Note reconciliation: cache isolation, version display, refresh, dirty protection, deduplication, retry and switching passed');
 }
 

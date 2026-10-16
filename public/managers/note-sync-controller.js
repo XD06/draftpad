@@ -36,7 +36,7 @@ export default class NoteSyncController {
         return this.cache;
     }
 
-    saveStartupCache(patch = {}, { defer = false } = {}) {
+    saveStartupCache(patch = {}, { defer = false, immediate = true } = {}) {
         if (!defer) this.flushPendingCacheWrite();
         const previous = this.loadStartupCache() || { version: STARTUP_CACHE_VERSION, notes: {}, notepads: [] };
         const next = {
@@ -53,7 +53,7 @@ export default class NoteSyncController {
         if (defer) {
             this.cacheNeedsPersist = true;
             if (!this.cacheWriteTimer) {
-                this.persistCachedState();
+                if (immediate) this.persistCachedState();
                 if (typeof globalThis.setTimeout !== 'function') return this.cache;
                 this.cacheWriteTimer = globalThis.setTimeout(() => {
                     this.cacheWriteTimer = null;
@@ -79,7 +79,8 @@ export default class NoteSyncController {
     persistCachedState() {
         if (!this.cache) return;
         const persisted = this.persistStartupCache(this.cache);
-        if (persisted) this.cache = persisted;
+        // Quota recovery only compacts the disk snapshot. Keep loaded articles
+        // in memory so switching back does not need another network request.
         this.cacheNeedsPersist = !persisted;
     }
 
@@ -115,7 +116,7 @@ export default class NoteSyncController {
         return { ...cache, notes };
     }
 
-    cacheNotepads({ currentNotepadId, noteHistory, notepads }) {
+    cacheNotepads({ currentNotepadId, noteHistory, notepads, deferPersist = false }) {
         if (!Array.isArray(notepads) || notepads.length === 0) return null;
         return this.saveStartupCache({
             currentNotepadId,
@@ -128,8 +129,8 @@ export default class NoteSyncController {
                 version: notepad.version,
                 editCount: notepad.editCount,
                 editCountStartedAt: notepad.editCountStartedAt
-            }))
-        });
+            })),
+        }, { defer: deferPersist, immediate: !deferPersist });
     }
 
     cacheNote(notepadId, content, options = {}, { notepads = [] } = {}) {
