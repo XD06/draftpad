@@ -168,6 +168,8 @@ export class HybridMarkdownEditor {
         this.headingIds = [];
         this._headingAnchorQueued = false;
         this._lastValue = '';
+        this._parsedDocuments = new Map();
+        this._parsedDocumentSize = 0;
         this.ready = false;
         this.pendingValue = '';
         this.sourceMode = false;
@@ -411,14 +413,33 @@ export class HybridMarkdownEditor {
         this._exemptDecorationMarksFromCode();
         const nextValue = String(value ?? '');
         this._lastValue = nextValue;
+        const cached = this._parsedDocuments.get(nextValue);
         // 载入事务必须排除出撤销历史。编辑器以 content:'' 创建，正文是靠 setContent
         // 灌进来的，而它默认进历史——于是「打开文章」自己成了栈底那一步：Ctrl+Z 撤掉的
         // 就是载入，整篇瞬间变空白（boot textarea 交接、WS 远端更新、源码模式切回都走
         // 这条路，所以一打开文章按 Ctrl+Z 就中招）。更糟的是撤销能跨文章：在 A 文里
         // 撤出 B 文的内容，autosave 会把 A 文覆盖掉。
         this.editor.chain().setMeta('addToHistory', false)
-            .setContent(this.frontmatterToFence(nextValue), { emitUpdate: false }).run();
-        this.normalizeDecorationMarks();
+            .setContent(cached?.doc || this.frontmatterToFence(nextValue), { emitUpdate: false }).run();
+        if (cached) {
+            this._parsedDocuments.delete(nextValue);
+            this._parsedDocuments.set(nextValue, cached);
+        } else {
+            this.normalizeDecorationMarks();
+            // PM documents are immutable. Reuse only the parsed content, never
+            // an EditorState, so selection and undo still follow load semantics.
+            const doc = this.editor.state.doc;
+            const size = nextValue.length + doc.nodeSize;
+            if (size <= 1000000) {
+                this._parsedDocuments.set(nextValue, { doc, size });
+                this._parsedDocumentSize += size;
+                while (this._parsedDocuments.size > 8 || this._parsedDocumentSize > 1000000) {
+                    const oldest = this._parsedDocuments.keys().next().value;
+                    this._parsedDocumentSize -= this._parsedDocuments.get(oldest).size;
+                    this._parsedDocuments.delete(oldest);
+                }
+            }
+        }
         if (emit) {
             this.notifyEditorValueChanged(this.getValue());
         } else {
