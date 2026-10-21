@@ -7,6 +7,7 @@
 
 /** 允许通过配置隐藏的功能按钮（顺序与 index.html 的 .floating-actions 一致）。 */
 export const CONFIGURABLE_FLOATING_ACTIONS = [
+    'toggle-source-mode',
     'toggle-article-toc',
     'copy-all',
     'toggle-today-drafts',

@@ -675,6 +675,16 @@
                 <circle cx="19" cy="12" r="1.4"></circle>
             </svg>
         </button>
+        <button id="toggle-source-mode" class="floating-btn" aria-label="切换到 Markdown 源码模式" aria-pressed="false" data-tooltip="源码模式">
+            <!-- 尺寸不是随手写的 20：其余按钮的图形只占 viewBox 的约 88%，按 20 渲染墨迹
+                 宽 17.58px；这个 </> 图形只占 80%（且天生扁——高只有宽的 70%），按 20 渲染
+                 只有 15.99px，会明显比邻居小一圈。按 22×22 渲染墨迹宽 17.59px，与邻居平均
+                 17.28px 偏差 1.8%（真机 getBBox 实测，见 test:source-mode-browser）。
+                 填充式 + currentColor，与工具条其余图标同一风格。 -->
+            <svg width="22" height="22" viewBox="0 0 1024 1024" fill="currentColor" aria-hidden="true">
+                <path d="M336.64 686.08a40.8064 40.8064 0 0 1-27.136-10.2912L102.4 491.7248l218.5728-194.304A40.96 40.96 0 0 1 375.296 358.6048l-149.7088 133.12 138.24 122.88a40.96 40.96 0 0 1-27.1872 71.4752z m366.0288-0.0512l218.5216-194.304-207.0528-184.064a40.8576 40.8576 0 1 0-54.3232 61.184l138.24 122.88-149.76 133.0688a40.96 40.96 0 0 0 54.3744 61.2352zM511.232 743.936l81.8176-491.008a40.96 40.96 0 1 0-80.6912-13.4656l-81.8176 491.008a40.96 40.96 0 1 0 80.6912 13.4656z"></path>
+            </svg>
+        </button>
         <button id="toggle-article-toc" class="floating-btn" aria-label="打开文章目录" data-tooltip="文章目录">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <line x1="4" y1="6" x2="20" y2="6"></line>

@@ -61,8 +61,24 @@ import { buildMarkdownHeadingIndex } from './managers/heading-index.js';
 lowlight.registerAlias('yaml', 'dumbpad-frontmatter');
 
 const EMPTY_LIST_MARKER_RE = /^([ \t]*)(?:[-*+]|\d{1,9}[.)])[ \t]*$/;
+// 上面那条的多行形态，只用于「全文有没有空标记行」的预检：必须**不比它更严**，
+// 否则会漏掉真正需要归一化的输入（多容忍一个 CRLF 的 \r，宁可多走一趟状态机）。
+const EMPTY_LIST_MARKER_LINE_ANYWHERE_RE = /^[ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]*\r?$/m;
 const LIST_MARKER_LINE_RE = /^([ \t]*)(?:[-*+]|\d{1,9}[.)])[ \t]+/;
 const FENCE_OPEN_RE = /^ {0,3}(`{3,}|~{3,})/;
+
+/**
+ * 输入变更通知的合并窗口（毫秒）。一次按键 = 一次文档事务 = 一次全量
+ * Markdown 序列化（tiptap-markdown 的 serializer 是整篇重写，实测 2.4 万字
+ * 约 21ms、7.8 万字约 67ms），连续打字时逐键都做一遍会吃掉整个帧预算。
+ * 这里把「文档变了 → 上报值」改成尾随合并：窗口内连续输入只序列化一次。
+ *
+ * 契约没有变松——任何持久化/切文/隐藏页面的读取点都必须先
+ * `flushPendingInput()`（`editor.value` 代理 getter 已内置），所以窗口内
+ * 的值不会丢：要么被 flush 掉，要么被 `setValue` 的新文档取代（载入路径
+ * 由调用方自己持有真值，见 setValue 里的说明）。
+ */
+const INPUT_NOTIFY_DELAY_MS = 180;
 
 /**
  * 空列表项的序列化形态（行首只有标记、没有内容）在 Markdown 里有唯一的解析歧义：
@@ -78,13 +94,19 @@ const FENCE_OPEN_RE = /^ {0,3}(`{3,}|~{3,})/;
  * 围栏代码块、`$$` 数学块与文首 frontmatter 内部一律跳过。
  */
 export function normalizeAmbiguousEmptyListMarkers(value = '') {
-    const lines = String(value ?? '').split('\n');
+    const source = String(value ?? '');
+    // Fast path：没有「只由列表标记组成的行」就无从归一化，直接返回。
+    // 逐行状态机（含围栏 / 数学块 / frontmatter 的跟踪）对绝大多数文章是纯白跑，
+    // 而这一步在每次序列化出口都会执行——单条正则扫全文比 split + 逐行判断便宜得多。
+    // 正则与 EMPTY_LIST_MARKER_RE 同宽（行内只有缩进 + 单个标记 + 可选空白）。
+    if (!EMPTY_LIST_MARKER_LINE_ANYWHERE_RE.test(source)) return source;
+    const lines = source.split('\n');
     let fenceMarker = null;
     let fenceLength = 0;
     let inMathBlock = false;
     // 文首 frontmatter：第 0 行的开栏 --- 不算闭栏，闭栏之后的行重置为
     // 「块边界」状态（frontmatter 是独立的块，其后的空标记行本就合法）。
-    let inFrontmatter = String(value ?? '').startsWith('---\n');
+    let inFrontmatter = source.startsWith('---\n');
     let frontmatterClosed = false;
     let previousMarkerIndent = -1;
     let previousBlank = true;
@@ -152,6 +174,11 @@ export function normalizeAmbiguousEmptyListMarkers(value = '') {
 }
 
 export class HybridMarkdownEditor {
+    /**
+     * `performanceMonitor` 由 app.js 传入（`?debugPerformance=1` 时启用）。它只在
+     * 开关打开时生效，关闭时 measure/count 直接透传、不读时钟——所以这里不需要
+     * 再判 enabled 分支。
+     */
     constructor(container, { input, performanceMonitor = null, onCaretChange = null } = {}) {
         if (!globalThis.DumbPadTiptap) {
             throw new Error('Tiptap failed to load.');
@@ -168,15 +195,19 @@ export class HybridMarkdownEditor {
         this.headingIds = [];
         this._headingAnchorQueued = false;
         this._lastValue = '';
+        this._serializedDoc = null;
+        this._serializedValue = '';
         this._parsedDocuments = new Map();
         this._parsedDocumentSize = 0;
         this.ready = false;
-        this.pendingValue = '';
         this.sourceMode = false;
         this.assetMaxFileBytes = null;
         this.assetApi = null;
         this.isComposing = false;
         this.fileCommand = createFileCommandController(this);
+        this._inputNotifyTimer = null;
+        // 最近一次「用户真的放过光标」的位置（见 trackCaretWhileFocused）。
+        this._trackedCaret = null;
 
         this.readyPromise = new Promise((resolve) => { this._resolveReady = resolve; });
 
@@ -344,10 +375,11 @@ export class HybridMarkdownEditor {
             // dumbpadNormalize 是装饰 mark（批注/画线/高亮）的拆段连接事务：修复内容
             // 本身就是加载进来的内容，不能被当作用户编辑触发保存。
             if (!transaction || !transaction.docChanged || transaction.getMeta('dumbpadNormalize')) return;
-            this.notifyEditorValueChanged(this.getValue());
+            this.scheduleInputNotify();
         });
 
         this.editor.on('selectionUpdate', () => {
+            this.trackCaretWhileFocused();
             this.onCaretChange();
         });
 
@@ -383,9 +415,31 @@ export class HybridMarkdownEditor {
         if (this.sourceMode) {
             return this.getSourceTextarea()?.value ?? this._lastValue;
         }
+        // 同一份不可变文档只序列化一次：getValue 在一次输入事件里会被
+        // 调用多次（上报、目录、保存、光标快照），PM 的 doc 是不可变对象，
+        // 身份没变就说明 Markdown 不会变。任何事务都会换掉 doc 身份，
+        // 因此缓存永远不会给出过期的值。
+        const doc = this.editor.state.doc;
+        if (this._serializedDoc === doc) return this._serializedValue;
+        // 序列化前先取原文：measure 的返回值取决于通知模式（关闭时返回 true），
+        // 不能把它当数据用——这里只借它计时，原文自己接。
+        let serialized;
+        const serialize = () => {
+            serialized = this.editor.storage.markdown.getMarkdown();
+            return serialized;
+        };
+        if (this.performanceMonitor?.enabled) {
+            this.performanceMonitor.measure('serialize_wysiwyg', serialize);
+            this.performanceMonitor.count('serialize_wysiwyg');
+        } else {
+            serialize();
+        }
         // 空标记行归一化（见函数注释）：空列表项的歧义形态在重新解析时会被
         // setext 吞掉父行，出口补空行让「打字时 == 刷新后」在空条目上也成立。
-        return normalizeAmbiguousEmptyListMarkers(this.fenceToFrontmatter(this.editor.storage.markdown.getMarkdown()));
+        const value = normalizeAmbiguousEmptyListMarkers(this.fenceToFrontmatter(serialized));
+        this._serializedDoc = doc;
+        this._serializedValue = value;
+        return value;
     }
 
     /**
@@ -412,7 +466,28 @@ export class HybridMarkdownEditor {
     setValue(value, emit = true) {
         this._exemptDecorationMarksFromCode();
         const nextValue = String(value ?? '');
+        const previousValue = this._lastValue;
         this._lastValue = nextValue;
+        // 载入会整篇替换文档，窗口里挂起的输入变更已经没有意义：它的值既被
+        // 新文档取代，上报出去还会让上层把旧文章标脏。丢弃而不是 flush。
+        // emit=true 时下面会主动上报一次（远端更新 = 恰好一次变更通知）。
+        this.discardPendingInput();
+        // 正文换了，上一条正文里记下的光标位置就没有意义了（PM 位置是文档内的
+        // 绝对偏移，换文档后指向别处）。不清的话「在 A 文点了光标 → 切到 B 文 →
+        // 切源码」会把 A 的位置映射进 B，跳到毫不相干的一段。内容相同则保留
+        // （同一份正文里那个位置依然成立）。
+        if (nextValue !== previousValue) this._trackedCaret = null;
+        // 源码模式下 textarea 就是可见的编辑面：切文章（以及远端更新）时它必须
+        // 跟着换。否则 textarea 里留着上一篇的原文，用户点一下切回渲染就会
+        // `setValue(textarea.value)` 把**上一篇文章的正文**写进当前文章——
+        // 实测「上上次切换的文章」正是这么来的，而且会顺带触发一次自动保存。
+        if (this.sourceMode) {
+            const sourceTextarea = this.getSourceTextarea();
+            if (sourceTextarea) {
+                sourceTextarea.value = nextValue;
+                this.autosizeSourceTextarea(sourceTextarea);
+            }
+        }
         const cached = this._parsedDocuments.get(nextValue);
         // 载入事务必须排除出撤销历史。编辑器以 content:'' 创建，正文是靠 setContent
         // 灌进来的，而它默认进历史——于是「打开文章」自己成了栈底那一步：Ctrl+Z 撤掉的
@@ -589,29 +664,55 @@ export class HybridMarkdownEditor {
         return this.editor.isFocused;
     }
 
-    /* ---------------- 事件总线（与旧类同名契约） ---------------- */
-
-    addEventListener(eventName, callback) {
-        if (!this.listeners.has(eventName)) this.listeners.set(eventName, new Set());
-        this.listeners.get(eventName).add(callback);
-    }
-
-    removeEventListener(eventName, callback) {
-        this.listeners.get(eventName)?.delete(callback);
-    }
-
-    dispatch(eventName, detail) {
-        this.listeners.get(eventName)?.forEach((callback) => callback(detail));
-    }
+    /* ---------------- 值变更通知 ---------------- */
 
     notifyEditorValueChanged(value) {
+        // 显式上报（/file 插图、斜杠命令、载入 emit=true 等）已经带着当前值，
+        // 挂起的合并窗口没有存在意义：取消它，保证「一次变更 = 一次上报」。
+        if (this._inputNotifyTimer !== null) {
+            clearTimeout(this._inputNotifyTimer);
+            this._inputNotifyTimer = null;
+        }
         this._lastValue = value;
         this.dispatch('input', { value });
         this.onInput(value);
     }
 
-    whenReady() {
-        return this.readyPromise;
+    /**
+     * 输入变更上报的合并入口（见 INPUT_NOTIFY_DELAY_MS 的说明）。
+     * 窗口内的连续事务只保留最后一个：序列化发生在定时器里，而不是每个
+     * 按键的 update 回调里。`flushPendingInput()` 立刻结清并同步上报。
+     */
+    scheduleInputNotify() {
+        clearTimeout(this._inputNotifyTimer);
+        this._inputNotifyTimer = setTimeout(() => {
+            this._inputNotifyTimer = null;
+            // 编辑器已被销毁（页面关闭、实例重建）：此时 storage.markdown 与
+            // doc 都已不可读，再序列化只会抛错。挂起的变更随实例一起作废。
+            if (!this.editor || this.editor.isDestroyed) return;
+            this.notifyEditorValueChanged(this.getValue());
+        }, INPUT_NOTIFY_DELAY_MS);
+    }
+
+    /**
+     * 立刻把挂起的输入变更结清（同步上报）。持久化、切文、隐藏页面、
+     * 读取当前值之前都必须先调它——否则窗口内最后几次按键的值还没上报。
+     * 返回是否有挂起的变更被结清。
+     */
+    flushPendingInput() {
+        if (this._inputNotifyTimer === null) return false;
+        clearTimeout(this._inputNotifyTimer);
+        this._inputNotifyTimer = null;
+        this.notifyEditorValueChanged(this.getValue());
+        return true;
+    }
+
+    /** 丢弃挂起的输入变更（载入新文档前用：新文档的真值由调用方持有）。 */
+    discardPendingInput() {
+        if (this._inputNotifyTimer === null) return false;
+        clearTimeout(this._inputNotifyTimer);
+        this._inputNotifyTimer = null;
+        return true;
     }
 
     /* ---------------- 光标偏移映射（可见文本偏移 ↔ ProseMirror 位置） ---------------- */
@@ -681,7 +782,8 @@ export class HybridMarkdownEditor {
             return {
                 mode: 'source',
                 offset: Number(textarea.selectionStart || 0),
-                scrollTop: Number(textarea.scrollTop || 0),
+                // 源码 textarea 不自己滚（高度由内容撑开），视线在外层滚动层上。
+                scrollTop: Number(this.scroller?.scrollTop || 0),
             };
         }
         if (this.isReadingMode) return null;
@@ -733,9 +835,327 @@ export class HybridMarkdownEditor {
         return this.container.querySelector('.tiptap-source-textarea');
     }
 
+    /**
+     * 文档前缀 [0, pos) 的 Markdown 长度。
+     *
+     * 这是「渲染光标」与「源码 textarea 光标」之间唯一的公共坐标系：textarea 里
+     * 装的就是 Markdown 原文，而序列化器对 Fragment 直接可用（实测
+     * `serialize(doc.slice(0, pos, false).content)` 与前缀逐字一致）。
+     *
+     * 返回 null 表示「这个位置切不出合法 Markdown」：把表格从中间切开时，序列化器
+     * 会拿到残缺的 row/cell 结构并抛错（真测踩过，整篇切换直接崩）。调用方必须把
+     * null 当「不可用位置」跳过，而不是当 0——否则单调性判断会被污染。
+     */
+    serializePrefixLength(pos) {
+        const { doc } = this.editor.state;
+        const clamped = Math.max(0, Math.min(Number(pos) || 0, doc.content.size));
+        try {
+            return this.editor.storage.markdown.serializer
+                .serialize(doc.slice(0, clamped, false).content).length;
+        } catch (_error) {
+            return null;
+        }
+    }
+
+    /**
+     * 记录「用户真的放过光标」这件事：只在编辑器聚焦、且选区是单点时记。
+     *
+     * 焦点门槛仍然需要，只是必须放在**记录时**而不是读取时——刚打开文章、用户
+     * 一个字没碰，PM 的 selection 也在 pos 1；不区分的话「只滚动没点正文」会被
+     * 当成光标在开头，切过去反而把视线拽回顶部（要修的正是这个毛病）。
+     */
+    trackCaretWhileFocused() {
+        if (!this.editor || this.editor.isDestroyed) return;
+        if (this.sourceMode) return;   // 源码模式下 textarea 才是真相，见 trackSourceCaret
+        if (!this.editor.isFocused) return;
+        const { selection } = this.editor.state;
+        if (!selection.empty) {
+            this._trackedCaret = null;   // 整段选择：不猜，交给滚动比例
+            return;
+        }
+        this._trackedCaret = { mode: 'wysiwyg', pos: selection.from };
+    }
+
+    /** 源码侧同理：textarea 有焦点且是单点光标时才记。 */
+    trackSourceCaret(textarea) {
+        if (!this.sourceMode || !textarea) return;
+        if (document.activeElement !== textarea) return;
+        if (Number(textarea.selectionEnd || 0) !== Number(textarea.selectionStart || 0)) {
+            this._trackedCaret = null;
+            return;
+        }
+        this._trackedCaret = { mode: 'source', offset: Number(textarea.selectionStart || 0) };
+    }
+
+    /**
+     * 当前可信光标 → Markdown 偏移；没有可信光标时返回 null。
+     *
+     * 不能在这里现查焦点：悬浮按钮的 click 之前必然先让编辑器失焦，等到切换那一刻
+     * `isFocused` 早就是 false 了（真机实测：光标明明在文中，判定却一直是「不可信」，
+     * 于是永远退回按比例落位）。所以光标在**放置的当时**记录（见
+     * trackCaretWhileFocused），这里只读最近一次记录。
+     *
+     * 记录只存位置不存偏移：selectionUpdate 在方向键/点击时都会来，长文里每次都
+     * 整篇序列化（实测 7.8 万字约 67ms）会吃掉输入预算；偏移留到切换时再算一次。
+     */
+    getCaretMarkdownOffset() {
+        const tracked = this._trackedCaret;
+        if (!tracked) return null;
+        if (tracked.mode === 'source') {
+            const textarea = this.getSourceTextarea();
+            if (!textarea || textarea.value.length === 0) return 0;
+            return Math.min(tracked.offset, textarea.value.length);
+        }
+        if (!this.editor || this.editor.isDestroyed) return null;
+        const maxPos = this.editor.state.doc.content.size;
+        if (tracked.pos > maxPos) return null;
+        return this.serializePrefixLength(Math.min(tracked.pos, maxPos));
+    }
+
+    /**
+     * Markdown 偏移 → 光标 ProseMirror 位置。
+     *
+     * `serializePrefixLength` 随位置**单调不减但不满射**：`# `、`- ` 这类语法
+     * 标记在任何 PM 位置都会产出，所以源码里落在标记中间的偏移没有精确对应位置
+     * ——取「前缀长度 >= 目标的最小位置」，贴到该块文字开头（比跑到块尾或文档
+     * 顶部都好）。返回值可能是块边界这类间隙位置，由 setCaretAtMarkdownOffset
+     * 的 `TextSelection.near` 兜住。
+     *
+     * 块级二分（边界是完整块，前缀长度在边界序列上严格不减）+ 块内线性细化
+     * （表内不单调，见函数内注释）。只在切换时跑一次，不在输入路径。
+     */
+    mapMarkdownOffsetToPos(target) {
+        const { doc } = this.editor.state;
+        const wanted = Math.max(0, Number(target) || 0);
+        const boundaries = [];
+        doc.forEach((node, offset) => boundaries.push(offset + node.nodeSize));
+        if (boundaries.length === 0) return 1;
+        const lastBoundary = boundaries[boundaries.length - 1];
+        if (wanted >= this.serializePrefixLength(lastBoundary)) return lastBoundary;
+
+        let low = 0;
+        let high = boundaries.length - 1;
+        while (low < high) {
+            const middle = (low + high) >> 1;
+            if (this.serializePrefixLength(boundaries[middle]) >= wanted) high = middle;
+            else low = middle + 1;
+        }
+        const blockEnd = boundaries[low];
+        const blockStart = low === 0 ? 0 : boundaries[low - 1];
+        if (wanted <= this.serializePrefixLength(blockStart)) return blockStart + 1;
+
+        // 块内细化：候选是文本节点边界（升序），线性扫到**第一个**前缀 >= 目标
+        // 的位置（找到即停，绝大多数块只有几个文本节点）。
+        // 这里刻意不用块内二分：表格内前缀长度**不是单调的**——GFM 序列化器按
+        // 已包含的行列宽补 padding，切到某格可能比切到前一格更短，二分会停在
+        // 错误候选上（写二分后 jsdom 往返测试实测 FAIL：pos 81/len 107 被映射
+        // 回 pos 78）。块级二分安全：边界是完整块，后一边界一定包含更多内容。
+        // ponytail: 表格内部目标 = O(单元格数) 次整篇序列化，百格长文切换可达
+        //   秒级；需要提速时给「表内目标」单独走块首回退，或做增量前缀。
+        const candidates = [];
+        doc.nodesBetween(blockStart, blockEnd, (node, pos) => {
+            if (node.isText) candidates.push(pos, pos + node.nodeSize);
+        });
+        if (candidates.length === 0) return blockStart + 1;
+        for (const candidate of candidates) {
+            const length = this.serializePrefixLength(candidate);
+            if (length !== null && length >= wanted) return candidate;
+        }
+        return blockEnd;
+    }
+
+    /** 把光标放到 Markdown 偏移处（两个编辑面通用）。 */
+    setCaretAtMarkdownOffset(offset, { scrollIntoView = true, focus = true } = {}) {
+        const wanted = Math.max(0, Number(offset) || 0);
+        if (this.sourceMode) {
+            const textarea = this.getSourceTextarea();
+            if (!textarea) return false;
+            const position = Math.min(wanted, textarea.value.length);
+            // 先聚焦再设选区：不聚焦的话切进源码还得用户再点一下才能打字。
+            if (focus) textarea.focus();
+            textarea.setSelectionRange(position, position);
+            // 记录同步到本面：下一次切换要读的是这里，而不是上一条正文里的位置。
+            this._trackedCaret = { mode: 'source', offset: position };
+            // textarea 自身不滚（高度由内容撑开），所以用选区位置换算外层滚动。
+            if (scrollIntoView) this.scrollTextareaSelectionIntoView(textarea);
+            return true;
+        }
+        if (!this.editor || this.editor.isDestroyed) return false;
+        const TextSelection = globalThis.DumbPadTiptap.PM.state.TextSelection;
+        const { state } = this.editor;
+        const maxPos = state.doc.content.size;
+        const position = Math.max(0, Math.min(this.mapMarkdownOffsetToPos(wanted), maxPos));
+        // near() 而不是 create()：映射的兜底返回值（块首 +1 / 块尾）可能落在
+        // 表格行、列表条目这类**间隙位置**，create 会造出非法光标；near 带
+        // 向前偏置贴到最近的合法文本位。
+        let selection = TextSelection.near(state.doc.resolve(position), 1);
+        if (!selection) selection = TextSelection.atStart(state.doc);
+        const tr = state.tr.setSelection(selection);
+        // 切回渲染时不调 PM 的 scrollIntoView：视线已经由滚动比例落回原处，
+        // 再滚一次会打架；而且 jsdom 没有布局，PM 的 coordsAtPos 会直接抛。
+        this.editor.view.dispatch(scrollIntoView && this.editor.isFocused ? tr.scrollIntoView() : tr);
+        this._trackedCaret = { mode: 'wysiwyg', pos: selection.from };
+        // PM 只在聚焦时才把状态里的选区同步到 DOM——不聚焦的话用户看不到光标，
+        // 而且下一次按键会先经过 focus 把选区重置掉。
+        if (focus) this.editor.commands.focus();
+        return true;
+    }
+
+    /**
+     * textarea 的光标不在「自己的滚动容器」里（组件把高度撑开、滚动交给外层），
+     * 所以 setSelectionRange 不会自动滚动。这里用一个离屏镜像量出光标真实的
+     * 纵向偏移，再把外层滚动容器挪过去。
+     *
+     * 不能按「字符数 ÷ 每行字符数」估算折行：textarea 是等宽拉丁字体，中文在其中
+     * 占双倍宽度，估算会把行数算少一半，长段落里能偏出几百像素。镜像复制影响
+     * 折行的那几个属性（字体/行高/宽度/内边距/white-space/word-break），
+     * 浏览器给出的 offsetTop 就是真实值。
+     */
+    measureTextareaCaretTop(textarea, offset) {
+        const before = textarea.value.slice(0, Math.max(0, offset));
+        const computed = window.getComputedStyle(textarea);
+        const mirror = document.createElement('div');
+        const style = mirror.style;
+        style.position = 'absolute';
+        style.left = '-99999px';
+        style.top = '0';
+        style.visibility = 'hidden';
+        style.pointerEvents = 'none';
+        // 与 textarea 同一套盒模型：宽度取 content box，避免 padding 参与折行。
+        style.boxSizing = 'content-box';
+        style.width = `${textarea.clientWidth}px`;
+        style.font = computed.font;
+        style.lineHeight = computed.lineHeight;
+        style.letterSpacing = computed.letterSpacing;
+        style.whiteSpace = 'pre-wrap';
+        style.wordBreak = computed.wordBreak || 'normal';
+        style.overflowWrap = computed.overflowWrap || 'break-word';
+        style.padding = '0';
+        const marker = document.createElement('span');
+        // 光标前的文本 + 一个零宽锚点；锚点的 offsetTop 就是光标所在行的行顶。
+        mirror.textContent = before;
+        marker.textContent = '\u200b';
+        mirror.appendChild(marker);
+        document.body.appendChild(mirror);
+        let top = 0;
+        try {
+            top = marker.offsetTop;
+        } finally {
+            mirror.remove();
+        }
+        return top + (parseFloat(computed.paddingTop) || 0);
+    }
+
+    scrollTextareaSelectionIntoView(textarea) {
+        const scroller = this.getScrollContainer();
+        if (!scroller || !textarea) return;
+        const caretTop = this.measureTextareaCaretTop(textarea, Number(textarea.selectionStart || 0));
+        const textareaRect = textarea.getBoundingClientRect();
+        const scrollerRect = scroller.getBoundingClientRect();
+        // 光标相对滚动内容顶部的偏移 = textarea 在内容里的偏移 + 光标在其内的高度。
+        const caretDocumentTop = scroller.scrollTop + (textareaRect.top - scrollerRect.top) + caretTop;
+        const viewTop = scroller.scrollTop;
+        const viewBottom = viewTop + scroller.clientHeight;
+        if (caretDocumentTop < viewTop + scroller.clientHeight * 0.15) {
+            scroller.scrollTop = Math.max(0, caretDocumentTop - scroller.clientHeight * 0.3);
+        } else if (caretDocumentTop > viewBottom - scroller.clientHeight * 0.15) {
+            scroller.scrollTop = caretDocumentTop - scroller.clientHeight * 0.7;
+        }
+    }
+
+    /**
+     * 源码 textarea 的高度由内容撑开（与渲染卡片一样交给外层滚动层滚动）。
+     * 固定高度会让源码模式自己滚、渲染模式外层滚，两套几何：长文章下源码区
+     * 停在屏幕上、内部出滚动条，切换时视线还会被重置到顶部。
+     */
+    autosizeSourceTextarea(textarea = this.getSourceTextarea()) {
+        if (!textarea) return;
+        // 先归零再量：留着上一次的 height 时 scrollHeight 会被旧高度钳住。
+        textarea.style.height = 'auto';
+        const nextHeight = Math.max(1, textarea.scrollHeight);
+        textarea.style.height = `${nextHeight}px`;
+    }
+
+    /**
+     * 视线位置在两个编辑面之间按**比例**传递（两边总高不同，像素值不可移植）。
+     *
+     * 必须走 getScrollContainer() 而不是死盯 this.scroller：桌面在
+     * .vditor-wysiwyg 内滚，移动端（ios-theme）是整页滚——那时 .vditor-wysiwyg
+     * 的 scrollHeight == clientHeight（max 0），只读它会让移动端每次切换都回到
+     * 顶部（真机实测 page.scrollTop 23863 → 0）。
+     */
+    getScrollFraction() {
+        const scroller = this.getScrollContainer();
+        if (!scroller) return 0;
+        const max = scroller.scrollHeight - scroller.clientHeight;
+        if (max <= 0) return 0;
+        return Math.max(0, Math.min(1, scroller.scrollTop / max));
+    }
+
+    applyScrollFraction(fraction) {
+        const scroller = this.getScrollContainer();
+        if (!scroller || !Number.isFinite(Number(fraction))) return;
+        const max = scroller.scrollHeight - scroller.clientHeight;
+        scroller.scrollTop = Math.max(0, Math.min(1, Number(fraction))) * max;
+    }
+
+    /**
+     * 切换编辑面后把视线按比例放回原位。
+     *
+     * 不能只写一次：两个面的总高不同（源码是纯文本、渲染有代码块/图片/标题的
+     * 额外高度），而且渲染侧的 NodeView 与图片是**异步撑高**的——一次 rAF 时
+     * scrollHeight 还没稳定，算出来的落点会偏。
+     *
+     * 但逐帧重写 scrollTop 有个必须防住的副作用：用户在这几帧里自己滚了，就会被
+     * 我们拽回去（真机踩过：滚到底后约 0.7s 弹回原位）。所以每一帧先核对
+     * 「当前 scrollTop 是否还是我们上一次写下去的值」，只要对不上就说明有人
+     * （用户）动了滚动，立刻放弃剩余帧。
+     *
+     * 循环的作废用世代号而不是 cancelAnimationFrame：再次切换时旧循环下一帧自己
+     * 退出即可，少一个全局依赖（jsdom 测试环境普遍只补了 requestAnimationFrame）。
+     */
+    restoreScrollFraction(fraction, { frames = 10 } = {}) {
+        const token = (this._scrollRestoreToken = (this._scrollRestoreToken || 0) + 1);
+        let lastHeight = -1;
+        let stable = 0;
+        let remaining = frames;
+        let lastWritten = null;
+        const step = () => {
+            if (this._scrollRestoreToken !== token) return;
+            if (!this.editor || this.editor.isDestroyed || !this.ready) return;
+            const scroller = this.getScrollContainer();
+            if (!scroller) return;
+            // 用户在我们两次写之间自己滚了：让位，不再覆盖。
+            if (lastWritten !== null && Math.abs(scroller.scrollTop - lastWritten) > 1) return;
+            if (this.sourceMode) this.autosizeSourceTextarea();
+            this.applyScrollFraction(fraction);
+            lastWritten = scroller.scrollTop;
+            const height = scroller.scrollHeight;
+            stable = height === lastHeight ? stable + 1 : 0;
+            lastHeight = height;
+            remaining -= 1;
+            if (stable >= 2 || remaining <= 0) return;
+            requestAnimationFrame(step);
+        };
+        requestAnimationFrame(step);
+    }
+
     setSourceMode(enabled) {
         if (Boolean(enabled) === this.sourceMode) return;
+        // 进源码模式前先把挂起的输入结清：textarea 显示的必须是含最后几次
+        // 按键的正文，否则用户在源码里会看到「少一截」的内容并把它存回去。
+        // **必须在置 sourceMode 之前**——getValue 在源码模式下读的是 textarea
+        // 或 _lastValue，反过来就结清不到最新文档。
+        if (enabled) this.flushPendingInput();
+        // 切换前的两个锚点：光标（Markdown 偏移，两个编辑面的公共坐标系）与
+        // 视线比例。光标可信时以光标为准（它会把自己滚进视野），否则退回比例。
+        const caretOffset = this.getCaretMarkdownOffset();
+        const scrollFraction = this.getScrollFraction();
         this.sourceMode = Boolean(enabled);
+        // 显隐由这一个类名决定（styles.css 的 .is-source-mode 规则，藏的是卡片
+        // `.tiptap`，滚动层本身保持可见）。不要再写行内 display：渲染层
+        // `.typora-editor-shell .vditor-wysiwyg` 带 `display: block !important`，
+        // 行内样式对它必输，实测会导致源码模式「点了没反应」。
         this.container.classList.toggle('is-source-mode', this.sourceMode);
         let textarea = this.getSourceTextarea();
         if (this.sourceMode) {
@@ -743,24 +1163,77 @@ export class HybridMarkdownEditor {
                 textarea = document.createElement('textarea');
                 textarea.className = 'tiptap-source-textarea';
                 textarea.setAttribute('aria-label', 'Markdown source');
-                this.container.appendChild(textarea);
+                // 挂进滚动层，和卡片 `.tiptap` 同级：同一套百分比基准、同一个
+                // 滚动容器，切换时 scrollTop 才有意义（挂在 shell 上会各滚各的）。
+                this.scroller.appendChild(textarea);
                 textarea.addEventListener('input', () => {
                     this.notifyEditorValueChanged(textarea.value);
+                    this.autosizeSourceTextarea(textarea);
+                    this.trackSourceCaret(textarea);
+                });
+                // 光标移动不产生 input：键盘、鼠标点选、程序化选区都要单独跟。
+                ['keyup', 'click', 'select', 'focus'].forEach(eventName => {
+                    textarea.addEventListener(eventName, () => this.trackSourceCaret(textarea));
                 });
                 // 源码模式下的 /file 命令（与旧 handleSourceFileCommand 对齐）。
                 textarea.addEventListener('keydown', (event) => {
                     this.fileCommand?.handleSourceKeydown(event);
                 });
+                // 换宽会改折行数 → 内容高度变；不重新量的话底部会被裁掉一截。
+                this._sourceResizeHandler = () => {
+                    if (!this.sourceMode) return;
+                    this.autosizeSourceTextarea();
+                };
+                window.addEventListener('resize', this._sourceResizeHandler);
             }
             textarea.value = this._lastValue;
-            textarea.style.display = 'block';
-            this.scroller.style.setProperty('display', 'none');
+            this.autosizeSourceTextarea(textarea);
         } else if (textarea) {
             const nextValue = textarea.value;
-            textarea.style.display = 'none';
-            this.scroller.style.removeProperty('display');
             this.setValue(nextValue, false);
         }
+        this.restoreCaretAfterModeSwitch(caretOffset, scrollFraction);
+    }
+
+    /**
+     * 切换后把光标与视线放回原位。
+     *
+     * 光标恢复必须在**布局稳定之后**做：源码侧 textarea 的高度是异步撑开的、
+     * 渲染侧代码块 NodeView 与图片也是异步撑高的，过早量会把落点算偏。
+     * 收敛期间先按滚动比例兜住视线（避免布局稳定前那一两帧看起来「跳到顶部」），
+     * 稳定后交给光标（它会把自己滚进视野，比比例更准）。
+     */
+    restoreCaretAfterModeSwitch(caretOffset, scrollFraction) {
+        if (caretOffset === null || caretOffset === undefined) {
+            this.restoreScrollFraction(scrollFraction);
+            return;
+        }
+        const token = (this._scrollRestoreToken = (this._scrollRestoreToken || 0) + 1);
+        let remaining = 10;
+        let lastHeight = -1;
+        let stable = 0;
+        const step = () => {
+            if (this._scrollRestoreToken !== token) return;
+            if (!this.editor || this.editor.isDestroyed || !this.ready) return;
+            const scroller = this.getScrollContainer();
+            if (!scroller) return;
+            if (this.sourceMode) this.autosizeSourceTextarea();
+            this.applyScrollFraction(scrollFraction);
+            const height = scroller.scrollHeight;
+            stable = height === lastHeight ? stable + 1 : 0;
+            lastHeight = height;
+            remaining -= 1;
+            if (!(stable >= 2 || remaining <= 0)) {
+                requestAnimationFrame(step);
+                return;
+            }
+            try {
+                this.setCaretAtMarkdownOffset(caretOffset);
+            } catch (_error) {
+                // 光标恢复是尽力而为，绝不打断切换。
+            }
+        };
+        requestAnimationFrame(step);
     }
 
     /* ---------------- 选区（对齐旧 WYSIWYG 行为：无纯文本偏移） ---------------- */
@@ -780,8 +1253,10 @@ export class HybridMarkdownEditor {
     /* ---------------- 大纲与导航 ---------------- */
 
     generateToC(markdown = undefined) {
+        // 目录按「当前正文」派生。_lastValue 由每次变更通知写入（含挂起窗口
+        // 里最新的那一次 flush），它没有时才回落到实时序列化。
         const value = markdown === undefined
-            ? (this._lastValue || this.pendingValue || (this.ready ? this.getValue() : ''))
+            ? (this._lastValue || (this.ready ? this.getValue() : ''))
             : markdown;
         const index = buildMarkdownHeadingIndex(value);
         this.headingLineBySlug = index.headingLineBySlug;

@@ -1,0 +1,288 @@
+/**
+ * 源码模式悬浮按钮回归（jsdom）：适配器的 setSourceMode 一直存在，但此前没有
+ * UI 入口。这里钉住接入后的关键契约：
+ * 1) 悬浮按钮存在、可通过 DUMBPAD_HIDDEN_FLOATING_ACTIONS 隐藏；
+ * 2) app.js 的 editor 代理暴露 setSourceMode / isSourceMode；
+ * 3) 源码 → 改标题级别 → 切回，渲染与落盘值都正确（用户的核心诉求）；
+ * 4) 状态持久化到 localStorage，刷新后恢复；
+ * 5) 阅读模式与源码模式互斥、切回后目录重建。
+ * 纯 textarea 方案：不做语法高亮/行号，只保证「改得动、存得对、渲染得回来」。
+ */
+const fs = require('fs');
+const path = require('path');
+const vm = require('vm');
+const { JSDOM } = require('jsdom');
+
+const ROOT = path.resolve(__dirname, '..');
+const indexPath = path.join(ROOT, 'public', 'index.html');
+const appPath = path.join(ROOT, 'public', 'app.js');
+
+let failures = 0;
+function check(name, condition, detail) {
+    if (condition) {
+        console.log(`PASS ${name}`);
+    } else {
+        failures += 1;
+        console.error(`FAIL ${name}${detail !== undefined ? ` :: ${JSON.stringify(detail)}` : ''}`);
+    }
+}
+
+/* ---------------- 1) 入口与配置（源码级，不需要浏览器环境） ---------------- */
+
+const indexHtml = fs.readFileSync(indexPath, 'utf8');
+const appSource = fs.readFileSync(appPath, 'utf8');
+
+check(
+    'index.html 有 toggle-source-mode 悬浮按钮',
+    /<button id="toggle-source-mode"[^>]*class="floating-btn"/.test(indexHtml),
+);
+check(
+    '按钮在 .floating-actions 容器内',
+    /<div class="floating-actions">[\s\S]*id="toggle-source-mode"[\s\S]*<\/div>/.test(indexHtml),
+);
+check(
+    '按钮带 aria-pressed（切换语义）',
+    /id="toggle-source-mode"[^>]*aria-pressed="false"/.test(indexHtml),
+);
+check(
+    '按钮带 data-tooltip',
+    /id="toggle-source-mode"[^>]*data-tooltip=/.test(indexHtml),
+);
+
+// 配置黑名单必须认识它，否则 DUMBPAD_HIDDEN_FLOATING_ACTIONS 无法隐藏。
+const floatingConfigSource = fs.readFileSync(
+    path.join(ROOT, 'public', 'managers', 'floating-actions-config.js'), 'utf8');
+check(
+    'CONFIGURABLE_FLOATING_ACTIONS 登记了 toggle-source-mode',
+    /CONFIGURABLE_FLOATING_ACTIONS\s*=\s*\[[\s\S]*?'toggle-source-mode'[\s\S]*?\]/.test(floatingConfigSource),
+);
+
+/* ---------------- 2) app.js 接线源码断言 ---------------- */
+
+const proxyStart = appSource.indexOf('const editor = {');
+const proxyEnd = appSource.indexOf('\n    };', proxyStart);
+const proxySource = appSource.slice(proxyStart, proxyEnd);
+check('editor 代理暴露 setSourceMode', /setSourceMode:\s*\(enabled\)\s*=>/.test(proxySource));
+check('editor 代理暴露 isSourceMode', /get isSourceMode\(\)/.test(proxySource));
+check(
+    '源码模式状态持久化到独立 key',
+    appSource.includes("SOURCE_MODE_KEY = 'dumbpad_source_mode'"),
+);
+check(
+    '进源码模式前退出阅读模式（互斥）',
+    /if \(active && isReadingMode\)[\s\S]{0,200}?isReadingMode = false;/.test(appSource),
+);
+check(
+    '切回渲染后重建目录（源码模式里没有渲染 DOM）',
+    /if \(!active\) \{[\s\S]{0,300}?updateToC\(\);/.test(appSource),
+);
+check(
+    '恢复时机挂在编辑器就绪之后',
+    /whenReady\(\)\.then\(\(\) => \{[\s\S]{0,600}?restoreSourceModeIfRequested\(\)/.test(appSource),
+);
+check(
+    '恢复函数定义在使用点之前（ensureEditor 可能更早调用）',
+    appSource.indexOf('function restoreSourceModeIfRequested()') < appSource.indexOf('restoreSourceModeIfRequested();'),
+);
+check(
+    '恢复路径不用 .catch 吞错（失败要能在控制台看见）',
+    !/restoreSourceModeIfRequested\(\);[\s\S]{0,80}?\}\)\s*\.catch\(/.test(appSource),
+);
+
+/* ---------------- 3) 真实编辑器往返（jsdom + 真实 bundle） ---------------- */
+
+const dom = new JSDOM('<!doctype html><html><body></body></html>', { url: 'http://localhost/' });
+for (const key of ['window', 'document', 'Node', 'NodeFilter', 'Element', 'HTMLElement', 'MutationObserver', 'KeyboardEvent', 'localStorage']) {
+    global[key] = key === 'window' ? dom.window : dom.window[key];
+}
+Object.defineProperty(global, 'navigator', { value: dom.window.navigator, configurable: true });
+global.getSelection = dom.window.getSelection.bind(dom.window);
+global.requestAnimationFrame = dom.window.requestAnimationFrame = cb => setTimeout(cb, 0);
+dom.window.Element.prototype.scrollIntoView = () => {};
+vm.runInThisContext(fs.readFileSync(path.join(ROOT, 'public/vendor/tiptap/tiptap.bundle.js'), 'utf8'));
+
+async function main() {
+    const { HybridMarkdownEditor } = await import('../public/tiptap-editor.js');
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const inputs = [];
+    const editor = new HybridMarkdownEditor(container, { input: value => inputs.push(value) });
+    try {
+        await editor.whenReady();
+
+        const article = '# 一级标题\n\n正文段落\n\n## 原有二级\n\n- 列表项';
+        editor.setValue(article, false);
+        check('初始渲染为 h1', container.querySelector('.tiptap h1')?.textContent === '一级标题');
+
+        // 用户核心场景：# → ##（此前只能删掉重打）
+        editor.setSourceMode(true);
+        const textarea = editor.getSourceTextarea();
+        check('源码模式显示 Markdown 原文', textarea.value === article, textarea.value);
+        // 显隐由 .is-source-mode 类驱动（styles.css 负责落到 computed display）。
+        // 这里不能断言行内 style：行内样式赢不过 `.typora-editor-shell
+        // .vditor-wysiwyg { display: block !important }`，那正是「点了没反应」的
+        // 根因；真机的 computed display 由 test/browser/source-mode.js 量。
+        check('源码模式给容器挂上 is-source-mode', container.classList.contains('is-source-mode'));
+        check('源码模式不再写行内 display', textarea.style.display === '' && editor.scroller.style.display === '');
+        check('isSourceMode 反映状态', editor.sourceMode === true);
+
+        textarea.value = article.replace('# 一级标题', '## 一级标题');
+        textarea.dispatchEvent(new dom.window.Event('input'));
+        check('源码编辑触发了变更上报', inputs.length === 1 && inputs[0].startsWith('## 一级标题'), inputs);
+
+        editor.setSourceMode(false);
+        const headings = [...container.querySelectorAll('.tiptap h1, .tiptap h2')]
+            .map(el => `${el.tagName}:${el.textContent}`);
+        check(
+            '切回后 h1 变 h2，原有 h2 保留',
+            headings.includes('H2:一级标题') && headings.includes('H2:原有二级') && !headings.includes('H1:一级标题'),
+            headings,
+        );
+        check('切回后列表仍正常渲染', Boolean(container.querySelector('.tiptap li')));
+        check('切回后渲染区恢复', editor.scroller.style.display === '');
+        check('切回后落盘值为新源码', editor.getValue().startsWith('## 一级标题'), editor.getValue());
+
+        // 幂等：再进再出，内容不变
+        const settled = editor.getValue();
+        editor.setSourceMode(true);
+        check('二次进入源码内容与渲染值一致', editor.getSourceTextarea().value === settled);
+        editor.setSourceMode(false);
+        check('二次切回内容不变', editor.getValue() === settled, { settled, now: editor.getValue() });
+
+        // 源码模式里切文章：textarea 必须跟着换成新正文，否则点一下切回渲染
+        // 会把上一篇的原文写进当前文章（用户报的「跳到上上次切换的文章」）。
+        editor.setSourceMode(true);
+        editor.setValue('# 文章甲\n\n甲的正文', false);
+        check('源码模式中载入新文章会刷新 textarea', editor.getSourceTextarea().value === '# 文章甲\n\n甲的正文', editor.getSourceTextarea().value);
+        editor.setValue('# 文章乙\n\n乙的正文', false);
+        check('连续切文 textarea 始终是最新一篇', editor.getSourceTextarea().value.startsWith('# 文章乙'), editor.getSourceTextarea().value);
+        editor.setSourceMode(false);
+        check('切回后渲染的是当前文章而非上一篇', container.querySelector('.tiptap h1')?.textContent === '文章乙',
+            container.querySelector('.tiptap h1')?.textContent);
+        check('切回后落盘值也是当前文章', editor.getValue().startsWith('# 文章乙'), editor.getValue());
+
+        // 空文档
+        editor.setValue('', false);
+        editor.setSourceMode(true);
+        check('空文档源码为空', editor.getSourceTextarea().value === '');
+        editor.getSourceTextarea().value = '# 新写的';
+        editor.getSourceTextarea().dispatchEvent(new dom.window.Event('input'));
+        editor.setSourceMode(false);
+        check('空文档里写入后正确渲染', container.querySelector('.tiptap h1')?.textContent === '新写的');
+
+        // 重复调用不炸
+        editor.setSourceMode(false);
+        check('重复关闭源码模式是安全的', editor.getValue() === '# 新写的');
+
+        /* ---------------- 4) 光标映射（Markdown 偏移 ↔ PM 位置） ----------------
+         * 源码/渲染两个编辑面的光标唯一公共坐标系就是 Markdown 偏移。
+         * 映射错了不会报错，只会「切过去光标跑到别处」——所以必须钉住往返。 */
+        const caretDoc = [
+            '# 一级标题',
+            '',
+            '正文段落一二三，带**加粗**和`行内代码`。',
+            '',
+            '## 二级',
+            '',
+            '- 列表甲',
+            '- 列表乙',
+            '',
+            '1. 有序一',
+            '2. 有序二',
+            '',
+            '> 引用第一行',
+            '> 引用第二行',
+            '',
+            '```js',
+            'const a = 1;',
+            '```',
+            '',
+            '| 列 | 二 |',
+            '| --- | --- |',
+            '| 甲 | 乙 |',
+            '',
+            '最后一段。',
+        ].join('\n');
+        editor.setValue(caretDoc, false);
+        const fullMd = editor.getValue();
+        check('映射用全文非空', fullMd.length > 50, fullMd.length);
+
+        // 关键不变式：**偏移 → 位置 → 偏移** 精确还原。
+        // 注意 serializePrefixLength 单调但**不满射**：`# `、`- ` 这类语法标记和
+        // 块间空行在任何 PM 位置都会产出，所以落在标记中间的偏移没有精确对应
+        // 位置（映射取「前缀长度 >= 目标的最小位置」，贴到块文字开头）。因此
+        // 遍历位置（位置产出的偏移必然可表示），而不是遍历 0..len 的每个偏移。
+        // 只取**文本节点边界**：那才是能放光标的位置。顶层块边界（pos 0 之类）
+        // 放不进 TextSelection，而 `# ` 这种行首标记的中间偏移本来就没有对应位置
+        // （映射会贴到块文字开头），所以不能遍历 0..len 的每个偏移。
+        const textPositions = new Set();
+        editor.editor.state.doc.descendants((node, pos) => {
+            if (node.isText) {
+                textPositions.add(pos);
+                textPositions.add(pos + node.nodeSize);
+            }
+        });
+        const positions = [...textPositions].sort((left, right) => left - right);
+        check('夹具里有足够的文本边界', positions.length > 20, positions.length);
+        let monotonic = true;
+        let mismatched = null;
+        let previousLength = -1;
+        for (const pos of positions) {
+            const length = editor.serializePrefixLength(pos);
+            if (length === null) continue;   // 表格内部切不出前缀：跳过
+            if (length < previousLength) monotonic = false;
+            const roundTrip = editor.serializePrefixLength(editor.mapMarkdownOffsetToPos(length));
+            if (roundTrip !== length && mismatched === null) {
+                mismatched = { pos, length, roundTrip };
+            }
+            previousLength = length;
+        }
+        check('serializePrefixLength 随位置单调不减', monotonic);
+        check('偏移→位置→偏移 往返精确（每个文本边界）', mismatched === null, mismatched);
+
+        // 表格这类「切不开」的位置必须返回 null 而不是抛错（真测踩过：整篇切换崩）。
+        const everyPosition = new Set([0, editor.editor.state.doc.content.size]);
+        editor.editor.state.doc.descendants((node, pos) => {
+            everyPosition.add(pos);
+            everyPosition.add(pos + node.nodeSize);
+        });
+        check('表格内部位置返回 null 而不是抛错',
+            [...everyPosition].some(pos => editor.serializePrefixLength(pos) === null));
+
+        // 边界与越界钳制
+        check('偏移 0 落到文档第一个内容位', editor.mapMarkdownOffsetToPos(0) === 1,
+            editor.mapMarkdownOffsetToPos(0));
+        const lastPos = editor.editor.state.doc.content.size;
+        check('越界偏移钳到文档末尾',
+            editor.mapMarkdownOffsetToPos(fullMd.length + 500) === lastPos,
+            { got: editor.mapMarkdownOffsetToPos(fullMd.length + 500), want: lastPos });
+
+        // 光标可信性：只记「用户真的放过光标」的位置，且**换文章必须作废**——
+        // PM 位置是文档内绝对偏移，带着 A 文的位置去映射 B 文会跳到不相干的一段。
+        editor._trackedCaret = { mode: 'wysiwyg', pos: 8 };
+        const trackedOffset = editor.getCaretMarkdownOffset();
+        check('有记录时可取光标偏移', typeof trackedOffset === 'number', trackedOffset);
+        editor.setValue(caretDoc, false);
+        check('内容未变的载入保留光标记录', editor._trackedCaret !== null);
+        editor._trackedCaret = { mode: 'wysiwyg', pos: 8 };
+        editor.setValue(caretDoc + '\n\n追加一段。', false);
+        check('换正文后光标记录作废', editor._trackedCaret === null, editor._trackedCaret);
+        check('无记录时光标不可信（退回按比例落位）', editor.getCaretMarkdownOffset() === null,
+            editor.getCaretMarkdownOffset());
+    } finally {
+        editor.editor.destroy();
+        dom.window.close();
+    }
+
+    console.log('');
+    if (failures > 0) {
+        console.error(`${failures} source-mode check(s) failed`);
+        process.exit(1);
+    }
+    console.log('source mode button checks passed');
+}
+
+main().catch((error) => {
+    console.error(error);
+    process.exit(1);
+});

@@ -73,6 +73,9 @@ import { registerResultType } from './managers/command-search/result-type-regist
 document.addEventListener('DOMContentLoaded', async () => {
     const DEBUG = false;
     const THEME_KEY = 'dumbpad_theme';
+    // 源码模式开关状态（布尔值）。与主题、阅读模式一样放在 localStorage，
+    // 刷新/重开 PWA 后保持用户上次的选择。
+    const SOURCE_MODE_KEY = 'dumbpad_source_mode';
     let editorPerformanceDiagnostics = null;
     const publishEditorPerformanceDiagnostics = summary => {
         if (!editorPerformanceDiagnostics) return;
@@ -130,13 +133,27 @@ document.addEventListener('DOMContentLoaded', async () => {
         // 卡片本体：旧 vditor 是 pre.vditor-reset，Tiptap 适配器是
         // div.tiptap.vditor-reset（白底/圆角/边框都在它身上），两者都是
         // .vditor-wysiwyg 下第一个 .vditor-reset，用类选择器同时命中。
-        getCard: () => document.querySelector('#hybrid-editor .vditor-wysiwyg .vditor-reset')
+        // 源码模式下卡片被 .is-source-mode 藏掉（rect 塌到 0），此时可见的
+        // 「卡片」是同一滚动层里的源码 textarea——不切过去，水印会跳到顶部。
+        getCard: () => {
+            const shell = document.getElementById('hybrid-editor');
+            if (shell?.classList.contains('is-source-mode')) {
+                return shell.querySelector('.tiptap-source-textarea');
+            }
+            return shell?.querySelector('.vditor-wysiwyg .vditor-reset') || null;
+        }
     });
     articleMetaFooter.attach();
 
     const editor = {
         get value() {
-            if (editorInstance) return editorInstance.getValue();
+            if (editorInstance) {
+                // 输入上报是尾随合并的（见 tiptap-editor.js 的 INPUT_NOTIFY_DELAY_MS）：
+                // 任何「读当前值」都必须先结清挂起的变更，否则保存/切文会拿到
+                // 少最后一两次按键的正文。
+                editorInstance.flushPendingInput?.();
+                return editorInstance.getValue();
+            }
             if (bootEditorActive && bootEditor) return bootEditor.value;
             return pendingEditorValue;
         },
@@ -180,8 +197,82 @@ document.addEventListener('DOMContentLoaded', async () => {
         addEventListener: (...args) => editorInstance?.addEventListener(...args),
         removeEventListener: (...args) => editorInstance?.removeEventListener(...args),
         setReadingMode: (enabled) => editorInstance?.setReadingMode(enabled),
-        get isReadingMode() { return editorInstance?.isReadingMode || false; }
+        get isReadingMode() { return editorInstance?.isReadingMode || false; },
+        // 源码模式：把整篇 Markdown 原文放进 textarea 直接改，切回时重新解析渲染。
+        // 适配器里早已实现（setSourceMode，含 /file 命令与光标快照），这里只补代理。
+        setSourceMode: (enabled) => editorInstance?.setSourceMode?.(enabled),
+        get isSourceMode() { return editorInstance?.sourceMode || false; }
     };
+
+    /**
+     * 源码模式悬浮按钮的视觉态（active / aria-pressed / 提示文案）。
+     * 与按钮一起定义在前部：ensureEditor 的恢复回调与后段接线都要用它。
+     */
+    function updateSourceModeUi() {
+        const button = document.getElementById('toggle-source-mode');
+        if (!button) return;
+        const active = Boolean(editorInstance?.sourceMode);
+        button.classList.toggle('active', active);
+        button.setAttribute('aria-pressed', String(active));
+        button.setAttribute('aria-label', active ? '切换回渲染模式' : '切换到 Markdown 源码模式');
+        button.setAttribute('data-tooltip', active ? '渲染模式' : '源码模式');
+    }
+
+    /**
+     * 启动时恢复上次的源码模式（`dumbpad_source_mode`）。
+     * 由 ensureEditor 的 whenReady 回调调用——那时正文已经灌进编辑器，
+     * textarea 才不会拿到空值。定义在这个位置（而不是后段接线区）是刻意的：
+     * ensureEditor 在本文件里更早就可能被调用，函数放在使用点之前最稳。
+     * 只切视图、不写回存储（persist=false），读到 true 才动作。
+     */
+    function restoreSourceModeIfRequested() {
+        if (!editorInstance || editorInstance.sourceMode) return;
+        if (storageManager.load(SOURCE_MODE_KEY) !== true) return;
+        if (applySourceMode) {
+            applySourceMode(true);
+            return;
+        }
+        // 钩子还没注册（addEventListeners 尚未跑到）：直接切适配器。
+        // 启动恢复只关心「进源码视图」，不需要阅读模式互斥与目录重建
+        // （那时目录还没渲染过）。
+        editorInstance.setSourceMode(true);
+        updateSourceModeUi();
+    }
+
+    /**
+     * 源码视图切换的实现与阅读模式/目录重建耦合，必须留在 `addEventListeners`
+     * 作用域里（那边能拿到 `updateReadingMode` / `updateToC`）。
+     * 这里只放一个后段注册进来的钩子：按钮点击时调用它，避免在文件前部
+     * 直接引用后段才声明的函数（那会抛 `setSourceMode is not defined`——
+     * 本轮真机踩过，表现为「点了完全没反应」）。
+     */
+    let applySourceMode = null;
+
+    /**
+     * 切换源码视图。编辑器是懒加载的：首次点击时它可能还没创建，
+     * 旧实现直接 `return`，用户看到的就是「点了没反应」——所以这里要
+     * 先等编辑器就绪再切，而不是静默放弃。
+     */
+    async function toggleSourceMode() {
+        const wanted = !(editorInstance?.sourceMode === true);
+        if (!editorInstance) {
+            // 编辑器还没创建：等它加载完（ensureEditor 内部会复用同一个 Promise）。
+            // 失败时必须给用户一个明确的反馈——不然又是一次「点了没反应」。
+            try {
+                await ensureEditor();
+            } catch (_error) {
+                toaster.show('源码模式不可用：编辑器尚未加载完成', 'error', false, 3200);
+                return;
+            }
+        }
+        if (!editorInstance) {
+            toaster.show('源码模式不可用：编辑器尚未加载完成', 'error', false, 3200);
+            return;
+        }
+        if (!applySourceMode) return;
+        applySourceMode(wanted);
+    }
+
 
     function wireBootEditor() {
         if (bootEditorWired || !bootEditor) return;
@@ -2294,6 +2385,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         const existing = document.getElementById(id);
         if (existing) {
             if (existing.dataset.loaded === 'true') return Promise.resolve(existing);
+            // 之前加载失败过的脚本：load/error 事件早已触发完了，再挂监听会永远
+            // 等不到回调（Promise 永久 pending）。直接以失败态返回，让调用方
+            // 能走到 catch 给出反馈——这是「点源码没反应」的根因之一。
+            if (existing.dataset.failed === 'true') {
+                return Promise.reject(new Error(`Failed to load script: ${src}`));
+            }
             return new Promise((resolve, reject) => {
                 existing.addEventListener('load', () => resolve(existing), { once: true });
                 existing.addEventListener('error', () => reject(new Error(`Failed to load script: ${src}`)), { once: true });
@@ -2309,7 +2406,10 @@ document.addEventListener('DOMContentLoaded', async () => {
                 script.dataset.loaded = 'true';
                 resolve(script);
             };
-            script.onerror = () => reject(new Error(`Failed to load script: ${src}`));
+            script.onerror = () => {
+                script.dataset.failed = 'true';
+                reject(new Error(`Failed to load script: ${src}`));
+            };
             document.head.appendChild(script);
         });
     }
@@ -2406,7 +2506,12 @@ document.addEventListener('DOMContentLoaded', async () => {
                 // after notepad selection can run before Vditor finishes mounting.
                 editorInstance.whenReady().then(() => {
                     if (currentNotepadId) updateToC();
-                }).catch(() => {});
+                    // 恢复上次的源码模式：必须在正文（boot 交接 / setValue）就绪
+                    // 之后再切视图，否则 textarea 里会是空的 _lastValue。
+                    // 不在这条链上挂 .catch 吞错——失败必须能在控制台看见，
+                    // 否则「刷新后没恢复」会变成静默无响应。
+                    restoreSourceModeIfRequested();
+                }, () => {});
                 return editorInstance;
             })().catch(error => {
                 editorLoader = null;
@@ -3110,6 +3215,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     // 内容此刻就是编辑器现值；即使与已存内容一致，服务端也会按 unchanged
     // 幂等处理，不会推高版本。
     function flushPendingNoteSave() {
+        // 输入上报是尾随合并的：页面隐藏/切文时窗口里可能还压着最后几次按键，
+        // 而它正是 debouncedSave 的触发源。先结清，再判断有没有待发保存——
+        // 否则「打完字立刻切后台」会一次都不保存。
+        editorInstance?.flushPendingInput?.();
         if (!saveTimeout || !currentNotepadId) return;
         clearTimeout(saveTimeout);
         saveTimeout = null;
@@ -3755,6 +3864,44 @@ document.addEventListener('DOMContentLoaded', async () => {
             readModeBtn.addEventListener('click', () => {
                 isReadingMode = !isReadingMode;
                 updateReadingMode(true);
+            });
+        }
+
+        /* ---------------- 源码模式（整篇 Markdown 原文编辑） ----------------
+         * 适配器的 setSourceMode 早就实现了（textarea 承载原文，切回时 setValue 重新
+         * 解析），这里补悬浮按钮入口 + 状态持久化。两个互斥关系必须处理：
+         * 1) 阅读模式下编辑器是 setEditable(false)，源码 textarea 虽仍可写，但退出源码
+         *    时 setValue 会重解析整篇——所以在阅读模式点源码，先退出阅读模式再进源码；
+         * 2) 源码模式里没有渲染 DOM，目录的片段子条目扫不到东西，切回后必须补一次
+         *    updateToC，否则目录会停在「本文暂无标题目录」。
+         * updateSourceModeUi / restoreSourceModeIfRequested 定义在文件前部（编辑器
+         * 代理之后）：ensureEditor 的恢复回调也要用它们，不能依赖后段声明。
+         */
+        const sourceModeBtn = document.getElementById('toggle-source-mode');
+
+        // 与阅读模式、目录重建耦合的切换实现：留在本作用域（能用
+        // updateReadingMode / updateToC），并通过钩子暴露给前部的按钮逻辑。
+        function setSourceMode(active, { persist = true } = {}) {
+            if (!editorInstance) return;
+            // 互斥：进源码前先离开阅读模式（阅读模式只读，源码模式要能改）。
+            if (active && isReadingMode) {
+                isReadingMode = false;
+                updateReadingMode(false);
+            }
+            editor.setSourceMode(active);
+            if (persist) storageManager.save(SOURCE_MODE_KEY, active);
+            updateSourceModeUi();
+            if (!active) {
+                // 切回渲染：正文已由 setValue 重解析，目录必须重建。
+                updateToC();
+            }
+        }
+        applySourceMode = setSourceMode;
+
+        // 绑定悬浮按钮入口。切换/恢复逻辑在前部（toggleSourceMode 等）。
+        if (sourceModeBtn) {
+            sourceModeBtn.addEventListener('click', () => {
+                void toggleSourceMode();
             });
         }
 

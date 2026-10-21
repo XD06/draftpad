@@ -2513,20 +2513,62 @@ main {
     }
 }
 
+/* 源码模式（悬浮按钮 </>）：整篇 Markdown 原文的可编辑面。
+ *
+ * 显隐**只由 .is-source-mode 类驱动**（JS 在 tiptap-editor.js 的 setSourceMode 里
+ * toggle 类名 + 灌值，不写行内 display）。原因：上面 `.typora-editor-shell
+ * .vditor-wysiwyg { display: block !important }`（滚动层补偿那条）会**压过行内
+ * style**——行内样式没有 !important 时，对带 !important 的声明是必输的，于是渲染
+ * 卡片根本藏不起来，textarea 被顶到卡片下方一屏之外（实测 y=828，视口只有 840），
+ * 用户看到的就是「点了没反应」。这里用更高特异性（3 个类 > 2 个类）的 !important
+ * 才赢得过它。改回行内写法会立刻复发，别动。
+ *
+ * 藏的是卡片 `.tiptap`，**不是滚动层 `.vditor-wysiwyg`**：源码 textarea 就挂在
+ * 滚动层里、与卡片同级，两者共用同一个滚动容器与同一套百分比基准——切换时
+ * scrollTop 才有意义（否则源码自己滚、外层滚，长文章下视线必然被重置到顶部）。
+ *
+ * 高度交给内容撑开（JS 量 scrollHeight 写回），不设固定高度/内部滚动条：
+ * 与渲染卡片一样「多长就多高、由外层滚动层滚」，长文章的源码才和渲染一致。 */
+.typora-editor-shell.is-source-mode .tiptap {
+    display: none !important;
+}
+
 .tiptap-source-textarea {
+    display: none;
     width: 100%;
-    min-height: 60vh;
-    padding: 24px;
+    max-width: 800px;
+    /* 与 .tiptap 卡片同一基准：同一个父级（滚动层）的内容盒，减去卡片自身的
+       64px 顶部让位，短文时同样占满一屏；长文由 JS 按内容撑高。 */
+    min-height: calc(100% - 64px);
+    margin: 64px auto 0;
+    padding: 38px 40px 110px;
     border: 1px solid var(--border-color);
     border-radius: 8px;
     background: var(--textarea-bg);
+    box-shadow: 0 10px 30px rgba(15, 23, 42, 0.05);
     color: var(--text-color);
-    font-family: var(--font-code, monospace);
+    font-family: var(--font-code, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
     font-size: 14px;
     line-height: 1.6;
+    /* 溢出隐藏：滚动归外层滚动层，textarea 自身不出滚动条。 */
+    overflow: hidden;
     resize: none;
     outline: none;
     box-sizing: border-box;
+}
+
+.typora-editor-shell.is-source-mode .tiptap-source-textarea {
+    display: block;
+}
+
+/* 移动端几何与卡片同步（见上方 ≤980 的 .tiptap 规则）：整页滚动时祖先高度为
+   auto，桌面那套 64px 让位 + 百分比最小高度不成立，改用与卡片同样的视口单位。 */
+@media (max-width: 980px) {
+    .typora-editor-shell .tiptap-source-textarea {
+        min-height: calc(100vh - 135px);
+        margin: 0 auto;
+        padding: 10px 10px 64px;
+    }
 }
 
 /* 搜索关键词命中的临时高亮（1.6s 后自动摘除） */
@@ -4352,6 +4394,18 @@ blockquote {
 
 .floating-btn:active {
     transform: scale(0.92);
+}
+
+/* 源码模式开启态。`:active`（按下的瞬间）与 `.active`（功能处于开启）是两回事：
+ * 工具条上「阅读模式 / 即时草稿 / Thoughts」都有各自的 `#id.active` 规则，
+ * 唯独这个按钮没有——实测开关前后 color/background/border 三项 computed 值
+ * 与邻居完全相同，用户根本看不出自己停在源码模式里。配色沿用
+ * `#toggle-reading-mode.active` 的既有约定（主色 + 10% 主色底）。
+ * ID + 类的特异性高于 ios-theme 桌面段的 `body:not(.thoughts-mode) .floating-btn`
+ * （纯类选择器），所以两套主题下都生效，不需要再补一份。 */
+#toggle-source-mode.active {
+    color: var(--primary-color);
+    background-color: rgba(var(--primary-rgb), 0.1);
 }
 
 .is-jump-target {

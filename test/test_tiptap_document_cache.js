@@ -88,7 +88,64 @@ async function main() {
         wrapper.setValue(large, false);
         assert.equal(parses, beforeLarge + 1, 'oversized documents must not be retained');
         assert(wrapper._parsedDocumentSize <= 1000000);
+
+        /* 序列化缓存：同一份不可变文档只序列化一次，事务一发生就失效。 */
+        const storage = wrapper.editor.storage.markdown;
+        const serializeOnce = storage.getMarkdown.bind(storage);
+        let serializations = 0;
+        storage.getMarkdown = (...args) => { serializations += 1; return serializeOnce(...args); };
+        wrapper.setValue(articles[1], false);
+        const baselineSerializations = serializations;
+        const first = wrapper.getValue();
+        wrapper.getValue();
+        wrapper.generateToC();
+        assert.equal(serializations, baselineSerializations + 1,
+            'repeated getValue on the same document must serialize only once');
+        assert.equal(wrapper.getValue(), first);
+        wrapper.editor.commands.insertContent('改动');
+        const changed = wrapper.getValue();
+        assert.equal(serializations, baselineSerializations + 2, 'a new transaction must invalidate the serialized value');
+        assert(changed !== first && changed.includes('改动'));
+        storage.getMarkdown = serializeOnce;
+
+        /* 输入上报是尾随合并的：窗口内多次事务只上报一次，flush 立刻结清。 */
+        const inputCount = () => inputs.length;
+        const beforeTyping = inputCount();
+        wrapper.notifyEditorValueChanged(wrapper.getValue());
+        const afterReset = inputCount();
+        assert.equal(afterReset, beforeTyping + 1, 'explicit notifications report immediately');
+        wrapper.editor.commands.insertContent('甲');
+        wrapper.editor.commands.insertContent('乙');
+        wrapper.editor.commands.insertContent('丙');
+        assert.equal(inputCount(), afterReset,
+            'typing inside the coalescing window must not serialize/report per keystroke');
+        assert.equal(wrapper.flushPendingInput(), true, 'a pending input change must be flushable');
+        assert.equal(inputCount(), afterReset + 1, 'flush reports the coalesced change exactly once');
+        assert(wrapper.getValue().includes('甲乙丙'), 'flush must report the latest document, not a stale one');
+        assert.equal(wrapper.flushPendingInput(), false, 'flushing with no pending change is a no-op');
+        assert.equal(inputCount(), afterReset + 1, 'a no-op flush must not report again');
+
+        /* 载入新文章丢弃挂起的变更：不会把上一篇文章标脏，emit=true 恰好一次。 */
+        const beforeLoad = inputCount();
+        wrapper.editor.commands.insertContent('未上报');
+        wrapper.setValue('# 另一篇\n\n新正文', false);
+        await new Promise((resolve) => setTimeout(resolve, 260));
+        assert.equal(inputCount(), beforeLoad, 'loading another article drops the pending change instead of reporting it');
+        wrapper.editor.commands.insertContent('远端前');
+        wrapper.setValue('# 远端\n\n远端正文', true);
+        await new Promise((resolve) => setTimeout(resolve, 260));
+        assert.equal(inputCount(), beforeLoad + 1, 'an emitting load reports exactly once and no trailing coalesced report follows');
+        assert.equal(wrapper.getValue(), '# 远端\n\n远端正文');
+
+        /* 源码模式：进模式前结清，textarea 不能少最后一截。 */
+        wrapper.editor.commands.insertContent('最后一截');
+        wrapper.setSourceMode(true);
+        assert(wrapper.getSourceTextarea().value.includes('最后一截'),
+            'entering source mode must show the latest keystrokes');
+        wrapper.setSourceMode(false);
+
         console.log('PASS parsed document cache: reuse, invalidation, edits, undo, source mode, normalization and bounds');
+        console.log('PASS serialized value cache, coalesced input notifications, flush/discard semantics');
     } finally {
         wrapper.editor.destroy();
         dom.window.close();
