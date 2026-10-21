@@ -159,6 +159,41 @@ async function main() {
     check('source mode hides menu', menuRoot().style.display === 'none');
     editor.setSourceMode(false);
 
+    // 11.5 浮层跟随滚动 / 窗口尺寸重算位置（旧实现注册了从未定义的
+    // handleResize，且编辑器内滚动（.vditor-wysiwyg）后菜单停在旧坐标）。
+    await setValueAndSelect('跟随滚动段落内容', 1, 6);
+    check('menu visible before scroll', menuRoot().style.display === 'flex');
+    let repositionError = null;
+    try {
+        window.dispatchEvent(new dom.window.Event('scroll'));
+        window.dispatchEvent(new dom.window.Event('resize'));
+    } catch (error) {
+        repositionError = error;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    check('resize/scroll reposition does not throw', repositionError === null, repositionError && repositionError.message);
+    check('menu stays visible after scroll/resize', menuRoot().style.display === 'flex');
+    // 标记 popover 打开后同样要跟随（锚点元素失效时不得抛错）
+    editor.editor.view.dispatch(editor.editor.state.tr.addMark(
+        1, 6, editor.editor.state.schema.marks.mdHighlight.create(),
+    ));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const repositionMarkEl = container.querySelector('mark.md-mark');
+    repositionMarkEl?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    const markPopover = document.body.querySelector('.mark-popover');
+    check('mark popover opened', Boolean(markPopover) && markPopover.style.display !== 'none');
+    repositionError = null;
+    try {
+        window.dispatchEvent(new dom.window.Event('scroll'));
+        window.dispatchEvent(new dom.window.Event('resize'));
+    } catch (error) {
+        repositionError = error;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    check('popover reposition does not throw', repositionError === null, repositionError && repositionError.message);
+    check('popover stays visible after scroll/resize', markPopover.style.display !== 'none');
+
     // 12. 打字后选区折叠，菜单收起
     await setValueAndSelect('普通段落', 1, 5);
     check('selection before typing shows menu', menuRoot().style.display === 'flex');

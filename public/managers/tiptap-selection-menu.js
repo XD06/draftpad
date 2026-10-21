@@ -180,12 +180,29 @@ class SelectionMenuView {
             this.showMarkPopover(marked);
         };
         view.dom.addEventListener('click', this.handleEditorClick);
+        // 浮层是 position:absolute + 页面坐标，窗口尺寸变化后原坐标就偏了；
+        // 编辑器滚动（桌面在 .vditor-wysiwyg 内滚、移动端整页滚）同理。
+        // 两处都必须重算，否则菜单会停在旧位置、与选区/标记脱开。
+        this.handleResize = () => this.reposition();
+        this.handleScroll = () => this.reposition();
         window.addEventListener('resize', this.handleResize);
+        window.addEventListener('scroll', this.handleScroll, { capture: true, passive: true });
         this.root.addEventListener('mousedown', (event) => event.stopPropagation());
         this.popover.addEventListener('mousedown', (event) => event.stopPropagation());
         // 点编辑器外（其他面板/正文）收起菜单：PM 的 blur 捕获即可，
         // 不需要 document 级 mousedown 监听。
         view.dom.addEventListener('blur', this.handleBlur, true);
+    }
+
+    /** 跟随窗口尺寸/滚动重算所有可见浮层的位置（不可见的一律跳过）。 */
+    reposition() {
+        if (this.visible) this.position();
+        if (this.popover.style.display !== 'none' && this.popoverAnchor?.isConnected) {
+            this.positionPopover(this.popoverAnchor);
+        }
+        if (this.timeMarkerMenu?.style.display !== 'none' && this.activeTimeMarkerElement?.isConnected) {
+            this.positionTimeMarkerMenu(this.activeTimeMarkerElement);
+        }
     }
 
     makeButton(label, action) {
@@ -347,6 +364,8 @@ class SelectionMenuView {
 
         this.popover.append(actions);
         this.popover.style.display = 'flex';
+        // 记下锚点元素：窗口尺寸/滚动变化时按它重算位置（元素被重绘掉就放弃）。
+        this.popoverAnchor = element;
         this.positionPopover(element);
         this.installPopoverCloseHandler();
     }
@@ -378,6 +397,7 @@ class SelectionMenuView {
 
         this.popover.append(content);
         this.popover.style.display = 'block';
+        this.popoverAnchor = element;
         this.positionPopover(element);
         this.installPopoverCloseHandler();
     }
@@ -390,6 +410,7 @@ class SelectionMenuView {
                 if (!this.popover.contains(event.target)) {
                     this.popover.style.display = 'none';
                     this.popoverReadonly = false;
+                    this.popoverAnchor = null;
                     document.removeEventListener('mousedown', close);
                 }
             };
@@ -419,6 +440,7 @@ class SelectionMenuView {
 
     hideMarkPopover() {
         this.popover.style.display = 'none';
+        this.popoverAnchor = null;
     }
 
     /** 定位渲染元素对应的文档范围（PM posFromDOM 反查，不猜文本）。 */
@@ -734,8 +756,8 @@ class SelectionMenuView {
 
     destroy() {
         window.removeEventListener('resize', this.handleResize);
+        window.removeEventListener('scroll', this.handleScroll, { capture: true });
         this.view.dom.removeEventListener('blur', this.handleBlur, true);
-        this.view.dom.removeEventListener('click', this.handleEditorClick);
         this.view.dom.removeEventListener('click', this.handleEditorClick);
         this.root.remove();
         this.popover.remove();
