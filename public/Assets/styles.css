@@ -4665,45 +4665,7 @@ blockquote {
     font-variant-numeric: tabular-nums;
 }
 
-.time-marker-menu {
-    z-index: 12050;
-    padding: 5px;
-    border-radius: 14px;
-    background: color-mix(in srgb, var(--modal-bg) 80%, transparent);
-    backdrop-filter: blur(18px) saturate(1.25);
-    -webkit-backdrop-filter: blur(18px) saturate(1.25);
-    border: 1px solid color-mix(in srgb, var(--border-color) 72%, transparent);
-    box-shadow: 0 12px 32px rgba(15, 23, 42, 0.13), 0 2px 8px rgba(15, 23, 42, 0.06);
-}
-
-.time-marker-menu .menu-btn-group {
-    gap: 4px;
-}
-
-.time-marker-menu button {
-    gap: 6px;
-    min-width: 62px;
-    min-height: 34px;
-    padding: 7px 10px;
-    border-radius: 10px;
-}
-
-.time-marker-menu button svg {
-    width: 15px;
-    height: 15px;
-}
-
-.time-marker-menu [data-time-action="update"]:hover {
-    background: color-mix(in srgb, #bd4d45 14%, transparent);
-    color: #a83f39;
-}
-
-.time-marker-menu [data-time-action="delete"]:hover {
-    background: color-mix(in srgb, #e74c3c 12%, transparent);
-    color: #e74c3c;
-}
-
-.has-annotation {
+.time-marker-menu {    z-index: 12050;    padding: 5px;    border-radius: 14px;    background: color-mix(in srgb, var(--modal-bg) 80%, transparent);    backdrop-filter: blur(18px) saturate(1.25);    -webkit-backdrop-filter: blur(18px) saturate(1.25);    border: 1px solid color-mix(in srgb, var(--border-color) 72%, transparent);    box-shadow: 0 12px 32px rgba(15, 23, 42, 0.13), 0 2px 8px rgba(15, 23, 42, 0.06);}.time-marker-menu .menu-btn-group {    gap: 4px;}.time-marker-menu button {    gap: 6px;    min-width: 62px;    min-height: 34px;    padding: 7px 10px;    border-radius: 10px;}.time-marker-menu button svg {    width: 15px;    height: 15px;}.time-marker-menu [data-time-action="update"]:hover {    background: color-mix(in srgb, #bd4d45 14%, transparent);    color: #a83f39;}.time-marker-menu [data-time-action="delete"]:hover {    background: color-mix(in srgb, #e74c3c 12%, transparent);    color: #e74c3c;}.has-annotation {
     position: relative;
     cursor: pointer;
     color: inherit;
@@ -4867,66 +4829,16 @@ img.annotation-badge:hover {
     padding: 4px;
 }
 
-.mark-popover-actions {
-    display: flex;
-    gap: 4px;
-    justify-content: center;
-    margin: 0;
-    padding: 0;
-    border: none;
-    box-sizing: border-box;
-    width: 100%;
+.mark-popover-actions {    border-top: 1px solid rgba(128, 128, 128, 0.1);    padding: 4px;}.mark-popover-actions {    display: flex;    gap: 4px;    justify-content: center;    margin: 0;    padding: 0;    border: none;    box-sizing: border-box;    width: 100%;}.mark-popover-actions button {    background: transparent;    border: 0;    color: var(--text-color);    padding: 8px 16px;    border-radius: 0;    font-size: 13px;    font-weight: 500;    cursor: pointer;    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);    white-space: nowrap;    display: flex;    align-items: center;    justify-content: center;    gap: 8px;    min-width: auto;}.mark-popover-actions button.delete-btn::before {    content: '';    display: none;    width: 14px;    height: 14px;    background-size: contain;    opacity: 0.6;}.mark-popover-actions button:hover {    background: rgba(128, 128, 128, 0.08);    color: var(--primary-color);}.mark-popover-actions .save-btn,.mark-popover-actions .edit-btn {    color: var(--text-color);    background: transparent;}.mark-popover-actions .delete-btn {    color: var(--text-color);}.mark-popover-actions button:active {
+    background: color-mix(in srgb, var(--text-color) 15%, transparent);
+    transform: scale(0.97);
 }
 
-.mark-popover-actions button {
-    background: transparent;
-    border: 0;
-    color: var(--text-color);
-    padding: 8px 16px;
-    border-radius: 0;
-    font-size: 13px;
-    font-weight: 500;
-    cursor: pointer;
-    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-    white-space: nowrap;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-    min-width: auto;
-}
-
-.mark-popover-actions button.delete-btn::before {
-    content: '';
-    display: none;
-    width: 14px;
-    height: 14px;
-    background-size: contain;
-    opacity: 0.6;
-}
-
-.mark-popover-actions button:hover {
-    background: rgba(128, 128, 128, 0.08);
-    color: var(--primary-color);
-}
-
-.mark-popover-actions .save-btn,
-.mark-popover-actions .edit-btn {
-    color: var(--text-color);
-    background: transparent;
-}
-
-.mark-popover-actions .delete-btn {
-    color: var(--text-color);
-}
-
-.mark-popover-actions button:active {
-    opacity: 0.8;
-}
-
+/* 取消类动作（取消高亮 / 取消画线 / 取消批注）：危险色只在 hover 时出现，
+   底色用 danger 的浅混色，跟图标条的 --sm-hover 同一套混色逻辑。 */
 .mark-popover-actions button.delete-btn:hover {
-    background: color-mix(in srgb, #e74c3c 10%, transparent);
-    color: #e74c3c;
+    background: color-mix(in srgb, var(--danger-color) 12%, transparent);
+    color: var(--danger-color);
 }
 
 .mark-popover-edit input:focus {
@@ -5366,7 +5278,12 @@ body.reading-mode-active .editor-main {
     background-color: rgba(var(--primary-rgb), 0.1);
 }
 
-/* Selection Menu */
+/* Selection Menu —— iOS 风格图标条（设计规格来自用户提供的 demo）。
+   材质靠「上下双色渐变 + 0.5px 描边 + 上缘 0.7px 高光 + 双层投影」四件套，
+   颜色全部走既有主题 token，深浅色自动跟随（--modal-bg / --border-color /
+   --text-color 在 [data-theme="dark"] 下已换过值）。
+   注意：这套变量只挂在 .typora-selection-menu 上，时间标记菜单（同用
+   .selection-menu 基类）不受影响。 */
 .selection-menu {
     position: absolute;
     z-index: 1000;
@@ -5394,27 +5311,179 @@ body.reading-mode-active .editor-main {
     }
 }
 
-.selection-menu button {
-    background: transparent;
-    border: none;
-    color: var(--text-color);
-    padding: 8px 10px;
-    border-radius: 8px;
-    cursor: pointer;
-    font-size: 13px;
-    font-weight: 600;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 6px;
-    transition: background 0.2s;
-    white-space: nowrap;
-    min-width: 44px;
+/* ---- iOS 风格图标条（选区菜单专用）----
+   规格对齐 demo：面板 24px 圆角 / 5px 内边距 / 40px 按钮 / 20px 图标 /
+   1×19px 分隔线 / 12px 尖角。尺寸只由下面这几个变量决定，整体缩放改一处。
+.selection-menu.typora-selection-menu {
+    --sm-surface-a: color-mix(in srgb, var(--modal-bg) 100%, #ffffff 0%);
+    --sm-surface-b: color-mix(in srgb, var(--modal-bg) 94%, var(--border-color));
+    --sm-border: color-mix(in srgb, var(--border-color) 80%, transparent);
+    --sm-gloss: rgba(255, 255, 255, 0.95);
+    --sm-icon: var(--text-color);
+    --sm-hover: color-mix(in srgb, var(--text-color) 13%, transparent);
+    --sm-split: color-mix(in srgb, var(--text-color) 16%, transparent);
+    --sm-radius: 24px;
+    --sm-btn: 40px;
+    --sm-icon-size: 20px;
+    background: linear-gradient(180deg, var(--sm-surface-a), var(--sm-surface-b));
+    border: 0.5px solid var(--sm-border);
+    border-radius: var(--sm-radius);
+    box-shadow: 0 12px 26px rgba(0, 0, 0, 0.16), 0 2px 6px rgba(0, 0, 0, 0.08);
+    padding: 5px;
+    gap: 0;
+    flex-wrap: nowrap;
+    flex-direction: row;
+    animation: smPop 0.26s cubic-bezier(0.22, 1.15, 0.36, 1) backwards;
+    transform-origin: bottom center;
 }
 
-.selection-menu button:hover {
-    background: rgba(var(--primary-rgb), 0.1);
-    color: var(--primary-color);
+/* 上缘 0.7px 高光：玻璃厚度感，别删。 */
+.selection-menu.typora-selection-menu::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    pointer-events: none;
+    box-shadow: inset 0 0.7px 0 var(--sm-gloss);
+}
+
+@keyframes smPop {
+    from {
+        opacity: 0;
+        transform: scale(0.92) translateY(7px);
+    }
+
+    to {
+        opacity: 1;
+        transform: scale(1) translateY(0);
+    }
+}
+
+.selection-menu.typora-selection-menu .menu-btn-group {
+    gap: 0;
+}
+
+/* ‼ 这些规则必须排除 .time-marker-menu：时间标记菜单同样挂 .selection-menu
+   .typora-selection-menu 两个基类，而 `.selection-menu.typora-selection-menu button`
+   的优先级 (0,2,1) 高于 `.time-marker-menu button` 的 (0,1,1)——不排除的话
+   `display:grid` 会压掉它的 `display:flex`，图标和「更新/删除」文字被堆成上下两行。 */
+.selection-menu.typora-selection-menu button {
+    width: var(--sm-btn);
+    height: var(--sm-btn);
+    min-width: 0;
+    padding: 0;
+    flex: 0 0 auto;
+    border: 0;
+    border-radius: 14px;
+    background: transparent;
+    color: var(--sm-icon);
+    display: grid;
+    place-items: center;
+    cursor: pointer;
+    transition: background 0.15s ease, transform 0.11s ease;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.selection-menu.typora-selection-menu button:hover {
+    background: var(--sm-hover);
+    color: var(--sm-icon);
+}
+
+.selection-menu.typora-selection-menu button:active {
+    transform: scale(0.87);
+    background: var(--sm-hover);
+}
+
+.selection-menu.typora-selection-menu button:focus-visible {
+    outline: 2px solid var(--sm-icon);
+    outline-offset: -3px;
+}
+
+/* 图标：实心填充，颜色只走 currentColor（暗色模式自动换色）。 */
+.selection-menu.typora-selection-menu .sm-ic {
+    width: var(--sm-icon-size);
+    height: var(--sm-icon-size);
+    display: block;
+    fill: currentColor;
+    stroke: none;
+}
+
+/* 按钮文字只给读屏与既有回归用，视觉隐藏（不是 display:none，仍在可访问树里）。 */
+.selection-menu.typora-selection-menu .sm-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+}
+
+/* 分组竖线 */
+.selection-menu.typora-selection-menu .sm-split {
+    width: 1px;
+    height: 19px;
+    margin: 0 4px;
+    flex: 0 0 auto;
+    background: var(--sm-split);
+    border-radius: 1px;
+}
+
+/* 指向选区的尖角：与材质下缘同色，rotate 45° 后只有下半截露在面板外。 */
+.selection-menu.typora-selection-menu::after {
+    content: "";
+    position: absolute;
+    bottom: -6px;
+    left: var(--sm-tail-x, calc(50% - 6px));
+    width: 12px;
+    height: 12px;
+    border-radius: 2.5px;
+    background: var(--sm-surface-b);
+    transform: rotate(45deg);
+    pointer-events: none;
+}
+
+/* 翻到选区下方时（上方放不下）：动画方向、尖角位置与颜色都要反过来。 */
+.selection-menu.typora-selection-menu.sm-below {
+    transform-origin: top center;
+    animation-name: smPopBelow;
+}
+
+.selection-menu.typora-selection-menu.sm-below::after {
+    top: -6px;
+    bottom: auto;
+    background: var(--sm-surface-a);
+}
+
+@keyframes smPopBelow {
+    from {
+        opacity: 0;
+        transform: scale(0.92) translateY(-7px);
+    }
+
+    to {
+        opacity: 1;
+        transform: scale(1) translateY(0);
+    }
+}
+
+/* 图标精灵容器：零尺寸，不参与布局。 */
+.sm-sprite {
+    position: absolute;
+    width: 0;
+    height: 0;
+    overflow: hidden;
+}
+
+/* 时间标记菜单仍是「图标 + 文字」的小胶囊，只把材质与选区菜单对齐。 */
+.time-marker-menu {
+    background: linear-gradient(180deg,
+        color-mix(in srgb, var(--modal-bg) 100%, #ffffff 0%),
+        color-mix(in srgb, var(--modal-bg) 94%, var(--border-color)));
+    box-shadow: 0 12px 26px rgba(0, 0, 0, 0.16), 0 2px 6px rgba(0, 0, 0, 0.08);
 }
 
 .selection-menu button svg {
@@ -5590,13 +5659,18 @@ body.reading-mode-active .editor-main {
 }
 
 @media (max-width: 720px) {
+    /* 移动端：整体缩一档（按钮 44px 保留全站触控基准），分隔线与图标同步微调。
+       不再让按钮 flex:1 均分宽度——图标条宽度由内容决定，否则窄屏上按钮会被
+       拉成宽条、图标间距失真。 */
     .selection-menu.typora-selection-menu {
+        --sm-btn: 44px;
+        --sm-icon-size: 21px;
+        --sm-radius: 22px;
         position: absolute;
         width: max-content;
         max-width: calc(100vw - 20px);
         justify-content: center;
-        padding: 2px;
-        border-radius: 14px;
+        padding: 4px;
         z-index: 12000;
     }
 
@@ -5606,9 +5680,8 @@ body.reading-mode-active .editor-main {
         justify-content: space-between;
     }
 
-    .selection-menu.typora-selection-menu button {
-        flex: 1 1 0;
-        min-height: 40px;
+    .selection-menu.typora-selection-menu .sm-split {
+        margin: 0 2px;
     }
 
     .selection-menu.typora-selection-menu .menu-input-group textarea {
@@ -6362,37 +6435,11 @@ body.reading-mode-active .editor-main {
 }
 
 .article-file-menu .article-file-download,
-.article-file-menu .article-file-delete {
-    display: inline-grid;
-    width: 28px;
-    min-width: 28px;
-    height: 28px;
-    place-items: center;
-    padding: 0;
-    border: 0;
-    border-radius: 4px;
-    background: transparent;
-    color: var(--muted-text);
-    cursor: pointer;
-    text-decoration: none;
-}
-
-.article-file-menu .article-file-download:hover,
-.article-file-menu .article-file-download:focus-visible {
-    outline: none;
-    background: color-mix(in srgb, var(--primary-color) 16%, transparent);
-    color: var(--primary-color);
-}
-
-.article-file-menu .article-file-delete {
-    color: #d84a44;
-}
-
-.article-file-menu .article-file-delete:hover,
+.article-file-menu .article-file-delete {    display: inline-grid;    width: 28px;    min-width: 28px;    height: 28px;    place-items: center;    padding: 0;    border: 0;    border-radius: 4px;    background: transparent;    color: var(--muted-text);    cursor: pointer;    text-decoration: none;}.article-file-menu .article-file-download:hover,.article-file-menu .article-file-download:focus-visible {    outline: none;    background: color-mix(in srgb, var(--primary-color) 16%, transparent);    color: var(--primary-color);}.article-file-menu .article-file-delete {    color: #d84a44;}.article-file-menu .article-file-delete:hover,
 .article-file-menu .article-file-delete:focus-visible {
     outline: none;
-    background: color-mix(in srgb, #d84a44 12%, transparent);
-    color: #c53631;
+    background: color-mix(in srgb, var(--danger-color) 12%, transparent);
+    color: var(--danger-color);
 }
 
 .article-image-size-menu button {
@@ -6466,8 +6513,9 @@ body.reading-mode-active .editor-main {
 
 .article-image-size-menu .article-image-delete:hover,
 .article-image-size-menu .article-image-delete:focus-visible {
-    background: color-mix(in srgb, #d84a44 12%, transparent);
-    color: #c53631;
+    outline: none;
+    background: color-mix(in srgb, var(--danger-color) 12%, transparent);
+    color: var(--danger-color);
 }
 
 .article-image-lightbox {

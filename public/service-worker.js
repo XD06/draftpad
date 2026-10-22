@@ -71,6 +71,7 @@ const CORE_ASSETS = [
   "/managers/tiptap-runtime.js",
   "/managers/tiptap-extensions.js",
   "/managers/tiptap-selection-menu.js",
+  "/managers/selection-menu-icons.js",
   "/managers/tiptap-slash-menu.js",
   "/managers/tiptap-file-command.js",
   "/managers/tiptap-image-interactions.js",

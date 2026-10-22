@@ -1,15 +1,18 @@
 /**
- * Tiptap 编辑器浮动菜单：选区菜单（画线/高亮/批注/复制）、标记取消
+ * Tiptap 编辑器浮动菜单：选区菜单（画线/高亮/批注/加粗/复制）、标记取消
  * popover 与时间标记更新/删除菜单。作为 Extension 的 ProseMirror 插件
  * 挂载，插件 view 负责菜单 DOM 的创建与销毁，动作全部走框架命令
- * （mark 命令 / setNodeMarkup / delete），事务进撤销历史并自然触发保存；
- * 不回写 Markdown 源码、不 setValue 全量重刷（旧 Vditor 时期的字符串
- * 手术路线是被重构掉的那套 hack）。选区菜单只在鼠标释放后显示，
+ * （mark 命令 / toggleMark / setNodeMarkup / delete），事务进撤销历史并自然
+ * 触发保存；不回写 Markdown 源码、不 setValue 全量重刷（旧 Vditor 时期的
+ * 字符串手术路线是被重构掉的那套 hack）。选区菜单只在鼠标释放后显示，
  * 已标记/时间标记文字点击弹对应菜单。选区定位用 PM coordsAtPos。
+ * 视觉是 iOS 风格图标条：图标数据在 selection-menu-icons.js，样式在
+ * styles.css 的「iOS 风格选区菜单」一节。
  */
 import { Extension, getMarkRange, PM } from './tiptap-runtime.js';
 import { buildUpdatedTimeMarker, parseTimeMarkerText } from './time-command.js';
 import { ANNOTATION_BADGE_SVG } from './tiptap-extensions.js';
+import { createSelectionMenuIcon, ensureSelectionMenuSprite } from './selection-menu-icons.js';
 
 const { Plugin, PluginKey, TextSelection } = PM.state;
 
@@ -106,14 +109,23 @@ class SelectionMenuView {
         this.root.className = 'selection-menu typora-selection-menu tiptap-selection-menu';
         this.root.style.display = 'none';
 
+        // iOS 风格图标条：按钮只有图标，文字标签作为可访问名称保留（视觉隐藏）。
+        // 分组之间插分隔线（demo 的分组：标记 / 文字样式 / 复制）。
+        ensureSelectionMenuSprite(document);
         this.btnGroup = document.createElement('div');
         this.btnGroup.className = 'menu-btn-group';
+        this.btnGroup.setAttribute('role', 'toolbar');
+        this.btnGroup.setAttribute('aria-label', '文本操作');
+        this.btnGroup.setAttribute('aria-orientation', 'horizontal');
 
         this.btnGroup.append(
-            this.makeButton('画线', () => this.applyMark('draw')),
-            this.makeButton('高亮', () => this.applyMark('mdHighlight')),
-            this.makeButton('批注', () => this.openAnnotationInput()),
-            this.makeButton('复制', () => this.copySelection()),
+            this.makeButton('画线', () => this.applyMark('draw'), 'sm-draw'),
+            this.makeButton('高亮', () => this.applyMark('mdHighlight'), 'sm-highlight'),
+            this.makeButton('批注', () => this.openAnnotationInput(), 'sm-annotate'),
+            this.makeDivider(),
+            this.makeButton('加粗', () => this.toggleBold(), 'sm-bold'),
+            this.makeDivider(),
+            this.makeButton('复制', () => this.copySelection(), 'sm-copy'),
         );
 
         this.inputGroup = document.createElement('div');
@@ -205,11 +217,21 @@ class SelectionMenuView {
         }
     }
 
-    makeButton(label, action) {
+    makeButton(label, action, iconId = '') {
         const btn = document.createElement('button');
         btn.type = 'button';
         btn.title = label;
-        btn.textContent = label;
+        btn.setAttribute('aria-label', label);
+        if (iconId) {
+            btn.dataset.action = iconId.replace(/^sm-/, '');
+            btn.append(createSelectionMenuIcon(iconId, document));
+        }
+        // 文字标签保留在 DOM 里、视觉隐藏：按钮的可访问名称与既有回归
+        // （按 textContent 定位按钮）都不变，界面上只看到图标。
+        const text = document.createElement('span');
+        text.className = 'sm-label';
+        text.textContent = label;
+        btn.append(text);
         // 阻止 mousedown 默认行为：否则点击按钮会把编辑器焦点/选区
         // 抢走（浏览器把焦点移到按钮），PM 选区折叠、动作落空。
         btn.addEventListener('mousedown', (event) => {
@@ -218,6 +240,14 @@ class SelectionMenuView {
         });
         btn.addEventListener('click', () => action());
         return btn;
+    }
+
+    /** 图标条里的分组竖线（纯装饰，不进可访问树）。 */
+    makeDivider() {
+        const divider = document.createElement('span');
+        divider.className = 'sm-split';
+        divider.setAttribute('aria-hidden', 'true');
+        return divider;
     }
 
     update(view, prevState) {
@@ -322,6 +352,14 @@ class SelectionMenuView {
         menuLeft = Math.min(Math.max(menuLeft, 10), window.innerWidth - menuRect.width - 10);
         this.root.style.left = `${menuLeft}px`;
         this.root.style.top = `${menuTop}px`;
+        // 菜单在选区下方时（移动端默认、桌面顶到视口上缘翻转）：尖角移到顶边，
+        // 动画方向跟着反过来，否则弹出感是错的。
+        const isBelow = menuTop > rect.bottom + scrollY;
+        this.root.classList.toggle('sm-below', isBelow);
+        // 尖角必须继续指向选区中心：菜单被视口夹住后不能再用写死的 50%。
+        const tailX = rect.left + rect.width / 2 - menuLeft - 6;
+        const clampedTail = Math.max(10, Math.min(tailX, menuRect.width - 16));
+        this.root.style.setProperty('--sm-tail-x', `${clampedTail}px`);
     }
 
     /* ------- 已标记文字的「取消」popover（旧 mark-popover 行为） ------- */
@@ -340,7 +378,6 @@ class SelectionMenuView {
         const actions = document.createElement('div');
         actions.className = 'mark-popover-actions';
         actions.style.cssText = 'border:none;margin:0;padding:0;';
-
         if (type === 'annotation') {
             const editBtn = document.createElement('button');
             editBtn.type = 'button';
@@ -721,7 +758,37 @@ class SelectionMenuView {
         this.hide();
         // 落标记后退出选中状态：光标折叠到标记起点（与旧编辑器一致，
         // 选区仍罩在高亮/划线上会显得"没有退出选中"）。
-        const $from = this.view.state.doc.resolve(from);
+        this.collapseTo(from);
+    }
+
+    /**
+     * 加粗：走框架 toggleMark（与 Mod+b 落到同一个 mark），选区已加粗时取消。
+     *
+     * 为什么直接用 PM 的 toggleMark 而不是 `view.commands.toggleBold()`：本类是
+     * ProseMirror 插件 view，`this.view` 是 EditorView，**没有** `.commands`
+     * （那是 Tiptap Editor 实例上的链式 API）。拿 Editor 实例要穿过编辑器适配层，
+     * 只会给插件加一条反向依赖；toggleMark(markType) 就是 toggleBold 内部的那一步。
+     *
+     * 不加 priority 是刻意的——加粗没有「点已加粗文字取消」的入口（那条只对
+     * 画线/高亮/批注），跨链接/高亮/画线被拆成多个 <strong> 只在渲染层，
+     * 序列化仍是**一整段** `**…**`（实测往返稳定），因此不需要抬 rank 去
+     * 追求「单元素」；抬了反而改变 mark 的嵌套顺序。跨行内代码必然断开
+     * （`**前** \`code\` **后**`），这是 Markdown 的正确语义。
+     */
+    toggleBold() {
+        const { from } = this.pendingSelection || this.view.state.selection;
+        const boldType = this.view.state.schema.marks.bold;
+        if (!boldType) return;
+        this.view.dispatch(this.view.state.tr);
+        PM.commands.toggleMark(boldType)(this.view.state, this.view.dispatch, this.view);
+        this.hide();
+        this.collapseTo(from);
+    }
+
+    /** 动作完成后退出选中状态：光标折叠到标记起点（与旧编辑器一致）。 */
+    collapseTo(pos) {
+        const clamped = Math.max(0, Math.min(pos, this.view.state.doc.content.size));
+        const $from = this.view.state.doc.resolve(clamped);
         const collapsed = TextSelection.near($from, -1);
         this.view.dispatch(this.view.state.tr.setSelection(collapsed));
         this.view.focus();
@@ -739,10 +806,7 @@ class SelectionMenuView {
         }
         this.hide();
         // 复制后同样退出选中状态。
-        const $from = this.view.state.doc.resolve(from);
-        const collapsed = TextSelection.near($from, -1);
-        this.view.dispatch(this.view.state.tr.setSelection(collapsed));
-        this.view.focus();
+        this.collapseTo(from);
     }
 
     handleBlur() {

@@ -118,6 +118,52 @@ async function main() {
     const annoValue = editor.getValue();
     check('annotation mark serializes to span[data-note]', annoValue.includes('data-note="测试批注"'), annoValue);
 
+    // 6.1 加粗 → bold mark → `**…**`，再点一次取消。
+    // 这里必须真的点到按钮：插件 view 的 this.view 是 EditorView（没有 Tiptap 的
+    // .commands 链式 API），用错入口会静默抛错、菜单也不收起——上一版就是这么坏的。
+    await setValueAndSelect('甲加粗文字乙', 2, 6);
+    const boldBtn = [...menuRoot().querySelectorAll('button')].find(b => b.textContent === '加粗');
+    check('bold button exists', Boolean(boldBtn));
+    boldBtn.click();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    const boldValue = editor.getValue();
+    check('bold mark applied via framework command', boldValue.includes('**加粗文字**'), boldValue);
+    check('bold action hides the menu', menuRoot().style.display === 'none', menuRoot().style.display);
+    check('bold action collapses the selection', editor.editor.state.selection.empty,
+        JSON.stringify({ from: editor.editor.state.selection.from, to: editor.editor.state.selection.to }));
+
+    // 再选同一段点一次 = 取消加粗（toggle 语义，与 Mod+b 一致）
+    await setValueAndSelect(boldValue, 2, 6);
+    [...menuRoot().querySelectorAll('button')].find(b => b.textContent === '加粗').click();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    check('bold button toggles off', editor.getValue() === '甲加粗文字乙', editor.getValue());
+
+    // 加粗跨链接：序列化仍是一整段（渲染层拆 <strong> 不影响存储）
+    await setValueAndSelect('前 [链接文字](https://example.com) 后', 1, 9);
+    [...menuRoot().querySelectorAll('button')].find(b => b.textContent === '加粗').click();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    const boldLinkValue = editor.getValue();
+    check('bold across a link serializes as one span',
+        boldLinkValue === '**前 [链接文字](https://example.com) 后**', boldLinkValue);
+    editor.setValue(boldLinkValue, false);
+    check('bold across a link roundtrips', editor.getValue() === boldLinkValue, editor.getValue());
+
+    // 图标条结构：每个按钮都有图标 + 可访问名称，标签视觉隐藏但仍在可访问树里
+    await setValueAndSelect('图标检查', 1, 3);
+    const iconButtons = [...menuRoot().querySelectorAll('.menu-btn-group button')];
+    check('every menu button carries an icon',
+        iconButtons.every(b => b.querySelector('svg use')), iconButtons.map(b => b.textContent).join(','));
+    check('every menu button has an accessible name',
+        iconButtons.every(b => (b.getAttribute('aria-label') || '') === b.textContent),
+        iconButtons.map(b => `${b.textContent}|${b.getAttribute('aria-label')}`).join(','));
+    check('menu labels stay in the accessibility tree (visually hidden only)',
+        iconButtons.every(b => b.querySelector('.sm-label')?.textContent === b.textContent));
+    check('the sprite is mounted once',
+        document.body.querySelectorAll('.sm-sprite').length === 1,
+        document.body.querySelectorAll('.sm-sprite').length);
+    check('group dividers exist', menuRoot().querySelectorAll('.sm-split').length === 2,
+        menuRoot().querySelectorAll('.sm-split').length);
+
     // 7. 菜单动作后撤销历史可用（框架 mark 命令进历史；必须在任何
     // setValue 之前断言——setContent 重置文档会清空撤销历史）
     editor.editor.commands.undo();
