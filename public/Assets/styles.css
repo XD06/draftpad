@@ -4665,7 +4665,89 @@ blockquote {
     font-variant-numeric: tabular-nums;
 }
 
-.time-marker-menu {    z-index: 12050;    padding: 5px;    border-radius: 14px;    background: color-mix(in srgb, var(--modal-bg) 80%, transparent);    backdrop-filter: blur(18px) saturate(1.25);    -webkit-backdrop-filter: blur(18px) saturate(1.25);    border: 1px solid color-mix(in srgb, var(--border-color) 72%, transparent);    box-shadow: 0 12px 32px rgba(15, 23, 42, 0.13), 0 2px 8px rgba(15, 23, 42, 0.06);}.time-marker-menu .menu-btn-group {    gap: 4px;}.time-marker-menu button {    gap: 6px;    min-width: 62px;    min-height: 34px;    padding: 7px 10px;    border-radius: 10px;}.time-marker-menu button svg {    width: 15px;    height: 15px;}.time-marker-menu [data-time-action="update"]:hover {    background: color-mix(in srgb, #bd4d45 14%, transparent);    color: #a83f39;}.time-marker-menu [data-time-action="delete"]:hover {    background: color-mix(in srgb, #e74c3c 12%, transparent);    color: #e74c3c;}.has-annotation {
+/* 时间标记菜单：与选区图标条同一套材质语言（渐变 + 上缘高光 + 双层投影），
+   但按钮是「图标 + 文字」的小胶囊，不是纯图标方块。
+   ‼ 选择器写成 .selection-menu.time-marker-menu（(0,2,0)）：下面 5400 行开外的
+   基础 `.selection-menu`（(0,1,0)）在源序上更靠后，同优先级会把它顶掉（实测
+   圆角被打回 8px、内边距被打回 4px）。 */
+.selection-menu.time-marker-menu {
+    z-index: 12050;
+    padding: 5px;
+    border-radius: 20px;
+    background: linear-gradient(180deg,
+        color-mix(in srgb, var(--modal-bg) 100%, #ffffff 0%),
+        color-mix(in srgb, var(--modal-bg) 94%, var(--border-color)));
+    backdrop-filter: blur(18px) saturate(1.25);
+    -webkit-backdrop-filter: blur(18px) saturate(1.25);
+    border: 0.5px solid color-mix(in srgb, var(--border-color) 80%, transparent);
+    box-shadow: 0 12px 26px rgba(0, 0, 0, 0.16), 0 2px 6px rgba(0, 0, 0, 0.08);
+    overflow: hidden;
+    flex-wrap: nowrap;
+}
+
+/* 上缘 0.7px 高光，与选区菜单同一条玻璃厚度线索。 */
+.selection-menu.time-marker-menu::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    pointer-events: none;
+    box-shadow: inset 0 0.7px 0 rgba(255, 255, 255, 0.95);
+}
+
+.selection-menu.time-marker-menu .menu-btn-group {
+    gap: 2px;
+}
+
+/* 按钮：flex 横排（图标 + 文字），圆角与内边距跟图标条同族。
+   ‼ 这条必须能压过 `.selection-menu.typora-selection-menu:not(.time-marker-menu) button`
+   ——后者已用 :not() 排除本菜单，所以这里只需 (0,1,1) 即可。 */
+.time-marker-menu button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    min-width: 64px;
+    min-height: 36px;
+    padding: 7px 11px;
+    border: 0;
+    border-radius: 12px;
+    background: transparent;
+    color: var(--text-color);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease, transform 0.11s ease;
+}
+
+.time-marker-menu button:active {
+    transform: scale(0.96);
+}
+
+.time-marker-menu button svg {
+    width: 15px;
+    height: 15px;
+    flex: 0 0 auto;
+    opacity: 0.9;
+}
+
+/* 悬停配色统一走 token（原来这里是两个不同的硬编码红：#bd4d45 与 #e74c3c，
+   同一组按钮里出现两种红，且暗色主题下不会跟随）。 */
+.time-marker-menu [data-time-action="update"]:hover,
+.time-marker-menu [data-time-action="update"]:focus-visible {
+    outline: none;
+    background: color-mix(in srgb, var(--danger-color) 12%, transparent);
+    color: var(--danger-color);
+}
+
+.time-marker-menu [data-time-action="delete"]:hover,
+.time-marker-menu [data-time-action="delete"]:focus-visible {
+    outline: none;
+    background: color-mix(in srgb, var(--danger-color) 12%, transparent);
+    color: var(--danger-color);
+}
+
+.has-annotation {
     position: relative;
     cursor: pointer;
     color: inherit;
@@ -4829,7 +4911,65 @@ img.annotation-badge:hover {
     padding: 4px;
 }
 
-.mark-popover-actions {    border-top: 1px solid rgba(128, 128, 128, 0.1);    padding: 4px;}.mark-popover-actions {    display: flex;    gap: 4px;    justify-content: center;    margin: 0;    padding: 0;    border: none;    box-sizing: border-box;    width: 100%;}.mark-popover-actions button {    background: transparent;    border: 0;    color: var(--text-color);    padding: 8px 16px;    border-radius: 0;    font-size: 13px;    font-weight: 500;    cursor: pointer;    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);    white-space: nowrap;    display: flex;    align-items: center;    justify-content: center;    gap: 8px;    min-width: auto;}.mark-popover-actions button.delete-btn::before {    content: '';    display: none;    width: 14px;    height: 14px;    background-size: contain;    opacity: 0.6;}.mark-popover-actions button:hover {    background: rgba(128, 128, 128, 0.08);    color: var(--primary-color);}.mark-popover-actions .save-btn,.mark-popover-actions .edit-btn {    color: var(--text-color);    background: transparent;}.mark-popover-actions .delete-btn {    color: var(--text-color);}.mark-popover-actions button:active {
+/* 动作条 =「胶囊里的胶囊」：外框负责圆角与裁切，按钮自己有同族圆角 + 内缩。
+   以前按钮是 border-radius:0 且四周紧贴外框（实测上下左右各只差 0.67px 的边框），
+   hover 底色是个直角矩形，被外框 10px 圆角切掉四个角——看起来像缺角的色块。 */
+.mark-popover-actions {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    margin: 0;
+    padding: 4px;
+    border: none;
+    box-sizing: border-box;
+    width: 100%;
+    border-radius: 10px;
+}
+
+.mark-popover-actions button {
+    background: transparent;
+    border: 0;
+    color: var(--text-color);
+    padding: 7px 14px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease;
+    white-space: nowrap;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    min-width: auto;
+}
+
+.mark-popover-actions button.delete-btn::before {
+    content: '';
+    display: none;
+    width: 14px;
+    height: 14px;
+    background-size: contain;
+    opacity: 0.6;
+}
+
+.mark-popover-actions button:hover {
+    background: color-mix(in srgb, var(--text-color) 9%, transparent);
+    color: var(--text-color);
+}
+
+.mark-popover-actions .save-btn,
+.mark-popover-actions .edit-btn {
+    color: var(--text-color);
+    background: transparent;
+}
+
+.mark-popover-actions .delete-btn {
+    color: var(--text-color);
+}
+
+.mark-popover-actions button:active {
     background: color-mix(in srgb, var(--text-color) 15%, transparent);
     transform: scale(0.97);
 }
@@ -5314,7 +5454,10 @@ body.reading-mode-active .editor-main {
 /* ---- iOS 风格图标条（选区菜单专用）----
    规格对齐 demo：面板 24px 圆角 / 5px 内边距 / 40px 按钮 / 20px 图标 /
    1×19px 分隔线 / 12px 尖角。尺寸只由下面这几个变量决定，整体缩放改一处。
-.selection-menu.typora-selection-menu {
+   ‼ 用 :not(.time-marker-menu) 排除时间标记菜单：它同样带 .selection-menu
+   .typora-selection-menu 两个基类，而本组选择器 (0,2,0) 的优先级高于
+   `.time-marker-menu` (0,1,0)，不排除就会把它的圆角/内边距/按钮排布全部顶掉。 */
+.selection-menu.typora-selection-menu:not(.time-marker-menu) {
     --sm-surface-a: color-mix(in srgb, var(--modal-bg) 100%, #ffffff 0%);
     --sm-surface-b: color-mix(in srgb, var(--modal-bg) 94%, var(--border-color));
     --sm-border: color-mix(in srgb, var(--border-color) 80%, transparent);
@@ -5337,8 +5480,8 @@ body.reading-mode-active .editor-main {
     transform-origin: bottom center;
 }
 
-/* 上缘 0.7px 高光：玻璃厚度感，别删。 */
-.selection-menu.typora-selection-menu::before {
+/* 上缘 0.7px 高光：玻璃厚度感，别删。（时间菜单有自己的一条，见上面 .time-marker-menu::before） */
+.selection-menu.typora-selection-menu:not(.time-marker-menu)::before {
     content: "";
     position: absolute;
     inset: 0;
@@ -5359,7 +5502,7 @@ body.reading-mode-active .editor-main {
     }
 }
 
-.selection-menu.typora-selection-menu .menu-btn-group {
+.selection-menu.typora-selection-menu:not(.time-marker-menu) .menu-btn-group {
     gap: 0;
 }
 
@@ -5367,7 +5510,7 @@ body.reading-mode-active .editor-main {
    .typora-selection-menu 两个基类，而 `.selection-menu.typora-selection-menu button`
    的优先级 (0,2,1) 高于 `.time-marker-menu button` 的 (0,1,1)——不排除的话
    `display:grid` 会压掉它的 `display:flex`，图标和「更新/删除」文字被堆成上下两行。 */
-.selection-menu.typora-selection-menu button {
+.selection-menu.typora-selection-menu:not(.time-marker-menu) button {
     width: var(--sm-btn);
     height: var(--sm-btn);
     min-width: 0;
@@ -5384,17 +5527,17 @@ body.reading-mode-active .editor-main {
     -webkit-tap-highlight-color: transparent;
 }
 
-.selection-menu.typora-selection-menu button:hover {
+.selection-menu.typora-selection-menu:not(.time-marker-menu) button:hover {
     background: var(--sm-hover);
     color: var(--sm-icon);
 }
 
-.selection-menu.typora-selection-menu button:active {
+.selection-menu.typora-selection-menu:not(.time-marker-menu) button:active {
     transform: scale(0.87);
     background: var(--sm-hover);
 }
 
-.selection-menu.typora-selection-menu button:focus-visible {
+.selection-menu.typora-selection-menu:not(.time-marker-menu) button:focus-visible {
     outline: 2px solid var(--sm-icon);
     outline-offset: -3px;
 }
@@ -6435,7 +6578,33 @@ body.reading-mode-active .editor-main {
 }
 
 .article-file-menu .article-file-download,
-.article-file-menu .article-file-delete {    display: inline-grid;    width: 28px;    min-width: 28px;    height: 28px;    place-items: center;    padding: 0;    border: 0;    border-radius: 4px;    background: transparent;    color: var(--muted-text);    cursor: pointer;    text-decoration: none;}.article-file-menu .article-file-download:hover,.article-file-menu .article-file-download:focus-visible {    outline: none;    background: color-mix(in srgb, var(--primary-color) 16%, transparent);    color: var(--primary-color);}.article-file-menu .article-file-delete {    color: #d84a44;}.article-file-menu .article-file-delete:hover,
+.article-file-menu .article-file-delete {
+    display: inline-grid;
+    width: 28px;
+    min-width: 28px;
+    height: 28px;
+    place-items: center;
+    padding: 0;
+    border: 0;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--muted-text);
+    cursor: pointer;
+    text-decoration: none;
+}
+
+.article-file-menu .article-file-download:hover,
+.article-file-menu .article-file-download:focus-visible {
+    outline: none;
+    background: color-mix(in srgb, var(--primary-color) 16%, transparent);
+    color: var(--primary-color);
+}
+
+.article-file-menu .article-file-delete {
+    color: var(--danger-color);
+}
+
+.article-file-menu .article-file-delete:hover,
 .article-file-menu .article-file-delete:focus-visible {
     outline: none;
     background: color-mix(in srgb, var(--danger-color) 12%, transparent);

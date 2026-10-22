@@ -117,10 +117,81 @@ async function checkEditorContentClasses() {
         Boolean(container.querySelector('.vditor-reset blockquote')), container.innerHTML.slice(0, 400));
 }
 
+/**
+ * 悬停底色的「圆角贴合」守卫。事故形态：按钮铺满圆角容器、自己却是 border-radius:0，
+ * hover 时底色是直角矩形，被外框圆角切掉四个角（实测 .mark-popover 的按钮四周只差
+ * 0.67px 的边框）。规则是：容器有圆角 => 铺满内沿的按钮必须自带圆角；并且 JS 不许
+ * 给这些动作条写行内 padding/border（行内样式会压掉样式表里的内缩）。
+ */
+function checkHoverRadiusFit() {
+    const styles = fs.readFileSync(path.join(ASSETS, 'styles.css'), 'utf8');
+    const blocks = [];
+    const rulePattern = /([^{}]+)\{([^{}]*)\}/g;
+    let match;
+    while ((match = rulePattern.exec(styles)) !== null) {
+        blocks.push({ selectors: match[1].replace(/\s+/g, ' ').trim(), body: match[2] });
+    }
+    // 取「基础规则」：选择器恰好是该片段、且没有伪类/后代限定（否则会抓到后面的
+    // :hover / ::before 变体——它们没有 border-radius，断言就永远为真）。
+    // 允许一个 :not(...) 作用域限定：图标条用 :not(.time-marker-menu) 把时间标记菜单
+    // 排除出去（两者共用 .selection-menu 基类），这种限定不影响本条断言的语义。
+    const normalizeSelector = (selector) => selector
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/:not\([^)]*\)/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+    // 按「顶层逗号」拆分选择器列表：:not(a, b) 里的逗号不是列表分隔符。
+    const splitSelectors = (list) => {
+        const parts = [];
+        let depth = 0;
+        let current = '';
+        for (const char of list) {
+            if (char === '(') depth += 1;
+            if (char === ')') depth = Math.max(0, depth - 1);
+            if (char === ',' && depth === 0) { parts.push(current); current = ''; continue; }
+            current += char;
+        }
+        parts.push(current);
+        return parts;
+    };
+    const blockFor = (fragment) => blocks
+        .filter(block => splitSelectors(block.selectors)
+            .some(selector => normalizeSelector(selector) === fragment))
+        .pop();
+    const radiusOf = (block) => {
+        const radius = /border-radius:\s*([^;]+);/.exec(block.body);
+        return radius ? radius[1].trim() : '';
+    };
+    const pairs = [
+        ['.mark-popover-actions', '.mark-popover-actions button'],
+        ['.article-file-menu', '.article-file-menu .article-file-download'],
+        ['.article-image-size-menu', '.article-image-size-menu button'],
+        ['.time-marker-menu', '.time-marker-menu button'],
+        ['.selection-menu.typora-selection-menu', '.selection-menu.typora-selection-menu button'],
+    ];
+    for (const [containerSel, buttonSel] of pairs) {
+        const containerBlock = blockFor(containerSel);
+        const buttonBlock = blockFor(buttonSel);
+        check(`hover fit: ${containerSel} and its button both have a rule`,
+            Boolean(containerBlock) && Boolean(buttonBlock), { containerSel, buttonSel });
+        if (!containerBlock || !buttonBlock) continue;
+        const containerRadius = radiusOf(containerBlock);
+        const buttonRadius = radiusOf(buttonBlock);
+        check(`hover fit: ${buttonSel} is not a square inside a rounded ${containerSel}`,
+            !/^\d/.test(containerRadius) || !/^0(px)?$/.test(buttonRadius),
+            { containerRadius, buttonRadius });
+    }
+    // JS 不许给动作条写行内内边距（上一版就是 'border:none;margin:0;padding:0;' 压掉了 CSS）
+    const menuJs = fs.readFileSync(path.join(ROOT, 'public', 'managers', 'tiptap-selection-menu.js'), 'utf8');
+    check('hover fit: the selection menu does not inline-style its action bar',
+        !/mark-popover-actions'[\s\S]{0,160}cssText/.test(menuJs), 'found a cssText assignment near mark-popover-actions');
+}
+
 async function main() {
     checkCssBalance();
     checkBlockquoteRules();
     checkTodayDraftsWritingAreaRules();
+    checkHoverRadiusFit();
     await checkEditorContentClasses();
     if (failures) {
         console.error(`\n${failures} check(s) failed`);

@@ -377,7 +377,10 @@ class SelectionMenuView {
         this.popover.innerHTML = '';
         const actions = document.createElement('div');
         actions.className = 'mark-popover-actions';
-        actions.style.cssText = 'border:none;margin:0;padding:0;';
+        // 不要在这里写行内 padding/border：内边距归 styles.css 的
+        // .mark-popover-actions 统一控制（行内样式优先级更高，会把样式表里
+        // 的内缩压成 0，hover 底色就变成紧贴外框的直角块）。
+
         if (type === 'annotation') {
             const editBtn = document.createElement('button');
             editBtn.type = 'button';
