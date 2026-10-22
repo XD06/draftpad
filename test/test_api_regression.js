@@ -394,7 +394,9 @@ function assertThoughtsFrontendRegressions() {
     );
     assert(
         indexSource.includes('id="toggle-thoughts"') &&
-        indexSource.includes('M515.96 625.88c-89.74') &&
+        // 灯泡图标（用户提供）：1024 网格、归一化到 900×900 居中，颜色走 currentColor。
+        indexSource.includes('M767.4 77.3l-1.9-1.1c-15-8.5-34-3.4-42.7 11.4') &&
+        indexSource.includes('translate(57.57 57.56) scale(0.887574)') &&
         !indexSource.includes('M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19'),
         'the Thought entry action should use the supplied filled idea icon, never the editor pencil icon'
     );
