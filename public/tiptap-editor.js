@@ -54,6 +54,7 @@ import {
     TiptapImageInteractions,
 } from './managers/tiptap-image-interactions.js';
 import { TiptapImagePaste } from './managers/tiptap-image-paste.js';
+import { TiptapPointerFocusGuard } from './managers/tiptap-pointer-focus.js';
 import { DumbPadMedia } from './managers/tiptap-media.js';
 import { buildMarkdownHeadingIndex } from './managers/heading-index.js';
 
@@ -321,6 +322,9 @@ export class HybridMarkdownEditor {
                 // 粘贴/拖入图片一律走资产上传（否则内核把 Base64 直接写进正文，
                 // 且没有 dumbpad-width，渲染按原宽铺满纸面）。见 tiptap-image-paste.js
                 TiptapImagePaste.configure({ getAdapter: () => this }),
+                // 点图片/附件/媒体等装饰性节点不夺焦、不把旧光标滚进视野、
+                // 移动端不弹键盘。见 tiptap-pointer-focus.js
+                TiptapPointerFocusGuard,
                 DumbPadArticleFileLink,
                 TiptapArticleUploadProgress,
                 // 斜杠命令菜单（/time、/file，可经 registerSlashCommand 扩展）。

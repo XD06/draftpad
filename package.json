@@ -63,6 +63,7 @@
     "test:source-mode-browser": "node test/browser/source-mode.js",
     "test:tiptap-image-menu": "node test/test_tiptap_image_menu.js",
     "test:tiptap-image-paste": "node test/test_tiptap_image_paste.js",
+    "test:tiptap-pointer-focus": "node test/test_tiptap_pointer_focus.js",
     "test:tiptap-soft-enter-link": "node test/test_tiptap_soft_enter_link.js",
     "test:tiptap-soft-enter-block-rules": "node test/test_tiptap_soft_enter_block_rules.js",
     "test:tiptap-code-fence-input": "node test/test_tiptap_code_fence_input.js",
