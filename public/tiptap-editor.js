@@ -47,12 +47,13 @@ import {
 import { TiptapSelectionMenu } from './managers/tiptap-selection-menu.js';
 import { TiptapSlashMenu } from './managers/tiptap-slash-menu.js';
 import { createFileCommandController, TiptapArticleUploadProgress } from './managers/tiptap-file-command.js';
-import { DEFAULT_ARTICLE_IMAGE_WIDTH } from './managers/article-file-command.js';
+import { buildArticleImageMarkdown } from './managers/article-file-command.js';
 import {
     DumbPadArticleFileLink,
     DumbPadImage,
     TiptapImageInteractions,
 } from './managers/tiptap-image-interactions.js';
+import { TiptapImagePaste } from './managers/tiptap-image-paste.js';
 import { DumbPadMedia } from './managers/tiptap-media.js';
 import { buildMarkdownHeadingIndex } from './managers/heading-index.js';
 
@@ -317,6 +318,9 @@ export class HybridMarkdownEditor {
                 }),
                 TiptapSelectionMenu,
                 TiptapImageInteractions,
+                // 粘贴/拖入图片一律走资产上传（否则内核把 Base64 直接写进正文，
+                // 且没有 dumbpad-width，渲染按原宽铺满纸面）。见 tiptap-image-paste.js
+                TiptapImagePaste.configure({ getAdapter: () => this }),
                 DumbPadArticleFileLink,
                 TiptapArticleUploadProgress,
                 // 斜杠命令菜单（/time、/file，可经 registerSlashCommand 扩展）。
@@ -1453,9 +1457,9 @@ export class HybridMarkdownEditor {
         if (!url) return false;
         const isImage = asset.kind === 'image' || /\.(png|jpe?g|gif|webp|svg|avif)$/i.test(url);
         const label = String(asset.name || asset.filename || (isImage ? 'image' : url));
-        // 与 /file 插图保持一致：默认「窄」档，插入时不占满纸面。
+        // 与 /file、粘贴插图保持一致：默认「窄」档，插入时不占满纸面。
         const markdown = isImage
-            ? `![${label}](${url} "dumbpad-width=${DEFAULT_ARTICLE_IMAGE_WIDTH}")`
+            ? buildArticleImageMarkdown({ name: label, previewUrl: url })
             : `[${label}](${url})`;
         this.editor.commands.insertContentAt(this.editor.state.selection.from, markdown);
         this.notifyEditorValueChanged(this.getValue());

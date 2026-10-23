@@ -80,6 +80,16 @@ export function replaceFileCommand(value, range, replacement = '') {
     return { value: next, selectionStart: caret, selectionEnd: caret };
 }
 
+/**
+ * 图片落文形态：`![名](previewUrl "dumbpad-width=360")`。默认「窄」档，
+ * 插入/粘贴都不占满纸面；需要更大用图片尺寸菜单再调。`/file`、设置里的
+ * 「插入」、粘贴/拖入图片三条入口共用它，保证形态唯一。
+ */
+export function buildArticleImageMarkdown(asset = {}) {
+    const alt = String(asset?.name || '图片').replace(/[[\]\\]/g, '\\$&');
+    return `![${alt}](${asset.previewUrl} "dumbpad-width=${DEFAULT_ARTICLE_IMAGE_WIDTH}")`;
+}
+
 export function buildArticleFileMarkdown(asset = {}) {
     const name = escapeMarkdownLabel(asset.name || '文件');
     const url = String(asset.downloadUrl || asset.originalUrl || '').trim();
