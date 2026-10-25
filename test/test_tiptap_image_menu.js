@@ -391,6 +391,41 @@ async function main() {
     editor.editor.commands.undo();
     check('file delete is undoable', editor.getValue().includes('报告.pdf'), editor.getValue());
 
+    /* ---- 8.4 首次点击就居中：`[hidden]` 是 display:none，隐藏时 offsetWidth
+       恒为 0，定位会退回写死的 fallbackWidth（210），而实际宽度 283——居中公式
+       少算 73px，菜单偏右 37px。用户看到的就是「第一次点偏移、再点一次才居中」
+       （第二次点按时菜单已可见，量得到真实宽度）。jsdom 不计算布局，这里给
+       offsetWidth 打桩模拟「隐藏=0 / 可见=真实宽度」。 ---- */
+    {
+        editor.setValue(IMAGE_ONLY, false);
+        const menu = sizeMenu();
+        const menuElement = menu;
+        const realWidth = 283;
+        Object.defineProperty(menuElement, 'offsetWidth', {
+            configurable: true,
+            get() { return menuElement.hidden ? 0 : realWidth; },
+        });
+        // 图片宽 360、居中：图片左缘 100 → 菜单左缘应为 100 + (360-283)/2 = 138.5
+        const rectStub = () => ({ left: 100, top: 200, right: 460, bottom: 400, width: 360, height: 200 });
+        const realRect = imageEl().getBoundingClientRect;
+        imageEl().getBoundingClientRect = rectStub;
+        click(imageEl());
+        await wait(20);
+        const firstLeft = Number.parseFloat(menuElement.style.left);
+        check('first open already centers on the image (no fallback-width drift)',
+            Math.abs(firstLeft - 138.5) < 1, { firstLeft, expected: 138.5 });
+        // 再点一次必须落在同一位置。**不能在两次之间派发 document mousedown**：
+        // 那会先把菜单关掉，第二次又走隐藏路径、两次都取 fallback，断言就变成
+        // 恒真（实测过）。真实复现是「菜单还开着时再点图片」，此时第二次能量到
+        // 真实宽度——正是这个差值造成了肉眼看到的跳动。
+        click(imageEl());
+        await wait(20);
+        const secondLeft = Number.parseFloat(menuElement.style.left);
+        check('reopening the menu does not shift it', Math.abs(secondLeft - firstLeft) < 0.5, { firstLeft, secondLeft });
+        imageEl().getBoundingClientRect = realRect;
+        delete menuElement.offsetWidth;
+    }
+
     /* ---- 8.5 宽度上限钳制（旧 max(240, floor(clientWidth || innerWidth-48))） ---- */
     Object.defineProperty(contentRoot(), 'clientWidth', { value: 300, configurable: true });
     editor.setValue(IMAGE_ONLY, false);
@@ -520,8 +555,7 @@ async function main() {
     check('size menu opens while editor focused', sizeMenu().hidden === false);
 
     /* ---- 10d. 菜单按 visualViewport 夹取：软键盘只缩 vv（iOS 的 innerHeight
-       不随键盘变），菜单必须落在可见区内；键盘开合（vv resize）按锚元素重夹 ---- */
-    document.body.dispatchEvent(new dom.window.MouseEvent('mousedown', { bubbles: true }));
+       不随键盘变），菜单必须落在可见区内；键盘开合（vv resize）按锚元素重夹 ---- */    document.body.dispatchEvent(new dom.window.MouseEvent('mousedown', { bubbles: true }));
     await wait(20);
     fakeViewport.width = 390;
     fakeViewport.height = 420;

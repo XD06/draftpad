@@ -545,8 +545,14 @@ class ArticleImageInteractionView {
             ? `/api/assets/${assetId}/download`
             : (image.getAttribute('src') || '');
         download.download = image.getAttribute('alt') || '图片';
-        this.positionMenuUnderElement(this.sizeMenu, image, 210);
+        // **必须先显示再定位**：`[hidden]` 是 `display: none`，隐藏状态下
+        // offsetWidth/offsetHeight 恒为 0，定位会退回写死的 fallbackWidth
+        // （210），而实际宽度 283——居中公式 (rect.width - menuWidth) / 2
+        // 少算 73px，菜单就偏右 37px。用户看到的现象是「第一次点击偏移、
+        // 再点一次才居中」：第二次点按时菜单已经可见，量得到真实宽度。
+        // 同一任务内紧接着写 left/top 不会闪烁——布局与绘制都在任务结束后。
         this.sizeMenu.hidden = false;
+        this.positionMenuUnderElement(this.sizeMenu, image, 210);
     }
 
     hideSizeMenu() {
@@ -619,8 +625,9 @@ class ArticleImageInteractionView {
         const download = this.fileMenu.querySelector('[data-file-download]');
         download.href = link.getAttribute('href') || '';
         download.download = String(link.textContent || '附件').replace(/^📎\s*/, '').split('·')[0].trim() || '附件';
-        this.positionMenuUnderElement(this.fileMenu, link, 68);
+        // 与图片尺寸菜单同一个坑：隐藏时量不到真实宽度，先显示再定位。
         this.fileMenu.hidden = false;
+        this.positionMenuUnderElement(this.fileMenu, link, 68);
     }
 
     hideFileMenu() {
