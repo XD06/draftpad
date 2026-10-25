@@ -504,6 +504,96 @@ const wait = (port, t = 25000) => new Promise((res, rej) => {
     check('源码模式关键盘后光标在可见带内', gState.caretY > 84 && gState.caretY < 760, gState);
     await p7.close();
 
+    // ===== H. 移动端：整页滚动时带状归位必须真是「出带才动」=====
+    // G 段先把 scrollTop 设成 0 再派发 vv resize，而 document.scrollingElement 的
+    // getBoundingClientRect().top 本身就等于 −scrollTop：滚动位置为 0 时「再减一次
+    // 容器 rect」恰好不影响结果，所以 G 段对本 bug 是绿的（真机三轮无头全绿、仍复现
+    // 的成因）。深滚动时误差正好是一个 scrollTop，光标的文档位被算高那么多 → 永远
+    // 判成「在视口下方出带」→ 每次归位都写成 ≈2×scrollTop（浏览器钳到文末），
+    // 视线甩到文末、光标留在原处。这里从**深滚动 + 光标已在带内**起步，断言归位是
+    // no-op（视线纹丝不动），再把视线按到顶部模拟浏览器键盘滚动，断言按光标归回。
+    const p8 = await browser.newPage({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true });
+    await p8.goto(`http://127.0.0.1:${PORT}/`, { waitUntil: 'networkidle' });
+    await p8.waitForTimeout(2500);
+    await p8.evaluate(() => {
+      const item = [...document.querySelectorAll('#directory-tree .dir-item')]
+        .find(el => el.textContent.includes('Long Scroll'));
+      item.click();
+    });
+    await p8.waitForTimeout(2000);
+    await p8.evaluate(() => document.getElementById('toggle-source-mode').click());
+    await p8.waitForTimeout(900);
+    // 光标放到 80% 处，然后把视线放到「光标行位于视口 40% 高」的深滚动位置。
+    const placeDeep = () => p8.evaluate(() => {
+      const ta = document.querySelector('.tiptap-source-textarea');
+      const page = document.scrollingElement;
+      ta.focus();
+      const offset = Math.floor(ta.value.length * 0.8);
+      ta.setSelectionRange(offset, offset);
+      ta.dispatchEvent(new Event('keyup'));
+      const cs = getComputedStyle(ta);
+      const mirror = document.createElement('div');
+      Object.assign(mirror.style, {
+        position: 'absolute', left: '-99999px', top: '0', visibility: 'hidden',
+        width: ta.clientWidth + 'px', font: cs.font, lineHeight: cs.lineHeight,
+        whiteSpace: 'pre-wrap', wordBreak: cs.wordBreak, padding: '0', boxSizing: 'content-box',
+      });
+      mirror.textContent = ta.value.slice(0, offset);
+      const marker = document.createElement('span');
+      marker.textContent = '\u200b';
+      mirror.appendChild(marker);
+      document.body.appendChild(mirror);
+      const caretDocY = ta.getBoundingClientRect().top + page.scrollTop + (parseFloat(cs.paddingTop) || 0) + marker.offsetTop;
+      mirror.remove();
+      const H = page.clientHeight;
+      const max = page.scrollHeight - H;
+      page.scrollTop = Math.max(0, Math.min(max, caretDocY - H * 0.4));
+      return { scrollTop: page.scrollTop, max, H, caretDocY: Math.round(caretDocY) };
+    });
+    const probe8 = () => p8.evaluate(() => {
+      const ta = document.querySelector('.tiptap-source-textarea');
+      const page = document.scrollingElement;
+      const cs = getComputedStyle(ta);
+      const mirror = document.createElement('div');
+      Object.assign(mirror.style, {
+        position: 'absolute', left: '-99999px', top: '0', visibility: 'hidden',
+        width: ta.clientWidth + 'px', font: cs.font, lineHeight: cs.lineHeight,
+        whiteSpace: 'pre-wrap', wordBreak: cs.wordBreak, padding: '0', boxSizing: 'content-box',
+      });
+      mirror.textContent = ta.value.slice(0, ta.selectionStart || 0);
+      const marker = document.createElement('span');
+      marker.textContent = '\u200b';
+      mirror.appendChild(marker);
+      document.body.appendChild(mirror);
+      const caretY = Math.round(ta.getBoundingClientRect().top + (parseFloat(cs.paddingTop) || 0) + marker.offsetTop);
+      mirror.remove();
+      const max = page.scrollHeight - page.clientHeight;
+      return { scrollTop: page.scrollTop, caretY, frac: max > 0 ? +(page.scrollTop / max).toFixed(3) : 0, focused: document.activeElement === ta };
+    });
+    const deep = await placeDeep();
+    await p8.waitForTimeout(250);
+    check('H 夹具成立：深滚动且光标已在可见带内',
+        deep.scrollTop > deep.H && (await probe8()).caretY > 0.15 * deep.H && (await probe8()).caretY < 0.85 * deep.H,
+        deep);
+    // 键盘开合（浏览器把视线甩到文档顶 = 元素盒对准）后归位：必须按光标回到带内。
+    // 注意这里**不能**从 scrollTop=0 起步断言归位落点：滚动位置为 0 时本段的坐标
+    // 误差恰好为 0（错误公式也写得对），只有下面的带内 no-op 断言能抓住真机形态。
+    await p8.evaluate(() => { document.scrollingElement.scrollTop = 0; window.visualViewport.dispatchEvent(new Event('resize')); });
+    await p8.waitForTimeout(700);
+    const hCorrected = await probe8();
+    check('整页滚动关键盘后视线按光标归位（不停在顶部、也不甩到文末）',
+        hCorrected.frac > 0.2 && hCorrected.frac < 0.99, hCorrected);
+    check('整页滚动关键盘后光标回到可见带内',
+        hCorrected.caretY > 0.15 * deep.H && hCorrected.caretY < 0.85 * deep.H, hCorrected);
+    // 再派发一次（真机 vv 会连发多次）：已在带内就必须一动不动。
+    const beforeNoop = (await probe8()).scrollTop;
+    await p8.evaluate(() => window.visualViewport.dispatchEvent(new Event('resize')));
+    await p8.waitForTimeout(700);
+    const afterNoop = await probe8();
+    check('整页滚动：光标在带内时再次归位是 no-op（视线不被拽走）',
+        Math.abs(afterNoop.scrollTop - beforeNoop) < 2, { beforeNoop, afterNoop });
+    await p8.close();
+
     report();
     process.exitCode = failed ? 1 : 0;
   } catch (e) {

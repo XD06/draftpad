@@ -32,6 +32,7 @@ const CORE_ASSETS = [
   "/managers/storage.js",
   "/managers/note-sync-controller.js",
   "/managers/editor-performance.js",
+  "/managers/caret-trace.js",
   "/managers/heading-index.js",
   "/managers/thoughts.js",
   "/managers/today-drafts/today-draft-action-menu.js",

@@ -20,6 +20,11 @@ import {
     isEditorPerformanceEnabled
 } from './managers/editor-performance.js';
 import {
+    createCaretTrace,
+    installCaretTrace,
+    isCaretTraceEnabled
+} from './managers/caret-trace.js';
+import {
     getStartupNotepadId,
     renderSidebar,
     renderRecentFiles,
@@ -2414,6 +2419,47 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     }
 
+    // 真机取证记录器：只有 ?debugCaret=1（或 localStorage 开关）时启用，关闭时
+    // 不起帧循环、不挂监听。移动端「视线与光标不统一」是无头环境复现不了的时序
+    // 问题，靠这套打点把「哪一下跳变、紧跟哪个事件」从真机取回来。
+    let caretTraceHandle = null;
+    function installCaretTraceIfEnabled(instance) {
+        if (caretTraceHandle || !isCaretTraceEnabled(window.location.search)) return null;
+        const handle = installCaretTrace({ editor: instance, win: window, doc: document, trace: createCaretTrace() });
+        caretTraceHandle = handle;
+        const overlay = document.createElement('div');
+        overlay.id = 'caret-trace-overlay';
+        overlay.setAttribute('aria-hidden', 'true');
+        overlay.style.cssText = 'position:fixed;left:8px;bottom:8px;z-index:2147483647;font:11px/1.4 ui-monospace,monospace;'
+            + 'background:rgba(0,0,0,.78);color:#fff;padding:6px 8px;border-radius:8px;pointer-events:auto';
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.textContent = '复制视线日志';
+        button.style.cssText = 'font:inherit;color:inherit;background:none;border:1px solid #fff8;border-radius:6px;padding:4px 8px';
+        button.addEventListener('click', async () => {
+            const text = handle.trace.export();
+            try {
+                await navigator.clipboard.writeText(text);
+                button.textContent = '已复制 ' + text.length + ' 字';
+            } catch (error) {
+                // 剪贴板在非安全上下文/无手势下会失败：退化成全局变量，控制台可取。
+                window.__dumbpadCaretTraceText = text;
+                button.textContent = '复制失败，见 __dumbpadCaretTraceText';
+                console.warn('[caret-trace] clipboard failed', error);
+            }
+            setTimeout(() => { button.textContent = '复制视线日志'; }, 2500);
+        });
+        overlay.appendChild(button);
+        document.body.appendChild(overlay);
+        window.__dumbpadCaretTrace = Object.freeze({
+            trace: handle.trace,
+            export: () => handle.trace.export(),
+            timeline: () => handle.trace.timeline(),
+            geometry: () => handle.readGeometry(),
+        });
+        return handle;
+    }
+
     async function ensureEditor() {
         if (editorInstance) return editorInstance;
         if (!editorLoader) {
@@ -2510,6 +2556,10 @@ document.addEventListener('DOMContentLoaded', async () => {
                     // 之后再切视图，否则 textarea 里会是空的 _lastValue。
                     // 不在这条链上挂 .catch 吞错——失败必须能在控制台看见，
                     // 否则「刷新后没恢复」会变成静默无响应。
+                    // 取证记录器必须**早于**恢复切换挂上：恢复路径直接调
+                    // setSourceMode（顺带注册 textarea 的 vv 监听），晚了就抓不到
+                    // 「刷新即源码」这形态的第一跳，而那正是用户最常复现的一条。
+                    installCaretTraceIfEnabled(editorInstance);
                     restoreSourceModeIfRequested();
                 }, () => {});
                 return editorInstance;

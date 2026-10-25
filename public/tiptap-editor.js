@@ -1068,9 +1068,16 @@ export class HybridMarkdownEditor {
         if (!scroller || !textarea) return;
         const caretTop = this.measureTextareaCaretTop(textarea, Number(textarea.selectionStart || 0));
         const textareaRect = textarea.getBoundingClientRect();
-        const scrollerRect = scroller.getBoundingClientRect();
+        // 视口顶缘在**文档坐标**里的位置：内滚容器（桌面）用它自己的 rect.top；
+        // 整页滚动（移动端 ios-theme，滚动容器是 document.scrollingElement）时它的
+        // rect.top 已经带上了 −scrollTop，再减一遍等于把 scrollTop 加错两次——量出来
+        // 的光标文档位偏高 scrollTop 那么多，于是「光标明明在可见带内」也会误判成出带，
+        // 一次归位把视线甩到文末（真机 Android PWA 的视线/光标不统一）。
+        // 与渲染侧孪生函数 scrollEditorCaretIntoView 同一处理，别只改一边。
+        const isPageScroll = scroller === document.scrollingElement || scroller === document.documentElement;
+        const scrollerTop = isPageScroll ? 0 : scroller.getBoundingClientRect().top;
         // 光标相对滚动内容顶部的偏移 = textarea 在内容里的偏移 + 光标在其内的高度。
-        const caretDocumentTop = scroller.scrollTop + (textareaRect.top - scrollerRect.top) + caretTop;
+        const caretDocumentTop = scroller.scrollTop + (textareaRect.top - scrollerTop) + caretTop;
         const viewTop = scroller.scrollTop;
         const viewBottom = viewTop + scroller.clientHeight;
         if (caretDocumentTop < viewTop + scroller.clientHeight * 0.15) {

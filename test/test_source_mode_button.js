@@ -185,6 +185,53 @@ async function main() {
             editor._trackedCaret = null;
         }
 
+        /* 整页滚动（移动端 ios-theme）下的带状归位几何。承重不变式：
+         * document.scrollingElement 的 getBoundingClientRect().top 本身就等于
+         * −scrollTop（它跟着文档一起滚），所以「容器顶缘在视口里的位置」必须是 0——
+         * 拿它的 rect 当偏移基准会把 scrollTop 加错两遍，量出的光标文档位偏高
+         * 正好一个 scrollTop，于是「光标明明在可见带内」也判成出带，一次归位把
+         * 视线甩到文末（真机 Android PWA 的「视线与光标不统一」；桌面走内滚容器
+         * rect 是常量，公式在桌面恰好成立，所以此前只有真机复现）。
+         * jsdom 没有布局，用假滚动容器复现那层几何；渲染侧孪生函数
+         * scrollEditorCaretIntoView 早就有这条 isPageScroll 分支，此处只是补齐对称。 */
+        const fakePage = {
+            scrollTop: 17166,
+            clientHeight: 844,
+            scrollHeight: 21723,
+            getBoundingClientRect: () => ({ top: -fakePage.scrollTop }),
+        };
+        Object.defineProperty(document, 'scrollingElement', { value: fakePage, configurable: true });
+        const bandTextarea = editor.getSourceTextarea();
+        try {
+            // jsdom 无布局：measureTextareaCaretTop 恒为 0，于是 textarea 的 rect.top
+            // 就是「光标行距视口顶的像素」，正好对应真机量到的三种位置。
+            const band = (scrollTop, caretViewportY) => {
+                fakePage.scrollTop = scrollTop;
+                bandTextarea.getBoundingClientRect = () => ({ top: caretViewportY });
+                editor.scrollTextareaSelectionIntoView(bandTextarea);
+                return fakePage.scrollTop;
+            };
+            // 真机探针实测：S=17166、H=844、光标行在视口 338px 处（带内）。
+            // 错误实现会写成 S+caretDocY−0.7H ≈ 34079（浏览器钳到文末）。
+            const inBand = band(17166, 338);
+            check('整页滚动：光标在可见带内时视线不动（带状语义成立）',
+                Math.abs(inBand - 17166) < 0.5, inBand);
+            // 光标在视口下方（1182px）：应落到 70% 处 = caretDocY − 0.7H，而不是文末。
+            const below = band(16322, 1182);
+            check('整页滚动：光标在下方出带时轻推到 70%（不甩到文末）',
+                Math.abs(below - (16322 + 1182 - 844 * 0.7)) < 0.5, below);
+            // 光标在视口上方（−338px）：应落到 30% 处 = caretDocY − 0.3H。
+            const above = band(17842, -338);
+            check('整页滚动：光标在上方出带时轻推到 30%',
+                Math.abs(above - (17842 - 338 - 844 * 0.3)) < 0.5, above);
+            // 深滚动到底也必须是 no-op：旧实现在这里必然把 scrollTop 再写大一次。
+            const atBottom = band(20879, 338);
+            check('整页滚动：贴底带内同样是 no-op', Math.abs(atBottom - 20879) < 0.5, atBottom);
+        } finally {
+            delete bandTextarea.getBoundingClientRect;   // 还原原型实现
+            delete document.scrollingElement;            // 还原 jsdom 的 getter
+        }
+
         // 源码模式里切文章：textarea 必须跟着换成新正文，否则点一下切回渲染
         // 会把上一篇的原文写进当前文章（用户报的「跳到上上次切换的文章」）。
         editor.setSourceMode(true);
