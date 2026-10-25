@@ -27,7 +27,11 @@ const fakeS3 = {
         }
 
         if (name === 'CopyObjectCommand') {
-            const sourceKey = decodeURI(input.CopySource).replace(/^dumbpad-test\//, '');
+            // 与 s3-service.copyObject 的约定对齐：CopySource 按路径段
+            // encodeURIComponent，夹具必须逐段 decodeURIComponent（decodeURI
+            // 漏解 %23/%3F，等于比实现宽松）。
+            const sourceKey = input.CopySource.split('/').map(decodeURIComponent).join('/')
+                .replace(/^dumbpad-test\//, '');
             objects.set(input.Key, objects.get(sourceKey) || '');
             return {};
         }

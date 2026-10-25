@@ -60,6 +60,17 @@ check('链接只留文字', deriveArticleTitle('[链接文字](http://example.co
 check('词内下划线不被当强调', deriveArticleTitle('snake_case_words 保持原样'), 'snake_case_words 保持原样');
 check('跳过分隔线后取正文', deriveArticleTitle('---\n正文第一句。'), '正文第一句。');
 
+/* ---------------- 反斜杠转义还原与语法残骸守卫 ---------------- */
+
+// 序列化器会把正文里单独的 `#` 转义成 `\#` 存进源码；自动命名必须解义，
+// 且解义后仍无字母数字的行（纯语法标记）不许成为标题（真机产出过名字 `\#`）。
+check('标题里的 \\% 解义为 %', deriveArticleTitle('# 100\\% 覆盖率'), '100% 覆盖率');
+check('标题里的 C\\# 解义为 C#', deriveArticleTitle('# C\\# 语言'), 'C# 语言');
+check('纯 \\# 行不产生标题', deriveArticleTitle('\\#\n正文第一句。'), '正文第一句。');
+check('解义后无字母数字的标题被跳过', deriveArticleTitle('# \\#\\#\n## 真标题'), '真标题');
+check('只有 \\# 时返回空串（保持现名）', deriveArticleTitle('\\#'), '');
+check('首句兜底跳过纯标点行', deriveArticleTitle('。。。。\n第一句。'), '第一句。');
+
 /* ---------------- 排除区：frontmatter / 代码围栏 ---------------- */
 
 check('文首 frontmatter 不参与标题', deriveArticleTitle('---\ntitle: 元信息\ntags: [a]\n---\n# 真标题\n正文'), '真标题');

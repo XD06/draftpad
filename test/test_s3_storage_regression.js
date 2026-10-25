@@ -76,8 +76,23 @@ const fakeS3 = {
         }
 
         if (name === 'CopyObjectCommand') {
-            const sourceKey = decodeURI(input.CopySource).replace(/^dumbpad-test\//, '');
-            objects.set(input.Key, objects.get(sourceKey) || '');
+            // 模拟真实 S3 的 URL 语义：CopySource 里裸 `#` 被当 fragment、裸 `?`
+            // 被当 query 截断——只有按路径段 encodeURIComponent 的实现才能把含
+            // `#` 的键完整送达（旧 encodeURI 整串编码在此必挂，反向验证靠它）。
+            let rawSource = input.CopySource;
+            const fragAt = rawSource.indexOf('#');
+            if (fragAt > -1) rawSource = rawSource.slice(0, fragAt);
+            const queryAt = rawSource.indexOf('?');
+            if (queryAt > -1) rawSource = rawSource.slice(0, queryAt);
+            const sourceKey = rawSource.split('/').map(decodeURIComponent).join('/')
+                .replace(/^dumbpad-test\//, '');
+            if (!objects.has(sourceKey)) {
+                const error = new Error('The specified key does not exist.');
+                error.name = 'NoSuchKey';
+                error.$metadata = { httpStatusCode: 404 };
+                throw error;
+            }
+            objects.set(input.Key, objects.get(sourceKey));
             return {};
         }
 
@@ -293,6 +308,26 @@ async function waitForSearch(query) {
     );
 
     await waitForSearch('needle');
+
+    // 名字含 `#` 的文章改名：真实事故路径（自动命名产出 `\#`，之后手动改名
+    // 永远 500）。旧实现 CopySource 用 encodeURI 整串编码，`#` 不被编码 →
+    // 服务端按 fragment 截断源键 → NoSuchKey。
+    result = await request('/api/notepads', {
+        method: 'POST',
+        body: JSON.stringify({ name: 'C# 笔记', content: 'hash body' })
+    });
+    assert(result.response.ok, 'S3 POST notepad with `#` in name should succeed');
+    const hashNotepadId = result.body.id;
+    result = await request(`/api/notepads/${hashNotepadId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: 'C# 笔记（改名）' })
+    });
+    assert(result.response.ok, 'S3 rename of a `#`-named notepad should succeed (CopySource must be percent-encoded per path segment)');
+    assert(result.body.name === 'C# 笔记（改名）', 'renamed notepad should report the new name');
+    result = await request(`/api/notes/${hashNotepadId}`);
+    assert(result.response.ok, 'content of the renamed `#` notepad should still be readable');
+    assert(result.body.content === 'hash body', 'renaming a `#` notepad must carry its content to the new key');
 
     result = await request(`/api/share/${notepadId}`);
     assert(result.response.ok, 'S3 GET /api/share/:id should succeed');

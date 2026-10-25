@@ -190,9 +190,16 @@ async function headObject(key) {
 async function copyObject(sourceKey, destKey) {
     const normalizedSource = normalizeKey(sourceKey);
     const normalizedDest = normalizeKey(destKey);
+    // CopySource 是 URL 的一部分，必须按路径段 encodeURIComponent：只 encodeURI
+    // 整串不编码 `#` / `?`，服务端把 `#` 当 fragment 截断（NoSuchKey）、`?` 当
+    // query（InvalidArgument）。文章改名走 copy+delete，名字含 `#`（如 `C#`、
+    // 自动命名产出的 `\#`）时旧实现必炸。非 ASCII 由 encodeURIComponent 编成
+    // UTF-8 百分号转义，与 S3 规范一致。与 scripts/backup/s3-object-store.js
+    // 的 encodeCopySource 同一模式。
+    const encodedSource = normalizedSource.split('/').map(encodeURIComponent).join('/');
     await ensureClient().send(new CopyObjectCommand({
         Bucket: s3Bucket,
-        CopySource: encodeURI(`${s3Bucket}/${normalizedSource}`),
+        CopySource: `${s3Bucket}/${encodedSource}`,
         Key: normalizedDest
     }));
 }

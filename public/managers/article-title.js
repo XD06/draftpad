@@ -36,8 +36,16 @@ function stripInlineMarkdown(text) {
 
 function normalizeTitle(text) {
     return stripInlineMarkdown(text)
+        // 反斜杠转义还原（CommonMark：`\#` → `#`）——正文里单独的 `#` 会被
+        // 序列化器转义成 `\#` 存进源码，不解义就会把「\#」当标题自动命名。
+        .replace(/\\([!-\/:-@\[-`{-~])/g, '$1')
         .replace(/\s+/g, ' ')
         .trim();
+}
+
+/** 标题必须含至少一个字母或数字，否则视为语法残骸（`\#`、`***`、`…`），跳过。 */
+function hasMeaningfulText(title) {
+    return /[\p{L}\p{N}]/u.test(title);
 }
 
 function truncate(text, maxChars) {
@@ -89,7 +97,7 @@ export function deriveArticleTitle(markdown, { maxChars = ARTICLE_TITLE_MAX_CHAR
         const heading = bare.match(ATX_HEADING_RE);
         if (heading) {
             const text = normalizeTitle(heading[2].replace(/#+\s*$/, ''));
-            if (text) headings.push({ level: heading[1].length, text });
+            if (text && hasMeaningfulText(text)) headings.push({ level: heading[1].length, text });
             continue;
         }
         textLines.push(bare);
@@ -108,7 +116,7 @@ export function deriveArticleTitle(markdown, { maxChars = ARTICLE_TITLE_MAX_CHAR
             .replace(/^\d+[.)][ \t]+/, '')
             .replace(/^#{1,6}[ \t]*/, '');
         const sentence = firstSentence(stripped, maxChars);
-        if (sentence) return sentence;
+        if (sentence && hasMeaningfulText(sentence)) return sentence;
     }
     return '';
 }
