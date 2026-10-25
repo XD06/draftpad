@@ -200,11 +200,16 @@ function registerThoughtRoutes(app, context) {
 
             const meta = await storage.readThoughtMeta(id);
             const relations = await storage.readRelations(id);
-            const responseRelations = [];
-            const responseSuggestions = [];
-
-            async function edgeToResponse(edge) {
-                const target = await storage.readThought(edge.targetId);
+            const relationEdges = Array.isArray(relations.edges) ? relations.edges : [];
+            const suggestionEdges = Array.isArray(relations.suggestions) ? relations.suggestions : [];
+            // Resolve every edge target through one batched read: per-edge
+            // readThought calls re-read the whole collection once per edge on
+            // legacy layouts (S3 legacy: one full-object GET per edge).
+            const targetsById = await storage.readThoughtsByIds(
+                [...relationEdges, ...suggestionEdges].map(edge => edge.targetId)
+            );
+            const edgeToResponse = (edge) => {
+                const target = targetsById.get(edge.targetId);
                 if (!target) return null;
                 return {
                     thought: {
@@ -221,19 +226,10 @@ function registerThoughtRoutes(app, context) {
                     reasons: Array.isArray(edge.reasons) ? edge.reasons : [],
                     signals: edge.signals || null
                 };
-            }
+            };
 
-            const [resolvedRelations, resolvedSuggestions] = await Promise.all([
-                Promise.all((relations.edges || []).map(edgeToResponse)),
-                Promise.all((relations.suggestions || []).map(edgeToResponse))
-            ]);
-
-            for (const item of resolvedRelations) {
-                if (item) responseRelations.push(item);
-            }
-            for (const item of resolvedSuggestions) {
-                if (item) responseSuggestions.push(item);
-            }
+            const responseRelations = relationEdges.map(edgeToResponse).filter(Boolean);
+            const responseSuggestions = suggestionEdges.map(edgeToResponse).filter(Boolean);
 
             res.json({
                 id,
@@ -445,8 +441,7 @@ function registerThoughtRoutes(app, context) {
     app.get('/api/thoughts/:id', async (req, res) => {
         try {
             const { id } = req.params;
-            const thoughts = await readThoughts();
-            const thought = thoughts.find(t => t.id === id);
+            const thought = await storage.readThought(id);
             if (!thought) return res.status(404).json({ error: 'Thought not found' });
             res.json(thought);
         } catch (err) {
@@ -861,12 +856,14 @@ function registerThoughtRoutes(app, context) {
                         return { status: 400, body: { error: 'Invalid action' } };
                 }
 
+                let sourceChanged = false;
                 if (modified) {
                     thought.updatedAt = Date.now();
                     thought.version = (thought.version || 1) + 1;
                     let meta = await storage.readThoughtMeta(thought.id);
                     const sourceAfter = createAnalysisSourceSignature(thought);
-                    if (sourceAfter.hash !== sourceBefore.hash) {
+                    sourceChanged = sourceAfter.hash !== sourceBefore.hash;
+                    if (sourceChanged) {
                         meta = await markThoughtAIStale(thought, meta, sourceAfter);
                     }
                     thought.aiStatus = visibleAIStatus(thought.id, meta, thought.aiStatus || 'missing');
@@ -875,7 +872,7 @@ function registerThoughtRoutes(app, context) {
                     await storage.writeThought(thought);
                 }
 
-                return { status: 200, body: { success: true, thought }, thought, modified };
+                return { status: 200, body: { success: true, thought }, thought, modified, sourceChanged };
             });
 
             if (result.status !== 200) {
@@ -883,7 +880,10 @@ function registerThoughtRoutes(app, context) {
             }
 
             if (result.modified) {
-                scheduleIndexNotepads(250);
+                // The search corpus only contains text/subItems/tags, so only
+                // source changes pay for a corpus reindex; toggle-style
+                // updates (complete/pin) skip the full notepad re-read.
+                if (result.sourceChanged) scheduleIndexNotepads(250);
                 broadcastThoughtsUpdate('update', result.thought);
             }
             res.json(result.body);

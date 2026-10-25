@@ -110,6 +110,10 @@ export class ThoughtsManager {
         this.manualRelationSearchTimer = null;
         this.manualRelationSearchSeq = 0;
         this.openRelationsPanelIds = new Set();
+        // Session-level relations payload cache: re-renders (socket pushes,
+        // tag clicks, error fallbacks) re-open panels from this map instead
+        // of re-fetching every relations graph on each render.
+        this.relationsPanelCache = new Map();
         this.openAIStatusPanelIds = new Set();
         this.openAgentPanelIds = new Set();
         this.expandedThoughtIds = new Set();
@@ -451,7 +455,16 @@ export class ThoughtsManager {
         try {
             localStorage.setItem(THOUGHTS_CACHE_KEY, JSON.stringify({
                 updatedAt: Date.now(),
-                thoughts: Array.isArray(thoughts) ? thoughts.slice(0, 500) : []
+                // Strip inline base64 payloads: attachments can dominate a
+                // thought's serialized size and slow both this write and the
+                // startup parse. Pending offline attachments still reload
+                // fully because the outbox keeps complete copies for replay.
+                thoughts: (Array.isArray(thoughts) ? thoughts.slice(0, 500) : []).map(thought => ({
+                    ...thought,
+                    attachments: Array.isArray(thought.attachments)
+                        ? thought.attachments.map(att => (att?.dataUrl ? { ...att, dataUrl: undefined } : att))
+                        : thought.attachments
+                }))
             }));
         } catch (_error) {
             // Cache is a best-effort startup accelerator.
@@ -748,6 +761,12 @@ export class ThoughtsManager {
         this._hasMoreThoughts = false;
         this._thoughtPageFilterKey = filters.key;
         this.updateThoughtLoadMoreControl();
+        // Optimistic first paint: while the server query is in flight, show
+        // locally filtered results from the already-loaded pages. Date
+        // filters are server-only, so skip the paint when one is selected.
+        if (filters.query && !filters.date) {
+            this.render();
+        }
         try {
             const page = await this.apiClient.listPage({
                 date: filters.date,
@@ -1481,17 +1500,24 @@ export class ThoughtsManager {
 
     _checkScrollLoad() {
         if (this._renderedCount >= this._lastFilteredIds.length && !this._hasMoreThoughts) return;
-        const sentinel = this.timeline.querySelector('.thoughts-load-more-sentinel');
-        if (!sentinel) return;
-        const rect = sentinel.getBoundingClientRect();
-        const containerRect = (this.scrollArea || this.view).getBoundingClientRect();
-        if (rect.top <= containerRect.bottom + 300) {
-            if (this._renderedCount < this._lastFilteredIds.length) {
-                this._renderBatch(this.getFilteredThoughts(), this.searchInput.value.toLowerCase());
-            } else {
-                this.loadNextThoughtPage();
+        // Scroll events fire far more often than frames; measure the sentinel
+        // at most once per frame instead of on every event.
+        if (this._scrollCheckFrameScheduled) return;
+        this._scrollCheckFrameScheduled = true;
+        requestAnimationFrame(() => {
+            this._scrollCheckFrameScheduled = false;
+            const sentinel = this.timeline.querySelector('.thoughts-load-more-sentinel');
+            if (!sentinel) return;
+            const rect = sentinel.getBoundingClientRect();
+            const containerRect = (this.scrollArea || this.view).getBoundingClientRect();
+            if (rect.top <= containerRect.bottom + 300) {
+                if (this._renderedCount < this._lastFilteredIds.length) {
+                    this._renderBatch(this.getFilteredThoughts(), this.searchInput.value.toLowerCase());
+                } else {
+                    this.loadNextThoughtPage();
+                }
             }
-        }
+        });
     }
 
     patchRenderedThought(thoughtId) {
@@ -1536,7 +1562,9 @@ export class ThoughtsManager {
             const thought = this.thoughts.find(item => item.id === thoughtId);
             const card = this.timeline.querySelector(`.thought-card[data-id="${CSS.escape(thoughtId)}"]`);
             if (thought && card && !card.querySelector('.thought-relations-panel')) {
-                this.openRelationsPanel(card, thought);
+                // Re-renders restore from the session cache; only a cache
+                // miss pays for a network fetch.
+                this.openRelationsPanel(card, thought, { fetch: !this.relationsPanelCache.has(thoughtId) });
             }
         });
 
@@ -3123,23 +3151,37 @@ export class ThoughtsManager {
         if (thought?.id) this.openRelationsPanelIds.delete(thought.id);
     }
 
-    async openRelationsPanel(card, thought) {
+    async openRelationsPanel(card, thought, { fetch = true } = {}) {
         if (!card || !thought?.id || card.querySelector('.thought-relations-panel')) return;
         const button = card.querySelector('.thought-relations-btn');
         const panel = document.createElement('div');
         panel.className = 'thought-relations-panel';
-        panel.innerHTML = '<div class="thought-relations-state">正在加载关联...</div>';
+        const cached = this.relationsPanelCache.get(thought.id);
+        if (cached) {
+            panel.innerHTML = this.renderRelationsPanelContent(
+                thought.id,
+                this.normalizeAIStatus(cached.status),
+                cached.relations,
+                cached.suggestions,
+                cached.error
+            );
+        } else {
+            panel.innerHTML = '<div class="thought-relations-state">正在加载关联...</div>';
+        }
         this.bindRelationsPanelEvents(panel, card, thought);
         card.appendChild(panel);
         button?.classList.add('active');
         button?.setAttribute('aria-expanded', 'true');
         this.openRelationsPanelIds.add(thought.id);
 
+        if (!fetch && cached) return;
         try {
             await this.refreshRelationsPanel(panel, thought);
         } catch (err) {
             console.warn('Failed to fetch thought relations:', err);
-            if (!panel.isConnected) return;
+            // With cached content on screen a failed refresh must not wipe
+            // it back to an error placeholder.
+            if (!panel.isConnected || cached) return;
             panel.innerHTML = '<div class="thought-relations-state error">关联加载失败</div>';
         }
     }
@@ -3219,6 +3261,7 @@ export class ThoughtsManager {
             panel.innerHTML = '<div class="thought-relations-state">暂无关联想法</div>';
             return;
         }
+        this.cacheRelationsPanelData(thought.id, data);
         if (!panel.isConnected) return;
         panel.innerHTML = this.renderRelationsPanelContent(
             thought.id,
@@ -3227,6 +3270,28 @@ export class ThoughtsManager {
             data.suggestions || [],
             data.error || null
         );
+    }
+
+    cacheRelationsPanelData(thoughtId, data) {
+        if (!thoughtId || !data) return;
+        this.relationsPanelCache.set(thoughtId, {
+            status: data.status,
+            relations: Array.isArray(data.relations) ? data.relations : [],
+            suggestions: Array.isArray(data.suggestions) ? data.suggestions : [],
+            error: data.error || null
+        });
+        while (this.relationsPanelCache.size > 24) {
+            this.relationsPanelCache.delete(this.relationsPanelCache.keys().next().value);
+        }
+    }
+
+    // Local relation mutations (delete / ignore) patch the cached payload so
+    // the next panel restore cannot resurrect a removed edge.
+    pruneRelationsPanelCache(thoughtId, targetId) {
+        const cached = this.relationsPanelCache.get(thoughtId);
+        if (!cached) return;
+        cached.relations = cached.relations.filter(item => item?.thought?.id !== targetId);
+        cached.suggestions = cached.suggestions.filter(item => item?.thought?.id !== targetId);
     }
 
     renderRelationsPanelContent(thoughtId, status, relations, suggestions = [], error = null) {
@@ -3307,7 +3372,13 @@ export class ThoughtsManager {
             }
 
             const relationsData = await this.apiClient.getRelations(thought.id);
+            this.cacheRelationsPanelData(thought.id, relationsData);
             if (panel?.isConnected) {
+                // Refresh the lists without destroying the manual search
+                // input, so linking from search keeps the query and focus.
+                const input = panel.querySelector('.thought-manual-relation-input');
+                const query = input?.value ?? '';
+                const hadFocus = input === document.activeElement;
                 panel.innerHTML = this.renderRelationsPanelContent(
                     thought.id,
                     this.normalizeAIStatus(relationsData.status),
@@ -3315,6 +3386,11 @@ export class ThoughtsManager {
                     relationsData.suggestions || [],
                     relationsData.error || null
                 );
+                const nextInput = panel.querySelector('.thought-manual-relation-input');
+                if (nextInput && query) {
+                    nextInput.value = query;
+                    if (hadFocus) nextInput.focus();
+                }
             }
         } catch (err) {
             console.error('Failed to create manual relation:', err);
@@ -3333,6 +3409,7 @@ export class ThoughtsManager {
 
         try {
             await this.apiClient.deleteRelation(sourceId, targetId);
+            this.pruneRelationsPanelCache(sourceId, targetId);
             item?.remove();
             if (!card.querySelector('.thought-relation-item') && !card.querySelector('.thought-relation-suggestion')) {
                 const panel = card.querySelector('.thought-relations-panel');
@@ -3386,6 +3463,7 @@ export class ThoughtsManager {
 
         try {
             const data = await this.apiClient.deleteRelation(sourceId, targetId);
+            this.pruneRelationsPanelCache(sourceId, targetId);
 
             item?.remove();
             const sourceThought = this.thoughts.find(thought => thought.id === sourceId);
@@ -3997,9 +4075,13 @@ export class ThoughtsManager {
         let threshold = 0;
         let wasReady = false;
         let suppressNextClick = false;
+        let pendingSwipeState = null;
+        let swipeFrameScheduled = false;
 
         const reset = () => {
             resetSubtaskSwipe(row);
+            pendingSwipeState = null;
+            swipeFrameScheduled = false;
             tracking = false;
             isDragging = false;
             deltaX = 0;
@@ -4031,14 +4113,25 @@ export class ThoughtsManager {
             }
             if (!isDragging) return;
             event.preventDefault();
-            const state = getThoughtSwipeState(deltaX, threshold, threshold + 18);
-            row.style.setProperty('--subtask-swipe-x', `${state.swipeX}px`);
-            row.style.transform = `translate3d(${state.swipeX}px, 0, 0)`;
-            row.style.setProperty('--subtask-swipe-progress', String(state.progress));
-            row.style.setProperty('--subtask-swipe-opacity', String(state.actionOpacity));
-            row.classList.toggle('swipe-ready', state.ready);
-            if (state.ready && !wasReady) navigator.vibrate?.(8);
-            wasReady = state.ready;
+            // Same rAF coalescing as the card-level swipe: pointermove can
+            // fire multiple times per frame and every style write here
+            // invalidates the row subtree.
+            pendingSwipeState = getThoughtSwipeState(deltaX, threshold, threshold + 18);
+            if (swipeFrameScheduled) return;
+            swipeFrameScheduled = true;
+            requestAnimationFrame(() => {
+                swipeFrameScheduled = false;
+                const state = pendingSwipeState;
+                pendingSwipeState = null;
+                if (!tracking || !isDragging || !state) return;
+                row.style.setProperty('--subtask-swipe-x', `${state.swipeX}px`);
+                row.style.transform = `translate3d(${state.swipeX}px, 0, 0)`;
+                row.style.setProperty('--subtask-swipe-progress', String(state.progress));
+                row.style.setProperty('--subtask-swipe-opacity', String(state.actionOpacity));
+                row.classList.toggle('swipe-ready', state.ready);
+                if (state.ready && !wasReady) navigator.vibrate?.(8);
+                wasReady = state.ready;
+            });
         });
 
         const finish = (event) => {

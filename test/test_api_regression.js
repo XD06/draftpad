@@ -282,10 +282,18 @@ function assertThoughtsFrontendRegressions() {
         thoughtsSource.includes('openAIStatusPanelIds = new Set()') &&
         thoughtsSource.includes('restoreOpenPanelsAfterRender()') &&
         thoughtsSource.includes('this.restoreOpenPanelsAfterRender();') &&
-        thoughtsSource.includes('async openRelationsPanel(card, thought)') &&
+        thoughtsSource.includes('async openRelationsPanel(card, thought, { fetch = true } = {})') &&
         thoughtsSource.includes('async openAIStatusPanel(card, thought)') &&
         thoughtsSource.includes('if (!panel.isConnected) return'),
         'thought relation and AI detail panels should stay open across cached/network re-renders and ignore stale async panel updates'
+    );
+    assert(
+        thoughtsSource.includes('relationsPanelCache = new Map()') &&
+        thoughtsSource.includes('this.openRelationsPanel(card, thought, { fetch: !this.relationsPanelCache.has(thoughtId) })') &&
+        thoughtsSource.includes('this.cacheRelationsPanelData(thought.id, data);') &&
+        thoughtsSource.includes('this.pruneRelationsPanelCache(sourceId, targetId);') &&
+        thoughtsSource.includes('const nextInput = panel.querySelector(\'.thought-manual-relation-input\');'),
+        'relations panels should restore from a session cache without re-fetching on every re-render, and manual relation creation should preserve the search input'
     );
     assert(
         (thoughtsSource.match(/renderTagFilters\(\)\s*\{/g) || []).length === 1,

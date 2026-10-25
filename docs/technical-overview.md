@@ -157,6 +157,10 @@ Thought 页面使用 `GET /api/thoughts?format=page&light=1&limit=30&sort=timeli
 
 服务端在 `STORAGE_LAYOUT=split` 下会通过 `storage.listThoughtsPage()` 读取既有的 `indexes/thoughts-index.json`，先在索引中完成标签、日期、完成状态与游标筛选排序，再只读取当前页的 Thought 文件。索引缺失、旧索引没有时间线字段、对象缺失、`legacy` 布局以及任意关键词全文搜索时，都回退到完整读取；回退会修复 split 索引，不能以不完整结果代替用户搜索结果。这样 S3 的无关键词列表从“列举并读取全部对象”降为“一份索引加最多 30 个对象”。
 
+`legacy` 布局（单文件 `thoughts.json`）的 `writeThought`/`deleteThought` 同样增量维护 `indexes/thoughts-index.json`（此前只有 split 维护，legacy 的索引会永久陈旧、且没有 `searchText` 字段）。`searchThoughtsLight`（手动关联搜索 `GET /api/thoughts/search` 的后端）遇到缺 `searchText` 的陈旧索引时会**自愈重建**：一次完整读取得回精确结果并回写新索引，之后的每次按键只在索引上过滤——替代旧的“每次搜索都静默全量读”兜底。`GET /api/thoughts/:id/relations` 的边目标解析改走 `storage.readThoughtsByIds()`：legacy 布局一次集合读建 `id → thought` 映射（此前每条边都重新读取并解析整个 thoughts 文件，S3 legacy 下等于每条边一个全量对象 GET），split 布局仍按 id 定向读。Thought 写后的全局搜索重建（`scheduleIndexNotepads`）只在正文源（text/subItems/tags）变化时调度：完成/置顶类切换不再触发“重读所有记事本全文 + Fuse 全量重建”。
+
+前端 relations 面板有**会话级负载缓存**（`relationsPanelCache`，上限 24 条、最旧先逐出）：任何全量重渲染（socket 推送、标签点击、错误回退）后 `restoreOpenPanelsAfterRender()` 从缓存原样恢复面板 DOM，不再对每个开着的面板重新发起 `GET /relations`；显式点开面板仍即时渲染缓存并后台刷新一次，`relations_update` 推送到达时才重新拉取。本地删除/忽略关联会同步修剪缓存，恢复时不会复活已删的边；新建手动关联只重绘面板并保留搜索输入的内容与焦点。搜索框输入时先对已加载条目做乐观本地过滤渲染（选了日期时除外——日期是服务端专属筛选），响应返回后替换为服务端结果。`localStorage` 的 Thought 启动缓存在写入时剔除附件的 base64 `dataUrl`（离线待同步附件由 outbox 保存完整副本、载入时合并回来，不受影响）。子任务行滑删与卡片滑删同样走 rAF 合帧（每个指针帧只写一次样式），滚动哨兵的测量每帧至多一次。
+
 `ThoughtsManager` 将“已从服务端取到的条数”和“已插入 DOM 的卡片数”分开管理：前者由游标追加，后者仍按 30 张批量插入。完成和置顶不调用 `render()` 清空时间线，而是仅重建被操作卡片，并在当前可见批次内移动、补入或移除卡片。筛选条件改变时重置游标重新请求，避免只对已加载的局部数据筛选造成漏项。
 
 ### 多端 Thought 同步的渲染边界

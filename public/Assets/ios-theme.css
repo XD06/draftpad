@@ -644,6 +644,13 @@ main {
     -webkit-mask-image: none !important;
 }
 
+/* iOS theme lets the whole page scroll, so the viewport fade overlays are
+   not wanted here either. */
+.thoughts-scroll-viewport::before,
+.thoughts-scroll-viewport::after {
+    display: none;
+}
+
 /* 暗色模式 */
 [data-theme="dark"] .thought-card {
     background: #2c2c2e;

@@ -696,6 +696,28 @@ async function readThought(id) {
     return thoughts.find(thought => thought.id === id) || null;
 }
 
+// Batch-load Thoughts by id (relation graphs, index-page hydration). Legacy
+// layouts read the whole collection once and index it — per-id readThought
+// calls there each re-read the entire file; split layouts do one targeted
+// read per id so a small id set never fetches the whole dataset. Duplicate
+// ids collapse to a single read.
+async function readThoughtsByIds(ids) {
+    const uniqueIds = Array.from(new Set(
+        (Array.isArray(ids) ? ids : [])
+            .map(id => String(id || '').trim())
+            .filter(Boolean)
+    ));
+    if (!uniqueIds.length) return new Map();
+
+    if (STORAGE_LAYOUT === 'split') {
+        const thoughts = await Promise.all(uniqueIds.map(id => readThought(id)));
+        return new Map(uniqueIds.map((id, index) => [id, thoughts[index]]));
+    }
+
+    const byId = new Map((await readThoughts()).map(thought => [thought.id, thought]));
+    return new Map(uniqueIds.map(id => [id, byId.get(id) || null]));
+}
+
 async function listThoughtsPage({
     query = '',
     date = '',
@@ -778,19 +800,23 @@ async function searchThoughtsLight({ query = '', keywords = null, limit = 8 } = 
         updatedAt: thought.updatedAt || thought.createdAt || 0
     });
 
-    const index = await readIndex('thoughts-index');
-    const searchUsable = Array.isArray(index?.items) && index.items.every(item => (
+    let index = await readIndex('thoughts-index');
+    const hasSearchText = Array.isArray(index?.items) && index.items.every(item => (
         item
         && typeof item.id === 'string'
         && typeof item.searchText === 'string'
         && Number.isFinite(Number(item.updatedAt || item.createdAt || 0))
     ));
-    if (!searchUsable) {
-        const thoughts = await readThoughts();
-        return thoughts.filter(matchFull)
-            .sort((left, right) => Number(right.updatedAt || right.createdAt || 0) - Number(left.updatedAt || left.createdAt || 0))
-            .slice(0, cappedLimit)
-            .map(toLight);
+    // Self-heal instead of silently degrading: an index without searchText
+    // (written before the field existed, or by legacy layouts that never
+    // maintained the index) is rebuilt once from a complete read, so this
+    // request stays exact and every later one filters on the index instead
+    // of re-reading the whole collection on each keystroke.
+    let preloadedThoughts = null;
+    if (!hasSearchText) {
+        preloadedThoughts = await readThoughts();
+        index = thoughtIndexFrom(preloadedThoughts);
+        await writeIndex('thoughts-index', index);
     }
 
     const matched = index.items
@@ -799,8 +825,11 @@ async function searchThoughtsLight({ query = '', keywords = null, limit = 8 } = 
             : item.searchText.includes(q))
         .sort((left, right) => Number(right.updatedAt || right.createdAt || 0) - Number(left.updatedAt || left.createdAt || 0))
         .slice(0, cappedLimit);
-    const items = await Promise.all(matched.map(entry => readThought(entry.id)));
-    return items
+    const byId = preloadedThoughts
+        ? new Map(preloadedThoughts.map(thought => [thought.id, thought]))
+        : await readThoughtsByIds(matched.map(entry => entry.id));
+    return matched
+        .map(entry => byId.get(entry.id))
         .filter(item => item?.id)
         .filter(matchFull)
         .map(toLight);
@@ -824,6 +853,7 @@ async function writeThought(thought) {
         if (index >= 0) thoughts[index] = thought;
         else thoughts.unshift(thought);
         await saveThoughts(thoughts);
+        await upsertThoughtIndexEntry(thought);
         return;
     }
 
@@ -838,6 +868,7 @@ async function writeThought(thought) {
     if (index >= 0) thoughts[index] = thought;
     else thoughts.unshift(thought);
     await saveThoughts(thoughts);
+    await upsertThoughtIndexEntry(thought);
 }
 
 async function deleteThought(id) {
@@ -854,6 +885,7 @@ async function deleteThought(id) {
         const thoughts = await readThoughts();
         const nextThoughts = thoughts.filter(thought => thought.id !== id);
         await saveThoughts(nextThoughts);
+        await removeThoughtIndexEntry(id);
         return nextThoughts.length !== thoughts.length;
     }
 
@@ -868,6 +900,7 @@ async function deleteThought(id) {
     const thoughts = await readThoughts();
     const nextThoughts = thoughts.filter(thought => thought.id !== id);
     await saveThoughts(nextThoughts);
+    await removeThoughtIndexEntry(id);
     return nextThoughts.length !== thoughts.length;
 }
 
@@ -1679,6 +1712,7 @@ module.exports = {
     readTodayDrafts,
     saveTodayDrafts,
     readThought,
+    readThoughtsByIds,
     listThoughtsPage,
     searchThoughtsLight,
     writeThought,

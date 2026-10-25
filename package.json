@@ -13,6 +13,7 @@
     "test:ai-queue": "node test/test_ai_queue_relations.js",
     "test:relations": "node test/test_relations_calculator.js",
     "test:thought-ai-status": "node test/test_thought_ai_status.js",
+    "test:thought-legacy-index": "node test/test_thought_legacy_index.js",
     "test:thought-api-client": "node test/test_thought_api_client.js",
     "test:thought-outbox": "node test/test_thought_outbox.js",
     "test:thought-attachments": "node test/test_thought_attachments.js",
