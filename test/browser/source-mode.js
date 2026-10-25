@@ -445,6 +445,65 @@ const wait = (port, t = 25000) => new Promise((res, rej) => {
     check('移动端带光标切回渲染：视线不在顶部（比例保持）', fBack.frac > 0.2, fBack);
     await p6.close();
 
+    // ===== G. 移动端：源码模式下键盘开/关的视线归位（真机报告：关键盘后视线飞到最上面） =====
+    // 机制：源码 textarea 是「内容等高」元素，浏览器的键盘滚动对准的是元素盒
+    // ——元素顶就是文档顶，于是「光标留原地、视线到顶部」。渲染模式没这个问题
+    // （contenteditable 的键盘滚动对准选区），切换链路已由 F 段覆盖。无头环境
+    // 没有真键盘：手动复现「浏览器把视线滚到文档顶」，再派发 visualViewport
+    // 的 resize（键盘开/收都伴随它），断言落定后按光标带状归位、光标与视线
+    // 重新统一。
+    const p7 = await browser.newPage({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true });
+    await p7.goto(`http://127.0.0.1:${PORT}/`, { waitUntil: 'networkidle' });
+    await p7.waitForTimeout(2500);
+    await p7.evaluate(() => {
+      const item = [...document.querySelectorAll('#directory-tree .dir-item')]
+        .find(el => el.textContent.includes('Long Scroll'));
+      item.click();
+    });
+    await p7.waitForTimeout(2000);
+    await p7.evaluate(() => document.getElementById('toggle-source-mode').click());
+    await p7.waitForTimeout(800);
+    // 「正在源码里编辑」：光标放在 80% 处并聚焦，视线也在光标附近
+    await p7.evaluate(() => {
+      const ta = document.querySelector('.tiptap-source-textarea');
+      ta.focus();
+      const offset = Math.floor(ta.value.length * 0.8);
+      ta.setSelectionRange(offset, offset);
+      const p = document.scrollingElement;
+      p.scrollTop = (p.scrollHeight - p.clientHeight) * 0.8;
+    });
+    await p7.waitForTimeout(200);
+    // 复现真机形态：键盘滚动把视线甩到文档顶；键盘收起伴随 vv resize
+    await p7.evaluate(() => {
+      document.scrollingElement.scrollTop = 0;
+      window.visualViewport.dispatchEvent(new Event('resize'));
+    });
+    await p7.waitForTimeout(700);
+    const gState = await p7.evaluate(() => {
+      const p = document.scrollingElement;
+      const max = p.scrollHeight - p.clientHeight;
+      const ta = document.querySelector('.tiptap-source-textarea');
+      const before = ta.value.slice(0, ta.selectionStart || 0);
+      const cs = getComputedStyle(ta);
+      const mirror = document.createElement('div');
+      Object.assign(mirror.style, {
+        position: 'absolute', left: '-99999px', visibility: 'hidden',
+        width: ta.clientWidth + 'px', font: cs.font, lineHeight: cs.lineHeight,
+        whiteSpace: 'pre-wrap', wordBreak: cs.wordBreak, padding: '0', boxSizing: 'content-box',
+      });
+      mirror.textContent = before;
+      const marker = document.createElement('span');
+      marker.textContent = '\u200b';
+      mirror.appendChild(marker);
+      document.body.appendChild(mirror);
+      const caretY = Math.round(ta.getBoundingClientRect().top + (parseFloat(cs.paddingTop) || 0) + marker.offsetTop);
+      mirror.remove();
+      return { frac: max > 0 ? +(p.scrollTop / max).toFixed(3) : 0, caretY, focused: document.activeElement === ta };
+    });
+    check('源码模式关键盘后视线按光标归位（不再停在顶部）', gState.frac > 0.2, gState);
+    check('源码模式关键盘后光标在可见带内', gState.caretY > 84 && gState.caretY < 760, gState);
+    await p7.close();
+
     report();
     process.exitCode = failed ? 1 : 0;
   } catch (e) {

@@ -1229,6 +1229,25 @@ export class HybridMarkdownEditor {
                     this.autosizeSourceTextarea();
                 };
                 window.addEventListener('resize', this._sourceResizeHandler);
+                // 键盘开/收（visualViewport resize）：浏览器对聚焦的「内容等高
+                // textarea」做键盘滚动时对准的是元素盒——元素顶就是文档顶，真机
+                // 表现为「源码模式关键盘，视线飞到最上面、光标留在原处」。等键盘
+                // 动画与几何落定（300ms，与目录跳转的移动端等待同值）后按光标
+                // 带状归位：光标本就在可见带内时是 no-op，只在视线被滚飞时纠正，
+                // 光标与视线重新统一。textarea 失焦（键盘因点到别处而收）不抢：
+                // 那次滚动的落点是用户自己选的。
+                this._sourceViewportHandler = () => {
+                    if (!this.sourceMode) return;
+                    const focused = this.getSourceTextarea();
+                    if (!focused || document.activeElement !== focused) return;
+                    setTimeout(() => {
+                        const current = this.getSourceTextarea();
+                        if (!this.sourceMode || !current || document.activeElement !== current) return;
+                        if (this.editor?.isDestroyed) return;
+                        this.scrollTextareaSelectionIntoView(current);
+                    }, 300);
+                };
+                window.visualViewport?.addEventListener('resize', this._sourceViewportHandler);
             }
             textarea.value = this._lastValue;
             this.autosizeSourceTextarea(textarea);

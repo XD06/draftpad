@@ -114,6 +114,11 @@ async function main() {
         editor.setValue(article, false);
         check('初始渲染为 h1', container.querySelector('.tiptap h1')?.textContent === '一级标题');
 
+        // 键盘开合的视线归位依赖 visualViewport；jsdom 没有，造一个 EventTarget。
+        // 必须在首次 setSourceMode 之前定义：适配器在创建 textarea 时注册监听。
+        const fakeViewport = new dom.window.EventTarget();
+        Object.defineProperty(dom.window, 'visualViewport', { value: fakeViewport, configurable: true });
+
         // 用户核心场景：# → ##（此前只能删掉重打）
         editor.setSourceMode(true);
         const textarea = editor.getSourceTextarea();
@@ -148,6 +153,37 @@ async function main() {
         check('二次进入源码内容与渲染值一致', editor.getSourceTextarea().value === settled);
         editor.setSourceMode(false);
         check('二次切回内容不变', editor.getValue() === settled, { settled, now: editor.getValue() });
+
+        // 键盘开/收的视线归位：源码模式 + textarea 聚焦时按光标带状归位（真机：
+        // 浏览器对「内容等高 textarea」的键盘滚动对准元素盒 = 文档顶，视线飞顶、
+        // 光标留原地）。三个门槛：聚焦才管、失焦不抢（键盘因点到别处而收，落点
+        // 是用户自己选的）、渲染模式不触发。
+        let viewportScrollCalls = 0;
+        const realScrollIntoView = editor.scrollTextareaSelectionIntoView.bind(editor);
+        editor.scrollTextareaSelectionIntoView = (ta) => { viewportScrollCalls += 1; return realScrollIntoView(ta); };
+        try {
+            editor.setSourceMode(true);
+            const viewportTextarea = editor.getSourceTextarea();
+            viewportTextarea.focus();
+            fakeViewport.dispatchEvent(new dom.window.Event('resize'));
+            await new Promise(resolve => setTimeout(resolve, 380));
+            check('源码模式键盘开合（textarea 聚焦）触发视线归位', viewportScrollCalls === 1, viewportScrollCalls);
+            viewportTextarea.blur();
+            fakeViewport.dispatchEvent(new dom.window.Event('resize'));
+            await new Promise(resolve => setTimeout(resolve, 380));
+            check('textarea 失焦时键盘收起不抢视线', viewportScrollCalls === 1, viewportScrollCalls);
+            editor.setSourceMode(false);
+            fakeViewport.dispatchEvent(new dom.window.Event('resize'));
+            await new Promise(resolve => setTimeout(resolve, 380));
+            check('渲染模式下 vv resize 不触发源码归位', viewportScrollCalls === 1, viewportScrollCalls);
+        } finally {
+            delete editor.scrollTextareaSelectionIntoView;
+            // 还原焦点与光标记录：本块是全文件唯一聚焦编辑面的段落，切回渲染的
+            // 光标恢复会顺带聚焦 PM 编辑器；不还原的话，后面「换正文后光标记录
+            // 作废」的既有断言会读到本块残留的焦点与记录（selectionUpdate 重记）。
+            if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+            editor._trackedCaret = null;
+        }
 
         // 源码模式里切文章：textarea 必须跟着换成新正文，否则点一下切回渲染
         // 会把上一篇的原文写进当前文章（用户报的「跳到上上次切换的文章」）。
