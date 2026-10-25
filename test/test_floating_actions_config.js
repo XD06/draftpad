@@ -200,6 +200,62 @@ function assertWiring() {
         'styles.css must override .floating-btn display:flex for the hidden attribute to work'
     );
 
+    /* 移动端展开态必须在视口内，且**保持单行**。竖排一列在横屏放不下
+       （9×38+8×8 = 406px > 393px）；按钮写死 38px 再横排，一行也放不下
+       （393px 屏溢出 10px）。定稿是「按钮弹性收缩 + 整条水平居中」：
+       393px 屏每个 38px、320px 屏 30px、宽视口封顶 40px。 */
+    assert(
+        /body\.fab-expanded:not\(\.thoughts-mode\)\s+\.floating-actions\s*\{[^}]*flex-wrap:\s*nowrap/.test(styles),
+        'the expanded mobile rail must stay on one row (no wrapping into a two-row block)'
+    );
+    assert(
+        /body\.fab-expanded:not\(\.thoughts-mode\)\s+\.floating-actions\s*\{[^}]*left:\s*0[^}]*right:\s*0[^}]*margin-left:\s*auto[^}]*margin-right:\s*auto/.test(styles),
+        'the expanded mobile rail must be centred with left/right + margin auto, not translateX'
+    );
+    /* 不能用 transform 居中：ios-theme 给 `.floating-actions` 写了
+       `transition: ... transform 180ms`，transform 会参与过渡，展开瞬间整条
+       向左滑 185px（实测 left 197→12），用户看到的就是「大幅度跳动」。 */
+    assert(
+        !/body\.fab-expanded:not\(\.thoughts-mode\)\s+\.floating-actions\s*\{[^}]*transform:\s*translateX/.test(styles),
+        'the expanded mobile rail must not centre with translateX (it animates along the rail transition)'
+    );
+    /* 展开态是等宽单行格子，任何单个按钮的缩放都会破坏布局：`.floating-btn:hover`
+       是 scale(1.1)，触屏浏览器会把点过的按钮判成 hover——实测 fab-toggle-group
+       被放大到 42px，撑破 386px 整条宽度、折成两行。 */
+    assert(
+        /body\.fab-expanded:not\(\.thoughts-mode\)\s+\.floating-actions\s*>\s*\.floating-btn\s*\{[^}]*transform:\s*none/.test(styles),
+        'expanded rail buttons must neutralise the hover scale so one enlarged button cannot wrap the row'
+    );
+    assert(
+        /body\.fab-expanded:not\(\.thoughts-mode\)\s+\.floating-actions\s*\{[^}]*width:\s*min\(386px,\s*calc\(100vw - 24px\)\)/.test(styles),
+        'the expanded rail width must be capped at nine 40px buttons and clamped to the viewport'
+    );
+    /* 按钮必须可收缩到 30px 但不能再小：min-width:0 会把带固定 width 的按钮
+       压成 1px（实测），按钮得放得下 20/22px 图标。 */
+    assert(
+        /body\.fab-expanded:not\(\.thoughts-mode\)\s+\.floating-actions\s*>\s*\.floating-btn\s*\{[^}]*flex:\s*0 1 40px[^}]*min-width:\s*30px[^}]*max-width:\s*40px/.test(styles),
+        'expanded rail buttons must flex between 30px and 40px so nine of them always fit one row'
+    );
+    assert(
+        !/body\.fab-expanded:not\(\.thoughts-mode\)\s+\.floating-actions\s*>\s*\.floating-btn\s*\{[^}]*min-width:\s*0/.test(styles),
+        'expanded rail buttons must not use min-width:0 (they collapse to 1px)'
+    );
+    /* 只改 bottom 不清 top/transform，盒子会被 top:55% 与 bottom 夹成固定高度
+       （852×393 横屏实测容器只有 97px 高，9 个按钮溢出底部 55px）。 */
+    assert(
+        /\.floating-actions\s*\{[^}]*top:\s*auto[^}]*\}/.test(styles)
+        && /\.floating-actions\s*\{[^}]*transform:\s*none[^}]*\}/.test(styles),
+        'the mobile rail must clear the desktop top:55% + translateY(-50%) so bottom positioning wins'
+    );
+
+    /* 行内 display:flex 会压过样式表的 grid（优先级高于任何选择器），展开态
+       就退回单行横排、溢出视口。router 只在收起时写 none，展开时清空。 */
+    const routerSource = fs.readFileSync(path.join(ROOT, 'public', 'managers', 'workspace-router.js'), 'utf8');
+    assert(
+        /this\.floatingActions\.style\.display\s*=\s*isEditor\s*\?\s*''\s*:\s*'none'/.test(routerSource),
+        'the workspace router must not write an inline display:flex on the floating rail (it would override the mobile grid)'
+    );
+
     const serverSource = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
     assert(
         serverSource.includes('HIDDEN_FLOATING_ACTIONS') && serverSource.includes('hiddenFloatingActions: HIDDEN_FLOATING_ACTIONS'),

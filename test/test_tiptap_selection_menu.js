@@ -87,6 +87,11 @@ async function main() {
     await setValueAndSelect('正文段落', 1, 5);
     check('text selection shows menu', menuRoot().style.display === 'flex');
 
+    // 动作反馈（轻提示）：菜单按钮点完菜单就收起，用户需要一条确认。
+    // 这里接管 window.toaster，断言每个动作都真的发出了对应文案与类型。
+    const toastCalls = [];
+    global.window.toaster = { show: (message, type) => toastCalls.push({ message, type }) };
+
     // 4. 画线 → draw mark → 序列化为 <span data-draw>
     await setValueAndSelect('正文段落', 1, 5);
     const drawBtn = [...menuRoot().querySelectorAll('button')].find(b => b.textContent === '画线');
@@ -94,6 +99,7 @@ async function main() {
     await new Promise((resolve) => setTimeout(resolve, 30));
     const drawValue = editor.getValue();
     check('draw mark applied via framework command', drawValue.includes('<span data-draw'), drawValue);
+    check('draw action surfaces a toast', toastCalls.at(-1)?.message === '已画线', toastCalls);
 
     // 5. 高亮 → mdHighlight mark → <mark>
     await setValueAndSelect('第二段落', 1, 5);
@@ -102,6 +108,7 @@ async function main() {
     await new Promise((resolve) => setTimeout(resolve, 30));
     const markValue = editor.getValue();
     check('highlight mark serializes to <mark>', markValue.includes('<mark>'), markValue);
+    check('highlight action surfaces a toast', toastCalls.at(-1)?.message === '已高亮', toastCalls);
 
     // 6. 批注 → annotation mark → span[data-note] + sub 标签
     await setValueAndSelect('第三段落', 1, 5);
@@ -117,10 +124,12 @@ async function main() {
     await new Promise((resolve) => setTimeout(resolve, 30));
     const annoValue = editor.getValue();
     check('annotation mark serializes to span[data-note]', annoValue.includes('data-note="测试批注"'), annoValue);
+    check('annotation action surfaces a toast', toastCalls.at(-1)?.message === '已添加批注', toastCalls);
 
     // 6.1 加粗 → bold mark → `**…**`，再点一次取消。
     // 这里必须真的点到按钮：插件 view 的 this.view 是 EditorView（没有 Tiptap 的
     // .commands 链式 API），用错入口会静默抛错、菜单也不收起——上一版就是这么坏的。
+    // 文案必须跟着动作方向变（加粗/取消加粗），否则取消动作上也显示「已加粗」。
     await setValueAndSelect('甲加粗文字乙', 2, 6);
     const boldBtn = [...menuRoot().querySelectorAll('button')].find(b => b.textContent === '加粗');
     check('bold button exists', Boolean(boldBtn));
@@ -131,12 +140,14 @@ async function main() {
     check('bold action hides the menu', menuRoot().style.display === 'none', menuRoot().style.display);
     check('bold action collapses the selection', editor.editor.state.selection.empty,
         JSON.stringify({ from: editor.editor.state.selection.from, to: editor.editor.state.selection.to }));
+    check('bold action surfaces a success toast', toastCalls.at(-1)?.message === '已加粗' && toastCalls.at(-1)?.type === 'success', toastCalls);
 
     // 再选同一段点一次 = 取消加粗（toggle 语义，与 Mod+b 一致）
     await setValueAndSelect(boldValue, 2, 6);
     [...menuRoot().querySelectorAll('button')].find(b => b.textContent === '加粗').click();
     await new Promise((resolve) => setTimeout(resolve, 30));
     check('bold button toggles off', editor.getValue() === '甲加粗文字乙', editor.getValue());
+    check('toggling bold off reports the cancel direction', toastCalls.at(-1)?.message === '已取消加粗' && toastCalls.at(-1)?.type === 'info', toastCalls);
 
     // 加粗跨链接：序列化仍是一整段（渲染层拆 <strong> 不影响存储）
     await setValueAndSelect('前 [链接文字](https://example.com) 后', 1, 9);

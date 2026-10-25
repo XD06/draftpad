@@ -139,7 +139,11 @@ export class WorkspaceRouter {
         if (this.thoughtsView) this.thoughtsView.style.display = isThoughts ? 'flex' : 'none';
         // Let the responsive stylesheet choose block on mobile and flex on desktop.
         if (this.todayView) this.todayView.style.display = isToday ? '' : 'none';
-        if (this.floatingActions) this.floatingActions.style.display = isEditor ? 'flex' : 'none';
+        // 同理：收起时不写死 flex。展开态的移动端布局是 grid（styles.css 的
+        // `body.fab-expanded:not(.thoughts-mode) .floating-actions`），行内
+        // `display: flex` 优先级高于任何样式表规则，会把折行网格压回单行
+        // ——9 个按钮横向溢出视口（393px 屏实测溢出 10px）。
+        if (this.floatingActions) this.floatingActions.style.display = isEditor ? '' : 'none';
         document.documentElement.removeAttribute('data-initial-workspace');
     }
 }

@@ -557,12 +557,12 @@ body::before {
     border: none;
 }
 
-/* Toast 微调 — iOS 风格 pill */
+/* Toast 微调 — 与 styles.css 的玻璃卡片同一套语言：这里只补 iOS 的字重/内缩，
+   圆角交给 styles.css 的 14px（写 100px 胶囊会和类型色图标圆底打架）。 */
 .toast {
-    border-radius: 100px;
     font-size: 14px;
     font-weight: 500;
-    padding: 8px 18px;
+    padding: 9px 15px 9px 10px;
 }
 
 /* 输入栏微调 — 融入 iOS 背景 */
@@ -1189,10 +1189,19 @@ main {
         line-height: 1.68;
     }
 
+    /* 提示条要让开底部工具条：收起态是 3 个按钮的单行胶囊（38px + 10px
+       内缩 + 18px 离底，顶部约 67px），展开态是 9 个按钮的单行胶囊（同样
+       高，但更宽）。写死 82px 只够前者——实测展开后 toast 与按钮重叠。 */
     .toast-container {
-        bottom: calc(env(safe-area-inset-bottom, 0px) + 82px);
+        bottom: calc(env(safe-area-inset-bottom, 0px) + 76px);
         padding: 0;
         pointer-events: none;
+    }
+
+    /* 展开态按钮仍是 38px 高（单行），但整条更宽、视觉更"重"，多让 42px
+       避免任何视口下贴得太近。 */
+    body.fab-expanded .toast-container {
+        bottom: calc(env(safe-area-inset-bottom, 0px) + 118px);
     }
 
     .toast {

@@ -1135,38 +1135,85 @@ main {
     padding: 0.5rem 1rem;
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    align-items: center;
+    gap: 8px;
     z-index: 2000;
+    /* 容器只负责排队：自身不吃指针，卡片各自可点（既有点击关闭/静态提示
+       的点击回调，也不能挡住它下面的编辑器）。 */
+    pointer-events: none;
 }
 
+/* 轻提示卡片：玻璃底 + 类型色圆形图标 + 文案。
+ * 颜色全部走主题 token，深浅色自动跟随；图标是纯装饰（aria-hidden），
+ * 文案在 .toast-text 里，所以 textContent 仍是纯文本。 */
 .toast {
-    color: #ffffff;
-    padding: 0.5rem 1rem;
-    border-radius: 20px;
-    opacity: 0;
-    transition: opacity 0.3s ease-in-out;
-    max-width: 300px;
+    display: flex;
+    align-items: center;
+    gap: 9px;
     box-sizing: border-box;
-    word-wrap: break-word;
+    max-width: min(340px, calc(100vw - 32px));
+    padding: 9px 15px 9px 10px;
+    border: 1px solid color-mix(in srgb, var(--border-color) 72%, transparent);
+    border-radius: 14px;
+    background: color-mix(in srgb, var(--header-bg) 88%, transparent);
+    color: var(--text-color);
     font-size: 0.875rem;
-    text-align: center;
+    font-weight: 500;
+    line-height: 1.35;
+    text-align: left;
+    word-wrap: break-word;
+    pointer-events: auto;
+    cursor: default;
+    box-shadow:
+        0 10px 30px color-mix(in srgb, #000 14%, transparent),
+        0 1px 0 color-mix(in srgb, #fff 40%, transparent) inset;
+    backdrop-filter: blur(16px) saturate(150%);
+    -webkit-backdrop-filter: blur(16px) saturate(150%);
+    opacity: 0;
+    transform: translateY(6px) scale(0.97);
+    transition:
+        opacity 0.26s var(--ease-out-expo),
+        transform 0.26s var(--ease-out-expo);
 }
 
 .toast.show {
     opacity: 1;
+    transform: none;
 }
 
-.toast.success {
-    background-color: var(--success-status-bg);
+/* 图标底座：类型色实心圆底 + 白色描边图标（22px 圆 / 13px 图形）。 */
+.toast-icon {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    color: #fff;
+    background: var(--primary-color);
 }
 
-.toast.error {
-    background-color: var(--danger-status-bg);
+.toast-icon svg {
+    width: 13px;
+    height: 13px;
 }
 
-.toast.info {
-    background-color: rgba(var(--primary-rgb), 0.85);
-    color: white;
+.toast-text {
+    min-width: 0;
+    padding-right: 2px;
+}
+
+.toast.success .toast-icon {
+    background: #16a34a;
+}
+
+.toast.error .toast-icon {
+    background: var(--danger-color);
+}
+
+.toast.info .toast-icon {
+    background: var(--primary-color);
 }
 
 .notepad-controls {
@@ -5020,6 +5067,66 @@ body.reading-mode-active .editor-main {
     .floating-actions {
         bottom: 80px;
         right: 20px;
+        /* top/transform 必须与 bottom 一起清掉：基础规则是 top:55% +
+           translateY(-50%)，只改 bottom 会让盒子被 top 与 bottom 夹成固定
+           高度（852×393 横屏实测容器只有 97px 高），9 个按钮竖排溢出视口
+           底部 55px。 */
+        top: auto;
+        transform: none;
+    }
+
+    /* 展开态在移动端必须永远留在视口内，并且**保持单行**。
+       竖排一列放不下（横屏 9×38+8×8 = 406px > 393px 视口）；按钮写死 38px
+       再横排，一行也放不下（393px 屏溢出右边界 10px）——折成两行虽然不溢出，
+       观感却变成一个方块团（用户明确否掉）。正确解法是**让按钮弹性收缩**：
+       一行 + 按钮均分整条宽度，393px 屏每个 38px（与原来等大）、320px 屏
+       30px，一行永远放得下；宽视口封顶 40px，不会把按钮拉成巨块。
+       特异性 (0,3,1) 才能压过 ios-theme.css 的
+       `body:not(.thoughts-mode) .floating-actions`（(0,2,1)，且该文件后加载）。 */
+    body.fab-expanded:not(.thoughts-mode) .floating-actions {
+        flex-direction: row;
+        flex-wrap: nowrap;
+        align-items: center;
+        gap: 2px;
+        /* 水平居中：左右边距天然相等（窄屏时宽度吃满 calc(100vw - 24px)，
+           左边距正好 12px；横屏时按钮封顶 40px、整条停在 386px 居中）。
+           **不要用 left:50% + translateX(-50%)**：ios-theme 给
+           `.floating-actions` 写了 `transition: ... transform 180ms`，
+           transform 会参与过渡——展开瞬间整条从 right:18px 的位置向左
+           滑 185px（实测 left 197→12，约 300ms），用户看到的就是「大幅度
+           跳动」。用 left/right 撑满 + margin auto 居中，left/right 与
+           margin 都不在那条 transition 里，位置是瞬变的，按钮原地出现。 */
+        left: 0;
+        right: 0;
+        margin-left: auto;
+        margin-right: auto;
+        /* 宽度显式算出来：9 个按钮 × 40px 上限 + 8 个 2px 间隙 + 左右 5px 内缩
+           = 386px，再与「视口 - 24px」取小。**不要写 width: max-content**：
+           flex 容器的 max-content 按最小内容算，会把按钮压到 min-width(30px)
+           （实测整条只有 296px、按钮全 30px）。 */
+        width: min(386px, calc(100vw - 24px));
+        max-height: calc(100dvh - 24px);
+        padding: 5px;
+        box-sizing: border-box;
+        /* 收起态是 999px 胶囊；展开态与它同形（都是一行），继续走胶囊。 */
+        border-radius: 999px;
+    }
+
+    /* 9 个按钮均分整条宽度。flex-basis 写 40px 而不是 0：它就是按钮的理想
+       宽度（宽视口时整条 386px、按钮 40px），窄视口再由 flex-shrink 收缩到
+       38px / 30px。**不要写 min-width:0**：那会让按钮收缩到 0（实测三个带
+       固定 width 的按钮被压成 1px），按钮必须至少放得下 20/22px 的图标。 */
+    body.fab-expanded:not(.thoughts-mode) .floating-actions > .floating-btn {
+        flex: 0 1 40px;
+        width: auto;
+        min-width: 30px;
+        max-width: 40px;
+        height: 38px;
+        /* **必须压掉 scale**：`.floating-btn:hover` 是 `transform: scale(1.1)`，
+           触屏浏览器会把「点过的按钮」判成 hover——实测 fab-toggle-group 被
+           放大到 42px，撑破 386px 的整条宽度，导致折行成两行（rows:2）。
+           展开态是一行等宽格子，任何单个按钮的缩放都会破坏布局。 */
+        transform: none;
     }
 }
 

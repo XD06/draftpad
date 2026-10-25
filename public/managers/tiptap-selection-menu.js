@@ -29,6 +29,15 @@ const MARKED_ELEMENT_SELECTOR = '.has-annotation, [data-draw], mark.md-mark';
 
 export const selectionMenuPluginKey = new PluginKey('dumbpadSelectionMenu');
 
+/**
+ * 动作反馈：轻提示（window.toaster 由 app.js 挂上，插件层只做可选调用）。
+ * 菜单按钮点完菜单就收起，没有反馈用户不知道到底落没落上标记——尤其
+ * 画线/高亮的视觉差异很小。文案统一「已…」句式，类型用 success/info。
+ */
+function notify(message, type = 'success', timeoutMs = 1400) {
+    window.toaster?.show?.(message, type, false, timeoutMs);
+}
+
 function selectionHasProtectedNode(state) {
     const { from, to, empty } = state.selection;
     if (empty) return true;
@@ -520,6 +529,7 @@ class SelectionMenuView {
         if (!markType) return;
         this.view.dispatch(this.view.state.tr.removeMark(range.from, range.to, markType));
         this.view.focus();
+        notify(type === 'highlight' ? '已取消高亮' : (type === 'draw' ? '已取消画线' : '已取消批注'), 'info');
     }
 
     /** 编辑批注：原地展开编辑卡片，框架更新 mark attrs（可撤销），与旧 updateAnnotationComment 对齐。 */
@@ -728,6 +738,7 @@ class SelectionMenuView {
         }
         this.view.dispatch(tr);
         this.view.focus();
+        notify(action === 'delete' ? '已删除时间标记' : '已更新为当前时间', action === 'delete' ? 'info' : 'success');
     }
 
     openAnnotationInput() {
@@ -762,6 +773,7 @@ class SelectionMenuView {
         // 落标记后退出选中状态：光标折叠到标记起点（与旧编辑器一致，
         // 选区仍罩在高亮/划线上会显得"没有退出选中"）。
         this.collapseTo(from);
+        notify(markName === 'draw' ? '已画线' : (markName === 'mdHighlight' ? '已高亮' : '已添加批注'));
     }
 
     /**
@@ -779,13 +791,18 @@ class SelectionMenuView {
      * （`**前** \`code\` **后**`），这是 Markdown 的正确语义。
      */
     toggleBold() {
-        const { from } = this.pendingSelection || this.view.state.selection;
+        const { from, to } = this.pendingSelection || this.view.state.selection;
         const boldType = this.view.state.schema.marks.bold;
         if (!boldType) return;
+        // toggleMark 的返回值不告诉我们是加还是取消，落之前先问一次文档：
+        // 整段已加粗 → 这次是取消，否则是加粗。提示文案要跟着变，否则
+        // 「已加粗」出现在取消动作上就是错的。
+        const wasBold = this.view.state.doc.rangeHasMark(from, to, boldType);
         this.view.dispatch(this.view.state.tr);
         PM.commands.toggleMark(boldType)(this.view.state, this.view.dispatch, this.view);
         this.hide();
         this.collapseTo(from);
+        notify(wasBold ? '已取消加粗' : '已加粗', wasBold ? 'info' : 'success');
     }
 
     /** 动作完成后退出选中状态：光标折叠到标记起点（与旧编辑器一致）。 */
@@ -800,16 +817,22 @@ class SelectionMenuView {
     async copySelection() {
         const { from, to } = this.pendingSelection || this.view.state.selection;
         const text = this.view.state.doc.textBetween(from, to, '\n');
+        let copied = false;
         if (text) {
             try {
                 await navigator.clipboard.writeText(text);
+                copied = true;
             } catch (_error) {
-                // 无剪贴板权限时静默失败（与旧实现一致的尽力而为）。
+                // 无剪贴板权限（非安全上下文、用户拒绝授权）：明确告知失败，
+                // 不要静默——旧实现是静默尽力而为，用户以为复制成功了。
+                copied = false;
             }
         }
         this.hide();
         // 复制后同样退出选中状态。
         this.collapseTo(from);
+        if (!text) return;
+        notify(copied ? '已复制' : '复制失败：剪贴板不可用', copied ? 'success' : 'error', copied ? 1400 : 2600);
     }
 
     handleBlur() {
