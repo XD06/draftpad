@@ -401,6 +401,20 @@ document.addEventListener('DOMContentLoaded', async () => {
     const settingsAssetsSelectAll = document.getElementById('settings-assets-select-all');
     const settingsAssetsSelectedCount = document.getElementById('settings-assets-selected-count');
     const settingsAssetsDeleteSelected = document.getElementById('settings-assets-delete-selected');
+    const settingsNavSyncBadge = document.getElementById('settings-nav-sync-badge');
+    const settingsNavAssetsCount = document.getElementById('settings-nav-assets-count');
+    const settingsNavTrashCount = document.getElementById('settings-nav-trash-count');
+    const settingsStatTotalNotes = document.getElementById('settings-stat-total-notes');
+    const settingsStatTotalEdits = document.getElementById('settings-stat-total-edits');
+    const settingsStatActiveDays = document.getElementById('settings-stat-active-days');
+    const settingsStatRecentNotes = document.getElementById('settings-stat-recent-notes');
+    const settingsHeatmapHeadline = document.getElementById('settings-heatmap-headline');
+    const settingsHeatmapMonths = document.getElementById('settings-heatmap-months');
+    const settingsHeatmapGrid = document.getElementById('settings-heatmap-grid');
+    const settingsHeatmapScroll = document.getElementById('settings-heatmap-scroll');
+    const settingsHeatmapCaption = document.getElementById('settings-heatmap-caption');
+    let currentSettingsTab = 'overview';
+    let currentSettingsHeatmapMode = 'all';
     const selectedAssetIds = new Set();
     // Cache the latest asset metadata by id so the "插入" action can reference an
     // existing asset (no re-upload, no duplicate copy) without another request.
@@ -1160,6 +1174,11 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     function renderTrashItems(items = []) {
         if (!settingsTrashList) return;
+        const count = Array.isArray(items) ? items.length : 0;
+        if (settingsNavTrashCount) {
+            settingsNavTrashCount.textContent = String(count);
+            settingsNavTrashCount.hidden = count === 0;
+        }
         if (!Array.isArray(items) || items.length === 0) {
             settingsTrashList.innerHTML = '<div class="settings-trash-empty">垃圾桶为空。</div>';
             if (settingsTrashEmpty) settingsTrashEmpty.disabled = true;
@@ -1274,6 +1293,11 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     function renderAssetItems(items = []) {
         if (!settingsAssetsList) return;
+        const count = Array.isArray(items) ? items.length : 0;
+        if (settingsNavAssetsCount) {
+            settingsNavAssetsCount.textContent = String(count);
+            settingsNavAssetsCount.hidden = count === 0;
+        }
         assetItemsById.clear();
         (Array.isArray(items) ? items : []).forEach(item => {
             const id = String(item?.id || '');
@@ -1496,6 +1520,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         renderSidebar(currentNotepads, selectedId, selectNotepad, deleteNotepadById, renameNotepadById, toggleNotepadPin, directorySearchQuery);
         renderRecentFiles(selectedId, currentNotepads, selectNotepad, deleteNotepadById, renameNotepadById, toggleNotepadPin);
         cacheNotepads(noteHistory, selectedId);
+        if (settingsModal?.classList.contains('visible')) {
+            renderSettingsActivityStats();
+        }
     }
 
     function getCachedNote(notepadId) {
@@ -1791,6 +1818,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         notepad.editCountStartedAt = data.editCountStartedAt;
         if (Number(data.updatedAt) > 0) notepad.updatedAt = Number(data.updatedAt);
         updateArticleMeta();
+        if (settingsModal?.classList.contains('visible')) {
+            renderSettingsActivityStats();
+        }
     }
 
     function setCurrentNoteVersion(notepadId, version) {
@@ -3125,6 +3155,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             settingsSyncSummary.dataset.kind = summaryKind;
             settingsSyncSummary.textContent = summaryText;
         }
+        if (typeof updateSettingsSyncNavBadge === 'function') {
+            updateSettingsSyncNavBadge(summaryKind, getDirtyCachedNotes().length);
+        }
         if (settingsLocalVersion) settingsLocalVersion.textContent = localVersion ?? '-';
         if (settingsServerVersion) settingsServerVersion.textContent = remoteVersionLabel;
         if (settingsCacheTime) settingsCacheTime.textContent = formatCacheTime(cachedNote?.savedAt);
@@ -3172,6 +3205,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     function openSettingsModal(options = {}) {
         settingsManager.loadSettings();
+        switchSettingsTab(options.focusSyncPanel ? 'sync' : (options.tab || currentSettingsTab || 'overview'));
+        renderSettingsActivityStats();
         updateSettingsConflictSection();
         void reconcileCurrentNote('settings', { force: true }).then(() => updateSettingsConflictSection());
         refreshCloudStatus(false);
@@ -3180,10 +3215,106 @@ document.addEventListener('DOMContentLoaded', async () => {
         const isMobile = window.matchMedia?.('(max-width: 720px)')?.matches;
         const focusTarget = options.focusSyncPanel
             ? settingsConflictSection
-            : (isMobile ? null : settingsInputAutoSaveStatusInterval);
+            : (isMobile || currentSettingsTab !== 'overview' ? null : settingsInputAutoSaveStatusInterval);
         showModal(settingsModal, focusTarget);
         if (options.focusSyncPanel && settingsConflictSection) {
             settingsConflictSection.scrollIntoView({ block: 'nearest' });
+        }
+    }
+
+    function switchSettingsTab(tabName = 'overview') {
+        const validTabs = new Set(['overview', 'sync', 'assets', 'trash']);
+        const nextTab = validTabs.has(tabName) ? tabName : 'overview';
+        currentSettingsTab = nextTab;
+        if (!settingsModal) return;
+        settingsModal.querySelectorAll('[data-settings-tab]').forEach(btn => {
+            const active = btn.dataset.settingsTab === nextTab;
+            btn.classList.toggle('is-active', active);
+            btn.setAttribute('aria-selected', String(active));
+        });
+        settingsModal.querySelectorAll('[data-settings-pane]').forEach(pane => {
+            const active = pane.dataset.settingsPane === nextTab;
+            pane.classList.toggle('is-active', active);
+            pane.hidden = !active;
+        });
+        if (nextTab === 'overview') {
+            requestAnimationFrame(() => {
+                if (settingsHeatmapScroll) {
+                    settingsHeatmapScroll.scrollLeft = settingsHeatmapScroll.scrollWidth;
+                }
+            });
+        }
+    }
+
+    function updateSettingsSyncNavBadge(summaryKind, dirtyCount = 0) {
+        if (!settingsNavSyncBadge) return;
+        if (summaryKind === 'conflict' || dirtyCount > 0) {
+            settingsNavSyncBadge.hidden = false;
+            settingsNavSyncBadge.dataset.kind = 'warn';
+            settingsNavSyncBadge.textContent = dirtyCount > 0 ? String(dirtyCount) : '!';
+        } else if (summaryKind === 'offline' || summaryKind === 'error') {
+            settingsNavSyncBadge.hidden = false;
+            settingsNavSyncBadge.dataset.kind = 'error';
+            settingsNavSyncBadge.textContent = '!';
+        } else {
+            settingsNavSyncBadge.hidden = true;
+            settingsNavSyncBadge.textContent = '';
+            delete settingsNavSyncBadge.dataset.kind;
+        }
+    }
+
+    function renderSettingsActivityStats() {
+        if (!settingsHeatmapGrid || typeof SettingsManager.computeNotepadActivityStats !== 'function') return;
+        const stats = SettingsManager.computeNotepadActivityStats(currentNotepads, {
+            weeks: 31,
+            mode: currentSettingsHeatmapMode
+        });
+        if (settingsStatTotalNotes) settingsStatTotalNotes.textContent = String(stats.totalNotes);
+        if (settingsStatTotalEdits) settingsStatTotalEdits.textContent = String(stats.totalEdits);
+        if (settingsStatActiveDays) settingsStatActiveDays.textContent = String(stats.activeDays);
+        if (settingsStatRecentNotes) settingsStatRecentNotes.textContent = String(stats.recentNotes30d);
+
+        if (settingsHeatmapHeadline) {
+            const modeText = stats.mode === 'edits'
+                ? '次修改与更新记录'
+                : stats.mode === 'created'
+                    ? '篇新建文章记录'
+                    : '次创作活跃记录';
+            settingsHeatmapHeadline.innerHTML = `<strong id="settings-heatmap-total">${stats.windowContributions}</strong> ${modeText}（近 ${stats.weekCount} 周）`;
+        }
+
+        if (settingsHeatmapMonths) {
+            settingsHeatmapMonths.style.gridTemplateColumns = `repeat(${stats.weekCount}, 11px)`;
+            settingsHeatmapMonths.innerHTML = stats.monthLabels.map(item => (
+                `<span style="grid-column-start:${item.colIndex + 1}">${escapeHtml(item.label)}</span>`
+            )).join('');
+        }
+
+        settingsHeatmapGrid.style.gridTemplateColumns = `repeat(${stats.weekCount}, 11px)`;
+        settingsHeatmapGrid.innerHTML = stats.cells.map(cell => (
+            `<span class="settings-heatmap-cell${cell.isFuture ? ' is-future' : ''}" data-level="${cell.level}" data-date="${escapeHtml(cell.dateKey)}" title="${escapeHtml(cell.tooltip)}"></span>`
+        )).join('');
+
+        if (settingsHeatmapCaption) {
+            if (stats.latestNotepad) {
+                const editsText = stats.latestNotepad.editCount > 0
+                    ? ` · 累计修改 ${stats.latestNotepad.editCount} 次`
+                    : '';
+                settingsHeatmapCaption.textContent = `最近更新：《${stats.latestNotepad.name}》${editsText}`;
+            } else {
+                settingsHeatmapCaption.textContent = '基于文章创建、更新与修改次数统计';
+            }
+        }
+
+        if (settingsModal) {
+            settingsModal.querySelectorAll('[data-heatmap-mode]').forEach(btn => {
+                btn.classList.toggle('is-active', btn.dataset.heatmapMode === currentSettingsHeatmapMode);
+            });
+        }
+        if (settingsHeatmapScroll) {
+            requestAnimationFrame(() => {
+                settingsHeatmapScroll.scrollLeft = settingsHeatmapScroll.scrollWidth;
+            });
         }
     }
 
@@ -3792,6 +3923,20 @@ document.addEventListener('DOMContentLoaded', async () => {
                 event.preventDefault();
                 event.stopPropagation();
                 openSettingsModal({ focusSyncPanel: true });
+            });
+        }
+        if (settingsModal) {
+            settingsModal.addEventListener('click', (event) => {
+                const tabBtn = event.target.closest?.('[data-settings-tab]');
+                if (tabBtn?.dataset.settingsTab) {
+                    switchSettingsTab(tabBtn.dataset.settingsTab);
+                    return;
+                }
+                const modeBtn = event.target.closest?.('[data-heatmap-mode]');
+                if (modeBtn?.dataset.heatmapMode) {
+                    currentSettingsHeatmapMode = modeBtn.dataset.heatmapMode;
+                    renderSettingsActivityStats();
+                }
             });
         }
         if (settingsCancel) settingsCancel.addEventListener('click', () => hideModal(settingsModal));

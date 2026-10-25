@@ -139,6 +139,7 @@
     "test:auth-service": "node test/test_auth_service.js",
     "test:auth-routes": "node test/test_auth_routes.js",
     "test:floating-actions-config": "node test/test_floating_actions_config.js",
+    "test:settings-modal": "node test/test_settings_modal_redesign.js",
     "test:audit-log": "node test/test_audit_log.js",
     "test:share-sanitizer": "node test/test_share_sanitizer.js",
     "test:share-secret": "node test/test_share_secret.js",
