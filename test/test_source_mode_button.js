@@ -216,10 +216,11 @@ async function main() {
             const inBand = band(17166, 338);
             check('整页滚动：光标在可见带内时视线不动（带状语义成立）',
                 Math.abs(inBand - 17166) < 0.5, inBand);
-            // 光标在视口下方（1182px）：应落到 70% 处 = caretDocY − 0.7H，而不是文末。
+            // 光标在视口下方（1182px）：出带下侧落 40%（真机反馈 70% 时「光标贴屏底、
+            // 要手动再滑一点」）——= caretDocY − 0.4H，而不是文末。
             const below = band(16322, 1182);
-            check('整页滚动：光标在下方出带时轻推到 70%（不甩到文末）',
-                Math.abs(below - (16322 + 1182 - 844 * 0.7)) < 0.5, below);
+            check('整页滚动：光标在下方出带时轻推到 40%（不甩到文末）',
+                Math.abs(below - (16322 + 1182 - 844 * 0.4)) < 0.5, below);
             // 光标在视口上方（−338px）：应落到 30% 处 = caretDocY − 0.3H。
             const above = band(17842, -338);
             check('整页滚动：光标在上方出带时轻推到 30%',
@@ -339,6 +340,65 @@ async function main() {
         check('越界偏移钳到文档末尾',
             editor.mapMarkdownOffsetToPos(fullMd.length + 500) === lastPos,
             { got: editor.mapMarkdownOffsetToPos(fullMd.length + 500), want: lastPos });
+
+        /* 前缀空间 == textarea 空间（真机「切换后光标跑到下一行」的钉）。
+         * serializePrefixLength 必须与 getValue() 走同一条出口链：textarea 装的是
+         * fenceToFrontmatter + normalizeAmbiguousEmptyListMarkers 变换后的文本，
+         * 原始序列化器里 frontmatter 是 ```dumbpad-frontmatter 围栏形态，两者在
+         * 文首差 19 字符（围栏语言名长度）；偏移若用原始空间算、放到变换后的
+         * textarea 上，光标整体偏后一两行。探针实测差 +19 → 本条钉死差 0。 */
+        const fmDoc = '---\ntitle: 草稿\ntags: [a]\n---\n\n# 标题\n\n这是正文第一段，目标文字在这里。\n\n结尾段。';
+        editor.setValue(fmDoc, false);
+        const fmText = editor.getValue();
+        check('frontmatter 文章的全文前缀长度等于 textarea 长度',
+            editor.serializePrefixLength(editor.editor.state.doc.content.size) === fmText.length,
+            { prefix: editor.serializePrefixLength(editor.editor.state.doc.content.size), textarea: fmText.length });
+        // 真机链路方向：渲染光标（PM 位置）→ 偏移 → 应用到 textarea 必须命中同一段
+        // 文字。用反向（偏移→位置→偏移）测会撞上「映射不满射」的既有设计——中段
+        // 偏移没有精确对应位置，取 >= 目标的最小文本边界，那是另一条不变式的事。
+        const fmWordStart = fmText.indexOf('目标文字');
+        let fmCaretPos = null;
+        editor.editor.state.doc.descendants((node, pos) => {
+            if (fmCaretPos !== null || !node.isText) return true;
+            if (/目标文字/.test(node.text || '')) {
+                fmCaretPos = pos + (node.text || '').indexOf('目标文字');
+            }
+            return true;
+        });
+        editor._trackedCaret = { mode: 'wysiwyg', pos: fmCaretPos };
+        const fmOffset = editor.getCaretMarkdownOffset();
+        check('渲染光标→偏移→textarea 落点命中目标文字（不差行）',
+            fmText.slice(fmOffset, fmOffset + 4) === '目标文字',
+            { offset: fmOffset, landed: JSON.stringify(fmText.slice(fmOffset, fmOffset + 8)) });
+        editor._trackedCaret = null;
+
+        /* 前缀空间统一的第三格：渲染光标落在 frontmatter 的 YAML 行**里面**再切
+         * 源码。出口链不做转换时这类偏移留在 raw 空间（+19），落点直接跳出
+         * frontmatter 块（真机「光标跑下一行」的窄域同族）。注意**不需要**开栏
+         * 即时转换的额外分支——内核序列化器给截断的代码块照样补闭合围栏
+         * （CodeFenceInputShortcut 依赖的同一条契约），「成对才转」的
+         * fenceToFrontmatter 对切片位置统一生效；反向验证：去掉出口链本条 FAIL，
+         * 开栏转换版与简单链版行为等价，叠上去是多余复杂度。 */
+        let yamlCaretPos = null;
+        editor.editor.state.doc.descendants((node, pos) => {
+            if (yamlCaretPos !== null || !node.isText) return true;
+            if ((node.text || '').includes('草稿')) {
+                yamlCaretPos = pos + (node.text || '').indexOf('草稿');
+            }
+            return true;
+        });
+        check('夹具里有 frontmatter 的 YAML 文字', yamlCaretPos !== null, yamlCaretPos);
+        editor._trackedCaret = { mode: 'wysiwyg', pos: yamlCaretPos };
+        const yamlOffset = editor.getCaretMarkdownOffset();
+        const fmBlockEnd = fmText.indexOf('\n---', 4) + 5;   // 闭合围栏的末尾
+        check('渲染光标在 frontmatter YAML 内→偏移落在 frontmatter 块内（前缀与 textarea 同空间）',
+            yamlOffset >= 4 && yamlOffset <= fmBlockEnd,
+            { offset: yamlOffset, fmBlockEnd, landed: JSON.stringify(fmText.slice(Math.max(0, yamlOffset - 6), yamlOffset + 8)) });
+        editor._trackedCaret = null;
+
+        // 还原后续段落期望的文档（「内容未变的载入保留光标记录」以 caretDoc 为基准）。
+        editor.setValue(caretDoc, false);
+
 
         // 光标可信性：只记「用户真的放过光标」的位置，且**换文章必须作废**——
         // PM 位置是文档内绝对偏移，带着 A 文的位置去映射 B 文会跳到不相干的一段。

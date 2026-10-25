@@ -846,9 +846,23 @@ export class HybridMarkdownEditor {
     /**
      * 文档前缀 [0, pos) 的 Markdown 长度。
      *
-     * 这是「渲染光标」与「源码 textarea 光标」之间唯一的公共坐标系：textarea 里
-     * 装的就是 Markdown 原文，而序列化器对 Fragment 直接可用（实测
-     * `serialize(doc.slice(0, pos, false).content)` 与前缀逐字一致）。
+     * 这是「渲染光标」与「源码 textarea 光标」之间唯一的公共坐标系——但**必须与
+     * textarea 内容同一空间**：textarea 装的是 `getValue()` 出口（`fenceToFrontmatter`
+     * + `normalizeAmbiguousEmptyListMarkers`）变换后的文本，而序列化器直接产物里
+     * frontmatter 是 ```` ```dumbpad-frontmatter ```` 围栏形态、深缩进空列表标记不补行。
+     * 原始前缀长度放到变换后的文本上用，有 frontmatter 的文章整体偏 +19 字符
+     * （围栏头 `dumbpad-frontmatter` 19 字符，真机反馈「切换后光标跑到下一行」，
+     * 探针实测恰好偏两行）。出口链对**顶层块边界**序列的单调性无影响：frontmatter
+     * 是独立的块，边界切出的前缀要么完整含它（整体转换、长度 −19）要么完全不含
+     * （不转）；补行变换只增不减。块内候选是线性扫（本就不依赖单调）。映射
+     * 「不满射」的既有性质不变：落在语法标记/空行中间的偏移贴到最近文本位
+     * （差 ≤1 字符），与整行漂移不是一个量级。
+     *
+     * 切片切进 frontmatter 块**内部**（光标点在 YAML 行里再切源码）不需要额外分支：
+     * 内核序列化器对截断的代码块节点照样补齐闭合围栏（`CodeFenceInputShortcut`
+     * 依赖的同一条「收尾补转」契约），所以「成对才转」的 `fenceToFrontmatter`
+     * 对所有切片位置统一生效。曾按直觉加过「开栏即时转换」，反向验证证明它与
+     * 简单出口链等价——别再叠回来。
      *
      * 返回 null 表示「这个位置切不出合法 Markdown」：把表格从中间切开时，序列化器
      * 会拿到残缺的 row/cell 结构并抛错（真测踩过，整篇切换直接崩）。调用方必须把
@@ -858,8 +872,10 @@ export class HybridMarkdownEditor {
         const { doc } = this.editor.state;
         const clamped = Math.max(0, Math.min(Number(pos) || 0, doc.content.size));
         try {
-            return this.editor.storage.markdown.serializer
-                .serialize(doc.slice(0, clamped, false).content).length;
+            const rawPrefix = this.editor.storage.markdown.serializer
+                .serialize(doc.slice(0, clamped, false).content);
+            // 与 getValue() 逐字节同一条出口链：前缀空间 == textarea 空间。
+            return normalizeAmbiguousEmptyListMarkers(this.fenceToFrontmatter(rawPrefix)).length;
         } catch (_error) {
             return null;
         }
@@ -1083,13 +1099,16 @@ export class HybridMarkdownEditor {
         if (caretDocumentTop < viewTop + scroller.clientHeight * 0.15) {
             scroller.scrollTop = Math.max(0, caretDocumentTop - scroller.clientHeight * 0.3);
         } else if (caretDocumentTop > viewBottom - scroller.clientHeight * 0.15) {
-            scroller.scrollTop = caretDocumentTop - scroller.clientHeight * 0.7;
+            // 出带下侧落 40%（真机反馈：70% 时「视线没回到光标处，手动向下再滑
+            // 一点才舒服」——键盘开合与深切换走的都是这一支，光标贴屏幕下缘太靠
+            // 拇指热区，40% 略高于视觉中心。与渲染侧孪生函数同步改，别只改一边）
+            scroller.scrollTop = Math.max(0, caretDocumentTop - scroller.clientHeight * 0.4);
         }
     }
 
     /**
      * 渲染侧光标带状滚动：与 scrollTextareaSelectionIntoView 同一套 15% 边带 /
-     * 30%·70% 落位——光标已在舒适带内就不动视线，切换场景先由滚动比例把视线
+     * 30%·40% 落位——光标已在舒适带内就不动视线，切换场景先由滚动比例把视线
      * 放回原处，这里只在光标被甩出带外时轻推。无布局环境（jsdom）直接跳过。
      */
     scrollEditorCaretIntoView() {
@@ -1110,7 +1129,8 @@ export class HybridMarkdownEditor {
         if (caretDocumentTop < scroller.scrollTop + scroller.clientHeight * 0.15) {
             scroller.scrollTop = Math.max(0, caretDocumentTop - scroller.clientHeight * 0.3);
         } else if (caretDocumentTop > viewBottom - scroller.clientHeight * 0.15) {
-            scroller.scrollTop = caretDocumentTop - scroller.clientHeight * 0.7;
+            // 出带下侧落 40%：与源码侧孪生函数同一常数，同步改。
+            scroller.scrollTop = Math.max(0, caretDocumentTop - scroller.clientHeight * 0.4);
         }
     }
 
