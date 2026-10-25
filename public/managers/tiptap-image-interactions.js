@@ -276,6 +276,18 @@ class ArticleImageInteractionView {
                 this.closeLightbox();
             }
         };
+        // 软键盘开合（visualViewport resize）：菜单是 fixed 定位，键盘把它顶出
+        // 可见区时按锚元素重新夹取位置——「菜单先开、键盘后弹/收」的场景
+        // （点按夺焦残留）不再停在键盘后面。
+        this.handleViewportResize = () => {
+            if (!this.sizeMenu.hidden && this.activeImage?.isConnected) {
+                this.positionMenuUnderElement(this.sizeMenu, this.activeImage, 210);
+            }
+            if (!this.fileMenu.hidden && this.activeFileLink?.isConnected) {
+                this.positionMenuUnderElement(this.fileMenu, this.activeFileLink, 68);
+            }
+        };
+        window.visualViewport?.addEventListener('resize', this.handleViewportResize);
 
         // 与旧 bindArticleImageInteractions 同机制：直接在 view.dom 挂 DOM 监听。
         // 不用 PM 的 handleClick prop——它依赖 PM 鼠标管线（posAtCoords /
@@ -628,14 +640,27 @@ class ArticleImageInteractionView {
 
     /* ---------------- 定位 ---------------- */
 
+    /**
+     * 可见视口：软键盘只缩 visualViewport（iOS 的 innerHeight 不随键盘变），
+     * 菜单按布局视口夹取会落到「键盘后面」——真机上就是「菜单不见了」。
+     */
+    visibleViewportSize() {
+        const viewport = window.visualViewport;
+        return {
+            width: Number(viewport?.width || window.innerWidth || 0),
+            height: Number(viewport?.height || window.innerHeight || 0),
+        };
+    }
+
     positionMenuUnderElement(menu, element, fallbackWidth) {
         const rect = typeof element.getBoundingClientRect === 'function' ? element.getBoundingClientRect() : null;
         const menuWidth = menu.offsetWidth || fallbackWidth;
         const menuHeight = menu.offsetHeight || 40;
+        const viewport = this.visibleViewportSize();
         const centeredLeft = rect ? rect.left + (rect.width - menuWidth) / 2 : 0;
         const below = rect ? rect.bottom + 8 : 8;
-        menu.style.left = `${Math.max(10, Math.min(window.innerWidth - menuWidth - 10, centeredLeft))}px`;
-        menu.style.top = `${Math.max(10, Math.min(window.innerHeight - menuHeight - 10, below))}px`;
+        menu.style.left = `${Math.max(10, Math.min(viewport.width - menuWidth - 10, centeredLeft))}px`;
+        menu.style.top = `${Math.max(10, Math.min(viewport.height - menuHeight - 10, below))}px`;
     }
 
     /* ---------------- 点击 ---------------- */
@@ -718,7 +743,7 @@ class ArticleImageInteractionView {
             // 非顶层独立图片（列表/引用内）不参与拖拽，但触屏点按仍要在
             // pointerup 弹尺寸菜单，记一个轻量点按状态。
             if (event.pointerType !== 'mouse') {
-                this.tap = { image, pointerId: event.pointerId };
+                this.tap = { image, pointerId: event.pointerId, hadEditorFocus: this.view.hasFocus() };
                 image.setPointerCapture?.(event.pointerId);
             }
             return;
@@ -727,6 +752,7 @@ class ArticleImageInteractionView {
             image,
             pointerId: event.pointerId,
             pointerType: event.pointerType,
+            hadEditorFocus: this.view.hasFocus(),
             startX: event.clientX,
             startY: event.clientY,
             active: false,
@@ -768,6 +794,7 @@ class ArticleImageInteractionView {
             event.preventDefault();
             event.stopPropagation();
             this.lastTapAt = Date.now();
+            this.releaseStolenFocus(tap.hadEditorFocus);
             this.openSizeMenu(tap.image);
             return;
         }
@@ -782,6 +809,7 @@ class ArticleImageInteractionView {
                 event.preventDefault();
                 event.stopPropagation();
                 this.lastTapAt = Date.now();
+                this.releaseStolenFocus(drag.hadEditorFocus);
                 this.openSizeMenu(drag.image);
             }
             return;
@@ -789,6 +817,19 @@ class ArticleImageInteractionView {
         event.preventDefault();
         this.lastDragAt = Date.now();
         this.moveImage(drag);
+    }
+
+    /**
+     * 真机夺焦兜底：pointerdown 已 preventDefault，桌面 Chromium 不会聚焦；
+     * 但个别移动浏览器的触摸默认行为仍可能把焦点交给编辑器（真机复现过、
+     * 桌面仿真证不了）——键盘弹出，尺寸菜单被顶到键盘后面。「按下时没焦点、
+     * 抬起时有焦点」只可能是这次点按偷来的，还回去；本来就聚焦（用户正在
+     * 打字）时不动，不收用户的键盘。
+     */
+    releaseStolenFocus(hadEditorFocus) {
+        if (hadEditorFocus) return;
+        if (!this.view.hasFocus()) return;
+        this.view.dom.blur();
     }
 
     cancelDrag() {
@@ -854,6 +895,7 @@ class ArticleImageInteractionView {
         this.view.dom.removeEventListener('pointercancel', this.handlePointerUp);
         document.removeEventListener('keydown', this.handleDocumentKeydown);
         document.removeEventListener('mousedown', this.handleDocumentMousedown);
+        window.visualViewport?.removeEventListener('resize', this.handleViewportResize);
         document.body.classList.remove('article-image-lightbox-open');
         this.sizeMenu.remove();
         this.lightbox.remove();

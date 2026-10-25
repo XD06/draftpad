@@ -980,7 +980,10 @@ export class HybridMarkdownEditor {
             if (!textarea) return false;
             const position = Math.min(wanted, textarea.value.length);
             // 先聚焦再设选区：不聚焦的话切进源码还得用户再点一下才能打字。
-            if (focus) textarea.focus();
+            // preventScroll：focus 的默认滚动对准的是 textarea 元素盒（内容等高，
+            // 比视口高一个量级），一次就能把视线拽飞；视线统一交给下面的
+            // scrollTextareaSelectionIntoView（按光标带状落位）。
+            if (focus) textarea.focus({ preventScroll: true });
             textarea.setSelectionRange(position, position);
             // 记录同步到本面：下一次切换要读的是这里，而不是上一条正文里的位置。
             this._trackedCaret = { mode: 'source', offset: position };
@@ -999,13 +1002,19 @@ export class HybridMarkdownEditor {
         let selection = TextSelection.near(state.doc.resolve(position), 1);
         if (!selection) selection = TextSelection.atStart(state.doc);
         const tr = state.tr.setSelection(selection);
-        // 切回渲染时不调 PM 的 scrollIntoView：视线已经由滚动比例落回原处，
-        // 再滚一次会打架；而且 jsdom 没有布局，PM 的 coordsAtPos 会直接抛。
-        this.editor.view.dispatch(scrollIntoView && this.editor.isFocused ? tr.scrollIntoView() : tr);
+        // 不调 PM 的 scrollIntoView（含编辑器聚焦的场合）：它的最小滚动会把光标
+        // 怼到视口顶缘（移动端真机实测光标行贴到 y≈5），切换场景要的是「保住
+        // 滚动比例已恢复的视线，光标只在出带时轻推」。jsdom 没有布局，
+        // 带状滚动内部自行跳过。
+        this.editor.view.dispatch(tr);
         this._trackedCaret = { mode: 'wysiwyg', pos: selection.from };
         // PM 只在聚焦时才把状态里的选区同步到 DOM——不聚焦的话用户看不到光标，
         // 而且下一次按键会先经过 focus 把选区重置掉。
-        if (focus) this.editor.commands.focus();
+        // 不走 Tiptap 的 focus 命令：它的 iOS/Android 分支是裸 dom.focus()（无
+        // preventScroll，会把编辑器顶缘滚进视野），且默认再补一次 PM
+        // scrollIntoView。这里以 preventScroll 聚焦，焦点与选区同步照常成立。
+        if (focus) this.editor.view.dom.focus({ preventScroll: true });
+        if (scrollIntoView) this.scrollEditorCaretIntoView();
         return true;
     }
 
@@ -1065,6 +1074,33 @@ export class HybridMarkdownEditor {
         const viewTop = scroller.scrollTop;
         const viewBottom = viewTop + scroller.clientHeight;
         if (caretDocumentTop < viewTop + scroller.clientHeight * 0.15) {
+            scroller.scrollTop = Math.max(0, caretDocumentTop - scroller.clientHeight * 0.3);
+        } else if (caretDocumentTop > viewBottom - scroller.clientHeight * 0.15) {
+            scroller.scrollTop = caretDocumentTop - scroller.clientHeight * 0.7;
+        }
+    }
+
+    /**
+     * 渲染侧光标带状滚动：与 scrollTextareaSelectionIntoView 同一套 15% 边带 /
+     * 30%·70% 落位——光标已在舒适带内就不动视线，切换场景先由滚动比例把视线
+     * 放回原处，这里只在光标被甩出带外时轻推。无布局环境（jsdom）直接跳过。
+     */
+    scrollEditorCaretIntoView() {
+        if (!this.editor || this.editor.isDestroyed || !this.ready) return;
+        const scroller = this.getScrollContainer();
+        if (!scroller) return;
+        let coords = null;
+        try {
+            coords = this.editor.view.coordsAtPos(this.editor.state.selection.from);
+        } catch (_error) {
+            return;
+        }
+        if (!coords || !Number.isFinite(coords.top)) return;
+        const isPageScroll = scroller === document.scrollingElement || scroller === document.documentElement;
+        const viewTop = isPageScroll ? 0 : scroller.getBoundingClientRect().top;
+        const caretDocumentTop = scroller.scrollTop + (coords.top - viewTop);
+        const viewBottom = scroller.scrollTop + scroller.clientHeight;
+        if (caretDocumentTop < scroller.scrollTop + scroller.clientHeight * 0.15) {
             scroller.scrollTop = Math.max(0, caretDocumentTop - scroller.clientHeight * 0.3);
         } else if (caretDocumentTop > viewBottom - scroller.clientHeight * 0.15) {
             scroller.scrollTop = caretDocumentTop - scroller.clientHeight * 0.7;

@@ -2,6 +2,8 @@
  * 附件点击回归（真实浏览器）：编辑模式点附件 chip 只能弹菜单，不得触发任何下载
  * 或 window.open；下载只发生在菜单的「下载附件」里；阅读模式仍由浏览器直接下载。
  * 覆盖 Tiptap Link 的 PM handleClick 路径（jsdom 走不到鼠标管线，故必须真浏览器）。
+ * 图片触屏点按：不夺焦（真机=不弹键盘）、尺寸菜单照开且夹取在 visualViewport
+ * 内（软键盘只缩 vv，iOS 的 innerHeight 不变，按 innerHeight 夹取会落到键盘后面）。
  */
 const assert = require('node:assert/strict');
 const path = require('node:path');
@@ -12,11 +14,14 @@ const DOWNLOAD = `/api/assets/${ASSET_ID}/download`;
 const FILE_MD = `[报告.pdf · 1.2 MB](${DOWNLOAD} "dumbpad-file=1;size=1258291;type=application%2Fpdf")`;
 const BARE_URL = 'https://example.com/a';
 const NORMAL_URL = 'https://example.com/b';
+const LEGACY_PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+const IMAGE_MD = `![probe](${LEGACY_PNG})`;
 const FIXTURE = [
     FILE_MD,
     `[${BARE_URL}](${BARE_URL})`,
     `[普通链接](${NORMAL_URL})`,
     '正文一段文字。',
+    IMAGE_MD,
 ].join('\n\n') + '\n';
 
 module.exports = async function testAttachmentClick(browser) {
@@ -188,6 +193,59 @@ module.exports = async function testAttachmentClick(browser) {
         // 还原几何，后面的阅读模式步骤仍用同一组坐标
         await page.evaluate((fixture) => { editor.setValue(fixture, false); }, FIXTURE);
         await page.waitForTimeout(300);
+
+        // 6c) 触屏点图片：不夺焦（真机=不弹键盘），尺寸菜单照开、夹取在
+        //     visualViewport 内。真实点按必须落在真实图片上（先取中心再覆盖
+        //     矩形）；菜单定位读的是覆盖后的锚点矩形 + 假 vv（420 高模拟键盘
+        //     开启时的可见区），锚点下缘 760 → 未夹取会落到 768（键盘后面）。
+        await reset();
+        downloads = []; popups = [];
+        const imgCenter = await centerOf('.tiptap img');
+        await page.evaluate(() => {
+            // 6b 刚在编辑器里打完字（焦点还在）：先清焦点，模拟「键盘收起后
+            // 点图片」的真机起点——此时点图片绝不能再把焦点抢回来（=弹键盘）。
+            if (document.activeElement && document.activeElement !== document.body && document.activeElement.blur) {
+                document.activeElement.blur();
+            }
+            const realViewport = window.visualViewport;
+            window.__restoreViewport = () => {
+                if (realViewport) Object.defineProperty(window, 'visualViewport', { value: realViewport, configurable: true });
+                else delete window.visualViewport;
+            };
+            Object.defineProperty(window, 'visualViewport', {
+                value: { width: 1280, height: 420 },
+                configurable: true,
+            });
+            const img = document.querySelector('.tiptap img');
+            img.getBoundingClientRect = () => ({ left: 460, top: 740, right: 820, bottom: 760, width: 360, height: 20 });
+        });
+        await page.touchscreen.tap(imgCenter.x, imgCenter.y);
+        await page.waitForTimeout(400);
+        const afterImageTap = await read();
+        assert.deepEqual(afterImageTap.menus, ['article-image-size-menu'], 'touch tap on an image opens the size menu');
+        assert.equal(
+            await page.evaluate(() => document.activeElement !== editor.container.querySelector('.tiptap')),
+            true,
+            'touch tap on an image must not focus the editor (real device: keyboard must stay closed)',
+        );
+        const sizeMenuRect = await page.evaluate(() => {
+            const menu = document.querySelector('.article-image-size-menu');
+            const r = menu.getBoundingClientRect();
+            return { top: Math.round(r.top), bottom: Math.round(r.bottom) };
+        });
+        assert(sizeMenuRect.bottom <= 420 && sizeMenuRect.top >= 0,
+            `size menu must clamp inside the visual viewport under the keyboard (${JSON.stringify(sizeMenuRect)})`);
+        const narrow = await page.evaluate(() => {
+            const button = document.querySelector('.article-image-size-menu [data-image-width="360"]');
+            const r = button.getBoundingClientRect();
+            return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+        });
+        await page.touchscreen.tap(narrow.x, narrow.y);
+        await page.waitForTimeout(300);
+        assert.equal((await read()).value.includes('dumbpad-width=360'), true,
+            'touch tap on a size button applies the width');
+        await page.evaluate(() => { window.__restoreViewport?.(); });
+
         // 7) 阅读模式：浏览器原生下载，不弹菜单。
         // 先点编辑器外的空白把上一步留下的菜单收掉（「触发元素本身例外」会让点同一个
         // chip 不会关闭它），否则第 7 步的断言分不清是残留还是新开的。

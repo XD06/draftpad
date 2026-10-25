@@ -6554,6 +6554,8 @@ body.reading-mode-active .editor-main {
     border-radius: 7px;
     background: var(--modal-bg);
     box-shadow: 0 10px 28px rgba(0, 0, 0, 0.16);
+    /* 移动端去掉双击缩放启发式：开菜单后立刻点尺寸档位不被当成缩放手势吞掉 */
+    touch-action: manipulation;
 }
 
 .article-image-size-menu[hidden] {
@@ -6571,6 +6573,7 @@ body.reading-mode-active .editor-main {
     border-radius: 7px;
     background: var(--modal-bg);
     box-shadow: 0 10px 28px rgba(0, 0, 0, 0.16);
+    touch-action: manipulation;
 }
 
 .article-file-menu[hidden] {

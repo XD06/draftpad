@@ -359,6 +359,92 @@ const wait = (port, t = 25000) => new Promise((res, rej) => {
     check('移动端切回渲染后视线保持', Math.abs(mBefore.pageFrac - mBack.pageFrac) < 0.05, { before: mBefore.pageFrac, back: mBack.pageFrac });
     await p5.close();
 
+    // ===== F. 移动端：关键盘后带着光标切换（真机报告「光标还在、视线被重置到顶」） =====
+    // 与 E 段的差别：E 段无焦点无光标（纯比例路径）；真机的形态是「用户刚在
+    // 编辑（有可信光标）、关键盘、再点切换」。两股会重置视线的滚动只在移动
+    // 形态暴露：textarea.focus 的默认滚动对准元素盒（内容等高，一次拽到底）、
+    // 编辑器聚焦时 PM scrollIntoView 把光标怼到视口顶缘（实测 y≈5）。桌面点
+    // 按钮会先失焦，正好绕开这两条路——所以必须用聚焦 + 光标 + 假键盘几何
+    // （--dumbpad-vvh 与 keyboard-open，等价 app.js 的 vv handler 落到的几何）
+    // 在移动视口里复现。断言：光标落在可见带内（不贴顶不贴底、不被甩出屏）。
+    const p6 = await browser.newPage({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true });
+    await p6.goto(`http://127.0.0.1:${PORT}/`, { waitUntil: 'networkidle' });
+    await p6.waitForTimeout(2500);
+    await p6.evaluate(() => {
+      const item = [...document.querySelectorAll('#directory-tree .dir-item')]
+        .find(el => el.textContent.includes('Long Scroll'));
+      item.click();
+    });
+    await p6.waitForTimeout(2000);
+    // 光标放到小节 100（约 83% 处）并聚焦编辑器，模拟「正在编辑」
+    await p6.evaluate(() => {
+      const heads = [...document.querySelectorAll('.tiptap h2')];
+      const target = heads.find(h => h.textContent.includes('100'));
+      target.scrollIntoView({ block: 'center' });
+      const ed = document.querySelector('.tiptap');
+      ed.focus();
+      const range = document.createRange();
+      range.selectNodeContents(target);
+      range.collapse(true);
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+    });
+    await p6.waitForTimeout(400);
+    // 假键盘开→关（不动真实 vv：量的是切换链路对几何变化的鲁棒性）
+    await p6.evaluate(() => {
+      document.documentElement.style.setProperty('--dumbpad-vvh', '420px');
+      document.documentElement.classList.add('keyboard-open');
+    });
+    await p6.waitForTimeout(300);
+    await p6.evaluate(() => {
+      document.documentElement.style.removeProperty('--dumbpad-vvh');
+      document.documentElement.classList.remove('keyboard-open');
+    });
+    await p6.waitForTimeout(300);
+    const caretProbe6 = () => p6.evaluate(() => {
+      const page = document.scrollingElement;
+      const max = page.scrollHeight - page.clientHeight;
+      const ta = document.querySelector('.tiptap-source-textarea');
+      let caretY = null;
+      if (ta && getComputedStyle(ta).display !== 'none') {
+        // textarea 自身不滚（高度由内容撑开）：用镜像法量光标行的视口纵坐标
+        const before = ta.value.slice(0, ta.selectionStart || 0);
+        const cs = getComputedStyle(ta);
+        const mirror = document.createElement('div');
+        Object.assign(mirror.style, {
+          position: 'absolute', left: '-99999px', visibility: 'hidden',
+          width: ta.clientWidth + 'px', font: cs.font, lineHeight: cs.lineHeight,
+          whiteSpace: 'pre-wrap', wordBreak: cs.wordBreak, padding: '0', boxSizing: 'content-box',
+        });
+        mirror.textContent = before;
+        const marker = document.createElement('span');
+        marker.textContent = '\u200b';
+        mirror.appendChild(marker);
+        document.body.appendChild(mirror);
+        caretY = Math.round(ta.getBoundingClientRect().top + (parseFloat(cs.paddingTop) || 0) + marker.offsetTop);
+        mirror.remove();
+      } else {
+        const sel = window.getSelection();
+        caretY = sel && sel.rangeCount ? Math.round(sel.getRangeAt(0).getBoundingClientRect().top) : null;
+      }
+      return { caretY, frac: max > 0 ? +(page.scrollTop / max).toFixed(3) : 0 };
+    });
+    const mToggle6 = () => p6.evaluate(() => document.getElementById('toggle-source-mode').click());
+    await mToggle6();
+    await p6.waitForTimeout(1600);
+    const fSource = await caretProbe6();
+    check('移动端带光标进源码：光标落在可见带内（不被甩出屏）',
+        fSource.caretY !== null && fSource.caretY > 84 && fSource.caretY < 760, fSource);
+    check('移动端带光标进源码：视线不在顶部（比例保持）', fSource.frac > 0.2, fSource);
+    await mToggle6();
+    await p6.waitForTimeout(1600);
+    const fBack = await caretProbe6();
+    check('移动端带光标切回渲染：光标在可见带内（不被怼到顶缘）',
+        fBack.caretY !== null && fBack.caretY > 84 && fBack.caretY < 760, fBack);
+    check('移动端带光标切回渲染：视线不在顶部（比例保持）', fBack.frac > 0.2, fBack);
+    await p6.close();
+
     report();
     process.exitCode = failed ? 1 : 0;
   } catch (e) {

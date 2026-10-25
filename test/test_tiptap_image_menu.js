@@ -77,6 +77,14 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function main() {
     const { HybridMarkdownEditor } = await import('../public/tiptap-editor.js');
+    // 菜单视口夹取与键盘重夹依赖 visualViewport；jsdom 没有，用 EventTarget 造
+    // 一个（宽高与 jsdom 默认 innerWidth/innerHeight 一致，前面各节行为不变，
+    // 10d 里再改小模拟软键盘）。必须在编辑器创建前定义：交互层的 resize
+    // 监听是构造时注册的。
+    const fakeViewport = new dom.window.EventTarget();
+    fakeViewport.width = dom.window.innerWidth;
+    fakeViewport.height = dom.window.innerHeight;
+    Object.defineProperty(dom.window, 'visualViewport', { value: fakeViewport, configurable: true });
     const container = document.createElement('div');
     document.body.appendChild(container);
     const editor = new HybridMarkdownEditor(container, {});
@@ -479,6 +487,63 @@ async function main() {
     nestedImageEl().dispatchEvent(pointerEvent('pointerup', { clientX: 5, clientY: 5, pointerType: 'touch' }));
     await wait(30);
     check('nested image touch tap opens size menu via pointerup', sizeMenu().hidden === false);
+
+    /* ---- 10c. 真机夺焦兜底：按下时无焦点、抬起前焦点被偷（个别移动浏览器的
+       触摸默认行为，桌面 Chromium 的 preventDefault 仿真不出这条路）→ 抬起时
+       把焦点还回去（真机=键盘收起、菜单不被顶到键盘后），菜单照开；
+       按下时就聚焦（用户正打字）→ 不动焦点，不收用户的键盘 ---- */
+    document.body.dispatchEvent(new dom.window.MouseEvent('mousedown', { bubbles: true }));
+    await wait(20);
+    check('menu closed before stolen-focus tap', sizeMenu().hidden === true);
+    // 前面小节的 click/undo 会让 PM 顺手聚焦编辑器；这里清掉，模拟「键盘收起、
+    // 用户没在打字」的点按起点。
+    if (document.activeElement && document.activeElement !== document.body && document.activeElement.blur) {
+        document.activeElement.blur();
+    }
+    imageEl().dispatchEvent(pointerEvent('pointerdown', { clientX: 5, clientY: 5, pointerType: 'touch' }));
+    check('editor not focused at pointerdown', editor.editor.view.hasFocus() === false);
+    // 模拟真机：pointerdown 的 preventDefault 之外的默认路径仍把焦点交给编辑器
+    contentRoot().focus();
+    check('focus stolen between down and up', editor.editor.view.hasFocus() === true);
+    imageEl().dispatchEvent(pointerEvent('pointerup', { clientX: 5, clientY: 5, pointerType: 'touch' }));
+    await wait(30);
+    check('stolen focus is released after tap', editor.editor.view.hasFocus() === false);
+    check('size menu still opens when focus was stolen', sizeMenu().hidden === false);
+
+    document.body.dispatchEvent(new dom.window.MouseEvent('mousedown', { bubbles: true }));
+    await wait(20);
+    contentRoot().focus();
+    imageEl().dispatchEvent(pointerEvent('pointerdown', { clientX: 5, clientY: 5, pointerType: 'touch' }));
+    imageEl().dispatchEvent(pointerEvent('pointerup', { clientX: 5, clientY: 5, pointerType: 'touch' }));
+    await wait(30);
+    check('existing focus is kept while typing', editor.editor.view.hasFocus() === true);
+    check('size menu opens while editor focused', sizeMenu().hidden === false);
+
+    /* ---- 10d. 菜单按 visualViewport 夹取：软键盘只缩 vv（iOS 的 innerHeight
+       不随键盘变），菜单必须落在可见区内；键盘开合（vv resize）按锚元素重夹 ---- */
+    document.body.dispatchEvent(new dom.window.MouseEvent('mousedown', { bubbles: true }));
+    await wait(20);
+    fakeViewport.width = 390;
+    fakeViewport.height = 420;
+    const realImageRect = imageEl().getBoundingClientRect;
+    // 可见高度 420，图片下缘在 500（下半屏）：未夹取时菜单会落到 508（键盘后面）
+    imageEl().getBoundingClientRect = () => ({ left: 0, top: 480, right: 390, bottom: 500, width: 390, height: 20 });
+    imageEl().dispatchEvent(pointerEvent('pointerdown', { clientX: 195, clientY: 490, pointerType: 'touch' }));
+    imageEl().dispatchEvent(pointerEvent('pointerup', { clientX: 195, clientY: 490, pointerType: 'touch' }));
+    await wait(30);
+    // jsdom 无布局：菜单高度走 fallback 40，可见区底部夹取 = 420 - 40 - 10 = 370
+    check('size menu clamps inside visual viewport (keyboard open)',
+        sizeMenu().hidden === false && Number.parseInt(sizeMenu().style.top, 10) <= 370,
+        sizeMenu().style.top);
+    // 键盘收起：vv 恢复 844 → resize → 按锚元素重夹回 508
+    fakeViewport.height = 844;
+    fakeViewport.dispatchEvent(new dom.window.Event('resize'));
+    await wait(30);
+    check('menu re-clamps on visualViewport resize (keyboard closed)',
+        Number.parseInt(sizeMenu().style.top, 10) === 508, sizeMenu().style.top);
+    imageEl().getBoundingClientRect = realImageRect;
+    fakeViewport.width = dom.window.innerWidth;
+    fakeViewport.height = dom.window.innerHeight;
 
     // 9d) 目标块是空段落（文末图片 → trailingNode 补的空段落）：落点必须是块边界，
     // 解析成 null 会让拖拽静默失效（posAtDOM 对非叶子块返回的是「块内容起点」）。
