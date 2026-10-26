@@ -122,7 +122,7 @@ export function computeNotepadActivityStats(notepads = [], { now = Date.now(), w
       if (row === 0) {
         const month = cellDate.getMonth();
         if (month !== lastMonth) {
-          if (col - lastLabelCol >= 2) {
+          if (col - lastLabelCol >= 3) {
             monthLabels.push({ colIndex: col, label: MONTH_SHORT_NAMES[month] });
             lastLabelCol = col;
           }

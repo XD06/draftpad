@@ -3703,7 +3703,7 @@ main {
 }
 
 .settings-heatmap-cell.is-future {
-    opacity: 0.25;
+    visibility: hidden;
     pointer-events: none;
     cursor: default;
 }

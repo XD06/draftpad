@@ -3348,7 +3348,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (settingsHeatmapMonths) {
             settingsHeatmapMonths.style.gridTemplateColumns = `repeat(${stats.weekCount}, 11px)`;
             settingsHeatmapMonths.innerHTML = stats.monthLabels.map(item => (
-                `<span style="grid-column-start:${item.colIndex + 1}">${escapeHtml(item.label)}</span>`
+                `<span style="grid-column:${item.colIndex + 1} / span 3">${escapeHtml(item.label)}</span>`
             )).join('');
         }
 
