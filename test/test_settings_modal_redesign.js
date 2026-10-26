@@ -146,7 +146,8 @@ function runDomAndCssContractTests() {
         'settings-stat-active-days',
         'settings-stat-recent-notes',
         'settings-heatmap-months',
-        'settings-heatmap-grid'
+        'settings-heatmap-grid',
+        'settings-heatmap-popover'
     ];
 
     for (const id of requiredIds) {
@@ -171,6 +172,16 @@ function runDomAndCssContractTests() {
         stylesCss,
         /@media\s*\(max-width:\s*980px\)\s*\{[\s\S]*?\.settings-nav\s*\{[\s\S]*?grid-template-columns:\s*repeat\(4,\s*minmax\(0,\s*1fr\)\);/,
         'Mobile settings navigation should use Scheme C 4-column top segmented bar'
+    );
+    assert.match(
+        stylesCss,
+        /\.settings-heatmap-popover\s*\{[\s\S]*?position:\s*absolute;/,
+        'heatmap should have floating popover for cell tap/hover'
+    );
+    assert.match(
+        stylesCss,
+        /\.settings-heatmap-canvas\s*\{[\s\S]*?padding:\s*2px\s+4px\s+2px\s+2px;/,
+        'heatmap canvas must maintain safe padding to avoid scaling clipping on edge cells'
     );
 }
 

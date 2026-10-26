@@ -1279,7 +1279,7 @@ main {
 }
 
 #settings-modal .modal-content {
-    max-width: min(760px, calc(100vw - 32px));
+    max-width: min(800px, calc(100vw - 32px));
     max-height: min(86vh, 820px);
     overflow-y: auto;
 }
@@ -3334,7 +3334,7 @@ main {
 #settings-modal .modal-content {
     display: flex;
     flex-direction: column;
-    width: min(780px, 92vw);
+    width: min(800px, 92vw);
     height: min(88vh, 710px);
     overflow: hidden;
 }
@@ -3550,18 +3550,30 @@ main {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 10px;
-    flex-wrap: wrap;
+    gap: 8px;
+    min-height: 28px;
 }
 
 .settings-heatmap-headline {
     font-size: 13px;
     color: var(--text-color);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+    flex: 1 1 auto;
+    line-height: 28px;
 }
 
 .settings-heatmap-headline strong {
     font-weight: 700;
     font-variant-numeric: tabular-nums;
+}
+
+.settings-heatmap-period {
+    color: var(--muted-text);
+    font-size: 11.5px;
+    font-weight: 400;
 }
 
 .settings-heatmap-modes {
@@ -3572,6 +3584,7 @@ main {
     border-radius: 8px;
     background: color-mix(in srgb, var(--bg-color) 75%, var(--textarea-bg));
     border: 1px solid var(--border-color);
+    flex-shrink: 0;
 }
 
 .settings-heatmap-mode-btn {
@@ -3618,7 +3631,8 @@ main {
     overflow-x: auto;
     overflow-y: hidden;
     scrollbar-width: none;
-    padding-bottom: 2px;
+    padding: 4px 6px;
+    position: relative;
 }
 
 .settings-heatmap-scroll::-webkit-scrollbar {
@@ -3630,6 +3644,8 @@ main {
     flex-direction: column;
     gap: 4px;
     min-width: max-content;
+    padding: 2px 4px 2px 2px;
+    position: relative;
 }
 
 .settings-heatmap-months {
@@ -3644,6 +3660,7 @@ main {
 
 .settings-heatmap-months span {
     white-space: nowrap;
+    overflow: visible;
 }
 
 .settings-heatmap-weekdays {
@@ -3651,7 +3668,7 @@ main {
     grid-template-rows: repeat(7, 11px);
     row-gap: 3px;
     width: 24px;
-    padding-top: 18px;
+    padding-top: 20px;
     font-size: 10px;
     line-height: 11px;
     color: var(--muted-text);
@@ -3671,11 +3688,13 @@ main {
     width: 11px;
     height: 11px;
     aspect-ratio: 1 / 1;
-    border-radius: 2px;
+    border-radius: 2.5px;
     background: color-mix(in srgb, var(--text-color) 7%, var(--bg-color));
     outline: 1px solid rgba(27, 31, 35, 0.04);
     outline-offset: -1px;
-    transition: transform 0.1s ease;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    transition: transform 0.12s ease, outline 0.12s ease, box-shadow 0.12s ease;
 }
 
 [data-theme="dark"] .settings-heatmap-cell {
@@ -3686,12 +3705,80 @@ main {
 .settings-heatmap-cell.is-future {
     opacity: 0.25;
     pointer-events: none;
+    cursor: default;
 }
 
-.settings-heatmap-cell:hover {
-    transform: scale(1.25);
-    z-index: 2;
+.settings-heatmap-cell:hover,
+.settings-heatmap-cell.is-selected {
+    transform: scale(1.22);
+    z-index: 5;
     outline: 1.5px solid var(--primary-color);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+}
+
+.settings-heatmap-popover {
+    position: absolute;
+    z-index: 10;
+    pointer-events: none;
+    display: inline-flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    padding: 5px 9px;
+    border-radius: 7px;
+    background: rgba(30, 32, 35, 0.94);
+    color: #fff;
+    font-size: 11px;
+    line-height: 1.25;
+    white-space: nowrap;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    transform: translate(-50%, -100%);
+    margin-top: -6px;
+    transition: opacity 0.12s ease, transform 0.12s ease;
+    opacity: 1;
+}
+
+.settings-heatmap-popover::after {
+    content: '';
+    position: absolute;
+    bottom: -4px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 0;
+    height: 0;
+    border-left: 5px solid transparent;
+    border-right: 5px solid transparent;
+    border-top: 5px solid rgba(30, 32, 35, 0.94);
+}
+
+.settings-heatmap-popover.is-below {
+    transform: translate(-50%, 0);
+    margin-top: 18px;
+}
+
+.settings-heatmap-popover.is-below::after {
+    bottom: auto;
+    top: -4px;
+    border-top: none;
+    border-bottom: 5px solid rgba(30, 32, 35, 0.94);
+}
+
+.settings-heatmap-popover[hidden] {
+    display: none !important;
+    opacity: 0;
+}
+
+.settings-heatmap-popover-date {
+    font-weight: 600;
+    color: #f7df1e;
+    font-size: 10.5px;
+}
+
+.settings-heatmap-popover-detail {
+    font-size: 10.5px;
+    color: #f0f0f0;
 }
 
 .settings-heatmap-cell[data-level="1"],

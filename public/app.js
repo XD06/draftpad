@@ -413,6 +413,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     const settingsHeatmapGrid = document.getElementById('settings-heatmap-grid');
     const settingsHeatmapScroll = document.getElementById('settings-heatmap-scroll');
     const settingsHeatmapCaption = document.getElementById('settings-heatmap-caption');
+    const settingsHeatmapPopover = document.getElementById('settings-heatmap-popover');
+    const settingsHeatmapPopoverDate = document.getElementById('settings-heatmap-popover-date');
+    const settingsHeatmapPopoverDetail = document.getElementById('settings-heatmap-popover-detail');
+    let selectedHeatmapCell = null;
+    let defaultHeatmapCaptionText = '';
     let currentSettingsTab = 'overview';
     let currentSettingsHeatmapMode = 'all';
     const selectedAssetIds = new Set();
@@ -3206,7 +3211,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     function openSettingsModal(options = {}) {
         settingsManager.loadSettings();
         switchSettingsTab(options.focusSyncPanel ? 'sync' : (options.tab || currentSettingsTab || 'overview'));
-        renderSettingsActivityStats();
+        renderSettingsActivityStats({ initialScroll: true });
         updateSettingsConflictSection();
         void reconcileCurrentNote('settings', { force: true }).then(() => updateSettingsConflictSection());
         refreshCloudStatus(false);
@@ -3263,7 +3268,64 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     }
 
-    function renderSettingsActivityStats() {
+    function selectHeatmapCell(cellEl, toggleOffIfActive = true) {
+        if (!cellEl || cellEl.classList.contains('is-future')) {
+            hideHeatmapPopover();
+            return;
+        }
+        if (toggleOffIfActive && selectedHeatmapCell === cellEl) {
+            hideHeatmapPopover();
+            return;
+        }
+        if (selectedHeatmapCell) {
+            selectedHeatmapCell.classList.remove('is-selected');
+        }
+        selectedHeatmapCell = cellEl;
+        cellEl.classList.add('is-selected');
+
+        const dateKey = cellEl.dataset.date || '';
+        const created = Number(cellEl.dataset.created) || 0;
+        const updated = Number(cellEl.dataset.updated) || 0;
+        const edits = Number(cellEl.dataset.edits) || 0;
+
+        const parts = [];
+        if (created > 0) parts.push(`新建 ${created} 篇`);
+        if (updated > 0) parts.push(`更新 ${updated} 篇`);
+        if (edits > 0) parts.push(`修改 ${edits} 次`);
+        const detailText = parts.length > 0 ? parts.join(' · ') : '无记录';
+
+        if (settingsHeatmapPopover && settingsHeatmapPopoverDate && settingsHeatmapPopoverDetail) {
+            settingsHeatmapPopoverDate.textContent = dateKey;
+            settingsHeatmapPopoverDetail.textContent = detailText;
+            settingsHeatmapPopover.hidden = false;
+
+            const cellLeft = cellEl.offsetLeft + cellEl.offsetWidth / 2;
+            const cellTop = cellEl.offsetTop;
+            settingsHeatmapPopover.style.left = `${cellLeft}px`;
+            settingsHeatmapPopover.style.top = `${cellTop}px`;
+            const isNearTop = cellEl.offsetTop < 28;
+            settingsHeatmapPopover.classList.toggle('is-below', isNearTop);
+        }
+
+        if (settingsHeatmapCaption) {
+            settingsHeatmapCaption.innerHTML = `<strong>${escapeHtml(dateKey)}</strong>：${escapeHtml(detailText)}`;
+        }
+    }
+
+    function hideHeatmapPopover() {
+        if (selectedHeatmapCell) {
+            selectedHeatmapCell.classList.remove('is-selected');
+            selectedHeatmapCell = null;
+        }
+        if (settingsHeatmapPopover) {
+            settingsHeatmapPopover.hidden = true;
+        }
+        if (settingsHeatmapCaption && defaultHeatmapCaptionText) {
+            settingsHeatmapCaption.textContent = defaultHeatmapCaptionText;
+        }
+    }
+
+    function renderSettingsActivityStats(options = {}) {
         if (!settingsHeatmapGrid || typeof SettingsManager.computeNotepadActivityStats !== 'function') return;
         const stats = SettingsManager.computeNotepadActivityStats(currentNotepads, {
             weeks: 31,
@@ -3276,11 +3338,11 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         if (settingsHeatmapHeadline) {
             const modeText = stats.mode === 'edits'
-                ? '次修改与更新记录'
+                ? '次修改更新'
                 : stats.mode === 'created'
-                    ? '篇新建文章记录'
-                    : '次创作活跃记录';
-            settingsHeatmapHeadline.innerHTML = `<strong id="settings-heatmap-total">${stats.windowContributions}</strong> ${modeText}（近 ${stats.weekCount} 周）`;
+                    ? '篇新建文章'
+                    : '次创作活跃';
+            settingsHeatmapHeadline.innerHTML = `<strong id="settings-heatmap-total">${stats.windowContributions}</strong> ${modeText} <span class="settings-heatmap-period">· 近 ${stats.weekCount} 周</span>`;
         }
 
         if (settingsHeatmapMonths) {
@@ -3290,19 +3352,32 @@ document.addEventListener('DOMContentLoaded', async () => {
             )).join('');
         }
 
+        const prevSelectedDate = selectedHeatmapCell?.dataset?.date;
+        selectedHeatmapCell = null;
+        if (settingsHeatmapPopover) settingsHeatmapPopover.hidden = true;
+
         settingsHeatmapGrid.style.gridTemplateColumns = `repeat(${stats.weekCount}, 11px)`;
         settingsHeatmapGrid.innerHTML = stats.cells.map(cell => (
-            `<span class="settings-heatmap-cell${cell.isFuture ? ' is-future' : ''}" data-level="${cell.level}" data-date="${escapeHtml(cell.dateKey)}" title="${escapeHtml(cell.tooltip)}"></span>`
+            `<span class="settings-heatmap-cell${cell.isFuture ? ' is-future' : ''}" role="gridcell" tabindex="${cell.isFuture ? '-1' : '0'}" data-level="${cell.level}" data-date="${escapeHtml(cell.dateKey)}" data-created="${cell.created}" data-updated="${cell.updated}" data-edits="${cell.edits}" data-score="${cell.score}" title="${escapeHtml(cell.tooltip)}" aria-label="${escapeHtml(cell.tooltip)}"></span>`
         )).join('');
 
+        if (stats.latestNotepad) {
+            const editsText = stats.latestNotepad.editCount > 0
+                ? ` · 累计修改 ${stats.latestNotepad.editCount} 次`
+                : '';
+            defaultHeatmapCaptionText = `最近更新：《${stats.latestNotepad.name}》${editsText}`;
+        } else {
+            defaultHeatmapCaptionText = '基于文章创建、更新与修改次数统计';
+        }
         if (settingsHeatmapCaption) {
-            if (stats.latestNotepad) {
-                const editsText = stats.latestNotepad.editCount > 0
-                    ? ` · 累计修改 ${stats.latestNotepad.editCount} 次`
-                    : '';
-                settingsHeatmapCaption.textContent = `最近更新：《${stats.latestNotepad.name}》${editsText}`;
-            } else {
-                settingsHeatmapCaption.textContent = '基于文章创建、更新与修改次数统计';
+            settingsHeatmapCaption.textContent = defaultHeatmapCaptionText;
+        }
+
+        // Restore previously selected cell if still in view
+        if (prevSelectedDate) {
+            const restoredCell = settingsHeatmapGrid.querySelector(`[data-date="${prevSelectedDate}"]`);
+            if (restoredCell && !restoredCell.classList.contains('is-future')) {
+                selectHeatmapCell(restoredCell, false);
             }
         }
 
@@ -3311,9 +3386,15 @@ document.addEventListener('DOMContentLoaded', async () => {
                 btn.classList.toggle('is-active', btn.dataset.heatmapMode === currentSettingsHeatmapMode);
             });
         }
-        if (settingsHeatmapScroll) {
+
+        // Only auto-scroll to the right on initial modal open and only when there is substantial overflow
+        if (settingsHeatmapScroll && options.initialScroll) {
             requestAnimationFrame(() => {
-                settingsHeatmapScroll.scrollLeft = settingsHeatmapScroll.scrollWidth;
+                if (settingsHeatmapScroll.scrollWidth > settingsHeatmapScroll.clientWidth + 24) {
+                    settingsHeatmapScroll.scrollLeft = settingsHeatmapScroll.scrollWidth;
+                } else {
+                    settingsHeatmapScroll.scrollLeft = 0;
+                }
             });
         }
     }
@@ -3736,6 +3817,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     function hideModal(modal, msg) {
+        if (modal === settingsModal) {
+            hideHeatmapPopover();
+        }
         modal.classList.remove('visible');
         if (msg) toaster.show(msg);
         editor.focus();
@@ -3935,7 +4019,29 @@ document.addEventListener('DOMContentLoaded', async () => {
                 const modeBtn = event.target.closest?.('[data-heatmap-mode]');
                 if (modeBtn?.dataset.heatmapMode) {
                     currentSettingsHeatmapMode = modeBtn.dataset.heatmapMode;
-                    renderSettingsActivityStats();
+                    renderSettingsActivityStats({ initialScroll: false });
+                    return;
+                }
+                const cellBtn = event.target.closest?.('.settings-heatmap-cell');
+                if (cellBtn) {
+                    selectHeatmapCell(cellBtn);
+                    return;
+                }
+                if (!event.target.closest?.('#settings-heatmap-popover')) {
+                    hideHeatmapPopover();
+                }
+            });
+        }
+        if (settingsHeatmapGrid) {
+            settingsHeatmapGrid.addEventListener('keydown', (event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                    const cell = event.target.closest?.('.settings-heatmap-cell');
+                    if (cell) {
+                        event.preventDefault();
+                        selectHeatmapCell(cell);
+                    }
+                } else if (event.key === 'Escape') {
+                    hideHeatmapPopover();
                 }
             });
         }
