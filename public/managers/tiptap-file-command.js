@@ -115,7 +115,8 @@ function renderUploadCardWidgetDom(item, view) {
     return card;
 }
 
-function updateUploadProgress(item, progress = {}) {
+// 也被 tiptap-image-paste.js 复用：粘贴上传共用同一套卡片与状态更新。
+export function updateUploadProgress(item, progress = {}) {
     if (progress.phase) item.phase = progress.phase;
     if (typeof progress.percent === 'number') item.percent = progress.percent;
     if (typeof progress.total === 'number') item.total = progress.total;
