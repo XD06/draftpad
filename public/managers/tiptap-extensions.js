@@ -4,7 +4,7 @@
  * restoreAllRenderedMarks / renderInlineMarks 与 time-command.js），
  * roundtrip 兼容由 test/test_tiptap_roundtrip.js 固化，改动前先读它。
  */
-import { Mark, Node, Extension, TaskList, TaskItem, InputRule, findParentNode, CodeBlockLowlight, Underline, PM } from './tiptap-runtime.js';
+import { Mark, Node, Extension, TaskList, TaskItem, InputRule, findParentNode, CodeBlockLowlight, Underline, PM, getMarkdownSpec } from './tiptap-runtime.js';
 import { TIME_COMMAND, parseTimeMarkerText, buildTimeMarker } from './time-command.js';
 import { buildCodeBlockNodeView } from './tiptap-code-block-view.js';
 import { buildTaskItemNodeView } from './tiptap-task-item-view.js';
@@ -1382,6 +1382,114 @@ export const DumbPadTaskList = TaskList.extend({
     },
 });
 
+/**
+ * 待办三态（进行中 = `- [~] `）。
+ *
+ * markdown-it 只认 `[ ]`/`[x]` 做任务标记，`[~] ` 会原样留在列表项首段文本里：
+ * 条目落到编辑器是普通列表项 + 字面 "[~] "，`getValue()` 再把它转义成
+ * `- \[~\~\] 甲`——保存即改坏文档。本扩展在**解析期**把它还原成任务项：
+ *
+ * 1. `setup` 在 markdown-it 的 `inline` 之后、`github-task-lists` 之前，把列表项
+ *    首段开头的 `[~]` 改写成 `[ ] `（只动 token，不碰源码），并往正文塞一个
+ *    零宽哨兵——改写后内核插件才认，而 `updateDOM` 阶段复选框信息已被内核吃
+ *    掉，只有哨兵能把「进行中」与普通未完成区分开；
+ * 2. `updateDOM` 就地把带哨兵的条目改成进行中任务项（`data-doing="true"`），
+ *    随后把哨兵从文本节点里删掉，文档里不留痕；
+ * 3. `DumbPadTaskItem`（同文件）把 `doing` 声明成节点属性：parseHTML 只认第 2 步
+ *    盖的 data-doing，renderHTML 不输出；序列化器按 `doing` 输出 `[~] `，其余
+ *    一律回落到内核的 `[x]`/`[ ]`。
+ *
+ * 口径与内核 `[ ]` 任务标记一致：`[~] 甲`（带空格）/ 空标记 `[~]` 才算待办，
+ * `[~]甲`（粘连）仍是字面文本。嵌套条目同样生效。为什么走独立扩展而不覆盖
+ * DumbPadTaskItem 的 addStorage：内核收集 markdown 配置是浅合并，覆盖 parse 会
+ * 连 setup（`[ ]` 识别全靠它）一起挤掉；updateDOM 按扩展注册顺序执行，本扩展
+ * 紧跟 DumbPadTaskList 之后。
+ */
+const installedDoingTaskItemRules = new WeakSet();
+
+// 首段开头的 `[~]`（后接空格或行尾）；粘连的 `[~]甲` 不算标记。
+const DOING_TASK_MARK_LEAD_RE = /^\[~\] /;
+const DOING_TASK_MARK_BARE_RE = /^\[~\]$/;
+// 解析期的零宽哨兵（U+2063 不可见分隔符）：文本节点能携带、上屏不可见，
+// updateDOM 读完即删。
+const DOING_SENTINEL = '\u2063';
+
+/** 哨兵是否落在本 li 的**自有**文本里（子列表属于子级 li，不算）。 */
+function liHasOwnSentinel(listItem) {
+    for (let node = listItem.firstChild; node; node = node.nextSibling) {
+        if (node.nodeType === 3 && node.nodeValue.includes(DOING_SENTINEL)) return true;
+        // 条目正文在自己的 ul/ol 之前（子列表之后的内容属于下层条目）。
+        if (node.nodeType === 1 && /^(UL|OL)$/.test(node.nodeName)) break;
+        if (node.nodeType === 1 && node.textContent.includes(DOING_SENTINEL)) return true;
+    }
+    return false;
+}
+
+/**
+ * 把首段开头的 `[~]` 换成 `[ ] `，并在正文最前面塞一个零宽哨兵。
+ *
+ * 两处必须同时改：内核插件只看 `inline.content` 的前缀，渲染器又只认
+ * `inline.content` 里的源码——所以 content 只替换**前缀这几个字符**，正文
+ * 原样保留（整串重写会把 `**粗体**` 这类行内语法一起吃掉）。哨兵走 text
+ * 子节点：html_inline 会被渲染器拆掉尖括号，只有文本能活到 updateDOM。
+ */
+function rewriteDoingTaskItemTokens(state) {
+    const tokens = state.tokens;
+    for (let index = 2; index < tokens.length; index += 1) {
+        const token = tokens[index];
+        if (token.type !== 'inline'
+            || tokens[index - 1]?.type !== 'paragraph_open'
+            || tokens[index - 2]?.type !== 'list_item_open') continue;
+        const first = token.children?.[0];
+        if (!first || first.type !== 'text') continue;
+        if (!DOING_TASK_MARK_LEAD_RE.test(first.content) && !DOING_TASK_MARK_BARE_RE.test(first.content)) continue;
+        // 只换**前缀那几个字符**，正文源码原样保留（整串重写会吃掉 `**`/`` ` ``）。
+        // 标记 → 内核的 `[ ] `：插件只认这个带尾随空格的前缀；裸标记 `[~]`
+        // 没正文，补成 `[ ] `。哨兵放在 `[ ] ` 之后（插件只看前缀）。
+        token.content = token.content.replace(/^\[~\] ?/, '[ ] ');
+        first.content = `[ ] ${DOING_SENTINEL}${first.content.slice('[~]'.length).replace(/^ /, '')}`;
+    }
+}
+
+export const DumbPadDoingTaskItem = Extension.create({
+    name: 'dumbpadDoingTaskItem',
+
+    addStorage() {
+        return {
+            markdown: {
+                parse: {
+                    setup(markdownit) {
+                        if (installedDoingTaskItemRules.has(markdownit)) return;
+                        installedDoingTaskItemRules.add(markdownit);
+                        const rules = markdownit.core.ruler.__rules__;
+                        if (rules.some(rule => rule.name === 'github-task-lists')) {
+                            markdownit.core.ruler.before('github-task-lists', 'dumbpad_doing_task_item', rewriteDoingTaskItemTokens);
+                        } else {
+                            markdownit.core.ruler.after('inline', 'dumbpad_doing_task_item', rewriteDoingTaskItemTokens);
+                        }
+                    },
+                    updateDOM: (element) => {
+                        // 哨兵在 li 的**首个文本**里（紧跟内核复选框之后）；取该 li
+                        // 的「自有」文本块判断，父级不会误认子级的哨兵。
+                        // 先收集再清理：清理会删掉哨兵本身。
+                        const marking = Array.from(element.querySelectorAll('li'))
+                            .filter(listItem => liHasOwnSentinel(listItem));
+                        marking.forEach(listItem => listItem.setAttribute('data-doing', 'true'));
+                        // 只删哨兵所在的文本节点里的这几个字符：整段 textContent
+                        // 回写会把粗体/行内代码等子元素全部抹平。
+                        const walker = element.ownerDocument.createTreeWalker(element, 4);
+                        for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+                            if (node.nodeValue.includes(DOING_SENTINEL)) {
+                                node.nodeValue = node.nodeValue.replaceAll(DOING_SENTINEL, '');
+                            }
+                        }
+                    },
+                },
+            },
+        };
+    },
+});
+
 const installedEmptyTaskItemRules = new WeakSet();
 
 /**
@@ -1407,7 +1515,7 @@ function padEmptyTaskItemTokens(state) {
         const inline = tokens[index];
         const first = inline.children?.[0];
         if (!first || first.type !== 'text') continue;
-        if (!/^\[[ xX]\]$/.test(first.content)) continue;
+        if (!/^\[[ xX~]\]$/.test(first.content)) continue;
         first.content = `${first.content} `;
         inline.content = `${inline.content} `;
     }
@@ -1568,26 +1676,28 @@ export const DumbPadMixedTaskListGuard = Extension.create({
     },
 });
 
-/** 待办输入（Typora 流程，列表内）：无序列表项里输入 "[ ]"/"[x]" 再按
+/** 待办输入（Typora 流程，列表内）：无序列表项里输入 "[ ]"/"[x]"/"[~]" 再按
  * 空格，把当前列表转成任务列表。官方 TaskItem 的 input rule 只覆盖顶层
  * 普通段落（listItem 的 contentMatch 无法 findWrapping 到 taskItem），
  * 这里只接管列表内场景：删除括号文本后完全交给框架命令
- * toggleList('taskList', 'taskItem') 完成转换，不手写节点构造与光标计算。 */
+ * toggleList('taskList', 'taskItem') 完成转换，不手写节点构造与光标计算。
+ * "[~] " 得到进行中（doing），属性由 DumbPadTaskItem 声明。 */
 export const TaskListInputShortcut = Extension.create({
     name: 'taskListInputShortcut',
 
     addInputRules() {
         return [
             new InputRule({
-                find: /\[([ xX])?\]\s$/,
+                find: /\[([ xX~])?\]\s$/,
                 handler: ({ state, range, chain, match }) => {
                     const listItem = findParentNode(node => node.type.name === 'listItem')(state.selection);
                     if (!listItem) return;
-                    const checked = (match[1] || '').toLowerCase() === 'x';
+                    const mark = (match[1] || '').toLowerCase();
+                    const checked = mark === 'x';
                     chain()
                         .deleteRange(range)
                         .toggleList('taskList', 'taskItem', false)
-                        .updateAttributes('taskItem', { checked })
+                        .updateAttributes('taskItem', { checked, doing: mark === '~' })
                         .run();
                 },
             }),
@@ -1608,9 +1718,50 @@ export const DumbPadCodeBlock = CodeBlockLowlight.extend({
 
 // 官方 TaskItem 的 change 处理器闭包 getPos 在真实应用中返回 undefined，
 // 勾选会静默丢失；换成自管视图（posAtDOM 反查位置）。
+// `doing`（进行中，对应 `- [~] `）只由 DumbPadDoingTaskItem 在解析期盖章，
+// 渲染面零 DOM 属性、markdown 只在 doing 时偏离内核写法，见该扩展注释。
 export const DumbPadTaskItem = TaskItem.extend({
+    // 不要覆盖官方 addAttributes（会把 checked 顶掉）：合并后再补 doing。
+    addAttributes() {
+        return {
+            ...this.parent?.(),
+            doing: {
+                default: false,
+                keepOnSplit: false,
+                parseHTML: element => element.getAttribute('data-doing') === 'true',
+                renderHTML: () => ({}),
+            },
+        };
+    },
+
     addNodeView() {
         return ({ node, view }) => buildTaskItemNodeView()({ node, view });
+    },
+
+    addStorage() {
+        // 内核 taskItem 的 markdown 规格（序列化器 + `.task-list-item` 解析钩子）
+        // 登记在 tiptap-markdown 的内置表里，**不在** TaskItem 扩展自身的 storage
+        // 上——要「只换序列化器、保住解析钩子」只能用 getMarkdownSpec 取这一份：
+        // addStorage 的返回值会整体替换默认 markdown 配置，而不是与它合并。
+        const coreMarkdown = getMarkdownSpec(TaskItem) ?? {};
+        const coreSerializer = coreMarkdown.serialize;
+        return {
+            markdown: {
+                ...coreMarkdown,
+                serialize(serializer, node) {
+                    // 进行中是纯加法：未进行中的条目继续走内核序列化器
+                    // （`[x]`/`[ ]`），不需要在这里复刻它的写法。
+                    if (node.attrs.doing && !node.attrs.checked) {
+                        // 与内核同形：列表标记 `- ` 由父级 taskList 写出，
+                        // 条目只写自己的标记。
+                        serializer.write('[~] ');
+                        serializer.renderContent(node);
+                        return;
+                    }
+                    return coreSerializer?.call(this, serializer, node);
+                },
+            },
+        };
     },
 });
 
@@ -1976,7 +2127,9 @@ export const DumbPadListBlankLineBackspace = Extension.create({
  * 只有当前一项（`- ` 刚转出来的新建态）。处理方式是**就地**把整条列表换成
  * 等价的 taskList（每个子节点原样搬进 taskItem），位置与嵌套层级都不变；
  * 多条目列表与顶层单条目列表仍走内核路径（内核对它们的拆分/转换语义正确）。
- * `[x] ` 变体同样接住（大小写沿用解析侧的宽窄约定，x/X 都认）。
+ * `[x] ` 变体同样接住（大小写沿用解析侧的宽窄约定，x/X 都认）；`[~] ` 也接，
+ * 但同样只认「新建态」，多条目列表里的 `[~] ` 仍交给 TaskListInputShortcut
+ * （它的范围更宽，捕获组多了 `~`）——这里不抢它的场景。
  *
  * 处理器先删匹配文本再在**删除后的文档**上重新定位列表跨度（删除会让列表
  * 终点前移），步骤数非空即视为已处理，runner 不再咨询内核规则。
@@ -1988,8 +2141,8 @@ export const DumbPadTaskItemInPlaceShortcut = Extension.create({
 
     addInputRules() {
         return [new InputRule({
-            find: /^\s*(\[([ xX])?\])\s$/,
-            handler: ({ state, range }) => {
+            find: /^\s*(\[([ xX~])?\])\s$/,
+            handler: ({ state, range, match }) => {
                 const { selection } = state;
                 if (!selection.empty) return null;
                 const { $from } = selection;
@@ -2015,6 +2168,7 @@ export const DumbPadTaskItemInPlaceShortcut = Extension.create({
                 const taskListType = state.schema.nodes.taskList;
                 const taskItemType = state.schema.nodes.taskItem;
                 if (!taskListType || !taskItemType) return null;
+                const mark = (match?.[2] || '').toLowerCase();
 
                 const tr = state.tr;
                 tr.delete(range.from, range.to);
@@ -2024,7 +2178,7 @@ export const DumbPadTaskItemInPlaceShortcut = Extension.create({
                 const listNode = $caret.node(listDepth);
                 const children = [];
                 listItem.forEach(child => children.push(child));
-                const taskItemNode = taskItemType.create({ checked: false }, children);
+                const taskItemNode = taskItemType.create({ checked: mark === 'x', doing: mark === '~' }, children);
                 const taskListNode = taskListType.create(
                     { tight: listNode.attrs.tight ?? true },
                     [taskItemNode],

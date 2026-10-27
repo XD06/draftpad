@@ -4,6 +4,12 @@
  * 应用中其返回值不可靠导致勾选静默丢失），改用 PM view.posAtDOM 从节点
  * 自身 DOM 反查文档位置后 setNodeMarkup。经扩展 addNodeView 挂载，
  * Tiptap 对象参数签名：({ node, view, getPos, decorations, innerDecorations })。
+ *
+ * 三态（未完成 / 进行中 / 已完成）：`checked` 仍是布尔（写进 markdown 的唯一
+ * 状态），`doing` 是节点属性（由解析期的 `- [~] ` 盖章），DOM 上只体现为
+ * input 的 `indeterminate` —— 它是运行时状态、不进 markdown，归属只由
+ * nodeView 管理。复选框语义与内核保持一致（勾 = 已完成、取消勾 = 未完成），
+ * 不把勾选改成三态循环：那样会让「取消勾选」在浏览器里行为反直觉。
  */
 export function buildTaskItemNodeView() {
     return ({ node, view }) => {
@@ -13,12 +19,21 @@ export function buildTaskItemNodeView() {
         const checkbox = document.createElement('input');
         const content = document.createElement('div');
 
+        /** 三态归一化：DOM 上只有 checked / indeterminate 两个布尔。 */
+        const syncState = (targetNode) => {
+            const checked = Boolean(targetNode?.attrs?.checked);
+            const doing = targetNode?.attrs?.doing === true;
+            checkbox.checked = checked;
+            checkbox.indeterminate = doing && !checked;
+            listItem.dataset.checked = checked;
+            listItem.dataset.doing = doing && !checked ? 'true' : 'false';
+        };
+
         checkbox.type = 'checkbox';
         checkbox.setAttribute('aria-label', `Task item checkbox for ${node.textContent || 'empty task item'}`);
         checkboxWrapper.contentEditable = 'false';
         checkbox.addEventListener('mousedown', (event) => event.preventDefault());
-        checkbox.addEventListener('change', (event) => {
-            const checked = event.target.checked;
+        checkbox.addEventListener('change', () => {
             // 节点视图可能因文档重建导致位置闭包失效，从当前 DOM 反查
             // taskItem 的活文档位置再 setNodeMarkup，保证勾选写入文档。
             const $pos = view.state.doc.resolve(view.posAtDOM(listItem, 0));
@@ -32,14 +47,16 @@ export function buildTaskItemNodeView() {
             if (taskItemPos < 0) return;
             const currentNode = view.state.doc.nodeAt(taskItemPos);
             if (!currentNode || currentNode.type.name !== 'taskItem') return;
+            // 与内核复选框正交：勾上 = 已完成；从已完成 / 进行中取消勾 = 回未完成
+            // （浏览器把 indeterminate 的勾去掉后是未勾选，不去猜「回进行中」）。
             view.dispatch(view.state.tr.setNodeMarkup(taskItemPos, null, {
                 ...currentNode.attrs,
-                checked,
+                checked: checkbox.checked,
+                doing: false,
             }));
         });
 
-        listItem.dataset.checked = Boolean(node.attrs.checked);
-        checkbox.checked = Boolean(node.attrs.checked);
+        syncState(node);
         checkboxWrapper.append(checkbox, checkboxStyler);
         listItem.append(checkboxWrapper, content);
 
@@ -49,8 +66,8 @@ export function buildTaskItemNodeView() {
             update(updatedNode) {
                 if (updatedNode.type.name !== 'taskItem') return false;
                 node = updatedNode;
-                listItem.dataset.checked = Boolean(updatedNode.attrs.checked);
-                checkbox.checked = Boolean(updatedNode.attrs.checked);
+                syncState(updatedNode);
+                checkbox.setAttribute('aria-label', `Task item checkbox for ${updatedNode.textContent || 'empty task item'}`);
                 return true;
             },
             ignoreMutation(mutation) {

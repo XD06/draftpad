@@ -37,6 +37,7 @@ import {
     DumbPadTaskList,
     DumbPadCodeBlock,
     DumbPadTaskItem,
+    DumbPadDoingTaskItem,
     HeadingAnchor,
     headingAnchorPluginKey,
     TimeCommandShortcut,
@@ -305,6 +306,9 @@ export class HybridMarkdownEditor {
                 TableCell,
                 DumbPadTaskList,
                 DumbPadTaskItem.configure({ nested: true }),
+                // 待办三态：`- [~] ` 解析成进行中条目（data-doing），必须在
+                // DumbPadTaskList 之后（updateDOM 按注册顺序跑，见 tiptap-extensions.js）
+                DumbPadDoingTaskItem,
                 // 空任务项（- [ ] ）解析补丁：必须在 DumbPadTaskList 之后、赶在
                 // github-task-lists 之前补尾随空格，见 tiptap-extensions.js
                 DumbPadEmptyTaskItemParseRule,

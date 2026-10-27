@@ -20,6 +20,9 @@ export const findParentNode = runtime.findParentNode;
 export const getMarkRange = runtime.getMarkRange;
 export const StarterKit = runtime.StarterKit;
 export const Markdown = runtime.Markdown;
+// tiptap-markdown 内置的 markdown 规格表（序列化器 / parse 钩子）。扩展要只替换
+// 其中一部分时必须拿到默认那一份，见 tiptap-extensions.js 的 DumbPadTaskItem。
+export const getMarkdownSpec = runtime.getMarkdownSpec;
 export const Image = runtime.Image;
 export const Table = runtime.Table;
 export const TableRow = runtime.TableRow;

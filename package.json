@@ -73,6 +73,7 @@
     "test:tiptap-frontmatter-input": "node test/test_tiptap_frontmatter_input.js",
     "test:tiptap-undo-history": "node test/test_tiptap_undo_history.js",
     "test:tiptap-mixed-task-list": "node test/test_tiptap_mixed_task_list.js",
+    "test:tiptap-task-states": "node test/test_tiptap_task_states.js",
     "test:tiptap-underline-annotation": "node test/test_tiptap_underline_annotation.js",
     "test:tiptap-blockquote-input": "node test/test_tiptap_blockquote_input.js",
     "test:toc-jump-highlight": "node test/test_toc_jump_highlight.js",

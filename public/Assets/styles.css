@@ -2753,6 +2753,12 @@ main {
     cursor: pointer;
     position: relative;
     flex: none;
+    /* 方框光学居中：待办行底部那截间隙（行距不变式要求的 0.25/0.32em）落在
+       文字下方，方框却按行盒居中，实测方框中心比文字墨迹中心低 1.71px。
+       这里只平移方框自身（position:relative 不参与布局），行高与文字位置
+       分毫不动——退格阶梯的行距不变式依赖「li 高度恒定」，绝不能改用
+       padding/margin 去凑。真机 Chrome 实测：偏移后中心差 1.71px → 0.01px。 */
+    top: -1.7px;
 }
 
 .typora-editor-shell .vditor-reset ul[data-type="taskList"] li > label input:checked {
@@ -2834,6 +2840,15 @@ main {
     color: #9aa4ae;
     text-decoration: line-through;
     text-decoration-color: currentColor;
+}
+
+/* 进行中的待办（`- [~] `，属性 data-doing 由 NodeView 盖）：半填充方框。
+   方框保持 16px、圆角与边框色与未完成态一致，只换背景——左半实色右半留白，
+   文字与行距完全不动（不加行内底色/字重，避免与行距不变式打架）。
+   进行中且被勾选时以已完成为准（NodeView 同步时已把 data-doing 置 false）。 */
+.typora-editor-shell .vditor-reset ul[data-type="taskList"] li[data-doing="true"] > label input {
+    border-color: #d98a00;
+    background: linear-gradient(90deg, #d98a00 50%, transparent 50%);
 }
 
 .typora-editor-shell .vditor-reset a {

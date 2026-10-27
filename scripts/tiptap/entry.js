@@ -13,6 +13,9 @@ import * as PMTransform from '@tiptap/pm/transform';
 import * as PMSchemaList from '@tiptap/pm/schema-list';
 import { StarterKit } from '@tiptap/starter-kit';
 import { Markdown } from 'tiptap-markdown';
+// tiptap-markdown 的 exports 只映射包根，取不到内部工具函数；这里按文件路径
+// 直接引用（包内把 src 一起发布了）。
+import { getMarkdownSpec as tiptapMarkdownSpec } from '../../node_modules/tiptap-markdown/src/util/extensions.js';
 import Image from '@tiptap/extension-image';
 import { Table, TableRow, TableCell, TableHeader } from '@tiptap/extension-table';
 import { TaskList } from '@tiptap/extension-task-list';
@@ -51,6 +54,12 @@ export {
   CodeBlockLowlight,
   Underline,
 };
+
+// tiptap-markdown 用 getMarkdownSpec 取得「内核自带」的 markdown 规格
+// （taskItem/taskList 等的序列化器与解析钩子都登记在它的内置表里，不在
+// Tiptap 扩展自身的 storage 上）。扩展要「只替换一部分」就必须拿到它，
+// 否则覆盖 addStorage 会把解析钩子一起丢掉。包内没有导出，只能直接引源码。
+export const getMarkdownSpec = tiptapMarkdownSpec;
 
 // 代码块语法高亮走 Tiptap 官方 CodeBlockLowlight（PM Decoration 机制），
 // lowlight 实例在 bundle 层共享，编辑器侧只做别名注册。
