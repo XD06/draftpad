@@ -253,7 +253,7 @@ module.exports = async function testFloatingActionsConfig() {
         await page.waitForFunction(() => document.body.classList.contains('fab-expanded'), null, { timeout: 4000 });
         let mobileExpanded = await state(page);
         assert.equal(mobileExpanded['copy-all'].display, 'flex', 'expanding the group reveals the other actions');
-        assert.equal(mobileExpanded['toggle-today-drafts'].display, 'flex', 'expanding the group reveals today drafts');
+        assert.equal(mobileExpanded['toggle-today-drafts'].display, 'flex', 'expanding the group reveals instant drafts');
         assert.equal(mobileExpanded['clipboard-import-trigger'].display, 'none',
             'a blacklisted button must stay hidden even when the group is expanded');
         assert.deepEqual(warnings.filter(w => /pageerror/.test(w)), [], 'no page errors in the mobile layout');

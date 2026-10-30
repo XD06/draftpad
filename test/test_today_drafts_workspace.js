@@ -57,9 +57,9 @@ function run() {
     // 时间戳用 monday：createInstantDraft 的 day 由 createdAt 推出，合法 day 视为权威
     // （滑出窗口即过期淘汰），不能再依赖旧缓存救援把远古 day 改写成标记日。
     const draft = createInstantDraft('立即处理', monday.getTime());
-    assert(draft.text === '立即处理' && draft.completed === false, 'new today drafts should be simple incomplete text rows');
+    assert(draft.text === '立即处理' && draft.completed === false, 'new instant drafts should be simple incomplete text rows');
     store.save({ day: localDayKey(monday), items: [draft] });
-    assert(store.load().items.length === 1, 'today drafts should survive within the same day');
+    assert(store.load().items.length === 1, 'instant drafts should survive within the same day');
 
     const tomorrowStore = new InstantDraftsStore({ storage: localStorage, now: () => new Date('2026-08-04T09:00:00') });
     assert(tomorrowStore.load().items.length === 1, 'drafts should survive into the next day inside the 3-day window');
@@ -101,18 +101,18 @@ function run() {
     assert(stamped.day === '2026-08-03', 'a new draft should carry the local day it was created on');
 
     const rendered = renderInstantDrafts([{ id: 'draft-1', text: '<unsafe>', completed: true }]);
-    assert(rendered.includes('&lt;unsafe&gt;'), 'today draft rendering should escape user text');
-    assert(rendered.includes('checked'), 'completed today drafts should render a checked control');
+    assert(rendered.includes('&lt;unsafe&gt;'), 'instant draft rendering should escape user text');
+    assert(rendered.includes('checked'), 'completed instant drafts should render a checked control');
     const linkedDraft = renderInstantDraftItem({ id: 'draft-link', text: '打开 https://example.com/path?q=1, 或 www.example.org' });
-    assert(linkedDraft.includes('data-today-draft-text-display'), 'today drafts should render a non-editing display state');
-    assert(linkedDraft.includes('class="today-draft-link"'), 'today drafts should identify links independently from editable text');
+    assert(linkedDraft.includes('data-today-draft-text-display'), 'instant drafts should render a non-editing display state');
+    assert(linkedDraft.includes('class="today-draft-link"'), 'instant drafts should identify links independently from editable text');
     assert(linkedDraft.includes('href="https://example.com/path?q=1"'), 'https links should preserve their destination');
     assert(linkedDraft.includes('href="https://www.example.org"'), 'www links should receive an https scheme');
-    assert(linkedDraft.includes('target="_blank"') && linkedDraft.includes('rel="noopener noreferrer"'), 'today draft links should open safely in a new tab');
-    assert(renderInstantDrafts([]) === '', 'an empty today draft page should leave the writing surface available instead of rendering an empty-state message');
+    assert(linkedDraft.includes('target="_blank"') && linkedDraft.includes('rel="noopener noreferrer"'), 'instant draft links should open safely in a new tab');
+    assert(renderInstantDrafts([]) === '', 'an empty instant draft page should leave the writing surface available instead of rendering an empty-state message');
     const morning = new Date(2026, 7, 3, 9, 5).getTime();
-    assert(formatInstantDraftTime(morning) === '09:05', 'today draft timestamps should use a compact local HH:mm format');
-    assert(renderInstantDraftItem({ id: 'draft-time', text: '有时间的草稿', createdAt: morning }).includes('<time'), 'each today draft should render its creation time');
+    assert(formatInstantDraftTime(morning) === '09:05', 'instant draft timestamps should use a compact local HH:mm format');
+    assert(renderInstantDraftItem({ id: 'draft-time', text: '有时间的草稿', createdAt: morning }).includes('<time'), 'each instant draft should render its creation time');
     // 纸边翻页热区：行两端各占约 22% 宽度（至少 72px）起笔归翻页手势认领，
     // 中间约 56% 不认领，保住「点正文进编辑」的原生 click。行操作已改长按菜单，
     // 所以这里只剩「该不该认领翻页」一条判据。
@@ -167,11 +167,11 @@ function run() {
     assert(appSource.includes('new WorkspaceRouter'), 'top-level view routing should be centrally coordinated');
     const routerSource = fs.readFileSync(path.join(ROOT, 'public', 'managers', 'workspace-router.js'), 'utf8');
     assert(routerSource.includes("editorView.style.display = isEditor ? 'flex' : 'none'"), 'returning to the editor must restore the existing three-column flex layout');
-    assert(routerSource.includes("todayView.style.display = isToday ? '' : 'none'"), 'today drafts should let responsive CSS choose the mobile and desktop layout mode');
-    assert(routerSource.includes("this.todayToggle?.addEventListener('click'"), 'the today drafts entry must work before its lazy manager has loaded');
-    assert(!todayManagerSource.includes("this.toggleButton?.addEventListener('click'"), 'the today drafts manager must not own the global workspace entry listener');
+    assert(routerSource.includes("todayView.style.display = isToday ? '' : 'none'"), 'instant drafts should let responsive CSS choose the mobile and desktop layout mode');
+    assert(routerSource.includes("this.todayToggle?.addEventListener('click'"), 'the instant drafts entry must work before its lazy manager has loaded');
+    assert(!todayManagerSource.includes("this.toggleButton?.addEventListener('click'"), 'the instant drafts manager must not own the global workspace entry listener');
     assert(appSource.includes('new ImportTargetRegistry'), 'clipboard destinations should use a registry');
-    assert(indexSource.includes('id="today-drafts-view"'), 'the isolated today drafts view should be present in the app shell');
+    assert(indexSource.includes('id="today-drafts-view"'), 'the isolated instant drafts view should be present in the app shell');
     assert(indexSource.includes('dumbpad_last_workspace_v1'), 'the document should resolve the last workspace before the app bundle starts');
     assert(indexSource.includes('id="thoughts-stylesheet"'), 'Thought styles should have a dedicated first-paint stylesheet handle');
     assert(indexSource.indexOf('dumbpad_last_workspace_v1') < indexSource.indexOf('id="thoughts-stylesheet"'), 'the first-paint workspace must resolve before Thought stylesheet priority is selected');
@@ -182,12 +182,12 @@ function run() {
     assert(styles.includes('html:not([data-thoughts-styles-ready]) #thoughts-view'), 'unstyled Thought controls should stay hidden until their stylesheet is ready');
     assert(appSource.includes('router.applyShellState(initialWorkspace)'), 'the app should apply the workspace shell before remote data loads');
     assert(appSource.includes('registerServiceWorker().catch(() => {})'), 'service worker registration should not block workspace startup');
-    assert(indexSource.includes('class="today-drafts-writing-area"'), 'today drafts should use a dedicated continuous writing surface');
+    assert(indexSource.includes('class="today-drafts-writing-area"'), 'instant drafts should use a dedicated continuous writing surface');
     assert(indexSource.includes('<textarea id="today-drafts-input"'), 'the new-draft composer should be a wrapping textarea, not a single-line input');
     assert(todayManagerSource.includes("document.createElement('textarea')"), 'row editing should swap the display for a wrapping textarea');
     assert(todayManagerSource.includes('scrollHeight'), 'both composers should auto-grow with their content');
     assert(todayManagerSource.includes('event.isComposing'), 'IME confirm Enter must not submit or split drafts');
-    assert(indexSource.includes('<p class="today-drafts-subtitle">保留最近 3 天 · 左右滑动翻页 · 长按草稿操作</p>'), 'today drafts should explain the 3-day window, paging and the long-press menu under the title');
+    assert(indexSource.includes('<p class="today-drafts-subtitle">保留最近 3 天 · 左右滑动翻页 · 长按草稿操作</p>'), 'instant drafts should explain the 3-day window, paging and the long-press menu under the title');
     assert(todayManagerSource.includes('<p class="today-drafts-subtitle">保留最近 3 天 · 左右滑动翻页 · 长按草稿操作</p>'), 'the flip card mirror must repeat the same subtitle as the live page');
     assert(indexSource.includes('id="today-drafts-pager"') && indexSource.includes('id="today-drafts-flip-static"') && indexSource.includes('id="today-drafts-flip-flap"'),
         'the flip pager should own the whole paper card plus the static and mirrored curl copies');
@@ -205,27 +205,27 @@ function run() {
         'a single-page day must not look pressable');
     assert(todayManagerSource.includes("'2d ago', 'yest', 'today'"), 'day labels should use compact English abbreviations');
     assert(/\.today-drafts-eyebrow\s*\{[^}]*vertical-align:\s*-0\.22em/.test(todayStyles), 'the date subscript should hang at the title baseline');
-    assert(!indexSource.includes('<footer class="today-drafts-footer">'), 'today drafts should not repeat the lifetime hint at the bottom of the page');
-    assert(!indexSource.includes('today-drafts-add'), 'today drafts should submit through Enter without a separate add button');
-    assert(!indexSource.includes('today-drafts-clear-completed'), 'today drafts should not retain a global clear-completed action now that rows expose their own action menu');
+    assert(!indexSource.includes('<footer class="today-drafts-footer">'), 'instant drafts should not repeat the lifetime hint at the bottom of the page');
+    assert(!indexSource.includes('today-drafts-add'), 'instant drafts should submit through Enter without a separate add button');
+    assert(!indexSource.includes('today-drafts-clear-completed'), 'instant drafts should not retain a global clear-completed action now that rows expose their own action menu');
     assert(indexSource.includes('id="clipboard-import-dialog"'), 'the clipboard import dialog should be present in the app shell');
     assert(indexSource.includes('<div class="clipboard-import-header">'), 'the clipboard dialog heading must be isolated from global app-header styles');
-    assert(swSource.includes('/managers/today-drafts/today-drafts-manager.js'), 'the PWA should cache the today drafts manager');
-    assert(swSource.includes('/managers/today-drafts/today-drafts-api-client.js'), 'the PWA should cache the today draft API client');
-    assert(swSource.includes('/managers/today-drafts/today-drafts-outbox.js'), 'the PWA should cache the today draft sync outbox');
-    assert(swSource.includes('/managers/today-drafts/today-drafts-paging.js'), 'the PWA should cache the today draft paging helper');
-    assert(swSource.includes('/managers/today-drafts/today-drafts-swipe.js'), 'the PWA should cache the today draft swipe helper');
-    assert(swSource.includes('/managers/today-drafts/today-draft-action-menu.js'), 'the PWA should cache the today draft action menu');
+    assert(swSource.includes('/managers/today-drafts/today-drafts-manager.js'), 'the PWA should cache the instant drafts manager');
+    assert(swSource.includes('/managers/today-drafts/today-drafts-api-client.js'), 'the PWA should cache the instant draft API client');
+    assert(swSource.includes('/managers/today-drafts/today-drafts-outbox.js'), 'the PWA should cache the instant draft sync outbox');
+    assert(swSource.includes('/managers/today-drafts/today-drafts-paging.js'), 'the PWA should cache the instant draft paging helper');
+    assert(swSource.includes('/managers/today-drafts/today-drafts-swipe.js'), 'the PWA should cache the instant draft swipe helper');
+    assert(swSource.includes('/managers/today-drafts/today-draft-action-menu.js'), 'the PWA should cache the instant draft action menu');
     assert(swSource.includes('/managers/clipboard-import-coordinator.js'), 'the PWA should cache the clipboard import coordinator');
-    assert(todayStyles.includes('@media (min-width: 981px)'), 'desktop today drafts must define their own safe inset below the fixed app header');
-    assert(todayStyles.includes('height: calc(100dvh - 24px);'), 'desktop today drafts should fill the available application height');
-    assert(todayStyles.includes('width: min(100%, 820px);'), 'desktop today drafts should retain a readable notebook width');
-    assert(todayStyles.includes('padding: 65px 0 0;'), 'desktop today drafts must clear the fixed app header without reintroducing empty space');
-    assert(todayStyles.includes('flex: 1 1 auto;'), 'desktop today draft paper should extend to the bottom of the workspace');
-    assert(todayStyles.includes('padding: 26px 48px 28px;'), 'desktop today drafts should keep the footer close to the notebook edge');
+    assert(todayStyles.includes('@media (min-width: 981px)'), 'desktop instant drafts must define their own safe inset below the fixed app header');
+    assert(todayStyles.includes('height: calc(100dvh - 24px);'), 'desktop instant drafts should fill the available application height');
+    assert(todayStyles.includes('width: min(100%, 820px);'), 'desktop instant drafts should retain a readable notebook width');
+    assert(todayStyles.includes('padding: 65px 0 0;'), 'desktop instant drafts must clear the fixed app header without reintroducing empty space');
+    assert(todayStyles.includes('flex: 1 1 auto;'), 'desktop instant draft paper should extend to the bottom of the workspace');
+    assert(todayStyles.includes('padding: 26px 48px 28px;'), 'desktop instant drafts should keep the footer close to the notebook edge');
     assert(todayStyles.includes('.today-drafts-writing-area'), 'the draft page should reserve a visible writing area when no items exist');
     assert(todayStyles.includes('.today-drafts-subtitle'), 'the disposable lifetime hint should have a dedicated subtitle style');
-    assert(/\.today-draft-text-display\s*\{[^}]*white-space:\s*pre-wrap;[^}]*overflow-wrap:\s*anywhere;/.test(todayStyles), 'displayed today drafts should wrap onto the ruled rhythm instead of truncating');
+    assert(/\.today-draft-text-display\s*\{[^}]*white-space:\s*pre-wrap;[^}]*overflow-wrap:\s*anywhere;/.test(todayStyles), 'displayed instant drafts should wrap onto the ruled rhythm instead of truncating');
     assert(/\.today-draft-text-display\s*\{[^}]*line-height:\s*44px;/.test(todayStyles), 'each wrapped text line should sit on one 44px ruled band');
     assert(/\.today-draft-text-display\s*\{[^}]*text-indent:\s*36px;[^}]*white-space:\s*pre-wrap;/.test(todayStyles), 'the first line keeps the checkbox indent while wrapped lines start flush at the paper edge');
     assert(/\.today-draft-check\s*\{[^}]*z-index:\s*1;/.test(todayStyles), 'the checkbox must stay clickable above the flush text box');
@@ -306,18 +306,18 @@ function run() {
     assert(/\.today-drafts-sheet\s*\{[^}]*padding:\s*26px 36px 20px;/.test(todayStyles), 'the paper card keeps its own geometry');
     assert(todayStyles.includes('.today-draft-row.is-copied'), 'a copied historical row should flash a confirmation tint');
     assert(todayManagerSource.includes("if (!input.value.trim()) return;"), 'Enter on an empty draft line should not create accidental blank records');
-    assert(!rendered.includes('data-today-draft-remove'), 'today drafts should not render a per-row delete action');
+    assert(!rendered.includes('data-today-draft-remove'), 'instant drafts should not render a per-row delete action');
     assert(!todayRendererSource.includes('data-today-draft-remove'), 'single-draft deletion should remain outside the paper row renderer');
     assert(!todayManagerSource.includes('data-today-draft-remove'), 'the manager should not restore removed row-level delete controls');
-    assert(todayManagerSource.includes('this.menu.open('), 'today draft rows should open the shared long-press action menu');
+    assert(todayManagerSource.includes('this.menu.open('), 'instant draft rows should open the shared long-press action menu');
     assert(todayManagerSource.includes('this.onMoveToThought'), 'moving a draft into Thought should stay behind an application-level callback');
-    assert(todayManagerSource.includes('this.confirmationManager'), 'today drafts deletion should be guarded by the universal confirmation manager');
+    assert(todayManagerSource.includes('this.confirmationManager'), 'instant drafts deletion should be guarded by the universal confirmation manager');
     assert(todayManagerSource.includes('this.movingDraftIds'), 'a draft being moved into Thought should not be transferred twice');
-    assert(todayManagerSource.includes('mergeRemoteItems') && todayManagerSource.includes('retryOutbox'), 'today drafts should merge server state and retry local pending writes');
+    assert(todayManagerSource.includes('mergeRemoteItems') && todayManagerSource.includes('retryOutbox'), 'instant drafts should merge server state and retry local pending writes');
     assert(todayManagerSource.includes('this.scheduleSync(this.syncBackoffMs)'), 'a fully failed sync round must schedule its own follow-up so offline edits are not stranded until the next keystroke or reconnect');
     assert(todayManagerSource.includes('if (this.form?.requestSubmit)'), 'Enter submits through the form once instead of the always-falsy requestSubmit() || add() double path');
-    assert(appSource.includes('createInstantDraftThought(draft.text)'), 'the application should transfer a left-swiped today draft into Thought');
-    assert(todayStyles.includes('grid-template-columns: 36px minmax(0, 1fr);'), 'today draft rows carry no timestamp track: wrapped text must reach both ends of the ruled line');
+    assert(appSource.includes('createInstantDraftThought(draft.text)'), 'the application should transfer a left-swiped instant draft into Thought');
+    assert(todayStyles.includes('grid-template-columns: 36px minmax(0, 1fr);'), 'instant draft rows carry no timestamp track: wrapped text must reach both ends of the ruled line');
     assert(/\.today-draft-text-display::before\s*\{[^}]*float:\s*right;[^}]*width:\s*var\(--today-draft-time-gutter\)/.test(todayStyles), 'only the first line yields room for the timestamp, through a right float');
     assert(/\.today-draft-time\s*\{[^}]*position:\s*absolute;[^}]*right:\s*0(px)?;/.test(todayStyles), 'the timestamp is a paper-edge annotation, not a grid column that shortens every line');
     assert(/\.today-draft-row:has\(textarea\) \.today-draft-time\s*\{[^}]*opacity:\s*0;/.test(todayStyles), 'inline editing cannot reserve a first line, so the timestamp must step aside');
@@ -332,18 +332,18 @@ function run() {
     assert(!todayStyles.includes('background-color: color-mix(in srgb, var(--header-bg) 94%, var(--bg-color));'), 'the writing texture should not create a second surface edge beneath the title');
     assert(!todayStyles.includes('left: 36px;'), 'the writing surface must not cut through content with a full-height margin line');
     assert(!todayStyles.includes('box-shadow: inset 2px 0'), 'editing a row must not add a competing vertical focus stripe');
-    assert(todayStyles.includes('border-radius: 2px;'), 'today draft completion controls should use a square checkbox');
-    assert(todayStyles.includes('touch-action: pan-y;'), 'today draft rows should preserve vertical page scrolling for the long-press gesture');
+    assert(todayStyles.includes('border-radius: 2px;'), 'instant draft completion controls should use a square checkbox');
+    assert(todayStyles.includes('touch-action: pan-y;'), 'instant draft rows should preserve vertical page scrolling for the long-press gesture');
     assert(todayStyles.includes('.today-draft-row.is-menu-target'), 'the row under the open action menu should highlight while the menu is open');
     assert(todayStyles.includes('-webkit-touch-callout: none'), 'long-press must not trigger the native iOS text-selection callout');
     assert(todayStyles.includes('transform: translate(-50%, -65%) rotate(-45deg);'), 'the completion mark should be centered within the square rather than positioned with fixed offsets');
     assert(!todayStyles.includes('.today-draft-text:focus-visible,'), 'row editing should avoid a detached input outline');
-    assert(todayManagerSource.includes('hasActiveDraftInput'), 'today drafts manager should detect active draft input to protect editing');
-    assert(todayManagerSource.includes('this.isRendering'), 'today drafts manager should guard against reentrant renders');
+    assert(todayManagerSource.includes('hasActiveDraftInput'), 'instant drafts manager should detect active draft input to protect editing');
+    assert(todayManagerSource.includes('this.isRendering'), 'instant drafts manager should guard against reentrant renders');
     assert(todayManagerSource.includes('if (this.isRendering) return;'), 'focusout during DOM replacement must be ignored');
     assert(!todayManagerSource.includes('if (this.pendingRender) this.render();'), 'compositionend must not teardown inline editor');
 
-    console.log('Today drafts workspace checks passed');
+    console.log('Instant drafts workspace checks passed');
 }
 
 run();

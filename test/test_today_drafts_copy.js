@@ -279,7 +279,7 @@ async function run() {
     assert(manager.pagerInteraction, 'blank paper start must still arm the pager gesture');
     document.getElementById('today-drafts-view').dispatchEvent(pointerEvent(dom, 'pointerup', { clientX: 500, clientY: 300 }));
 
-    console.log('Today drafts copy button and deferred blur checks passed');
+    console.log('Instant drafts copy button and deferred blur checks passed');
 }
 
 run().catch(err => {

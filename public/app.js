@@ -660,7 +660,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 })
                 .catch(error => {
                     instantDraftsManagerLoader = null;
-                    console.warn('Failed to load today drafts:', error);
+                    console.warn('Failed to load instant drafts:', error);
                     toaster.show('即时草稿加载失败', 'error', true);
                     throw error;
                 });
@@ -689,7 +689,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         try {
             await manager.revealDraftById(id);
         } catch (error) {
-            console.warn('Failed to reveal today draft from search:', error);
+            console.warn('Failed to reveal instant draft from search:', error);
             toaster.show('未能定位该草稿', 'error');
         }
     }

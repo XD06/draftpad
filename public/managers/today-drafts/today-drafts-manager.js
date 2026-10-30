@@ -1049,7 +1049,7 @@ pagerBox() {
             this.mergeRemoteItems(remote?.items);
             await this.retryOutbox();
         } catch (error) {
-            console.info('Today drafts are currently using local storage:', error?.message || error);
+            console.info('Instant drafts are currently using local storage:', error?.message || error);
         }
     }
 
@@ -1335,7 +1335,7 @@ pagerBox() {
             this.persist();
             this.render();
         } catch (error) {
-            console.info('Today drafts sync will retry later:', error?.message || error);
+            console.info('Instant drafts sync will retry later:', error?.message || error);
         } finally {
             this.syncInFlight = false;
             const pending = this.outbox.load().length;

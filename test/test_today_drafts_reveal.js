@@ -68,7 +68,7 @@ async function run() {
     {
         const manager = createHarness({ items: [{ id: 'd1', text: '买苹果', day: today }] });
         const ok = await manager.revealDraftById('d1');
-        assert.ok(ok, 'today draft reveals in place');
+        assert.ok(ok, 'instant draft reveals in place');
         const row = manager.base.querySelector('[data-today-draft-id="d1"]');
         assert.ok(row, 'row stays in the DOM');
         assert.ok(row.classList.contains('reveal-focus'), 'row gets the flash class');
@@ -148,7 +148,7 @@ async function run() {
         assert.strictEqual(manager.renderCalls, 3, 'one render for the day switch, one for the page switch');
     }
 
-    console.log('Today drafts reveal checks passed');
+    console.log('Instant drafts reveal checks passed');
 }
 
 run().catch(error => {

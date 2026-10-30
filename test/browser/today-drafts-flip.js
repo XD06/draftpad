@@ -37,7 +37,7 @@ module.exports = async function testInstantDraftsFlip(browser) {
         await page.waitForTimeout(500);
 
         const pager = await page.$('#today-drafts-pager');
-        assert.ok(pager, 'today drafts pager must exist');
+        assert.ok(pager, 'instant drafts pager must exist');
 
         const box = await pager.boundingBox();
         assert.ok(box && box.width > 200, 'pager bounding box must have width');
@@ -160,7 +160,7 @@ module.exports = async function testInstantDraftsFlip(browser) {
         await page.waitForTimeout(500);
 
         assert.deepEqual(errors, []);
-        console.log('Today drafts flip browser regression passed');
+        console.log('Instant drafts flip browser regression passed');
     } finally {
         await page.close();
         await new Promise(resolve => server.close(resolve));

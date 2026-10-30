@@ -265,7 +265,7 @@ async function runAll() {
         assert(result.title.startsWith('学习部署流程'));
     });
 
-    console.log('[today draft provider]');
+    console.log('[instant draft provider]');
 
     const today = new Date();
     const yesterday = new Date(today);

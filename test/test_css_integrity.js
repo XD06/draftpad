@@ -64,22 +64,22 @@ function checkBlockquoteRules() {
 
 function checkInstantDraftsWritingAreaRules() {
     const instantDraftsCss = fs.readFileSync(path.join(ASSETS, 'today-drafts.css'), 'utf8');
-    check('today drafts writing area has background-attachment: local on overflowing state for synchronous scrolling',
+    check('instant drafts writing area has background-attachment: local on overflowing state for synchronous scrolling',
         /\.today-drafts-writing-area\.is-overflowing\s*\{[^}]*background-attachment:\s*local/s.test(instantDraftsCss),
         'missing background-attachment: local on .today-drafts-writing-area.is-overflowing');
-    check('today drafts flip layers explicitly force background-attachment: scroll to protect GPU rasterizer',
+    check('instant drafts flip layers explicitly force background-attachment: scroll to protect GPU rasterizer',
         /\.today-drafts-flip-layer\s+\.today-drafts-writing-area\s*\{[^}]*background-attachment:\s*scroll\s*!important/s.test(instantDraftsCss),
         'missing background-attachment: scroll !important on .today-drafts-flip-layer .today-drafts-writing-area');
-    check('today drafts flip keeps the writing-area paper texture',
+    check('instant drafts flip keeps the writing-area paper texture',
         !/\.today-drafts-pager\.is-flipping\s+\.today-drafts-flip-layer\s+\.today-drafts-writing-area\s*\{[^}]*background-image:\s*none/s.test(instantDraftsCss),
         'flip layers must retain the writing-area paper texture');
-    check('today drafts lightweight flap retains ruled paper texture',
+    check('instant drafts lightweight flap retains ruled paper texture',
         /\.today-drafts-flip-layer\.is-lite\s*\{[^}]*background-image:[^}]*repeating-linear-gradient/s.test(instantDraftsCss),
         'missing ruled paper texture on lightweight flip flap');
-    check('today drafts flip layer does not declare will-change on clip-path to prevent compositor memory spikes',
+    check('instant drafts flip layer does not declare will-change on clip-path to prevent compositor memory spikes',
         !/\.today-drafts-flip-layer[^}]*will-change:[^}]*clip-path/s.test(instantDraftsCss),
         'found prohibited will-change: clip-path on flip layer');
-    check('today drafts flip layer hides properly when hidden attribute is present',
+    check('instant drafts flip layer hides properly when hidden attribute is present',
         /\.today-drafts-flip-layer\[hidden\]\s*\{[^}]*display:\s*none/s.test(instantDraftsCss),
         'missing display: none on .today-drafts-flip-layer[hidden]');
 }

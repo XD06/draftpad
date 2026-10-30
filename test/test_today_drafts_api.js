@@ -40,7 +40,7 @@ async function waitForServer(child) {
         }
         await new Promise(resolve => setTimeout(resolve, 150));
     }
-    throw new Error('Timed out waiting for the today drafts test server');
+    throw new Error('Timed out waiting for the instant drafts test server');
 }
 
 function openWebSocket() {
@@ -55,7 +55,7 @@ function nextSocketMessage(ws, predicate) {
     return new Promise((resolve, reject) => {
         const timer = setTimeout(() => {
             ws.off('message', onMessage);
-            reject(new Error('Timed out waiting for today draft WebSocket update'));
+            reject(new Error('Timed out waiting for instant draft WebSocket update'));
         }, 3000);
         function onMessage(raw) {
             const message = JSON.parse(String(raw));
@@ -124,7 +124,7 @@ async function run() {
 
         result = await request('/api/today-drafts');
         assert(result.response.ok, 'GET /api/today-drafts should stay mounted as an alias');
-        assert(result.body.day === today && Array.isArray(result.body.items), 'today draft list should be date-scoped and object-shaped');
+        assert(result.body.day === today && Array.isArray(result.body.items), 'instant draft list should be date-scoped and object-shaped');
         assert.deepStrictEqual(result.body.items.map(item => item.id).sort(), canonicalIds,
             'the pre-rename alias should return the same records as the canonical path');
         assert(!result.body.items.some(item => item.id === 'expired-draft'), 'a list request should purge expired drafts');
@@ -244,7 +244,7 @@ async function run() {
         assert(result.response.ok && result.body.deleted === true, 'DELETE should remove one current-day draft');
 
         result = await request(`/api/today-drafts/${created.id}`);
-        assert(result.response.status === 404, 'a deleted today draft should not be readable');
+        assert(result.response.status === 404, 'a deleted instant draft should not be readable');
 
         result = await request('/api/today-drafts/yesterday-draft', {
             method: 'DELETE',
@@ -253,7 +253,7 @@ async function run() {
         assert(result.response.ok && result.body.draft.day === yesterday,
             'DELETE should remove a historical draft inside the window');
         ws.close();
-        console.log('Today drafts API checks passed');
+        console.log('Instant drafts API checks passed');
     } finally {
         child.kill();
         fs.rmSync(dataDir, { recursive: true, force: true });

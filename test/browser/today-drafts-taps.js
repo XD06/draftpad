@@ -226,7 +226,7 @@ async function main() {
     assert.deepEqual(errors, [], 'no page errors expected');
     await browser.close();
     listener.close();
-    console.log('Today drafts taps browser regression passed');
+    console.log('Instant drafts taps browser regression passed');
 }
 
 main().catch(error => {

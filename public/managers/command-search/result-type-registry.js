@@ -1,6 +1,6 @@
 // Result-type registry for the global search palette.
 //
-// Every data domain (notepad / thought / today draft / future modules such
+// Every data domain (notepad / thought / instant draft / future modules such
 // as reflections) registers how its results are badged and how clicking one
 // jumps to the source. The search renderer only reads this registry, so
 // adding a domain means one register call — never a change to the search

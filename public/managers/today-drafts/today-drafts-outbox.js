@@ -26,7 +26,7 @@ export default class InstantDraftsOutbox {
             const items = JSON.parse(this.storage.getItem(this.key) || '[]');
             return Array.isArray(items) ? items : [];
         } catch (error) {
-            console.warn('Failed to load today drafts outbox:', error);
+            console.warn('Failed to load instant drafts outbox:', error);
             return [];
         }
     }
@@ -36,7 +36,7 @@ export default class InstantDraftsOutbox {
         try {
             this.storage.setItem(this.key, JSON.stringify(next));
         } catch (error) {
-            console.warn('Failed to save today drafts outbox:', error);
+            console.warn('Failed to save instant drafts outbox:', error);
         }
         return next;
     }

@@ -7448,7 +7448,7 @@ body.reading-mode-active .editor-main {
 
 /* Links in the article editor — Lute already renders bare URLs (GFM
    autolink) and authored [text](url) as real <a> elements; give them the
-   same highlighted, clickable affordance as Thoughts and Today Drafts. */
+   same highlighted, clickable affordance as Thoughts and Instant Drafts. */
 .vditor-reset a[href] {
     color: var(--primary-color);
     text-decoration: underline;

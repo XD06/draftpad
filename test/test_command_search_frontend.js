@@ -166,7 +166,7 @@ async function run() {
     assert(thoughtItem, 'thought entries carry the Thought badge');
     assert.strictEqual(thoughtItem.querySelector('.command-item-count')?.textContent, '2 处', 'multi-match documents show a count chip');
     const draftItem = docItems.find(el => el.querySelector('.badge-today-draft'));
-    assert(draftItem, 'today draft entries carry the draft badge');
+    assert(draftItem, 'instant draft entries carry the draft badge');
     assert(!draftItem.querySelector('.command-item-count'), 'single matches stay clean without a count chip');
     assert(!draftItem.querySelector('.command-item-snippet'), 'title-only matches do not render a snippet');
 

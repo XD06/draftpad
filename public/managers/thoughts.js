@@ -1844,7 +1844,7 @@ export class ThoughtsManager {
             this.render();
             setTimeout(() => this.pendingCreateIds.delete(data.id), 2000);
         } catch (err) {
-            console.error('Failed to move today draft into Thought:', err);
+            console.error('Failed to move instant draft into Thought:', err);
             this.handleOutboxResult(this.outbox.enqueueCreate(buildQuickAddCreateOutboxItem({
                 text,
                 tags,

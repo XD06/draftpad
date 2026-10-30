@@ -151,7 +151,7 @@ async function run() {
     assert.strictEqual(mergeManager.isRetiredDraftDay(dayOffset(1)), false, 'an ahead-clock tomorrow is tolerated, not retired');
     assert.strictEqual(mergeManager.isRetiredDraftDay('not-a-day'), false, 'a missing or malformed day never counts as retired');
 
-    console.log('Today drafts sync retry backoff checks passed');
+    console.log('Instant drafts sync retry backoff checks passed');
 }
 
 run().catch(err => {

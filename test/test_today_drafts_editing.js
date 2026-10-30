@@ -129,7 +129,7 @@ async function run() {
     assert(afterBlurDisplay.textContent.includes('新增文字'), 'display span should contain edited text');
     assert.strictEqual(manager.pendingRender, false, 'pendingRender should be flushed on blur');
 
-    console.log('Today drafts editing lifecycle and focus preservation checks passed');
+    console.log('Instant drafts editing lifecycle and focus preservation checks passed');
 }
 
 run().catch(err => {

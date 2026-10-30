@@ -1,4 +1,4 @@
-/* Today drafts deliberately use a continuous writing surface rather than cards. */
+/* Instant drafts deliberately use a continuous writing surface rather than cards. */
 .today-drafts-view {
     width: min(100%, 820px);
     min-height: calc(100vh - 98px);

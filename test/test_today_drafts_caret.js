@@ -16,4 +16,4 @@ assert(source.includes('this.pendingRender'), 'draft rendering should defer DOM 
 assert(source.includes('data-today-draft-text-display'), 'clicking ordinary draft text should enter editing without treating a link as text input');
 assert(source.includes('data-today-draft-link'), 'direct link clicks should remain separate from the edit interaction');
 
-console.log('Today drafts caret checks passed');
+console.log('Instant drafts caret checks passed');

@@ -326,7 +326,7 @@ module.exports = async function testInstantDraftsPaging(browser) {
         assert.equal(afterMiddle.pageIndex, afterSweeps.pageIndex, 'the middle drag never turned the sheet');
 
         assert.deepEqual(errors, []);
-        console.log('Today drafts paging browser regression passed');
+        console.log('Instant drafts paging browser regression passed');
     } finally {
         await page.close();
         await new Promise(resolve => listener.close(resolve));
@@ -355,7 +355,7 @@ async function runOverflowScenario(browser) {
         });
         assert.ok(scrolled.atBottom, 'the tail of the draft is reachable by scrolling');
         assert.ok(scrolled.tailInViewport, 'the bottom of the overlong row really comes into view');
-        console.log('Today drafts overflow fallback passed');
+        console.log('Instant drafts overflow fallback passed');
     } finally {
         await page.close();
         await new Promise(resolve => listener.close(resolve));

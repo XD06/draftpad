@@ -99,7 +99,7 @@ async function run() {
         assert.strictEqual(findInstantDraftPageByRow(undefined, 0), null);
     }
 
-    console.log('Today drafts paging checks passed');
+    console.log('Instant drafts paging checks passed');
 }
 
 function pagesByDayOf(pages, day) {

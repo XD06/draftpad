@@ -71,7 +71,7 @@ async function run() {
     }
     assert.strictEqual(outbox.load().length, 1, 'attempts beyond any cap must never silently drop queued edits');
 
-    console.log('Today drafts outbox checks passed');
+    console.log('Instant drafts outbox checks passed');
 }
 
 run().catch(error => {
