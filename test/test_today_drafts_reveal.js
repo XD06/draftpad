@@ -22,7 +22,7 @@ async function run() {
     }
     dom.window.Element.prototype.scrollIntoView = function () {};
 
-    const { TodayDraftsManager } = await import('../public/managers/today-drafts/today-drafts-manager.js');
+    const { InstantDraftsManager } = await import('../public/managers/today-drafts/today-drafts-manager.js');
 
     const today = localDayKey(new Date());
     const yesterdayDate = new Date();
@@ -31,7 +31,7 @@ async function run() {
 
     // Object.create skips the constructor: only the reveal path's state.
     function createHarness({ items = [], viewDay = today, pagesByDay = {} } = {}) {
-        const manager = Object.create(TodayDraftsManager.prototype);
+        const manager = Object.create(InstantDraftsManager.prototype);
         manager.items = items;
         manager.viewDay = viewDay;
         manager.viewPageIndex = 0;

@@ -43,7 +43,7 @@ async function run() {
         globalThis.CSS = dom.window.CSS;
     }
 
-    const { TodayDraftsManager } = await import('../public/managers/today-drafts/today-drafts-manager.js');
+    const { InstantDraftsManager } = await import('../public/managers/today-drafts/today-drafts-manager.js');
 
     const storage = new Map();
     const fakeStore = {
@@ -67,7 +67,7 @@ async function run() {
     ];
     fakeStore.save({ items: initialItems });
 
-    const manager = new TodayDraftsManager({
+    const manager = new InstantDraftsManager({
         store: fakeStore,
         outbox: fakeOutbox,
         apiClient: fakeApi,

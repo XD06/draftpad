@@ -20,7 +20,7 @@ export function dayWindowKeys(date = new Date(), days = RETENTION_DAYS) {
     return keys;
 }
 
-export function createTodayDraft(text, now = Date.now()) {
+export function createInstantDraft(text, now = Date.now()) {
     return {
         id: globalThis.crypto?.randomUUID?.() || `today-${now}-${Math.random().toString(36).slice(2, 8)}`,
         text: String(text || '').trim(),
@@ -36,7 +36,7 @@ function isDayKey(value) {
     return /^\d{4}-\d{2}-\d{2}$/.test(String(value || ''));
 }
 
-export class TodayDraftsStore {
+export class InstantDraftsStore {
     constructor({ storage = globalThis.localStorage, now = () => new Date() } = {}) {
         this.storage = storage;
         this.now = now;

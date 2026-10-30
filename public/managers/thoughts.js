@@ -1806,7 +1806,7 @@ export class ThoughtsManager {
         );
     }
 
-    createTodayDraftThought(text) {
+    createInstantDraftThought(text) {
         const content = String(text || '').trim();
         if (!content) return false;
 
@@ -1827,11 +1827,11 @@ export class ThoughtsManager {
             if (card) card.scrollIntoView({ behavior: 'smooth', block: 'center' });
         }, 50);
 
-        void this.persistTodayDraftThought({ tempThought, text: content, tags, attachments });
+        void this.persistInstantDraftThought({ tempThought, text: content, tags, attachments });
         return true;
     }
 
-    async persistTodayDraftThought({ tempThought, text, tags, attachments }) {
+    async persistInstantDraftThought({ tempThought, text, tags, attachments }) {
         try {
             const data = markCreatedThoughtPending(
                 await this.apiClient.create({ text, tags, attachments })

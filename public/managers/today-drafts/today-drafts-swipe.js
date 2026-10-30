@@ -5,16 +5,16 @@
 // 行操作已改为长按唤出图标菜单（见 today-drafts-manager.js 的 startDraftLongPress），
 // 与翻页不再争抢横向手势，这里只剩「该不该认领翻页」这一条判据。
 // 起手定归属，手势中途绝不交棒变异，保证动效不串台、操作可预期。
-export const TODAY_DRAFT_PAGER_EDGE_RATIO = 0.22;
-export const TODAY_DRAFT_PAGER_MIN_EDGE = 72;
-export const TODAY_DRAFT_PAGER_EDGE = TODAY_DRAFT_PAGER_MIN_EDGE;
+export const INSTANT_DRAFT_PAGER_EDGE_RATIO = 0.22;
+export const INSTANT_DRAFT_PAGER_MIN_EDGE = 72;
+export const INSTANT_DRAFT_PAGER_EDGE = INSTANT_DRAFT_PAGER_MIN_EDGE;
 
-export function isTodayDraftPagerEdge({
+export function isInstantDraftPagerEdge({
     clientX,
     rect,
     edgeWidth,
-    edgeRatio = TODAY_DRAFT_PAGER_EDGE_RATIO,
-    minEdge = TODAY_DRAFT_PAGER_MIN_EDGE
+    edgeRatio = INSTANT_DRAFT_PAGER_EDGE_RATIO,
+    minEdge = INSTANT_DRAFT_PAGER_MIN_EDGE
 } = {}) {
     const left = Number(rect?.left);
     const right = Number(rect?.right);

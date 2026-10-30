@@ -28,7 +28,7 @@ async function run() {
     const input = document.getElementById('command-input');
     const results = document.getElementById('command-results');
 
-    const jumps = { notepad: [], thought: [], todayDraft: [] };
+    const jumps = { notepad: [], thought: [], instantDraft: [] };
     registerResultType('notepad', {
         label: '文章',
         badgeClass: 'badge-notepad',
@@ -42,7 +42,7 @@ async function run() {
     registerResultType('today_draft', {
         label: '即时草稿',
         badgeClass: 'badge-today-draft',
-        jump: result => jumps.todayDraft.push([result.id])
+        jump: result => jumps.instantDraft.push([result.id])
     });
     assert.strictEqual(getResultType('mystery').label, '其他', 'unknown types degrade to the generic badge');
     assert.strictEqual(getResultType('mystery').jump, null, 'unknown types have no jump target');

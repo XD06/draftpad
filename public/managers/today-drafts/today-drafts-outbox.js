@@ -15,7 +15,7 @@ function cloneDraft(draft) {
     return next;
 }
 
-export default class TodayDraftsOutbox {
+export default class InstantDraftsOutbox {
     constructor({ storage = window.localStorage, key = DEFAULT_OUTBOX_KEY } = {}) {
         this.storage = storage;
         this.key = key;

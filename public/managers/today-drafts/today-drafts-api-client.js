@@ -1,13 +1,13 @@
-export class TodayDraftsApiError extends Error {
+export class InstantDraftsApiError extends Error {
     constructor(message, { status = 0, body = null } = {}) {
         super(message);
-        this.name = 'TodayDraftsApiError';
+        this.name = 'InstantDraftsApiError';
         this.status = status;
         this.body = body;
     }
 }
 
-export default class TodayDraftsApiClient {
+export default class InstantDraftsApiClient {
     constructor({ baseUrl = '/api/today-drafts', fetchImpl = window.fetch.bind(window) } = {}) {
         this.baseUrl = baseUrl.replace(/\/+$/, '');
         this.fetchImpl = fetchImpl;
@@ -28,7 +28,7 @@ export default class TodayDraftsApiClient {
         const contentType = response.headers.get('content-type') || '';
         const body = contentType.includes('application/json') ? await response.json() : null;
         if (!response.ok) {
-            throw new TodayDraftsApiError(body?.error || `HTTP ${response.status}`, { status: response.status, body });
+            throw new InstantDraftsApiError(body?.error || `HTTP ${response.status}`, { status: response.status, body });
         }
         return body;
     }

@@ -49,12 +49,12 @@ function dayLabel(dayKey, now = new Date()) {
     return String(dayKey || '');
 }
 
-function createTodayDraftSearchProvider({ storage }) {
+function createInstantDraftSearchProvider({ storage }) {
     return {
         type: 'today_draft',
         scope: 'today_drafts',
         async search(keywords) {
-            const drafts = await storage.readTodayDrafts();
+            const drafts = await storage.readInstantDrafts();
             const windowKeys = dayWindowKeys();
             const results = [];
             for (const draft of Array.isArray(drafts) ? drafts : []) {
@@ -96,4 +96,4 @@ function createTodayDraftSearchProvider({ storage }) {
     };
 }
 
-module.exports = { createTodayDraftSearchProvider, dayWindowKeys, dayLabel, MAX_RESULTS };
+module.exports = { createInstantDraftSearchProvider, dayWindowKeys, dayLabel, MAX_RESULTS };

@@ -26,17 +26,17 @@ function loadModule(relativePath, names) {
 }
 
 function run() {
-    const { TodayDraftsStore, createTodayDraft, localDayKey, dayWindowKeys } = loadModule(
+    const { InstantDraftsStore, createInstantDraft, localDayKey, dayWindowKeys } = loadModule(
         'public/managers/today-drafts/today-drafts-store.js',
-        ['TodayDraftsStore', 'createTodayDraft', 'localDayKey', 'dayWindowKeys']
+        ['InstantDraftsStore', 'createInstantDraft', 'localDayKey', 'dayWindowKeys']
     );
-    const { formatTodayDraftTime, renderTodayDrafts, renderTodayDraftItem } = loadModule(
+    const { formatInstantDraftTime, renderInstantDrafts, renderInstantDraftItem } = loadModule(
         'public/managers/today-drafts/today-drafts-renderer.js',
-        ['formatTodayDraftTime', 'renderTodayDrafts', 'renderTodayDraftItem']
+        ['formatInstantDraftTime', 'renderInstantDrafts', 'renderInstantDraftItem']
     );
-    const { isTodayDraftPagerEdge, TODAY_DRAFT_PAGER_EDGE, TODAY_DRAFT_PAGER_EDGE_RATIO, TODAY_DRAFT_PAGER_MIN_EDGE } = loadModule(
+    const { isInstantDraftPagerEdge, INSTANT_DRAFT_PAGER_EDGE, INSTANT_DRAFT_PAGER_EDGE_RATIO, INSTANT_DRAFT_PAGER_MIN_EDGE } = loadModule(
         'public/managers/today-drafts/today-drafts-swipe.js',
-        ['isTodayDraftPagerEdge', 'TODAY_DRAFT_PAGER_EDGE', 'TODAY_DRAFT_PAGER_EDGE_RATIO', 'TODAY_DRAFT_PAGER_MIN_EDGE']
+        ['isInstantDraftPagerEdge', 'INSTANT_DRAFT_PAGER_EDGE', 'INSTANT_DRAFT_PAGER_EDGE_RATIO', 'INSTANT_DRAFT_PAGER_MIN_EDGE']
     );
     const { ImportTargetRegistry } = loadModule(
         'public/managers/import-target-registry.js',
@@ -53,18 +53,18 @@ function run() {
         setItem: (key, value) => storage.set(key, value)
     };
     const monday = new Date('2026-08-03T10:00:00');
-    const store = new TodayDraftsStore({ storage: localStorage, now: () => monday });
-    // 时间戳用 monday：createTodayDraft 的 day 由 createdAt 推出，合法 day 视为权威
+    const store = new InstantDraftsStore({ storage: localStorage, now: () => monday });
+    // 时间戳用 monday：createInstantDraft 的 day 由 createdAt 推出，合法 day 视为权威
     // （滑出窗口即过期淘汰），不能再依赖旧缓存救援把远古 day 改写成标记日。
-    const draft = createTodayDraft('立即处理', monday.getTime());
+    const draft = createInstantDraft('立即处理', monday.getTime());
     assert(draft.text === '立即处理' && draft.completed === false, 'new today drafts should be simple incomplete text rows');
     store.save({ day: localDayKey(monday), items: [draft] });
     assert(store.load().items.length === 1, 'today drafts should survive within the same day');
 
-    const tomorrowStore = new TodayDraftsStore({ storage: localStorage, now: () => new Date('2026-08-04T09:00:00') });
+    const tomorrowStore = new InstantDraftsStore({ storage: localStorage, now: () => new Date('2026-08-04T09:00:00') });
     assert(tomorrowStore.load().items.length === 1, 'drafts should survive into the next day inside the 3-day window');
 
-    const lastWeekStore = new TodayDraftsStore({ storage: localStorage, now: () => new Date('2026-08-10T09:00:00') });
+    const lastWeekStore = new InstantDraftsStore({ storage: localStorage, now: () => new Date('2026-08-10T09:00:00') });
     assert(lastWeekStore.load().items.length === 0, 'drafts older than the 3-day window should be dropped on load');
 
     // 过期草稿不得被缓存标记日「救回」：只有缺失/非法 day 的旧格式条目才继承标记日。
@@ -72,7 +72,7 @@ function run() {
     // 会被改写成标记日而永不过期，还会经 merge 当 local-only 重新上传复活。
     let rollingNow = new Date('2026-10-01T10:00:00');
     const rollingStorage = new Map();
-    const rollingStore = new TodayDraftsStore({
+    const rollingStore = new InstantDraftsStore({
         storage: {
             getItem: key => rollingStorage.get(key) || null,
             setItem: (key, value) => rollingStorage.set(key, value)
@@ -97,41 +97,41 @@ function run() {
 
     assert(JSON.stringify(dayWindowKeys(monday)) === JSON.stringify(['2026-08-01', '2026-08-02', '2026-08-03']),
         'the retention window should list today plus the two previous days from oldest to newest');
-    const stamped = createTodayDraft('带日期的草稿', monday.getTime());
+    const stamped = createInstantDraft('带日期的草稿', monday.getTime());
     assert(stamped.day === '2026-08-03', 'a new draft should carry the local day it was created on');
 
-    const rendered = renderTodayDrafts([{ id: 'draft-1', text: '<unsafe>', completed: true }]);
+    const rendered = renderInstantDrafts([{ id: 'draft-1', text: '<unsafe>', completed: true }]);
     assert(rendered.includes('&lt;unsafe&gt;'), 'today draft rendering should escape user text');
     assert(rendered.includes('checked'), 'completed today drafts should render a checked control');
-    const linkedDraft = renderTodayDraftItem({ id: 'draft-link', text: '打开 https://example.com/path?q=1, 或 www.example.org' });
+    const linkedDraft = renderInstantDraftItem({ id: 'draft-link', text: '打开 https://example.com/path?q=1, 或 www.example.org' });
     assert(linkedDraft.includes('data-today-draft-text-display'), 'today drafts should render a non-editing display state');
     assert(linkedDraft.includes('class="today-draft-link"'), 'today drafts should identify links independently from editable text');
     assert(linkedDraft.includes('href="https://example.com/path?q=1"'), 'https links should preserve their destination');
     assert(linkedDraft.includes('href="https://www.example.org"'), 'www links should receive an https scheme');
     assert(linkedDraft.includes('target="_blank"') && linkedDraft.includes('rel="noopener noreferrer"'), 'today draft links should open safely in a new tab');
-    assert(renderTodayDrafts([]) === '', 'an empty today draft page should leave the writing surface available instead of rendering an empty-state message');
+    assert(renderInstantDrafts([]) === '', 'an empty today draft page should leave the writing surface available instead of rendering an empty-state message');
     const morning = new Date(2026, 7, 3, 9, 5).getTime();
-    assert(formatTodayDraftTime(morning) === '09:05', 'today draft timestamps should use a compact local HH:mm format');
-    assert(renderTodayDraftItem({ id: 'draft-time', text: '有时间的草稿', createdAt: morning }).includes('<time'), 'each today draft should render its creation time');
+    assert(formatInstantDraftTime(morning) === '09:05', 'today draft timestamps should use a compact local HH:mm format');
+    assert(renderInstantDraftItem({ id: 'draft-time', text: '有时间的草稿', createdAt: morning }).includes('<time'), 'each today draft should render its creation time');
     // 纸边翻页热区：行两端各占约 22% 宽度（至少 72px）起笔归翻页手势认领，
     // 中间约 56% 不认领，保住「点正文进编辑」的原生 click。行操作已改长按菜单，
     // 所以这里只剩「该不该认领翻页」一条判据。
     const rowRect = { left: 100, right: 460, width: 360 };
-    assert(TODAY_DRAFT_PAGER_EDGE === 72, 'the pager edge band should be a single shared constant');
-    assert(TODAY_DRAFT_PAGER_EDGE_RATIO === 0.22, 'the edge ratio covers comfortable thumb reach from both screen sides');
-    assert(isTodayDraftPagerEdge({ clientX: 110, rect: rowRect }), 'a drag starting on the left edge of a row belongs to the pager');
-    assert(isTodayDraftPagerEdge({ clientX: 450, rect: rowRect }), 'a drag starting on the right edge of a row belongs to the pager');
-    assert(isTodayDraftPagerEdge({ clientX: 179, rect: rowRect }), 'the edge band includes boundary reach (79px on 360px row)');
-    assert(!isTodayDraftPagerEdge({ clientX: 181, rect: rowRect }), 'moving into the central region goes back to the row');
-    assert(!isTodayDraftPagerEdge({ clientX: 280, rect: rowRect }), 'the middle of a row is not claimed, so tapping text still edits it');
-    assert(!isTodayDraftPagerEdge({ clientX: 90, rect: rowRect }) && !isTodayDraftPagerEdge({ clientX: 470, rect: rowRect }),
+    assert(INSTANT_DRAFT_PAGER_EDGE === 72, 'the pager edge band should be a single shared constant');
+    assert(INSTANT_DRAFT_PAGER_EDGE_RATIO === 0.22, 'the edge ratio covers comfortable thumb reach from both screen sides');
+    assert(isInstantDraftPagerEdge({ clientX: 110, rect: rowRect }), 'a drag starting on the left edge of a row belongs to the pager');
+    assert(isInstantDraftPagerEdge({ clientX: 450, rect: rowRect }), 'a drag starting on the right edge of a row belongs to the pager');
+    assert(isInstantDraftPagerEdge({ clientX: 179, rect: rowRect }), 'the edge band includes boundary reach (79px on 360px row)');
+    assert(!isInstantDraftPagerEdge({ clientX: 181, rect: rowRect }), 'moving into the central region goes back to the row');
+    assert(!isInstantDraftPagerEdge({ clientX: 280, rect: rowRect }), 'the middle of a row is not claimed, so tapping text still edits it');
+    assert(!isInstantDraftPagerEdge({ clientX: 90, rect: rowRect }) && !isInstantDraftPagerEdge({ clientX: 470, rect: rowRect }),
         'a pointer outside the row is not claimed by that row');
-    assert(isTodayDraftPagerEdge({ clientX: 120, rect: { left: 100, right: 130 } }),
+    assert(isInstantDraftPagerEdge({ clientX: 120, rect: { left: 100, right: 130 } }),
         'a row narrower than two bands is fully pager-owned instead of leaving a dead middle');
-    assert(!isTodayDraftPagerEdge({ clientX: 120, rect: { left: 0, right: 0 } }) && !isTodayDraftPagerEdge({ clientX: NaN, rect: rowRect })
-        && !isTodayDraftPagerEdge({}) && !isTodayDraftPagerEdge({ clientX: 120 }),
+    assert(!isInstantDraftPagerEdge({ clientX: 120, rect: { left: 0, right: 0 } }) && !isInstantDraftPagerEdge({ clientX: NaN, rect: rowRect })
+        && !isInstantDraftPagerEdge({}) && !isInstantDraftPagerEdge({ clientX: 120 }),
         'an unmeasurable rect or pointer must not hijack the row');
-    const readonlyRendered = renderTodayDrafts([{ id: 'draft-old', text: '昨天的记录', day: '2026-08-02' }], { readonly: true });
+    const readonlyRendered = renderInstantDrafts([{ id: 'draft-old', text: '昨天的记录', day: '2026-08-02' }], { readonly: true });
     assert(readonlyRendered.includes('is-readonly'), 'historical-day rows should render read-only');
     assert(!readonlyRendered.includes('today-draft-swipe-action'), 'historical-day rows no longer render swipe action layers');
     assert(readonlyRendered.includes('disabled'), 'historical-day completion controls should not be togglable');
@@ -236,7 +236,7 @@ function run() {
     assert(todayStyles.includes('repeating-linear-gradient'), 'the empty writing area should retain subtle ruled-paper lines');
     assert(todayManagerSource.includes("this.writingArea?.classList.toggle('is-empty', todayItems.length === 0);"), 'the composer should move between the first and next available line as today items change');
     assert(todayManagerSource.includes('bindPagerFlipActions') && todayManagerSource.includes('this.viewDay'), 'the manager should own the day paging state and flip gesture');
-    assert(todayManagerSource.includes('paginateTodayDraftRows') && todayManagerSource.includes('flattenTodayDraftPages'),
+    assert(todayManagerSource.includes('paginateInstantDraftRows') && todayManagerSource.includes('flattenInstantDraftPages'),
         'a day longer than one sheet is cut into pages that the existing flip gesture walks');
     assert(/\.map\(node => node\.offsetHeight\)/.test(todayManagerSource), 'a draft\'s ruled-line count is measured in real layout, never guessed from the text');
     assert(/\.today-drafts-sizer\s*\{[^}]*visibility:\s*hidden;/.test(todayStyles), 'the row-height probe must lay out without ever painting');
@@ -244,7 +244,7 @@ function run() {
         'a single draft taller than a sheet keeps its tail reachable by scrolling');
     assert(todayManagerSource.includes('this.goToDraft(draft.id)'), 'adding a draft jumps to the page that received it');
     assert(todayManagerSource.includes('page.pageCount > 1'), 'a multi-page day shows which sheet of the day is open');
-    assert(todayManagerSource.includes('isTodayDraftPagerEdge('),
+    assert(todayManagerSource.includes('isInstantDraftPagerEdge('),
         'the pager claims the paper-edge band through the shared predicate so mid-row taps keep native editing');
     assert(!todayManagerSource.includes("closest('[data-today-draft-id], input, textarea"),
         'the pager may no longer hand every row drag to the row owner');
@@ -252,7 +252,7 @@ function run() {
         'tapping the page counter turns the sheet through the same flip the gesture uses');
     assert(!todayManagerSource.includes('handOffRowSwipeToFlip'),
         'mid-drag handoff is removed: gestures are strictly isolated to prevent animation corruption');
-    assert(!todayManagerSource.includes('isTodayDraftFlipHandoff'),
+    assert(!todayManagerSource.includes('isInstantDraftFlipHandoff'),
         'a held press stays a row action and never morphs into a page turn mid-flight');
     assert(todayManagerSource.includes('startDraftLongPress') && todayManagerSource.includes('DRAFT_LONG_PRESS_MS'),
         'row actions open through a long-press timer instead of a competing horizontal swipe');
@@ -316,7 +316,7 @@ function run() {
     assert(todayManagerSource.includes('mergeRemoteItems') && todayManagerSource.includes('retryOutbox'), 'today drafts should merge server state and retry local pending writes');
     assert(todayManagerSource.includes('this.scheduleSync(this.syncBackoffMs)'), 'a fully failed sync round must schedule its own follow-up so offline edits are not stranded until the next keystroke or reconnect');
     assert(todayManagerSource.includes('if (this.form?.requestSubmit)'), 'Enter submits through the form once instead of the always-falsy requestSubmit() || add() double path');
-    assert(appSource.includes('createTodayDraftThought(draft.text)'), 'the application should transfer a left-swiped today draft into Thought');
+    assert(appSource.includes('createInstantDraftThought(draft.text)'), 'the application should transfer a left-swiped today draft into Thought');
     assert(todayStyles.includes('grid-template-columns: 36px minmax(0, 1fr);'), 'today draft rows carry no timestamp track: wrapped text must reach both ends of the ruled line');
     assert(/\.today-draft-text-display::before\s*\{[^}]*float:\s*right;[^}]*width:\s*var\(--today-draft-time-gutter\)/.test(todayStyles), 'only the first line yields room for the timestamp, through a right float');
     assert(/\.today-draft-time\s*\{[^}]*position:\s*absolute;[^}]*right:\s*0(px)?;/.test(todayStyles), 'the timestamp is a paper-edge annotation, not a grid column that shortens every line');

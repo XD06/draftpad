@@ -174,7 +174,7 @@ async function openToday(browser, port) {
     return page;
 }
 
-module.exports = async function testTodayDraftsPaging(browser) {
+module.exports = async function testInstantDraftsPaging(browser) {
     const { listener, port } = await startServer(buildItems());
     const errors = [];
     const page = await openToday(browser, port);

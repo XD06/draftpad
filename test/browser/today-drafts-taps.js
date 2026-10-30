@@ -139,7 +139,7 @@ async function main() {
     // ---- 4a. 复制按钮：hover 亮出，点击写剪贴板 + toast ----
     await page.evaluate(() => {
         // 翻回今天页，避免只读行的文案差异
-        const manager = window.todayDraftsManagerRef;
+        const manager = window.instantDraftsManagerRef;
         if (manager) manager.viewDay = manager.items[0]?.day || manager.viewDay;
     }).catch(() => {});
     // 直接回到今天：左滑一次翻回（newer）

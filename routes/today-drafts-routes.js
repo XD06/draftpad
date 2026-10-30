@@ -25,7 +25,7 @@ function nextDayKey(date = new Date(), offset = 1) {
     return localDayKey(shifted);
 }
 
-function isSafeTodayDraftId(id) {
+function isSafeInstantDraftId(id) {
     return /^[A-Za-z0-9][A-Za-z0-9_-]{2,95}$/.test(String(id || ''));
 }
 
@@ -33,9 +33,9 @@ function isDayKey(value) {
     return /^\d{4}-\d{2}-\d{2}$/.test(String(value || ''));
 }
 
-function normalizeTodayDraft(value, fallbackDay) {
+function normalizeInstantDraft(value, fallbackDay) {
     const id = String(value?.id || '');
-    if (!isSafeTodayDraftId(id)) return null;
+    if (!isSafeInstantDraftId(id)) return null;
     const text = String(value?.text || '').trim();
     if (!text) return null;
     const createdAt = Number(value?.createdAt);
@@ -52,7 +52,7 @@ function normalizeTodayDraft(value, fallbackDay) {
     };
 }
 
-function registerTodayDraftRoutes(app, { storage, broadcastWebSocketMessage }) {
+function registerInstantDraftRoutes(app, { storage, broadcastWebSocketMessage }) {
     // 宽容窗口：考虑全球时区差异（UTC-12 到 UTC+14，时差范围最多跨 ±1 天）。
     // 客户端若处于比服务端快的时区（如东八区相较于 UTC），其本地「今天」在服务端视角为「明天」。
     // 淘汰历史草稿时保留 oldest（服务器 3 天前）；允许快时区客户端当前日 latest（服务器明天）。
@@ -73,18 +73,18 @@ function registerTodayDraftRoutes(app, { storage, broadcastWebSocketMessage }) {
     // 写回里顺带收窄——两者都不在这里落盘，落盘节奏归调用方。
     async function readActiveItems() {
         const bounds = windowBounds();
-        const all = await storage.readTodayDrafts();
+        const all = await storage.readInstantDrafts();
         return { bounds, all, items: all.filter(item => withinWindow(item, bounds)) };
     }
 
     async function readWindowDrafts() {
-        return storage.withTodayDraftWriteLock(async () => {
+        return storage.withInstantDraftWriteLock(async () => {
             const { bounds: { today }, all, items } = await readActiveItems();
             const active = items
-                .map(item => normalizeTodayDraft(item, today))
+                .map(item => normalizeInstantDraft(item, today))
                 .filter(Boolean)
                 .sort((left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id));
-            if (active.length !== all.length) await storage.saveTodayDrafts(active);
+            if (active.length !== all.length) await storage.saveInstantDrafts(active);
             return { day: today, items: active };
         });
     }
@@ -107,7 +107,7 @@ function registerTodayDraftRoutes(app, { storage, broadcastWebSocketMessage }) {
     });
 
     app.get('/api/today-drafts/:id', async (req, res) => {
-        if (!isSafeTodayDraftId(req.params.id)) {
+        if (!isSafeInstantDraftId(req.params.id)) {
             return res.status(400).json({ error: 'Today draft id is invalid', code: 'INVALID_TODAY_DRAFT_ID' });
         }
         try {
@@ -123,17 +123,17 @@ function registerTodayDraftRoutes(app, { storage, broadcastWebSocketMessage }) {
 
     app.put('/api/today-drafts/:id', async (req, res) => {
         const id = String(req.params.id || '');
-        if (!isSafeTodayDraftId(id)) {
+        if (!isSafeInstantDraftId(id)) {
             return res.status(400).json({ error: 'Today draft id is invalid', code: 'INVALID_TODAY_DRAFT_ID' });
         }
         const text = String(req.body?.text || '').trim();
         if (!text) return res.status(400).json({ error: 'text is required', code: 'INVALID_TODAY_DRAFT_TEXT' });
 
         try {
-            const result = await storage.withTodayDraftWriteLock(async () => {
+            const result = await storage.withInstantDraftWriteLock(async () => {
                 const { bounds: { today, oldest, latest }, items: active } = await readActiveItems();
                 const index = active.findIndex(item => item.id === id);
-                const existing = index >= 0 ? normalizeTodayDraft(active[index], today) : null;
+                const existing = index >= 0 ? normalizeInstantDraft(active[index], today) : null;
                 const requestedVersion = Number(req.body?.baseVersion);
 
                 if (existing && !Number.isSafeInteger(requestedVersion)) {
@@ -164,7 +164,7 @@ function registerTodayDraftRoutes(app, { storage, broadcastWebSocketMessage }) {
                 const next = active.filter(item => item.id !== id);
                 next.push(draft);
                 next.sort((left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id));
-                await storage.saveTodayDrafts(next);
+                await storage.saveInstantDrafts(next);
                 return { draft, created: !existing };
             });
 
@@ -179,11 +179,11 @@ function registerTodayDraftRoutes(app, { storage, broadcastWebSocketMessage }) {
 
     app.delete('/api/today-drafts/:id', async (req, res) => {
         const id = String(req.params.id || '');
-        if (!isSafeTodayDraftId(id)) {
+        if (!isSafeInstantDraftId(id)) {
             return res.status(400).json({ error: 'Today draft id is invalid', code: 'INVALID_TODAY_DRAFT_ID' });
         }
         try {
-            const result = await storage.withTodayDraftWriteLock(async () => {
+            const result = await storage.withInstantDraftWriteLock(async () => {
                 const { bounds: { today }, items: active } = await readActiveItems();
                 const existing = active.find(item => item.id === id);
                 if (!existing) return { error: 'Today draft not found', status: 404 };
@@ -194,8 +194,8 @@ function registerTodayDraftRoutes(app, { storage, broadcastWebSocketMessage }) {
                 if (requestedVersion !== existing.version) {
                     return { error: 'Today draft has been updated', status: 409, currentVersion: existing.version };
                 }
-                await storage.saveTodayDrafts(active.filter(item => item.id !== id));
-                return { draft: normalizeTodayDraft(existing, today) };
+                await storage.saveInstantDrafts(active.filter(item => item.id !== id));
+                return { draft: normalizeInstantDraft(existing, today) };
             });
 
             if (result.error) return res.status(result.status).json(result);
@@ -208,4 +208,4 @@ function registerTodayDraftRoutes(app, { storage, broadcastWebSocketMessage }) {
     });
 }
 
-module.exports = { localDayKey, dayWindowKeys, nextDayKey, registerTodayDraftRoutes };
+module.exports = { localDayKey, dayWindowKeys, nextDayKey, registerInstantDraftRoutes };

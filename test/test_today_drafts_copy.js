@@ -67,12 +67,12 @@ async function run() {
         globalThis.CSS = dom.window.CSS;
     }
 
-    const { TodayDraftsManager } = await import('../public/managers/today-drafts/today-drafts-manager.js');
-    const { renderTodayDraftItem } = await import('../public/managers/today-drafts/today-drafts-renderer.js');
+    const { InstantDraftsManager } = await import('../public/managers/today-drafts/today-drafts-manager.js');
+    const { renderInstantDraftItem } = await import('../public/managers/today-drafts/today-drafts-renderer.js');
 
     // ---- 1. 渲染器：可编辑与只读行都有复制按钮，且长在展示态正文末尾 ----
-    const editableHtml = renderTodayDraftItem({ id: 'row-1', text: '正文内容', completed: false, createdAt: Date.now() });
-    const readonlyHtml = renderTodayDraftItem({ id: 'row-2', text: '历史内容', completed: true, createdAt: Date.now() }, { readonly: true });
+    const editableHtml = renderInstantDraftItem({ id: 'row-1', text: '正文内容', completed: false, createdAt: Date.now() });
+    const readonlyHtml = renderInstantDraftItem({ id: 'row-2', text: '历史内容', completed: true, createdAt: Date.now() }, { readonly: true });
     for (const [label, html] of [['editable', editableHtml], ['readonly', readonlyHtml]]) {
         const holder = document.createElement('div');
         holder.innerHTML = html;
@@ -113,7 +113,7 @@ async function run() {
     const fakeApi = { list: async () => ({ day: localDayKey(), items: [] }) };
 
     const thoughtCalls = [];
-    const manager = new TodayDraftsManager({
+    const manager = new InstantDraftsManager({
         store: fakeStore,
         outbox: fakeOutbox,
         apiClient: fakeApi,

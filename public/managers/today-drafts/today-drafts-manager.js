@@ -1,10 +1,10 @@
-import { createTodayDraft, dayWindowKeys, localDayKey, TodayDraftsStore } from './today-drafts-store.js';
-import { escapeTodayDraftHtml, renderTodayDrafts } from './today-drafts-renderer.js';
-import { isTodayDraftPagerEdge } from './today-drafts-swipe.js';
-import { TODAY_DRAFT_LINE_UNIT, findTodayDraftPageByRow, flattenTodayDraftPages, paginateTodayDraftRows } from './today-drafts-paging.js';
-import TodayDraftsApiClient from './today-drafts-api-client.js';
-import TodayDraftsOutbox from './today-drafts-outbox.js';
-import { TodayDraftActionMenu } from './today-draft-action-menu.js';
+import { createInstantDraft, dayWindowKeys, localDayKey, InstantDraftsStore } from './today-drafts-store.js';
+import { escapeInstantDraftHtml, renderInstantDrafts } from './today-drafts-renderer.js';
+import { isInstantDraftPagerEdge } from './today-drafts-swipe.js';
+import { INSTANT_DRAFT_LINE_UNIT, findInstantDraftPageByRow, flattenInstantDraftPages, paginateInstantDraftRows } from './today-drafts-paging.js';
+import InstantDraftsApiClient from './today-drafts-api-client.js';
+import InstantDraftsOutbox from './today-drafts-outbox.js';
+import { InstantDraftActionMenu } from './today-draft-action-menu.js';
 
 const DAY_LABELS = ['2d ago', 'yest', 'today'];
 // 行程达纸宽 25% 判落页（older 折痕左缘→右缘、newer 反向）
@@ -31,11 +31,11 @@ function formatDayDate(dayKey) {
     return `${Number(month)}/${Number(day)}`;
 }
 
-export class TodayDraftsManager {
+export class InstantDraftsManager {
     constructor({
-        store = new TodayDraftsStore(),
-        apiClient = new TodayDraftsApiClient(),
-        outbox = new TodayDraftsOutbox(),
+        store = new InstantDraftsStore(),
+        apiClient = new InstantDraftsApiClient(),
+        outbox = new InstantDraftsOutbox(),
         onMoveToThought = async () => false,
         onMoveToArticle = async () => false,
         confirmationManager = null,
@@ -82,7 +82,7 @@ export class TodayDraftsManager {
         this.pendingFlipFrame = null;
         this.movingDraftIds = new Set();
         // 长按行唤出的操作菜单（横向图标条），portaled 到 body，靠行的 rect 定位。
-        this.menu = new TodayDraftActionMenu();
+        this.menu = new InstantDraftActionMenu();
         this.menuRow = null;
         // 进行中的长按候选：{ row, id, pointerId, startX, startY, timer }。
         this.draftPress = null;
@@ -316,7 +316,7 @@ pagerBox() {
             if (rowUnderPointer) this.startDraftLongPress(event, rowUnderPointer);
             // 从草稿两侧边缘区域起笔才认领翻页；中间正文区不认领，保住原生点击
             // （点正文进编辑）——长按候选不依赖认领，上面已经起好了计时器。
-            if (rowUnderPointer && !isTodayDraftPagerEdge({
+            if (rowUnderPointer && !isInstantDraftPagerEdge({
                 clientX: event.clientX,
                 rect: rowUnderPointer.getBoundingClientRect()
             })) return;
@@ -602,8 +602,8 @@ pagerBox() {
         if (!height) return 0;
         // 历史页不渲染输入行，整幅纸都是正文；今天要先扣掉输入行的真实高度
         // （44px 纸纹 + 3px 收边 + 1px 分隔线），否则整幅纸排满时输入行会被挤出纸面。
-        const reserved = day === localDayKey() ? (this.form?.offsetHeight || TODAY_DRAFT_LINE_UNIT) : 0;
-        return Math.floor((height - reserved) / TODAY_DRAFT_LINE_UNIT);
+        const reserved = day === localDayKey() ? (this.form?.offsetHeight || INSTANT_DRAFT_LINE_UNIT) : 0;
+        return Math.floor((height - reserved) / INSTANT_DRAFT_LINE_UNIT);
     }
 
     currentKey() {
@@ -626,7 +626,7 @@ pagerBox() {
         const day = draft.day || localDayKey();
         const rowIndex = this.itemsForDay(day).findIndex(item => item.id === id);
         if (rowIndex < 0) return null;
-        const page = findTodayDraftPageByRow(this.pagesByDay[day], rowIndex);
+        const page = findInstantDraftPageByRow(this.pagesByDay[day], rowIndex);
         return page ? page.index : null;
     }
 
@@ -696,7 +696,7 @@ pagerBox() {
         sizer.setAttribute('aria-hidden', 'true');
         sizer.style.width = `${width}px`;
         sizer.innerHTML = groups
-            .map((items, index) => renderTodayDrafts(items, this.pageDays[index] === today ? {} : { readonly: true }))
+            .map((items, index) => renderInstantDrafts(items, this.pageDays[index] === today ? {} : { readonly: true }))
             .join('');
         this.base.appendChild(sizer);
         const heights = [...sizer.children].map(node => node.offsetHeight);
@@ -704,7 +704,7 @@ pagerBox() {
         let cursor = 0;
         const result = groups.map(items => {
             const counts = heights.slice(cursor, cursor + items.length)
-                .map(height => Math.max(1, Math.round(height / TODAY_DRAFT_LINE_UNIT) || 1));
+                .map(height => Math.max(1, Math.round(height / INSTANT_DRAFT_LINE_UNIT) || 1));
             cursor += items.length;
             return counts;
         });
@@ -730,10 +730,10 @@ pagerBox() {
             // 量不到纸高或排版宽度（视图还没铺开）时不猜页边界：整日留作一页，
             // 宁可暂时超出纸面由纵向滚动兜底，也不要按假数据把内容打散成几十页。
             const budget = this.pageLinesFor(day);
-            pagesByDay[day] = paginateTodayDraftRows(lineCounts[index], budget || Number.POSITIVE_INFINITY);
+            pagesByDay[day] = paginateInstantDraftRows(lineCounts[index], budget || Number.POSITIVE_INFINITY);
         });
         this.pagesByDay = pagesByDay;
-        this.pageList = flattenTodayDraftPages({ dayKeys: days, pagesByDay });
+        this.pageList = flattenInstantDraftPages({ dayKeys: days, pagesByDay });
         this._cachedPageModelKey = modelKey;
     }
 
@@ -791,18 +791,18 @@ pagerBox() {
         const inputRow = isToday
             ? `<div class="today-drafts-input-row" aria-hidden="true">
                     <span class="today-drafts-input-marker" aria-hidden="true">+</span>
-                    <textarea rows="1" readonly tabindex="-1" placeholder="写下一件现在要做的事"${this.input?.style.height ? ` style="height:${this.input.style.height}"` : ''}>${escapeTodayDraftHtml(this.input?.value || '')}</textarea>
+                    <textarea rows="1" readonly tabindex="-1" placeholder="写下一件现在要做的事"${this.input?.style.height ? ` style="height:${this.input.style.height}"` : ''}>${escapeInstantDraftHtml(this.input?.value || '')}</textarea>
                 </div>`
             : '';
         return `<div class="today-drafts-header">
                 <div>
-                    <h2>即时草稿<span class="today-drafts-eyebrow">${escapeTodayDraftHtml(this.eyebrowText(page))}</span></h2>
+                    <h2>即时草稿<span class="today-drafts-eyebrow">${escapeInstantDraftHtml(this.eyebrowText(page))}</span></h2>
                     <p class="today-drafts-subtitle">保留最近 3 天 · 左右滑动翻页 · 长按草稿操作</p>
                 </div>
-                <div class="today-drafts-status"><span>${escapeTodayDraftHtml(countText)}</span></div>
+                <div class="today-drafts-status"><span>${escapeInstantDraftHtml(countText)}</span></div>
             </div>
             <div class="today-drafts-writing-area${items.length === 0 ? ' is-empty' : ''}">
-                <ol class="today-drafts-list">${renderTodayDrafts(items, isToday ? {} : { readonly: true })}</ol>
+                <ol class="today-drafts-list">${renderInstantDrafts(items, isToday ? {} : { readonly: true })}</ol>
                 ${inputRow}
             </div>`;
     }
@@ -1007,7 +1007,7 @@ pagerBox() {
         const isToday = page.day === localDayKey();
         const dayItems = this.itemsForDay(page.day);
         const items = page.indexes.map(index => dayItems[index]).filter(Boolean);
-        if (this.list) this.list.innerHTML = renderTodayDrafts(items, isToday ? {} : { readonly: true });
+        if (this.list) this.list.innerHTML = renderInstantDrafts(items, isToday ? {} : { readonly: true });
         this.base?.classList.toggle('is-history', !isToday);
     }
 
@@ -1104,7 +1104,7 @@ pagerBox() {
     }
 
     add(text, { focus = false, afterId = null, keepView = false, completed = false } = {}) {
-        const draft = createTodayDraft(text);
+        const draft = createInstantDraft(text);
         draft.completed = completed === true;
         if (!draft.text && !focus) return null;
         if (afterId) {

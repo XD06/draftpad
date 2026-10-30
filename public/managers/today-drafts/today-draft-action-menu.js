@@ -28,7 +28,7 @@ const SPRITE_HTML = `<svg class="tdam-sprite" aria-hidden="true" focusable="fals
 <symbol id="tdam-plus" viewBox="0 0 1024 1024"><path d="M512 128a48 48 0 0 1 48 48v288h288a48 48 0 0 1 0 96H560v288a48 48 0 0 1-96 0V560H176a48 48 0 0 1 0-96h288V176a48 48 0 0 1 48-48z"></path></symbol>
 </defs></svg>`;
 
-export class TodayDraftActionMenu {
+export class InstantDraftActionMenu {
     constructor({ host = document.body } = {}) {
         this.host = host;
         this.root = null;

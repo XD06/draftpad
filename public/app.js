@@ -584,8 +584,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     const settingsAssetApi = new AssetApiClient();
     let thoughtsManager = null;
     let thoughtsManagerLoader = null;
-    let todayDraftsManager = null;
-    let todayDraftsManagerLoader = null;
+    let instantDraftsManager = null;
+    let instantDraftsManagerLoader = null;
     let workspaceRouter = null;
     let clipboardImportCoordinator = null;
     let openCommandSearch = null;
@@ -635,16 +635,16 @@ document.addEventListener('DOMContentLoaded', async () => {
         return thoughtsManagerLoader;
     }
 
-    function ensureTodayDraftsManager() {
-        if (!todayDraftsManagerLoader) {
-            todayDraftsManagerLoader = import('./managers/today-drafts/today-drafts-manager.js')
-                .then(({ TodayDraftsManager }) => {
-                    todayDraftsManager = new TodayDraftsManager({
+    function ensureInstantDraftsManager() {
+        if (!instantDraftsManagerLoader) {
+            instantDraftsManagerLoader = import('./managers/today-drafts/today-drafts-manager.js')
+                .then(({ InstantDraftsManager }) => {
+                    instantDraftsManager = new InstantDraftsManager({
                         toaster,
                         confirmationManager,
                         onMoveToThought: async draft => {
                             const manager = await ensureThoughtsManager();
-                            const moved = manager.createTodayDraftThought(draft.text);
+                            const moved = manager.createInstantDraftThought(draft.text);
                             if (!moved) return false;
                             await workspaceRouter?.navigate('thoughts');
                             return true;
@@ -656,16 +656,16 @@ document.addEventListener('DOMContentLoaded', async () => {
                             return createNotepad({ content: draft.text, throwOnError: true });
                         }
                     });
-                    return todayDraftsManager;
+                    return instantDraftsManager;
                 })
                 .catch(error => {
-                    todayDraftsManagerLoader = null;
+                    instantDraftsManagerLoader = null;
                     console.warn('Failed to load today drafts:', error);
                     toaster.show('即时草稿加载失败', 'error', true);
                     throw error;
                 });
         }
-        return todayDraftsManagerLoader;
+        return instantDraftsManagerLoader;
     }
 
     // Global search jumps into the short-lived workspaces. Both managers are
@@ -683,9 +683,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     }
 
-    async function revealTodayDraftFromSearch(id) {
+    async function revealInstantDraftFromSearch(id) {
         await workspaceRouter?.navigate('today');
-        const manager = await ensureTodayDraftsManager();
+        const manager = await ensureInstantDraftsManager();
         try {
             await manager.revealDraftById(id);
         } catch (error) {
@@ -3643,7 +3643,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             todayView: document.getElementById('today-drafts-view'),
             floatingActions,
             ensureThoughts: ensureThoughtsManager,
-            ensureToday: ensureTodayDraftsManager,
+            ensureToday: ensureInstantDraftsManager,
             openEditorView
         });
         document.querySelector('#header-title h1')?.addEventListener('click', () => {
@@ -3667,7 +3667,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             confirmLabel: '保存到即时草稿',
             importText: async text => {
                 await workspaceRouter?.navigate('today');
-                const manager = await ensureTodayDraftsManager();
+                const manager = await ensureInstantDraftsManager();
                 return manager.addImportedText(text);
             }
         });
@@ -3853,7 +3853,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         registerResultType('today_draft', {
             label: '即时草稿',
             badgeClass: 'badge-today-draft',
-            jump: result => revealTodayDraftFromSearch(result.id)
+            jump: result => revealInstantDraftFromSearch(result.id)
         });
 
         const commandSearch = createCommandSearchManager({
@@ -4627,10 +4627,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (initialWorkspace === 'thoughts') {
             await ensureThoughtsManager();
             scheduleIdleTask(() => {
-                ensureTodayDraftsManager().catch(() => {});
+                ensureInstantDraftsManager().catch(() => {});
             });
         } else if (initialWorkspace === 'today') {
-            await ensureTodayDraftsManager();
+            await ensureInstantDraftsManager();
         } else if (startsInEditor) {
             // Paint cached content into the instant boot editor first so the user
             // can read and type right away, then load the rich editor in the
@@ -4645,7 +4645,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 // flushes even while the user stays in the editor workspace —
                 // otherwise draft records only catch up when the Today tab is
                 // opened.
-                ensureTodayDraftsManager().catch(() => {});
+                ensureInstantDraftsManager().catch(() => {});
             });
         }
         loadAppConfig();

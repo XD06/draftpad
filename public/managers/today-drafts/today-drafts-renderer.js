@@ -1,4 +1,4 @@
-export function escapeTodayDraftHtml(value = '') {
+export function escapeInstantDraftHtml(value = '') {
     return String(value)
         .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')
@@ -7,8 +7,8 @@ export function escapeTodayDraftHtml(value = '') {
         .replace(/'/g, '&#039;');
 }
 
-function linkifyTodayDraftText(value = '') {
-    const escaped = escapeTodayDraftHtml(value);
+function linkifyInstantDraftText(value = '') {
+    const escaped = escapeInstantDraftHtml(value);
     return escaped.replace(/((?:https?:\/\/|www\.)[^\s<>'"]+)/gi, match => {
         let url = match;
         let trailing = '';
@@ -27,19 +27,19 @@ function linkifyTodayDraftText(value = '') {
     });
 }
 
-export function formatTodayDraftTime(timestamp) {
+export function formatInstantDraftTime(timestamp) {
     const date = new Date(Number(timestamp));
     if (Number.isNaN(date.getTime())) return '';
     return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
 }
 
-export function renderTodayDraftItem(item, { readonly = false } = {}) {
-    const id = escapeTodayDraftHtml(item.id);
-    const text = linkifyTodayDraftText(item.text);
+export function renderInstantDraftItem(item, { readonly = false } = {}) {
+    const id = escapeInstantDraftHtml(item.id);
+    const text = linkifyInstantDraftText(item.text);
     const completed = item.completed ? ' checked' : '';
     const completedClass = item.completed ? ' is-completed' : '';
     const createdAt = Number(item.createdAt ?? item.updatedAt);
-    const time = formatTodayDraftTime(createdAt);
+    const time = formatInstantDraftTime(createdAt);
     const dateTime = Number.isFinite(createdAt) ? new Date(createdAt).toISOString() : '';
     const timestamp = time
         ? `<time class="today-draft-time" datetime="${dateTime}" title="创建于 ${time}">${time}</time>`
@@ -70,6 +70,6 @@ export function renderTodayDraftItem(item, { readonly = false } = {}) {
     </li>`;
 }
 
-export function renderTodayDrafts(items = [], options = {}) {
-    return items.map(item => renderTodayDraftItem(item, options)).join('');
+export function renderInstantDrafts(items = [], options = {}) {
+    return items.map(item => renderInstantDraftItem(item, options)).join('');
 }

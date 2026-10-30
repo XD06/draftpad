@@ -10,7 +10,7 @@ function localDayKey(offsetDays = 0) {
     return `${date.getFullYear()}-${month}-${day}`;
 }
 
-module.exports = async function testTodayDraftsFlip(browser) {
+module.exports = async function testInstantDraftsFlip(browser) {
     const app = express();
     const root = path.resolve(__dirname, '../..');
     let fixtureItems = [

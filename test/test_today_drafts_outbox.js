@@ -7,10 +7,10 @@ const ROOT = path.resolve(__dirname, '..');
 const sourcePath = path.join(ROOT, 'public', 'managers', 'today-drafts', 'today-drafts-outbox.js');
 const source = fs.readFileSync(sourcePath, 'utf8')
     .replace(/export default class /, 'class ')
-    + '\nmodule.exports = TodayDraftsOutbox;\n';
+    + '\nmodule.exports = InstantDraftsOutbox;\n';
 const context = { module: { exports: {} }, exports: {}, Date, Math, console };
 vm.runInNewContext(source, context, { filename: sourcePath });
-const TodayDraftsOutbox = context.module.exports;
+const InstantDraftsOutbox = context.module.exports;
 
 function memoryStorage() {
     const values = new Map();
@@ -21,7 +21,7 @@ function memoryStorage() {
 }
 
 async function run() {
-    const outbox = new TodayDraftsOutbox({ storage: memoryStorage() });
+    const outbox = new InstantDraftsOutbox({ storage: memoryStorage() });
     const localDraft = { id: 'today-local-1', text: 'reply soon', completed: false, version: 0, updatedAt: 100 };
     outbox.enqueueUpsert(localDraft);
     outbox.enqueueUpsert({ ...localDraft, text: 'reply to team', updatedAt: 101 });

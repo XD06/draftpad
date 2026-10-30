@@ -49,7 +49,7 @@ async function run() {
         globalThis.CSS = dom.window.CSS;
     }
 
-    const { TodayDraftsManager } = await import('../public/managers/today-drafts/today-drafts-manager.js');
+    const { InstantDraftsManager } = await import('../public/managers/today-drafts/today-drafts-manager.js');
 
     const store = {
         load: () => ({ day: localDayKey(), items: [] }),
@@ -81,7 +81,7 @@ async function run() {
         list: async () => ({ day: localDayKey(), items: [] })
     };
 
-    const manager = new TodayDraftsManager({
+    const manager = new InstantDraftsManager({
         store,
         outbox,
         apiClient,
@@ -125,7 +125,7 @@ async function run() {
         hasPending: () => false,
         retry: async () => ({ saved: [], remaining: [] })
     };
-    const mergeManager = new TodayDraftsManager({
+    const mergeManager = new InstantDraftsManager({
         store: { load: () => ({ day: localDayKey(), items: [] }), save: () => {} },
         outbox: mergeOutbox,
         apiClient,

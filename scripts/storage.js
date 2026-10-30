@@ -21,7 +21,7 @@ const {
 const DATA_DIR = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.join(__dirname, '..', 'data');
 const NOTEPADS_FILE = path.join(DATA_DIR, 'notepads.json');
 const THOUGHTS_FILE = path.join(DATA_DIR, 'thoughts.json');
-const TODAY_DRAFTS_FILE = path.join(DATA_DIR, 'today-drafts.json');
+const INSTANT_DRAFTS_FILE = path.join(DATA_DIR, 'today-drafts.json');
 const THOUGHTS_DIR = path.join(DATA_DIR, 'thoughts');
 const META_DIR = path.join(DATA_DIR, 'thoughts.meta');
 const RELATIONS_DIR = path.join(DATA_DIR, 'relations');
@@ -77,10 +77,10 @@ async function withNotepadWriteLock(task) {
     return run;
 }
 
-let todayDraftWriteLock = Promise.resolve();
-async function withTodayDraftWriteLock(task) {
-    const run = todayDraftWriteLock.then(task, task);
-    todayDraftWriteLock = run.catch(() => {});
+let instantDraftWriteLock = Promise.resolve();
+async function withInstantDraftWriteLock(task) {
+    const run = instantDraftWriteLock.then(task, task);
+    instantDraftWriteLock = run.catch(() => {});
     return run;
 }
 
@@ -624,8 +624,8 @@ async function initStorage() {
         await writeJSON(THOUGHTS_FILE, []);
     }
 
-    if (!await pathExists(TODAY_DRAFTS_FILE)) {
-        await writeJSON(TODAY_DRAFTS_FILE, []);
+    if (!await pathExists(INSTANT_DRAFTS_FILE)) {
+        await writeJSON(INSTANT_DRAFTS_FILE, []);
     }
 }
 
@@ -904,24 +904,24 @@ async function deleteThought(id) {
     return nextThoughts.length !== thoughts.length;
 }
 
-async function readTodayDrafts() {
+async function readInstantDrafts() {
     await init();
     if (isS3Backend()) {
         const drafts = await s3ReadJSON('today-drafts.json', []);
         return Array.isArray(drafts) ? drafts : [];
     }
-    const drafts = await readJSON(TODAY_DRAFTS_FILE, []);
+    const drafts = await readJSON(INSTANT_DRAFTS_FILE, []);
     return Array.isArray(drafts) ? drafts : [];
 }
 
-async function saveTodayDrafts(drafts) {
+async function saveInstantDrafts(drafts) {
     await init();
     const next = Array.isArray(drafts) ? drafts : [];
     if (isS3Backend()) {
         await s3WriteJSON('today-drafts.json', next);
         return;
     }
-    await writeJSON(TODAY_DRAFTS_FILE, next);
+    await writeJSON(INSTANT_DRAFTS_FILE, next);
 }
 
 async function readAgentRunUnsafe(id) {
@@ -1704,13 +1704,13 @@ async function getSearchDocuments() {
 module.exports = {
     init,
     withThoughtWriteLock,
-    withTodayDraftWriteLock,
+    withInstantDraftWriteLock,
     withNotepadWriteLock,
     withAgentRunWriteLock,
     readThoughts,
     saveThoughts,
-    readTodayDrafts,
-    saveTodayDrafts,
+    readInstantDrafts,
+    saveInstantDrafts,
     readThought,
     readThoughtsByIds,
     listThoughtsPage,
@@ -1759,7 +1759,7 @@ module.exports = {
         DATA_DIR,
         NOTEPADS_FILE,
         THOUGHTS_FILE,
-        TODAY_DRAFTS_FILE,
+        INSTANT_DRAFTS_FILE,
         THOUGHTS_DIR,
         META_DIR,
         RELATIONS_DIR,

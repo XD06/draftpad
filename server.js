@@ -22,7 +22,7 @@ const { createSearchIndex } = require('./server/indexing');
 const { createSearchRegistry } = require('./server/search/registry');
 const { createNotepadSearchProvider } = require('./server/search/providers/notepad-provider');
 const { createThoughtSearchProvider } = require('./server/search/providers/thought-provider');
-const { createTodayDraftSearchProvider } = require('./server/search/providers/today-draft-provider');
+const { createInstantDraftSearchProvider } = require('./server/search/providers/today-draft-provider');
 const { createWebSocketHub } = require('./server/websocket');
 const storage = require('./scripts/storage');
 const aiQueue = require('./scripts/ai-queue');
@@ -42,7 +42,7 @@ const { registerSearchRoutes } = require('./routes/search-routes');
 const { registerShareRoutes } = require('./routes/share-routes');
 const { registerStaticRoutes } = require('./routes/static-routes');
 const { registerThoughtRoutes } = require('./routes/thought-routes');
-const { registerTodayDraftRoutes } = require('./routes/today-drafts-routes');
+const { registerInstantDraftRoutes } = require('./routes/today-drafts-routes');
 const { registerTrashRoutes } = require('./routes/trash-routes');
 const { createAgentContextService } = require('./scripts/agent/agent-context-service');
 const { createAgentModelClient } = require('./scripts/agent/agent-model-client');
@@ -589,7 +589,7 @@ const searchRegistry = createSearchRegistry({
     providers: [
         createNotepadSearchProvider({ getCorpus: getSearchCorpus }),
         createThoughtSearchProvider({ storage }),
-        createTodayDraftSearchProvider({ storage })
+        createInstantDraftSearchProvider({ storage })
     ]
 });
 
@@ -650,7 +650,7 @@ registerThoughtRoutes(app, {
     broadcastWebSocketMessage
 });
 
-registerTodayDraftRoutes(app, {
+registerInstantDraftRoutes(app, {
     storage,
     broadcastWebSocketMessage
 });

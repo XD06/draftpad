@@ -12,7 +12,7 @@ const {
 const { createSearchRegistry } = require('../server/search/registry.js');
 const { createNotepadSearchProvider } = require('../server/search/providers/notepad-provider.js');
 const { createThoughtSearchProvider, buildThoughtLines } = require('../server/search/providers/thought-provider.js');
-const { createTodayDraftSearchProvider, dayWindowKeys, dayLabel } = require('../server/search/providers/today-draft-provider.js');
+const { createInstantDraftSearchProvider, dayWindowKeys, dayLabel } = require('../server/search/providers/today-draft-provider.js');
 
 function localDayKey(date) {
     const year = date.getFullYear();
@@ -284,9 +284,9 @@ async function runAll() {
         assert.strictEqual(dayWindowKeys().size, 3);
     });
 
-    const draftProvider = createTodayDraftSearchProvider({
+    const draftProvider = createInstantDraftSearchProvider({
         storage: {
-            async readTodayDrafts() {
+            async readInstantDrafts() {
                 return [
                     { id: 'd1', text: '今天要买苹果\n顺便复习部署', completed: false, day: localDayKey(today), version: 1, createdAt: 1, updatedAt: 10 },
                     { id: 'd2', text: '昨天的想法部署', completed: true, day: localDayKey(yesterday), version: 1, createdAt: 2, updatedAt: 20 },
