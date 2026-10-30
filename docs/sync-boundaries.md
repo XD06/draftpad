@@ -97,13 +97,13 @@ Thought 创建和修改不能等待 AI extract、embedding、rerank 或 S3 之�
 
 ### 即时草稿
 
-- `GET /api/today-drafts`、`GET /api/today-drafts/:id` 读取服务端 3 天窗口（今天 + 前 2 天）内的记录，并在访问时清理滑出窗口的日期。
-- 新记录用客户端生成的 id 调用 `PUT /api/today-drafts/:id`，不带 `baseVersion`；更新与删除必须带当前 `baseVersion`，版本过期返回 `409`。创建可以携带窗口内的 `day`（离线草稿跨过午夜后才重放时落回原日，窗口外由服务端盖章今天）；更新永远保留记录原有的 `day`。
-- 成功创建、更新、删除后广播 `today_drafts_update`，其 payload 只包含受影响的一条草稿。
+- `GET /api/instant-drafts`、`GET /api/instant-drafts/:id` 读取服务端 3 天窗口（今天 + 前 2 天）内的记录，并在访问时清理滑出窗口的日期。改名前的 `/api/today-drafts` 由同一组 handler 长期挂载为 alias。
+- 新记录用客户端生成的 id 调用 `PUT /api/instant-drafts/:id`，不带 `baseVersion`；更新与删除必须带当前 `baseVersion`，版本过期返回 `409`。创建可以携带窗口内的 `day`（离线草稿跨过午夜后才重放时落回原日，窗口外由服务端盖章今天）；更新永远保留记录原有的 `day`。
+- 成功创建、更新、删除后广播 `instant_drafts_update`，其 payload 只包含受影响的一条草稿；改名前的 `today_drafts_update` 与之一并双发。
 - 前端将 3 天窗口缓存和待同步 outbox 分开保存（outbox 克隆携带 `day`）；本机存在待同步项时，不以 WebSocket 的远端版本覆盖它。
 - outbox 冲刷是链式的：同步进行中再次触发的冲刷会在当前请求结束后立即重跑；网络失败以 3 秒退避自动重试；离开即时草稿视图前会先冲刷待同步项，而不是丢弃定时器。
 - WebSocket 重连（`ws_connected`）时，除重试 outbox 外还会重新拉取窗口列表，补齐断线期间其他设备的更新。
-- 即时草稿管理器在应用启动的空闲时段即创建（编辑器/Thought 工作区也会），保证后台也能接收 `today_drafts_update` 推送并冲刷 outbox，而不是等用户首次打开今日视图。
+- 即时草稿管理器在应用启动的空闲时段即创建（编辑器/Thought 工作区也会），保证后台也能接收 `instant_drafts_update` 推送并冲刷 outbox，而不是等用户首次打开今日视图。
 - 草稿不写入垃圾桶、Thought AI、relation 或搜索索引；需要长期保留时，先显式创建 Thought 或文章，再删除草稿。
 
 ## 5. Relation 边界
@@ -173,7 +173,7 @@ AI 日志应保留在后端控制台，用于定位任务是否入队、模型�
 - `thoughts_update`：Thought 本体发生创建、修改、删除。
 - `relations_update`：某个 Thought 的 relation 数量或内容发生变化。
 - `ai_status_update`：某个 Thought 的 AI 状态发生变化。
-- `today_drafts_update`：3 天窗口内的一条草稿被创建、更新或删除，payload 为该条草稿（含 `day`）。
+- `instant_drafts_update`：3 天窗口内的一条草稿被创建、更新或删除，payload 为该条草稿（含 `day`）。改名前的 `today_drafts_update` 与之同时发出、内容相同。
 
 WebSocket 只负责通知：
 
@@ -183,7 +183,7 @@ WebSocket 只负责通知：
 
 ## 8. 冲突与版本
 
-Notepad、Thought 和 Today Draft 使用 `version/baseVersion` 做乐观并发：
+Notepad、Thought 和 Instant Draft 使用 `version/baseVersion` 做乐观并发：
 
 - 客户端保存时带上 `baseVersion`。
 - 服务端发现当前版本更高时，若远端正文已经等于本次保存正文，应返回成功并标记 `unchanged=true`；否则返回 `409`。
@@ -197,7 +197,7 @@ Notepad、Thought 和 Today Draft 使用 `version/baseVersion` 做乐观并发�
 
 - Notepad 正文仍保持整篇版本冲突。
 - Thought 因为结构化字段较小，可以按字段或 action 做更细粒度合并。
-- Today Draft 是单行临时数据；冲突时先取回服务端当前版本，只重放明确的本地单条意图，不把它当作可长期保存的冲突副本。
+- Instant Draft 是单行临时数据；冲突时先取回服务端当前版本，只重放明确的本地单条意图，不把它当作可长期保存的冲突副本。
 - 手动 relation 和 suppressed relation 以 pair 为最小合并单位。
 - AI 派生数据不参与冲突，必要时重建。
 
@@ -211,7 +211,7 @@ Notepad、Thought 和 Today Draft 使用 `version/baseVersion` 做乐观并发�
 4. 如果本地有 dirty 内容，恢复在线后尝试保存；遇到 409 不自动覆盖。
 5. Thought 视图打开时再请求 `/api/thoughts`，不阻塞 Notepad 首屏。
 6. AI 状态、relation 面板按需请求，或通过 WebSocket 轻量刷新。
-7. 即时草稿视图打开时读取 `/api/today-drafts` 并重试本机 outbox；它不阻塞文章首屏，跨日内容只恢复到 3 天窗口以内（今天可编辑，历史日只读翻页查看）。
+7. 即时草稿视图打开时读取 `/api/instant-drafts` 并重试本机 outbox；它不阻塞文章首屏，跨日内容只恢复到 3 天窗口以内（今天可编辑，历史日只读翻页查看）。
 
 设置同步面板的职责：
 

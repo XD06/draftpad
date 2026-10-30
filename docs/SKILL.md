@@ -1,11 +1,11 @@
 ---
 name: dumbpad-api
-description: Manage DumbPad through its authenticated HTTP API. Use for frequent article, Thought, and Today Draft work; use the OpenAPI document when an operation is not covered here. Never edit DumbPad storage files directly.
+description: Manage DumbPad through its authenticated HTTP API. Use for frequent article, Thought, and Instant Draft work; use the OpenAPI document when an operation is not covered here. Never edit DumbPad storage files directly.
 ---
 
 # DumbPad API Agent
 
-Use the authenticated HTTP API only. It preserves versions, live updates, search indexes, storage layout, and the daily lifecycle of Today Drafts. Do not write `data/`, browser storage, or S3 objects directly.
+Use the authenticated HTTP API only. It preserves versions, live updates, search indexes, storage layout, and the daily lifecycle of Instant Drafts. Do not write `data/`, browser storage, or S3 objects directly.
 
 ## Choose The Right Area First
 
@@ -13,7 +13,7 @@ Use the authenticated HTTP API only. It preserves versions, live updates, search
 | --- | --- | --- |
 | Article (Notepad) | Detailed records, context, source material, structured Markdown, or anything that needs to remain discoverable. | Write the full record here. Length is not constrained. |
 | Thought | A persistent, concise idea, reminder, or task that may be retained and organized later. | Prefer one clear sentence, normally no more than 50 Chinese characters. If it needs explanation, create an Article instead. |
-| Today Draft | An immediate, disposable action for today only. The server clears it when the next local calendar day begins. | Keep it to one short sentence, usually a few to a few dozen characters. Do not use it as a permanent inbox. |
+| Instant Draft | An immediate, disposable action. The server keeps a rolling 3-day window (today plus the two previous days) and permanently drops rows that slide out of it. | Keep it to one short sentence, usually a few to a few dozen characters. Do not use it as a permanent inbox. |
 
 Ask the user when the correct area is unclear. Do not silently shorten content; move detailed material to an Article.
 
@@ -36,7 +36,7 @@ Use `Authorization: Bearer $DUMBPAD_TOKEN` for protected routes. `mode: "legacy"
 
 ## Operating Rules
 
-1. Read the current item before changing an existing Article, Thought, or Today Draft. Send its `baseVersion` for updates and deletes.
+1. Read the current item before changing an existing Article, Thought, or Instant Draft. Send its `baseVersion` for updates and deletes.
 2. On `409`, fetch the latest object and merge only the requested change. Never retry a stale overwrite blindly.
 3. Search before creating a permanent Article or Thought when duplication is plausible.
 4. Treat `DELETE`, trash restoration, and data-management actions as destructive. Require explicit user confirmation before calling them.
@@ -132,33 +132,35 @@ curl -fsS -X PATCH "$DUMBPAD_BASE_URL/api/thoughts/<thought-id>" \
   -d '{"action":"overwrite","attachments":[{"assetId":"<existing-asset-id>"},{"assetId":"<new-asset-id>"}],"baseVersion":3}'
 ```
 
-### Today Drafts
+### Instant Drafts
 
-Today Drafts are single, date-scoped rows. `GET /api/today-drafts` returns `{ day, items }` covering a 3-day window (today plus the two previous days); every row carries its own `day`. Do not attempt to retain rows older than the window. A caller supplies the row ID so offline clients can retry safely; a create may carry a `day` inside the window (offline drafts replayed after midnight land on their original day), while updates always keep the stored `day`.
+Instant Drafts are single, date-scoped rows. `GET /api/instant-drafts` returns `{ day, items }` covering a 3-day window (today plus the two previous days); every row carries its own `day`. Do not attempt to retain rows older than the window. A caller supplies the row ID so offline clients can retry safely; a create may carry a `day` inside the window (offline drafts replayed after midnight land on their original day), while updates always keep the stored `day`.
+
+The pre-rename path `/api/today-drafts` is still mounted as an alias with byte-identical responses, and the `today_drafts` search scope is still accepted. Use `/api/instant-drafts` and `scope=instant_drafts` in new work.
 
 ```bash
 # List today's rows.
-curl -fsS "$DUMBPAD_BASE_URL/api/today-drafts" \
+curl -fsS "$DUMBPAD_BASE_URL/api/instant-drafts" \
   -H "Authorization: Bearer $DUMBPAD_TOKEN"
 
 # Create one short row. Omit baseVersion only for a new ID.
-curl -fsS -X PUT "$DUMBPAD_BASE_URL/api/today-drafts/today-standup-01" \
+curl -fsS -X PUT "$DUMBPAD_BASE_URL/api/instant-drafts/today-standup-01" \
   -H "Authorization: Bearer $DUMBPAD_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"text":"回复团队消息","completed":false}'
 
 # Update one existing row with its current version.
-curl -fsS -X PUT "$DUMBPAD_BASE_URL/api/today-drafts/today-standup-01" \
+curl -fsS -X PUT "$DUMBPAD_BASE_URL/api/instant-drafts/today-standup-01" \
   -H "Authorization: Bearer $DUMBPAD_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"text":"回复团队消息","completed":true,"baseVersion":1}'
 ```
 
-To discard an individual Today Draft, first obtain explicit user confirmation, then call `DELETE /api/today-drafts/:id` with its current `baseVersion`. To retain a draft beyond today, create a concise Thought or detailed Article first, confirm it succeeded, then delete the draft.
+To discard an individual Instant Draft, first obtain explicit user confirmation, then call `DELETE /api/instant-drafts/:id` with its current `baseVersion`. To retain a draft beyond today, create a concise Thought or detailed Article first, confirm it succeeded, then delete the draft.
 
 ### Search
 
-Use the combined search only when the target area is unknown. Matching is exact multi-keyword AND: whitespace-separated keywords must all appear (case-insensitive) across Articles, Thoughts and Today Drafts. Results are typed (`type: notepad | thought | today_draft`) and carry `matchCount` plus per-line `occurrences`:
+Use the combined search only when the target area is unknown. Matching is exact multi-keyword AND: whitespace-separated keywords must all appear (case-insensitive) across Articles, Thoughts and Instant Drafts. Results are typed (`type: notepad | thought | instant_draft`) and carry `matchCount` plus per-line `occurrences`:
 
 ```bash
 curl -fsS "$DUMBPAD_BASE_URL/api/search?q=release&scope=all&page=1&pageSize=20" \
@@ -169,5 +171,5 @@ curl -fsS "$DUMBPAD_BASE_URL/api/search?q=release&scope=all&page=1&pageSize=20" 
 
 - `400`: validate the request against `/openapi.json`; do not guess fields.
 - `401` or `403`: stop and ask for a valid credential or the required scope.
-- `404`: confirm the ID and, for Today Drafts, that it still belongs to the current server day.
+- `404`: confirm the ID and, for Instant Drafts, that it still belongs to the current server day.
 - `409`: follow the merge rule above and retry once only after a safe merge.

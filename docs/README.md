@@ -13,8 +13,8 @@ For a new AI session, start with `../AGENTS.md` (the AI charter: commands, direc
 
 ## Current Docs
 
-- `api.md` - current REST API reference, including Today Draft lifecycle and WebSocket events; `GET /openapi.json` is the complete machine-readable contract.
-- `SKILL.md` - concise Agent guidance for choosing Articles, Thoughts, or Today Drafts and using their frequent operations.
+- `api.md` - current REST API reference, including Instant Draft lifecycle and WebSocket events; `GET /openapi.json` is the complete machine-readable contract.
+- `SKILL.md` - concise Agent guidance for choosing Articles, Thoughts, or Instant Drafts and using their frequent operations.
 - `technical-overview.md` - current architecture boundaries and module responsibilities (implementation-level detail).
 - `sync-boundaries.md` - sync ownership for Notepad, Thought, AI, S3, WebSocket, and conflicts.
 - `storage-interface.md` - storage boundary for local files and S3-compatible backends.

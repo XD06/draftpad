@@ -603,7 +603,9 @@ curl -X POST http://localhost:3000/api/assets/files \
 
 ## 即时草稿 API
 
-即时草稿（Today Draft）是“用完即走”的单行记录，不是永久笔记或待办历史。服务端按自己的本地日历分区，保留 **3 天窗口**（今天 + 前 2 天）内的记录；读取或写入时会永久清除滑出窗口的记录，因此客户端不得依赖 3 天前的草稿还存在。窗口内的历史日仅供查看，编辑器只开放给今天。需要长期保留的内容应先转成 Thought 或文章。
+即时草稿（Instant Draft）是“用完即走”的单行记录，不是永久笔记或待办历史。服务端按自己的本地日历分区，保留 **3 天窗口**（今天 + 前 2 天）内的记录；读取或写入时会永久清除滑出窗口的记录，因此客户端不得依赖 3 天前的草稿还存在。窗口内的历史日仅供查看，编辑器只开放给今天。需要长期保留的内容应先转成 Thought 或文章。
+
+> **路径兼容**：本节所有端点都以 `/api/instant-drafts` 为规范路径；改名前的 `/api/today-drafts` 由同一组 handler 长期挂载为 alias，两者响应逐字节一致。新代码请只用规范路径。
 
 ### 数据模型
 
@@ -621,7 +623,7 @@ curl -X POST http://localhost:3000/api/assets/files \
 
 `id` 由客户端提供，必须匹配 `[A-Za-z0-9][A-Za-z0-9_-]{2,95}`，便于离线重试幂等化。`text` 不能为空；产品约定是一句简短、当日要处理的事项，不在 API 层截断内容。`version` 用于同一条记录的乐观并发控制。
 
-### GET /api/today-drafts
+### GET /api/instant-drafts
 
 读取 3 天窗口（今天 + 前 2 天）内的全部草稿，每条带自己的 `day`。
 
@@ -636,11 +638,11 @@ curl -X POST http://localhost:3000/api/assets/files \
 
 `day` 字段是服务端的今天；条目自己的 `day` 可能落在窗口内的任何一天。
 
-### GET /api/today-drafts/:id
+### GET /api/instant-drafts/:id
 
-读取窗口内的一条草稿。不存在、已滑出窗口或已删除时返回 `404`；非法 id 返回 `400` 与 `code: "INVALID_TODAY_DRAFT_ID"`。
+读取窗口内的一条草稿。不存在、已滑出窗口或已删除时返回 `404`；非法 id 返回 `400` 与 `code: "INVALID_INSTANT_DRAFT_ID"`。
 
-### PUT /api/today-drafts/:id
+### PUT /api/instant-drafts/:id
 
 创建或更新一条草稿。新 id 不传 `baseVersion`，返回 `201`；已有 id 必须传当前 `baseVersion`，成功返回 `200`。版本过期返回 `409` 与 `currentVersion`，未传已有记录的版本返回 `400` 与 `code: "BASE_VERSION_REQUIRED"`。
 
@@ -658,11 +660,11 @@ curl -X POST http://localhost:3000/api/assets/files \
 { "success": true, "created": false, "draft": { "id": "today-standup-01", "version": 2 } }
 ```
 
-### DELETE /api/today-drafts/:id
+### DELETE /api/instant-drafts/:id
 
 删除窗口内的一条草稿。请求体必须包含当前 `baseVersion`；成功返回 `{ "success": true, "deleted": true, "draft": { ... } }`。这是破坏性操作，自动化执行前应获得用户确认。
 
-实时客户端还会收到 WebSocket `today_drafts_update` 事件，`action` 为 `create`、`update` 或 `delete`，`payload` 是受影响的草稿对象。
+实时客户端还会收到 WebSocket `instant_drafts_update` 事件，`action` 为 `create`、`update` 或 `delete`，`payload` 是受影响的草稿对象。改名前的 `today_drafts_update` 仍会与之一并双发，供缓存了旧 bundle 的客户端使用；新代码只监听新名。
 
 完整机器可读契约可通过 `GET /openapi.json` 查询；其中的 `paths` 与 `components.schemas` 可用于查找不常用端点和字段。
 
@@ -1592,16 +1594,16 @@ loosely_related
 
 ### GET /api/search
 
-全局搜索，跨三个数据域：Notepad（文章）、Thought、Today Draft（即时草稿）。匹配语义为**精确多关键词 AND**：查询按空白分词（上限 8 个），每个关键词都必须出现（大小写不敏感，标题 / 正文 / 标签任一位置）才算命中，不做模糊近似。
+全局搜索，跨三个数据域：Notepad（文章）、Thought、Instant Draft（即时草稿）。匹配语义为**精确多关键词 AND**：查询按空白分词（上限 8 个），每个关键词都必须出现（大小写不敏感，标题 / 正文 / 标签任一位置）才算命中，不做模糊近似。
 
-架构上由 `server/search/` 的领域 provider 注册表驱动（notepad / thought / today_draft 各自提供实现），新增数据域只需注册一个 provider；每个结果都带 `type` 字段标识来源域。
+架构上由 `server/search/` 的领域 provider 注册表驱动（notepad / thought / instant_draft 各自提供实现），新增数据域只需注册一个 provider；每个结果都带 `type` 字段标识来源域。
 
 **Query 参数：**
 
 | 参数 | 类型 | 说明 |
 |---|---|---|
 | `q` / `query` | string | 搜索关键词，支持空格分隔多关键词（AND）；空串返回空结果 |
-| `scope` | `notepads` / `thoughts` / `today_drafts` / `all` | 搜索范围，默认 `all` |
+| `scope` | `notepads` / `thoughts` / `instant_drafts` / `all` | 搜索范围，默认 `all`。改名前的 `today_drafts` 仍被接受，并归一化到 `instant_drafts` |
 | `page` | number | 页码，默认 `1` |
 | `pageSize` | number | 每页数量，默认返回全部 |
 
@@ -1645,7 +1647,7 @@ loosely_related
   - `block`（块类型：`{ type: 'heading', level }` / `todo` / `list` / `quote` / `code`（围栏内行）/ `text`，供 UI 显示徽标）；
   - `section`（notepad 域为所属 ATX 标题，感知围栏代码块；其他域为 `null`）、`context`（Thought 域标注 `正文` / `子任务` / `标签`，其他域为 `null`）。
   - 单文档上限 50 条，超出由 `occurrencesTruncated: true` 标记（`matchCount` 始终是未截断的真实总数）。
-- 排序：文档级——标题命中 > `coLineCount` 多 > 命中数多 > 更新时间新；域内排序一致，域间按 notepad → thought → today_draft。
+- 排序：文档级——标题命中 > `coLineCount` 多 > 命中数多 > 更新时间新；域内排序一致，域间按 notepad → thought → instant_draft。
 
 ### GET /api/share/:id
 
@@ -1704,11 +1706,11 @@ Relations 更新事件：
 }
 ```
 
-即时草稿更新事件：
+即时草稿更新事件（改名前的 `today_drafts_update` 仍会双发，字段完全一致）：
 
 ```json
 {
-  "type": "today_drafts_update",
+  "type": "instant_drafts_update",
   "action": "create | update | delete",
   "payload": { "id": "today-standup-01", "version": 2 }
 }

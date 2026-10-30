@@ -49,7 +49,7 @@ graph TD
 
 ### 三个"用完即走/短生命周期"域互不串线
 
-- **Today Drafts**（`routes/today-drafts-routes.js` + `public/managers/today-drafts/`）：按服务端日期滚动清理的单行清单（保留今天 + 前 2 天的窗口，历史日只读翻页；单日超出纸面时按 44px 纸纹切成同一天里的多页，日与页拉平成一条页序列，翻页手势不分叉；行操作走**长按唤出的图标菜单**（复制 / 转为 Thought / 转为文章 / 删除），横向手势只归翻页——纸边约 22% 宽的热区起笔即翻页，行中段正文本区不认领翻页以保住点按编辑），独立写锁 + 独立 `today_drafts_update` 事件。
+- **Instant Drafts**（`routes/today-drafts-routes.js` + `public/managers/today-drafts/`）：按服务端日期滚动清理的单行清单（保留今天 + 前 2 天的窗口，历史日只读翻页；单日超出纸面时按 44px 纸纹切成同一天里的多页，日与页拉平成一条页序列，翻页手势不分叉；行操作走**长按唤出的图标菜单**（复制 / 转为 Thought / 转为文章 / 删除），横向手势只归翻页——纸边约 22% 宽的热区起笔即翻页，行中段正文本区不认领翻页以保住点按编辑），独立写锁 + 独立 `instant_drafts_update` 事件（改名前的 `today_drafts_update` 仍双发）。对外路径以 `/api/instant-drafts` 为准，`/api/today-drafts` 作为 alias 长期挂载；存储文件仍是 `today-drafts.json`。
 - **Trash**（`routes/trash-routes.js`）：回收站只经 storage 边界。
 - **AgentRun**（`scripts/agent/agent-run-service.js`）：运行记录，不参与搜索与关系。
 
@@ -73,10 +73,10 @@ graph TD
 
 ## 4. 核心抽象与设计约束
 
-- **单一存储边界**：`scripts/storage.js` 暴露 Notepad/Thought/Today Draft/Trash/AI meta/relations/indexes 的统一方法集，并持有 `withThoughtWriteLock()` 异步互斥锁，Thought 的读-改-写必须整体包在锁内。
-- **乐观并发**：Notepad/Thought/Today Draft 都用 `baseVersion`；冲突返回 `409`，前端必须可恢复，不能死锁。
-- **本地优先 + 离线 outbox**：Thought 与 Today Draft 在浏览器侧各有 outbox（`localStorage`），联网后按 id 回放。
-- **写锁分级**：Thought 一把锁，Today Draft 一把独立锁，互不阻塞。
+- **单一存储边界**：`scripts/storage.js` 暴露 Notepad/Thought/Instant Draft/Trash/AI meta/relations/indexes 的统一方法集，并持有 `withThoughtWriteLock()` 异步互斥锁，Thought 的读-改-写必须整体包在锁内。
+- **乐观并发**：Notepad/Thought/Instant Draft 都用 `baseVersion`；冲突返回 `409`，前端必须可恢复，不能死锁。
+- **本地优先 + 离线 outbox**：Thought 与 Instant Draft 在浏览器侧各有 outbox（`localStorage`），联网后按 id 回放。
+- **写锁分级**：Thought 一把锁，Instant Draft 一把独立锁，互不阻塞。
 - **破坏性操作默认关闭**：`DUMBPAD_ENABLE_DESTRUCTIVE_DATA_OPERATIONS=false` 是默认值，空间删除、本地覆盖 S3、S3 覆盖本地、非 dry-run 本地导入都会被拒。
 - **`S3_PREFIX` 是数据集隔离边界**：测试 / 真实 / 备份必须用不同 prefix。
 - **鉴权双轨**：Legacy PIN 与 Personal security V1（`AUTH_V2_ENABLED=true`）并存。V2 启用后旧 PIN Cookie 与 PIN Bearer 全部失效，API token 只带 `content:*` / `thoughts:*` scope，不能调用 `/api/auth/*` 和 `/api/data-management/*`。
