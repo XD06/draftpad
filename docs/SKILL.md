@@ -47,6 +47,17 @@ Use `Authorization: Bearer $DUMBPAD_TOKEN` for protected routes. `mode: "legacy"
 
 Use an Article for detailed work. `Notepad` is its metadata; `Note` is its Markdown body.
 
+**`/api/notepads/:id` and `/api/notes/:id` share the same ID but are different resources.** The metadata endpoint never returns `content`, and `PATCH /api/notepads/:id` only flips the pin — a `200` without a `content` key does **not** mean the article is empty. To read the body you must call `GET /api/notes/:id`.
+
+| Goal | Endpoint |
+| --- | --- |
+| List / filter / sort / create / rename / pin / delete an article | `/api/notepads`, `/api/notepads/:id` |
+| Read the Markdown body | `GET /api/notes/:id` |
+| Read the heading outline (section slugs) | `GET /api/notes/:id/outline` |
+| Overwrite the whole body | `POST /api/notes/:id` |
+| Narrow edit (9 actions) | `PATCH /api/notes/:id` |
+| Several dependent edits, atomically | `POST /api/notes/:id/edits` |
+
 ```bash
 # Find an existing article or create a detailed record.
 curl -fsS "$DUMBPAD_BASE_URL/api/notepads?title=release" \
@@ -169,7 +180,9 @@ curl -fsS "$DUMBPAD_BASE_URL/api/search?q=release&scope=all&page=1&pageSize=20" 
 
 ## Errors And Conflicts
 
-- `400`: validate the request against `/openapi.json`; do not guess fields.
+Every failure body is JSON with an `error` string; some also carry a stable `code`. Branch on `code` when it is present, never on the `error` wording (it can change).
+
+- `400`: validate the request against `/openapi.json`; do not guess fields. `code: "BASE_VERSION_REQUIRED"` means an update omitted `baseVersion`; `INVALID_INSTANT_DRAFT_ID` / `INVALID_INSTANT_DRAFT_TEXT` mean the ID or text failed validation.
 - `401` or `403`: stop and ask for a valid credential or the required scope.
-- `404`: confirm the ID and, for Instant Drafts, that it still belongs to the current server day.
-- `409`: follow the merge rule above and retry once only after a safe merge.
+- `404`: confirm the ID and, for Instant Drafts, that it still belongs to the current retention window.
+- `409`: follow the merge rule above and retry once only after a safe merge. The body carries `currentVersion`; re-read, merge, then resend with the fresh version.

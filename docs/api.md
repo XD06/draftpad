@@ -7,6 +7,22 @@ Base URL: `http://localhost:PORT`
 
 除登录和配置端点外，`/api/*` 默认需要认证。浏览器使用 HttpOnly Cookie；自动化使用 `Authorization: Bearer <token>`。启用 `AUTH_V2_ENABLED=true` 后，旧 PIN Cookie 与 PIN Bearer 都不再可用，token 只可访问内容 API，不能访问认证、数据空间、备份或恢复管理端点。
 
+### 错误响应约定
+
+所有失败响应都是 JSON，至少带一个 `error` 字段（人类可读的英文短句）；能机器判别的失败额外带 `code`。**不要靠 `error` 文案分支**——文案可能调整，`code` 才是稳定判据。
+
+```json
+{ "error": "Instant draft id is invalid", "code": "INVALID_INSTANT_DRAFT_ID" }
+```
+
+现有 `code` 值：`INVALID_INSTANT_DRAFT_ID`、`INVALID_INSTANT_DRAFT_TEXT`、`BASE_VERSION_REQUIRED`、`INVALID_SEARCH_SCOPE`。版本冲突（`409`）统一带 `currentVersion`，先取回服务端当前版本再重放本地意图，不要盲目重试。
+
+> **尚未全量覆盖**：部分 `4xx`（尤其是认证与数据管理端点）目前只有 `error`、没有 `code`。`code` 存在时优先用它；不存在时只能按状态码与 `error` 判断。
+
+### 响应字段命名
+
+历史原因，少数列表端点用 `snake_case` 外层字段包住 `camelCase` 的条目字段，例如 `GET /api/notepads` 返回 `{ "notepads_list": [...], "note_history": "default" }`，而列表条目里是 `createdAt` / `updatedAt` / `editSessionIds`。`note_history` 是服务端回显的分页历史 cookie 值（未设置时为 `"default"`），不是数据字段。这些形状为兼容既有客户端保持不变。
+
 ---
 
 ## Auth 与配置 API
@@ -130,6 +146,19 @@ Personal security V1 的初次设置用旧 PIN 或一次性 `AUTH_BOOTSTRAP_TOKE
 ## Notepad API
 
 Notepad 是文章元数据；正文内容通过 Note API 读写。
+
+> **`/api/notepads/:id` 与 `/api/notes/:id` 用同一个 id，但不是同一个资源。** 两者最容易踩的坑是「拿到 200 却读不到正文」：元数据端点**永远不返回 `content`**，`PATCH` 也只改置顶（pin），不碰正文。按目的选端点：
+>
+> | 目的 | 端点 |
+> |---|---|
+> | 列文章 / 过滤 / 排序 / 新建 / 改标题 / 改置顶 / 删除 | `/api/notepads`、`/api/notepads/:id` |
+> | 读正文 | `GET /api/notes/:id` |
+> | 读章节结构（标题大纲与 slug） | `GET /api/notes/:id/outline` |
+> | 整篇覆盖保存 | `POST /api/notes/:id` |
+> | 局部编辑（append / replace / section 等 9 种 action） | `PATCH /api/notes/:id` |
+> | 多条编辑原子提交 | `POST /api/notes/:id/edits` |
+>
+> 判断「这篇是不是空的」只能看 `GET /api/notes/:id` 的 `content`；`GET /api/notepads/:id` 返回 200 且没有 `content` 键是正常现象，不代表空文章。
 
 文章同步使用的 GET 接口（文章列表、单篇元数据、正文和正文大纲）均返回 `Cache-Control: no-store, private`，客户端不应将响应当作可长期缓存的数据源。
 
