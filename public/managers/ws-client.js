@@ -1,5 +1,8 @@
 const SUPPORTED_EVENTS = new Set([
     'thoughts_update',
+    'instant_drafts_update',
+    // Legacy name: the server still emits it for clients running a cached
+    // bundle. New code listens to `instant_drafts_update` only.
     'today_drafts_update',
     'notes_update',
     'ai_status_update',

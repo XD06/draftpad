@@ -1,5 +1,12 @@
 const RETENTION_DAYS = 3;
 
+// 即时草稿（Instant Draft）对外挂载的两条路径：改名后的规范路径在前，
+// 旧名 `/api/today-drafts` 作为长期 alias 保留，避免已接入的脚本断掉。
+const API_PATHS = ['/api/instant-drafts', '/api/today-drafts'];
+
+// 同步事件同样双发：新前端认新名，缓存了旧 bundle 的客户端仍能收到更新。
+const WS_EVENTS = ['instant_drafts_update', 'today_drafts_update'];
+
 function localDayKey(date = new Date()) {
     const year = date.getFullYear();
     const month = String(date.getMonth() + 1).padStart(2, '0');
@@ -90,44 +97,42 @@ function registerInstantDraftRoutes(app, { storage, broadcastWebSocketMessage })
     }
 
     function broadcast(action, draft) {
-        broadcastWebSocketMessage({
-            type: 'today_drafts_update',
-            action,
-            payload: draft
-        });
+        for (const type of WS_EVENTS) {
+            broadcastWebSocketMessage({ type, action, payload: draft });
+        }
     }
 
-    app.get('/api/today-drafts', async (_req, res) => {
+    async function listDrafts(_req, res) {
         try {
             res.json(await readWindowDrafts());
         } catch (error) {
-            console.error('Error listing today drafts:', error);
-            res.status(500).json({ error: 'Error listing today drafts' });
+            console.error('Error listing instant drafts:', error);
+            res.status(500).json({ error: 'Error listing instant drafts' });
         }
-    });
+    }
 
-    app.get('/api/today-drafts/:id', async (req, res) => {
+    async function readDraft(req, res) {
         if (!isSafeInstantDraftId(req.params.id)) {
-            return res.status(400).json({ error: 'Today draft id is invalid', code: 'INVALID_TODAY_DRAFT_ID' });
+            return res.status(400).json({ error: 'Instant draft id is invalid', code: 'INVALID_INSTANT_DRAFT_ID' });
         }
         try {
             const { items } = await readWindowDrafts();
             const draft = items.find(item => item.id === req.params.id);
-            if (!draft) return res.status(404).json({ error: 'Today draft not found' });
+            if (!draft) return res.status(404).json({ error: 'Instant draft not found' });
             res.json(draft);
         } catch (error) {
-            console.error('Error reading today draft:', error);
-            res.status(500).json({ error: 'Error reading today draft' });
+            console.error('Error reading instant draft:', error);
+            res.status(500).json({ error: 'Error reading instant draft' });
         }
-    });
+    }
 
-    app.put('/api/today-drafts/:id', async (req, res) => {
+    async function upsertDraft(req, res) {
         const id = String(req.params.id || '');
         if (!isSafeInstantDraftId(id)) {
-            return res.status(400).json({ error: 'Today draft id is invalid', code: 'INVALID_TODAY_DRAFT_ID' });
+            return res.status(400).json({ error: 'Instant draft id is invalid', code: 'INVALID_INSTANT_DRAFT_ID' });
         }
         const text = String(req.body?.text || '').trim();
-        if (!text) return res.status(400).json({ error: 'text is required', code: 'INVALID_TODAY_DRAFT_TEXT' });
+        if (!text) return res.status(400).json({ error: 'text is required', code: 'INVALID_INSTANT_DRAFT_TEXT' });
 
         try {
             const result = await storage.withInstantDraftWriteLock(async () => {
@@ -140,7 +145,7 @@ function registerInstantDraftRoutes(app, { storage, broadcastWebSocketMessage })
                     return { error: 'baseVersion is required', status: 400, code: 'BASE_VERSION_REQUIRED' };
                 }
                 if (existing && requestedVersion !== existing.version) {
-                    return { error: 'Today draft has been updated', status: 409, currentVersion: existing.version };
+                    return { error: 'Instant draft has been updated', status: 409, currentVersion: existing.version };
                 }
 
                 // 更新永远留在它被创建的那一天；新建可以携带客户端指定的 day
@@ -172,27 +177,27 @@ function registerInstantDraftRoutes(app, { storage, broadcastWebSocketMessage })
             broadcast(result.created ? 'create' : 'update', result.draft);
             res.status(result.created ? 201 : 200).json({ success: true, created: result.created, draft: result.draft });
         } catch (error) {
-            console.error('Error saving today draft:', error);
-            res.status(500).json({ error: 'Error saving today draft' });
+            console.error('Error saving instant draft:', error);
+            res.status(500).json({ error: 'Error saving instant draft' });
         }
-    });
+    }
 
-    app.delete('/api/today-drafts/:id', async (req, res) => {
+    async function deleteDraft(req, res) {
         const id = String(req.params.id || '');
         if (!isSafeInstantDraftId(id)) {
-            return res.status(400).json({ error: 'Today draft id is invalid', code: 'INVALID_TODAY_DRAFT_ID' });
+            return res.status(400).json({ error: 'Instant draft id is invalid', code: 'INVALID_INSTANT_DRAFT_ID' });
         }
         try {
             const result = await storage.withInstantDraftWriteLock(async () => {
                 const { bounds: { today }, items: active } = await readActiveItems();
                 const existing = active.find(item => item.id === id);
-                if (!existing) return { error: 'Today draft not found', status: 404 };
+                if (!existing) return { error: 'Instant draft not found', status: 404 };
                 const requestedVersion = Number(req.body?.baseVersion);
                 if (!Number.isSafeInteger(requestedVersion)) {
                     return { error: 'baseVersion is required', status: 400, code: 'BASE_VERSION_REQUIRED' };
                 }
                 if (requestedVersion !== existing.version) {
-                    return { error: 'Today draft has been updated', status: 409, currentVersion: existing.version };
+                    return { error: 'Instant draft has been updated', status: 409, currentVersion: existing.version };
                 }
                 await storage.saveInstantDrafts(active.filter(item => item.id !== id));
                 return { draft: normalizeInstantDraft(existing, today) };
@@ -202,10 +207,17 @@ function registerInstantDraftRoutes(app, { storage, broadcastWebSocketMessage })
             broadcast('delete', result.draft);
             res.json({ success: true, deleted: true, draft: result.draft });
         } catch (error) {
-            console.error('Error deleting today draft:', error);
-            res.status(500).json({ error: 'Error deleting today draft' });
+            console.error('Error deleting instant draft:', error);
+            res.status(500).json({ error: 'Error deleting instant draft' });
         }
-    });
+    }
+
+    for (const base of API_PATHS) {
+        app.get(base, listDrafts);
+        app.get(`${base}/:id`, readDraft);
+        app.put(`${base}/:id`, upsertDraft);
+        app.delete(`${base}/:id`, deleteDraft);
+    }
 }
 
-module.exports = { localDayKey, dayWindowKeys, nextDayKey, registerInstantDraftRoutes };
+module.exports = { localDayKey, dayWindowKeys, nextDayKey, registerInstantDraftRoutes, API_PATHS, WS_EVENTS };

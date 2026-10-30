@@ -39,11 +39,16 @@ async function run() {
         badgeClass: 'badge-thought',
         jump: result => jumps.thought.push([result.id])
     });
-    registerResultType('today_draft', {
+    // 与 app.js 一致：即时草稿注册规范值 instant_draft，并保留改名前的
+    // today_draft 别名，避免缓存中的旧响应掉到「其他」徽标。
+    const instantDraftType = {
         label: '即时草稿',
         badgeClass: 'badge-today-draft',
         jump: result => jumps.instantDraft.push([result.id])
-    });
+    };
+    registerResultType('instant_draft', instantDraftType);
+    registerResultType('today_draft', instantDraftType);
+    assert.strictEqual(getResultType('today_draft').label, '即时草稿', 'the pre-rename type stays registered');
     assert.strictEqual(getResultType('mystery').label, '其他', 'unknown types degrade to the generic badge');
     assert.strictEqual(getResultType('mystery').jump, null, 'unknown types have no jump target');
 
@@ -121,7 +126,7 @@ async function run() {
             },
             {
                 id: 'draft-1',
-                type: 'today_draft',
+                type: 'instant_draft',
                 day: '2026-09-28',
                 title: '买苹果',
                 snippet: '',

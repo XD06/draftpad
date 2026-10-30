@@ -116,9 +116,17 @@ async function run() {
         await waitForServer(child);
         const today = localDayKey();
 
-        let result = await request('/api/today-drafts');
-        assert(result.response.ok, 'GET /api/today-drafts should list the retention window');
+        // 规范路径与改名前的 alias 必须指向同一套 handler。
+        let result = await request('/api/instant-drafts');
+        assert(result.response.ok, 'GET /api/instant-drafts should be the canonical path');
+        assert(result.body.day === today && Array.isArray(result.body.items), 'the canonical path returns the same body shape');
+        const canonicalIds = result.body.items.map(item => item.id).sort();
+
+        result = await request('/api/today-drafts');
+        assert(result.response.ok, 'GET /api/today-drafts should stay mounted as an alias');
         assert(result.body.day === today && Array.isArray(result.body.items), 'today draft list should be date-scoped and object-shaped');
+        assert.deepStrictEqual(result.body.items.map(item => item.id).sort(), canonicalIds,
+            'the pre-rename alias should return the same records as the canonical path');
         assert(!result.body.items.some(item => item.id === 'expired-draft'), 'a list request should purge expired drafts');
         assert(!result.body.items.some(item => item.id === 'out-of-window-draft'), 'drafts older than the 3-day window should be purged');
         assert(!result.body.items.some(item => item.id === 'bad id'), 'a list request should purge invalid persisted draft identifiers');
@@ -140,10 +148,12 @@ async function run() {
             'updating a historical draft should keep its original day');
 
         result = await request('/api/today-drafts/x');
-        assert(result.response.status === 400 && result.body.code === 'INVALID_TODAY_DRAFT_ID', 'single-draft endpoints should reject unsafe identifiers');
+        assert(result.response.status === 400 && result.body.code === 'INVALID_INSTANT_DRAFT_ID', 'single-draft endpoints should reject unsafe identifiers');
 
         const ws = await openWebSocket();
-        const createEvent = nextSocketMessage(ws, message => message.type === 'today_drafts_update' && message.action === 'create');
+        const createEvent = nextSocketMessage(ws, message => message.type === 'instant_drafts_update' && message.action === 'create');
+        // 改名兼容：旧事件名仍然双发，缓存了旧 bundle 的客户端才能收到更新。
+        const legacyCreateEvent = nextSocketMessage(ws, message => message.type === 'today_drafts_update' && message.action === 'create');
         result = await request('/api/today-drafts/client-draft-1', {
             method: 'PUT',
             body: JSON.stringify({ text: 'reply to the team', completed: false })
@@ -153,7 +163,9 @@ async function run() {
         assert(result.body.draft.day === today, 'a create without a day should be stamped with today');
         const created = result.body.draft;
         const event = await createEvent;
-        assert(event.payload?.id === created.id, 'today draft create should broadcast the affected record');
+        assert(event.payload?.id === created.id, 'instant draft create should broadcast the affected record');
+        const legacyEvent = await legacyCreateEvent;
+        assert(legacyEvent.payload?.id === created.id, 'the pre-rename event name should still be emitted for cached clients');
 
         result = await request('/api/today-drafts/offline-create-1', {
             method: 'PUT',

@@ -26,18 +26,18 @@ async function main() {
     const deletes = [];
     const draft = id => ({ id, text: `草稿 ${id}`, completed: false, day: localDayKey(0), version: 1, createdAt: Date.now(), updatedAt: Date.now() });
     app.get('/api/config', (_req, res) => res.json({ hiddenFloatingActions: [] }));
-    app.get('/api/today-drafts', (_req, res) => res.json({
+    app.get('/api/instant-drafts', (_req, res) => res.json({
         day: localDayKey(0),
         items: [
             { id: 't1', text: '测试一下', completed: false, day: localDayKey(0), createdAt: Date.now() - 120000 },
             { id: 't2', text: 'WiFi和我', completed: false, day: localDayKey(0), createdAt: Date.now() - 60000 }
         ]
     }));
-    app.put('/api/today-drafts/:id', express.json(), (req, res) => {
+    app.put('/api/instant-drafts/:id', express.json(), (req, res) => {
         puts.push({ id: req.params.id, body: req.body });
         res.json({ success: true, created: false, draft: { ...draft(req.params.id), text: req.body.text, completed: req.body.completed === true, version: 2 } });
     });
-    app.delete('/api/today-drafts/:id', express.json(), (req, res) => {
+    app.delete('/api/instant-drafts/:id', express.json(), (req, res) => {
         deletes.push({ id: req.params.id, body: req.body });
         res.json({ success: true, deleted: true, draft: draft(req.params.id) });
     });

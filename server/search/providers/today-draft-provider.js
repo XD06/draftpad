@@ -1,12 +1,17 @@
 'use strict';
 
-// Today Draft search provider for the global search registry.
+// Instant Draft search provider for the global search registry.
 //
-// Today drafts are a short-lived, small dataset (3-day rolling window, one
+// Instant drafts are a short-lived, small dataset (3-day rolling window, one
 // JSON file), so this provider reads them per query via storage — no cache
 // of its own. Drafts outside the retention window are pending deletion and
 // are excluded from search. The result carries the `day` key so the UI can
 // badge which day a hit belongs to and jump to it in the pager.
+//
+// Wire values: results carry `type: 'instant_draft'` and the provider is
+// selected by `scope: 'instant_drafts'`. The pre-rename values
+// (`today_draft` / `today_drafts`) are still accepted by the registry as
+// aliases so existing callers keep working.
 
 const {
     documentMatches,
@@ -51,8 +56,8 @@ function dayLabel(dayKey, now = new Date()) {
 
 function createInstantDraftSearchProvider({ storage }) {
     return {
-        type: 'today_draft',
-        scope: 'today_drafts',
+        type: 'instant_draft',
+        scope: 'instant_drafts',
         async search(keywords) {
             const drafts = await storage.readInstantDrafts();
             const windowKeys = dayWindowKeys();
@@ -75,7 +80,7 @@ function createInstantDraftSearchProvider({ storage }) {
 
                 results.push({
                     id: draft.id,
-                    type: 'today_draft',
+                    type: 'instant_draft',
                     day,
                     title,
                     name: snippet || title,

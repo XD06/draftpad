@@ -9,7 +9,7 @@ const {
     createSectionMapper,
     rankSearchResults
 } = require('../server/search/matcher.js');
-const { createSearchRegistry } = require('../server/search/registry.js');
+const { createSearchRegistry, SCOPES, normalizeScope } = require('../server/search/registry.js');
 const { createNotepadSearchProvider } = require('../server/search/providers/notepad-provider.js');
 const { createThoughtSearchProvider, buildThoughtLines } = require('../server/search/providers/thought-provider.js');
 const { createInstantDraftSearchProvider, dayWindowKeys, dayLabel } = require('../server/search/providers/today-draft-provider.js');
@@ -307,7 +307,7 @@ async function runAll() {
         assert.strictEqual(result.day, localDayKey(today));
         assert.strictEqual(result.title, '今天要买苹果');
         assert.strictEqual(result.occurrences.length, 1);
-        assert.strictEqual(result.type, 'today_draft');
+        assert.strictEqual(result.type, 'instant_draft');
     });
 
     console.log('[registry]');
@@ -338,6 +338,22 @@ async function runAll() {
         const all = await registry.search({ query: '部署' });
         assert.strictEqual(calls.length, 2);
         assert.strictEqual(all.results.length, 2);
+    });
+
+    // 改名兼容：`today_drafts` 是改名前的 scope 拼写，必须落到同一个 provider。
+    await run('scope 别名 today_drafts 归一化到 instant_drafts', async () => {
+        const calls = [];
+        const registry = createSearchRegistry({
+            providers: [
+                { type: 'notepad', scope: 'notepads', async search() { calls.push('notepad'); return []; } },
+                { type: 'instant_draft', scope: 'instant_drafts', async search() { calls.push('instant_draft'); return []; } }
+            ]
+        });
+        assert.deepStrictEqual(SCOPES.includes('today_drafts'), true, 'legacy scope stays in the accepted enum');
+        assert.strictEqual(normalizeScope('today_drafts'), 'instant_drafts');
+        assert.strictEqual(normalizeScope('TODAY_DRAFTS'), 'instant_drafts', 'scope is case-insensitive like the route');
+        await registry.search({ query: '苹果', scope: 'today_drafts' });
+        assert.deepStrictEqual(calls, ['instant_draft'], 'legacy scope selects the instant draft provider');
     });
 
     await run('provider 抛错降级为空结果并保持其他 provider 可用', async () => {

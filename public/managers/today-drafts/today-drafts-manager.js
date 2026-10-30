@@ -108,7 +108,7 @@ export class InstantDraftsManager {
         this.flipFrameBudget = 0;
         this.flipSlowFrames = 0;
         this.bindEvents();
-        window.addEventListener('today_drafts_update', event => this.handleSocketUpdate(event.detail || {}));
+        window.addEventListener('instant_drafts_update', event => this.handleSocketUpdate(event.detail || {}));
         // 移动端切后台/来电/切应用时浏览器可以吞掉 pointerup：翻页图层会卡在
         // 半开状态（is-flipping 的 user-select 与图层栈还挂着），回到前台就
         // 表现为「页面卡死」。可见性丢失与窗口失焦时无条件清场，代价为零——

@@ -10,8 +10,18 @@
 
 const { splitKeywords } = require('./matcher.js');
 
-const SCOPES = ['notepads', 'thoughts', 'today_drafts', 'all'];
+const SCOPES = ['notepads', 'thoughts', 'instant_drafts', 'today_drafts', 'all'];
 const DEFAULT_SCOPE = 'all';
+
+// `today_drafts` is the pre-rename spelling of `instant_drafts`. It stays in
+// the accepted enum and is normalized onto the canonical scope so callers
+// written against the old name keep selecting the same provider.
+const SCOPE_ALIASES = { today_drafts: 'instant_drafts' };
+
+function normalizeScope(scope) {
+    const value = String(scope || DEFAULT_SCOPE).toLowerCase();
+    return SCOPE_ALIASES[value] || value;
+}
 
 function createSearchRegistry({ providers }) {
     const providerList = Array.isArray(providers) ? providers : [];
@@ -20,8 +30,9 @@ function createSearchRegistry({ providers }) {
         const keywords = splitKeywords(query);
         if (keywords.length === 0) return { keywords, results: [] };
 
+        const requestedScope = normalizeScope(scope);
         const selected = providerList.filter(provider => (
-            scope === 'all' || provider.scope === scope
+            requestedScope === 'all' || provider.scope === requestedScope
         ));
         const batches = await Promise.all(selected.map(async provider => {
             try {
@@ -37,4 +48,4 @@ function createSearchRegistry({ providers }) {
     return { search, scopes: SCOPES, defaultScope: DEFAULT_SCOPE };
 }
 
-module.exports = { createSearchRegistry, SCOPES, DEFAULT_SCOPE };
+module.exports = { createSearchRegistry, SCOPES, DEFAULT_SCOPE, normalizeScope };

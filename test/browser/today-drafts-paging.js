@@ -44,9 +44,9 @@ function startServer(items) {
     const app = express();
     const echo = (req, res) => res.json({ draft: { id: req.params.id, ...(req.body || {}) }, version: 1 });
     app.get('/api/config', (_req, res) => res.json({ hiddenFloatingActions: [] }));
-    app.get('/api/today-drafts', (_req, res) => res.json({ day: localDayKey(0), items }));
-    app.put('/api/today-drafts/:id', express.json(), echo);
-    app.delete('/api/today-drafts/:id', express.json(), echo);
+    app.get('/api/instant-drafts', (_req, res) => res.json({ day: localDayKey(0), items }));
+    app.put('/api/instant-drafts/:id', express.json(), echo);
+    app.delete('/api/instant-drafts/:id', express.json(), echo);
     app.use(express.static(path.resolve(__dirname, '../..', 'public')));
     return new Promise(resolve => {
         const listener = app.listen(0, '127.0.0.1', () => resolve({ listener, port: listener.address().port }));

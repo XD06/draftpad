@@ -8,7 +8,7 @@ export class InstantDraftsApiError extends Error {
 }
 
 export default class InstantDraftsApiClient {
-    constructor({ baseUrl = '/api/today-drafts', fetchImpl = window.fetch.bind(window) } = {}) {
+    constructor({ baseUrl = '/api/instant-drafts', fetchImpl = window.fetch.bind(window) } = {}) {
         this.baseUrl = baseUrl.replace(/\/+$/, '');
         this.fetchImpl = fetchImpl;
     }

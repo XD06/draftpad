@@ -3850,11 +3850,15 @@ document.addEventListener('DOMContentLoaded', async () => {
             badgeClass: 'badge-thought',
             jump: (result, ctx) => revealThoughtFromSearch(result.id, ctx.keywords)
         });
-        registerResultType('today_draft', {
+        // 即时草稿：服务端已改发 `instant_draft`；`today_draft` 是改名前的
+        // 旧值，注册表同时保留，避免缓存中的旧响应落到「其他」徽标。
+        const instantDraftResultType = {
             label: '即时草稿',
             badgeClass: 'badge-today-draft',
             jump: result => revealInstantDraftFromSearch(result.id)
-        });
+        };
+        registerResultType('instant_draft', instantDraftResultType);
+        registerResultType('today_draft', instantDraftResultType);
 
         const commandSearch = createCommandSearchManager({
             fetchJson: fetchWithPin,
@@ -4640,11 +4644,11 @@ document.addEventListener('DOMContentLoaded', async () => {
             ensureEditor().catch(() => {});
             scheduleIdleTask(() => {
                 ensureThoughtsManager().catch(() => {});
-                // Also keep the today-drafts manager alive from boot so
-                // today_drafts_update pushes are received and the outbox
+                // Also keep the instant-drafts manager alive from boot so
+                // instant_drafts_update pushes are received and the outbox
                 // flushes even while the user stays in the editor workspace —
-                // otherwise draft records only catch up when the Today tab is
-                // opened.
+                // otherwise draft records only catch up when the Instant Draft
+                // tab is opened.
                 ensureInstantDraftsManager().catch(() => {});
             });
         }

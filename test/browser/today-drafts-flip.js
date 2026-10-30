@@ -21,7 +21,7 @@ module.exports = async function testInstantDraftsFlip(browser) {
 
     // Serve public
     app.get('/api/config', (_req, res) => res.json({ hiddenFloatingActions: [] }));
-    app.get('/api/today-drafts', (_req, res) => res.json({ day: localDayKey(0), items: fixtureItems }));
+    app.get('/api/instant-drafts', (_req, res) => res.json({ day: localDayKey(0), items: fixtureItems }));
     app.use(express.static(path.join(root, 'public')));
 
     const server = await new Promise(resolve => {
