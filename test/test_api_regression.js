@@ -833,7 +833,7 @@ async function run() {
         assert(result.response.ok, 'GET /api/notes/:id/outline should succeed');
         assert(result.response.headers.get('cache-control') === 'no-store, private', 'GET /api/notes/:id/outline should disable intermediary caching');
 
-        result = await request(`/api/notes/${notepadId}`, {
+        result = await request(`/api/notes/${notepadId}?include=content`, {
             method: 'PATCH',
             body: JSON.stringify({ action: 'append', text: ' world' })
         });
@@ -841,7 +841,7 @@ async function run() {
         assert(result.body.content === 'hello world', 'append should update note content');
         assert(result.body.version === 2, 'note patch should increment version');
 
-        result = await request(`/api/notes/${notepadId}`, {
+        result = await request(`/api/notes/${notepadId}?include=content`, {
             method: 'PATCH',
             body: JSON.stringify({ action: 'append', text: ' stale', baseVersion: 1 })
         });
@@ -907,14 +907,14 @@ async function run() {
         });
         assert(result.response.ok && result.body.id === 'api-fine-grained-note', 'POST /api/notepads should create the fine-grained edit fixture');
 
-        result = await request('/api/notes/api-fine-grained-note', {
+        result = await request('/api/notes/api-fine-grained-note?include=content', {
             method: 'PATCH',
             body: JSON.stringify({ action: 'replace', target: 'alpha', replacement: 'ALPHA', expectedCount: 1 })
         });
         assert(result.response.status === 400, 'replace with a mismatched expectedCount should be rejected');
         assert(result.body.matchCount === 2, 'a mismatched replace should report the actual match count');
 
-        result = await request('/api/notes/api-fine-grained-note', {
+        result = await request('/api/notes/api-fine-grained-note?include=content', {
             method: 'PATCH',
             body: JSON.stringify({ action: 'replace', target: 'alpha', replacement: 'ALPHA', expectedCount: 2 })
         });
@@ -922,7 +922,7 @@ async function run() {
         assert(result.body.content === '# Draft\n\nALPHA beta ALPHA\n\ndone', 'replace should swap every occurrence');
         assert(result.body.matchCount === 2 && result.body.replaced === 2, 'replace should report match and replaced counts');
 
-        result = await request('/api/notes/api-fine-grained-note', {
+        result = await request('/api/notes/api-fine-grained-note?include=content', {
             method: 'PATCH',
             body: JSON.stringify({ action: 'replace_first', target: 'ALPHA', replacement: 'A1' })
         });
@@ -930,13 +930,13 @@ async function run() {
         assert(result.body.content === '# Draft\n\nA1 beta ALPHA\n\ndone', 'replace_first should change only the first occurrence');
         assert(result.body.replaced === 1 && result.body.matchCount === 2, 'replace_first should report only one replacement out of two matches');
 
-        result = await request('/api/notes/api-fine-grained-note', {
+        result = await request('/api/notes/api-fine-grained-note?include=content', {
             method: 'PATCH',
             body: JSON.stringify({ action: 'insert_after', target: 'done', text: ' now' })
         });
         assert(result.response.ok && result.body.content === '# Draft\n\nA1 beta ALPHA\n\ndone now', 'insert_after should place text right after the anchor');
 
-        result = await request('/api/notes/api-fine-grained-note', {
+        result = await request('/api/notes/api-fine-grained-note?include=content', {
             method: 'PATCH',
             body: JSON.stringify({ action: 'insert_before', target: 'zzz-missing', text: 'x' })
         });
@@ -962,7 +962,7 @@ async function run() {
             'outline should expose the heading tree with slugs and line numbers'
         );
 
-        result = await request('/api/notes/api-note-outline', {
+        result = await request('/api/notes/api-note-outline?include=content', {
             method: 'PATCH',
             body: JSON.stringify({ action: 'replace_section', section: 'install', text: 'run pnpm i' })
         });
@@ -970,14 +970,14 @@ async function run() {
         assert(result.body.section === 'install', 'replace_section should echo the resolved section slug');
         assert(result.body.content === '# Intro\nwelcome\n## Install\nrun pnpm i\n## Usage\nuse it', 'replace_section should swap only the targeted section body');
 
-        result = await request('/api/notes/api-note-outline', {
+        result = await request('/api/notes/api-note-outline?include=content', {
             method: 'PATCH',
             body: JSON.stringify({ action: 'append_to_section', section: 'usage', text: '- step 1' })
         });
         assert(result.response.ok, 'append_to_section should succeed');
         assert(result.body.content === '# Intro\nwelcome\n## Install\nrun pnpm i\n## Usage\nuse it\n- step 1', 'append_to_section should add to the end of the section body');
 
-        result = await request('/api/notes/api-note-outline', {
+        result = await request('/api/notes/api-note-outline?include=content', {
             method: 'PATCH',
             body: JSON.stringify({ action: 'replace_section', section: 'does-not-exist', text: 'x' })
         });
@@ -994,7 +994,7 @@ async function run() {
         assert(result.response.ok, 'GET Chinese note outline should succeed');
         assert(result.body.outline[0]?.id === '今日速览', 'Chinese headings should retain a stable outline slug');
 
-        result = await request('/api/notes/api-note-outline-chinese', {
+        result = await request('/api/notes/api-note-outline-chinese?include=content', {
             method: 'PATCH',
             body: JSON.stringify({ action: 'replace_section', section: '今日速览', text: '新内容' })
         });
@@ -1009,7 +1009,7 @@ async function run() {
         });
         assert(result.response.ok && result.body.id === 'api-note-batch', 'POST /api/notepads should create the batch fixture');
 
-        result = await request('/api/notes/api-note-batch/edits', {
+        result = await request('/api/notes/api-note-batch/edits?include=content', {
             method: 'POST',
             body: JSON.stringify({ edits: [
                 { action: 'replace', target: 'v1', replacement: 'v2', expectedCount: 1 },
@@ -1021,7 +1021,7 @@ async function run() {
         assert(Array.isArray(result.body.results) && result.body.results.length === 2, 'a batch should report per-edit results');
         assert(result.body.version === 2, 'a batch should bump the note version once');
 
-        result = await request('/api/notes/api-note-batch/edits', {
+        result = await request('/api/notes/api-note-batch/edits?include=content', {
             method: 'POST',
             body: JSON.stringify({ edits: [
                 { action: 'append', text: ' more' },
@@ -1034,7 +1034,7 @@ async function run() {
         result = await request('/api/notes/api-note-batch');
         assert(result.body.content === 'v2 draft\n\ntodo\ndone' && result.body.version === 2, 'a rejected batch should leave the note untouched');
 
-        result = await request('/api/notes/api-note-batch/edits', {
+        result = await request('/api/notes/api-note-batch/edits?include=content', {
             method: 'POST',
             body: JSON.stringify({ edits: [] })
         });
@@ -1651,6 +1651,44 @@ async function run() {
 
         result = await request(`/api/trash/${deletedThoughtTrashId}`, { method: 'DELETE' });
         assert(result.response.ok, 'DELETE /api/trash/:id should permanently remove trash item');
+
+        // 写响应瘦身：默认不回传整篇正文（长文一次 append 曾回 132 KB），
+        // 需要全文时显式 ?include=content。放在最后，避免影响上面按版本号
+        // 推算的断言。
+        result = await request('/api/notepads', {
+            method: 'POST',
+            body: JSON.stringify({ id: 'api-slim-response', name: 'API Slim Response', content: 'alpha beta' })
+        });
+        assert(result.response.ok, 'the slim-response fixture should be created');
+
+        result = await request('/api/notes/api-slim-response', {
+            method: 'PATCH',
+            body: JSON.stringify({ action: 'append', text: ' gamma' })
+        });
+        assert(result.response.ok && result.body.modified === true, 'a default PATCH should still succeed');
+        assert(result.body.content === undefined, 'PATCH must not echo the whole document by default');
+        assert(typeof result.body.version === 'number', 'PATCH must still return the new version');
+
+        result = await request('/api/notes/api-slim-response?include=content', {
+            method: 'PATCH',
+            body: JSON.stringify({ action: 'append', text: ' delta' })
+        });
+        assert(result.body.content === 'alpha beta gamma delta', '?include=content should return the full body');
+
+        result = await request('/api/notes/api-slim-response/edits', {
+            method: 'POST',
+            body: JSON.stringify({ edits: [{ action: 'append', text: ' epsilon' }] })
+        });
+        assert(result.response.ok && result.body.modified === true, 'a default batch edit should still succeed');
+        assert(result.body.content === undefined, 'POST /edits must not echo the whole document by default');
+        assert(Array.isArray(result.body.results), 'POST /edits must still return per-edit results');
+
+        result = await request('/api/notes/api-slim-response/edits?include=content', {
+            method: 'POST',
+            body: JSON.stringify({ edits: [{ action: 'append', text: ' zeta' }] })
+        });
+        assert(result.body.content === 'alpha beta gamma delta epsilon zeta',
+            'POST /edits should honour ?include=content');
 
         console.log('API regression checks passed');
     } catch (error) {

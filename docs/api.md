@@ -429,13 +429,14 @@ Note 是某个 Notepad 的正文内容。保存接口使用 `baseVersion` 做乐
 ```json
 {
   "success": true,
-  "content": "# Updated",
   "modified": true,
   "version": 2,
   "matchCount": 1,
   "replaced": 1
 }
 ```
+
+> **默认不回传正文。** 长文一次 `append` 曾把上百 KB 的 Markdown 塞回响应（实测 392 KB 的文章 append 约 100 字返回 132 KB），而调用方通常只需要 `version`。需要全文时显式加 `?include=content`，响应里才会多一个 `content` 字段（内容与改动后一致）。
 
 `matchCount`/`replaced` 仅在按 `target` 匹配的 action 出现；`section` 类 action 会回显命中的 `section` slug。
 
@@ -469,7 +470,6 @@ Note 是某个 Notepad 的正文内容。保存接口使用 `baseVersion` 做乐
 ```json
 {
   "success": true,
-  "content": "v2\ndone",
   "modified": true,
   "version": 2,
   "results": [
@@ -478,6 +478,8 @@ Note 是某个 Notepad 的正文内容。保存接口使用 `baseVersion` 做乐
   ]
 }
 ```
+
+与 `PATCH /api/notes/:id` 相同：默认不回传正文，需要时加 `?include=content`。
 
 **错误：**
 

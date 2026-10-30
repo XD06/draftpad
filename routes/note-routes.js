@@ -9,6 +9,15 @@ function hashContent(content) {
     return crypto.createHash('sha256').update(String(content || '')).digest('hex');
 }
 
+// 写操作的响应默认不回传整篇正文：长文 append 一次会把上百 KB 的 Markdown
+// 塞回响应（实测 392 KB 的文章 append 100 字返回 132 KB），而调用方几乎都
+// 只需要 version。需要全文时显式加 `?include=content`。
+function wantsContent(req) {
+    const value = req.query?.include;
+    const list = Array.isArray(value) ? value.join(',') : String(value || '');
+    return list.split(',').map(part => part.trim().toLowerCase()).includes('content');
+}
+
 function registerNoteRoutes(app, context) {
     const {
         storage,
@@ -216,16 +225,20 @@ function registerNoteRoutes(app, context) {
                 return res.status(409).json({ error: result.error, currentVersion: result.currentVersion });
             }
 
+            const includeContent = wantsContent(req);
             if (result.modified) {
                 broadcastUpdate(id, result.content, senderId, result.version, { contentHash: hashContent(result.content), ...getNoteEditStats(result) });
                 scheduleIndexNotepads();
-                const body = { success: true, content: result.content, modified: true, version: result.version, ...getNoteEditStats(result) };
+                const body = { success: true, modified: true, version: result.version, ...getNoteEditStats(result) };
+                if (includeContent) body.content = result.content;
                 if (result.matchCount !== undefined) body.matchCount = result.matchCount;
                 if (result.replaced !== undefined) body.replaced = result.replaced;
                 if (result.section !== undefined) body.section = result.section;
                 return res.json(body);
             }
-            res.json({ success: true, content: result.content, modified: false, version: result.version, ...getNoteEditStats(result) });
+            const body = { success: true, modified: false, version: result.version, ...getNoteEditStats(result) };
+            if (includeContent) body.content = result.content;
+            res.json(body);
         } catch (err) {
             console.error('Error patching notes:', err);
             res.status(500).json({ error: 'Error patching notes' });
@@ -294,12 +307,17 @@ function registerNoteRoutes(app, context) {
                 return res.status(409).json({ error: result.error, currentVersion: result.currentVersion });
             }
 
+            const includeContent = wantsContent(req);
             if (result.modified) {
                 broadcastUpdate(id, result.content, senderId, result.version, { contentHash: hashContent(result.content), ...getNoteEditStats(result) });
                 scheduleIndexNotepads();
-                return res.json({ success: true, content: result.content, modified: true, version: result.version, results: result.results, ...getNoteEditStats(result) });
+                const body = { success: true, modified: true, version: result.version, results: result.results, ...getNoteEditStats(result) };
+                if (includeContent) body.content = result.content;
+                return res.json(body);
             }
-            res.json({ success: true, content: result.content, modified: false, version: result.version, results: result.results, ...getNoteEditStats(result) });
+            const body = { success: true, modified: false, version: result.version, results: result.results, ...getNoteEditStats(result) };
+            if (includeContent) body.content = result.content;
+            res.json(body);
         } catch (err) {
             console.error('Error applying note edits:', err);
             res.status(500).json({ error: 'Error applying note edits' });

@@ -92,6 +92,8 @@ curl -fsS -X POST "$DUMBPAD_BASE_URL/api/notes/<article-id>/edits" \
 
 Prefer narrow `PATCH` actions for edits, or `POST /api/notes/:id/edits` when several dependent changes must be atomic; inspect `/openapi.json` for the full edit action list and exact schemas.
 
+**Long documents cost two things — keep both out of your context.** Write responses (`PATCH /api/notes/:id`, `POST /api/notes/:id/edits`) return `{ success, modified, version, results? }` and do **not** echo the body; take `version` from there and only add `?include=content` when you genuinely need the text back. When you do read a body, strip inline `data:image/...;base64,` blobs before reasoning about it — a single pasted screenshot can dwarf the real text.
+
 ### Thoughts
 
 Thoughts are persistent but deliberately concise. Search with `light=1` when selecting or deduplicating, then mutate one item with its current version.
