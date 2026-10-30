@@ -253,6 +253,26 @@ function assertThoughtsFrontendRegressions() {
         openApi.components?.securitySchemes?.pinBearer,
         'developer API contract should expose the public authentication, trash, Notepad, Thought, and attachment APIs'
     );
+
+    // 契约版本必须跟 package.json 走：缓存了 openapi 的调用方靠它判断是否漂移。
+    const packageVersion = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
+    assert(openApi.info?.version === packageVersion,
+        'openapi info.version must equal package.json version, otherwise cached clients cannot detect contract drift');
+
+    // 契约与实现对齐：9 种 edit action 都不读 content，PATCH 不能把它标成必填。
+    assert(
+        JSON.stringify(openApi.components.schemas.NotePatch?.required) === JSON.stringify(['action']),
+        'NotePatch must only require action; every action takes its payload from text/target/replacement'
+    );
+    assert(openApi.components.schemas.NotePatch?.allOf === undefined,
+        'NotePatch must not inherit NoteSave (that would re-add the content requirement)');
+
+    // GET /api/notepads 的过滤/排序参数是真实存在的，契约必须声明。
+    const notepadListParams = (openApi.paths?.['/api/notepads']?.get?.parameters || []).map(parameter => parameter.name);
+    assert(
+        JSON.stringify(notepadListParams) === JSON.stringify(['title', 'sortBy', 'order']),
+        'GET /api/notepads should document the title filter and the sortBy/order pair it actually implements'
+    );
     assert(
         thoughtsSource.includes('queueManualRelationSearch') &&
         thoughtsSource.includes('manualRelationSearchSeq') &&
