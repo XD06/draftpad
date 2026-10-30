@@ -167,6 +167,24 @@ async function run() {
         const legacyEvent = await legacyCreateEvent;
         assert(legacyEvent.payload?.id === created.id, 'the pre-rename event name should still be emitted for cached clients');
 
+        // day 过滤：把「只看今天」变成服务端能力，客户端不必再自己筛。
+        const todayOnly = await request('/api/instant-drafts?day=today');
+        assert(todayOnly.response.ok, 'day=today should be an accepted filter');
+        assert(todayOnly.body.day === today, 'the envelope day stays the server day');
+        assert(todayOnly.body.items.every(item => item.day === today),
+            'day=today must not leak rows from previous days');
+        assert(todayOnly.body.items.some(item => item.id === created.id),
+            'day=today should still include the row created today');
+
+        const allDays = await request('/api/instant-drafts?day=all');
+        assert(allDays.response.ok, 'day=all should be an accepted filter');
+        assert(allDays.body.items.length > todayOnly.body.items.length,
+            'day=all must keep the historical rows that day=today drops');
+
+        const badDay = await request('/api/instant-drafts?day=week');
+        assert(badDay.response.status === 400 && badDay.body.code === 'INVALID_DAY_FILTER',
+            'an unknown day filter should be rejected instead of silently ignored');
+
         result = await request('/api/today-drafts/offline-create-1', {
             method: 'PUT',
             body: JSON.stringify({ text: 'created yesterday, synced today', day: yesterday })

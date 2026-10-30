@@ -7,6 +7,10 @@ const API_PATHS = ['/api/instant-drafts', '/api/today-drafts'];
 // 同步事件同样双发：新前端认新名，缓存了旧 bundle 的客户端仍能收到更新。
 const WS_EVENTS = ['instant_drafts_update', 'today_drafts_update'];
 
+// 列表过滤：默认 `all`（保持既有行为），`today` 让「只看今天」成为服务端能力，
+// 客户端不必再自己按 day 筛（窗口清理与落盘不受过滤影响）。
+const DAY_FILTERS = ['today', 'all'];
+
 function localDayKey(date = new Date()) {
     const year = date.getFullYear();
     const month = String(date.getMonth() + 1).padStart(2, '0');
@@ -102,9 +106,19 @@ function registerInstantDraftRoutes(app, { storage, broadcastWebSocketMessage })
         }
     }
 
-    async function listDrafts(_req, res) {
+    async function listDrafts(req, res) {
+        const dayFilter = String(req.query?.day || 'all').toLowerCase();
+        if (!DAY_FILTERS.includes(dayFilter)) {
+            return res.status(400).json({
+                error: `day must be ${DAY_FILTERS.join(', ')}`,
+                code: 'INVALID_DAY_FILTER'
+            });
+        }
         try {
-            res.json(await readWindowDrafts());
+            const window = await readWindowDrafts();
+            res.json(dayFilter === 'today'
+                ? { ...window, items: window.items.filter(item => item.day === window.day) }
+                : window);
         } catch (error) {
             console.error('Error listing instant drafts:', error);
             res.status(500).json({ error: 'Error listing instant drafts' });

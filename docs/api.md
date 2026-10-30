@@ -15,7 +15,7 @@ Base URL: `http://localhost:PORT`
 { "error": "Instant draft id is invalid", "code": "INVALID_INSTANT_DRAFT_ID" }
 ```
 
-现有 `code` 值：`INVALID_INSTANT_DRAFT_ID`、`INVALID_INSTANT_DRAFT_TEXT`、`BASE_VERSION_REQUIRED`、`INVALID_SEARCH_SCOPE`。版本冲突（`409`）统一带 `currentVersion`，先取回服务端当前版本再重放本地意图，不要盲目重试。
+现有 `code` 值：`INVALID_INSTANT_DRAFT_ID`、`INVALID_INSTANT_DRAFT_TEXT`、`INVALID_DAY_FILTER`、`BASE_VERSION_REQUIRED`、`INVALID_SEARCH_SCOPE`。版本冲突（`409`）统一带 `currentVersion`，先取回服务端当前版本再重放本地意图，不要盲目重试。
 
 > **尚未全量覆盖**：部分 `4xx`（尤其是认证与数据管理端点）目前只有 `error`、没有 `code`。`code` 存在时优先用它；不存在时只能按状态码与 `error` 判断。
 
@@ -655,6 +655,12 @@ curl -X POST http://localhost:3000/api/assets/files \
 ### GET /api/instant-drafts
 
 读取 3 天窗口（今天 + 前 2 天）内的全部草稿，每条带自己的 `day`。
+
+**Query 参数：**
+
+| 参数 | 类型 | 说明 |
+|---|---|---|
+| `day` | `all` / `today` | 默认 `all` 返回整个窗口；`today` 只返回 `day` 等于服务端今天的行。过滤发生在窗口清理之后，因此不会改变被删除的内容。其他取值返回 `400` 与 `code: "INVALID_DAY_FILTER"` |
 
 **响应：**
 

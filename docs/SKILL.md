@@ -149,6 +149,8 @@ Instant Drafts are single, date-scoped rows. `GET /api/instant-drafts` returns `
 
 The pre-rename path `/api/today-drafts` is still mounted as an alias with byte-identical responses, and the `today_drafts` search scope is still accepted. Use `/api/instant-drafts` and `scope=instant_drafts` in new work.
 
+Add `?day=today` to the list call when only the current day matters — the server filters after the window purge, so you do not have to filter client-side.
+
 ```bash
 # List today's rows.
 curl -fsS "$DUMBPAD_BASE_URL/api/instant-drafts" \
