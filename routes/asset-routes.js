@@ -292,7 +292,10 @@ function registerAssetRoutes(app, { storage, originValidationMiddleware, maxFile
             const asset = await assets.readAsset(id, requestedVariant);
             if (!asset) return res.status(404).json({ error: 'Asset not found' });
             const isMediaAsset = /^(video|audio)\//i.test(asset.contentType || '');
-            res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+            // 'private' keeps shared caches (reverse proxies/CDNs) from
+            // serving one account's authenticated asset responses to another;
+            // browser caching behaviour is unaffected.
+            res.setHeader('Cache-Control', 'private, max-age=31536000, immutable');
             res.type(asset.contentType);
             // 媒体文件必须 inline 供 <video>/<audio> 引用，其余文件维持
             // attachment（download 变体永远强制下载）。

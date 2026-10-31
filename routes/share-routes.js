@@ -1,3 +1,5 @@
+const crypto = require('crypto');
+
 function escapeHtml(str) {
     return String(str == null ? '' : str)
         .replace(/&/g, '&amp;')
@@ -87,7 +89,14 @@ function registerShareRoutes(app, context) {
         const { id } = req.params;
         const { t } = req.query;
 
-        if (!t || t !== getShareToken(id)) {
+        // Constant-time compare: the share token is the only thing guarding
+        // this unauthenticated page, so it must not leak through a timing
+        // side channel. Length differs only for malformed links.
+        const expected = getShareToken(id);
+        const provided = Array.isArray(t) ? String(t[0] || '') : String(t || '');
+        const tokenValid = provided.length === expected.length
+            && crypto.timingSafeEqual(Buffer.from(provided), Buffer.from(expected));
+        if (!tokenValid) {
             return res.status(403).send('<h1>Invalid or expired share link.</h1>');
         }
 
