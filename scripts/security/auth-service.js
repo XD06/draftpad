@@ -283,6 +283,12 @@ class AuthService {
             }
             state.totp = encryptSecret(totpSecret, this.masterKey);
             state.recoveryCodes.splice(validation.index, 1);
+            // Recovery means "my credentials may be compromised": revoke every
+            // existing session and trusted device so tokens the attacker may
+            // have copied stop working. The fresh session and device that
+            // authenticateState creates below are the only survivors.
+            state.sessions = [];
+            state.devices = [];
             const login = this.authenticateState(state, { password, totpCode, trustedDeviceToken: '', trustDevice: true, deviceLabel });
             await this.saveState(state);
             return login;

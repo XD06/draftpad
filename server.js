@@ -29,7 +29,7 @@ const aiQueue = require('./scripts/ai-queue');
 const s3PrefixTools = require('./scripts/s3-prefix-tools');
 const localToS3Migration = require('./scripts/migrate-local-to-s3');
 const s3Service = require('./scripts/s3-service');
-const { registerAuthRoutes } = require('./routes/auth-routes');
+const { registerAuthRoutes, isValidPin } = require('./routes/auth-routes');
 const { createAuthServiceFromEnv } = require('./scripts/security/auth-service');
 const { AuditLogger } = require('./scripts/security/audit-log');
 const { registerAssetRoutes } = require('./routes/asset-routes');
@@ -80,6 +80,13 @@ const NOTEPADS_FILE = path.join(DATA_DIR, 'notepads.json');
 const THOUGHTS_FILE = path.join(DATA_DIR, 'thoughts.json');
 const SITE_TITLE = process.env.SITE_TITLE || 'DumbPad';
 const PIN = process.env.DUMBPAD_PIN;
+// Fail closed on a set-but-invalid PIN: the request-time auth gate treats an
+// invalid PIN as "not configured" (legacy fail-open), so refusing to boot is
+// the only way a format typo cannot silently disable authentication.
+if (PIN && !isValidPin(PIN)) {
+    console.error('FATAL: DUMBPAD_PIN is set but invalid. It must be 4-10 digits; refusing to start with authentication silently disabled.');
+    process.exit(1);
+}
 const ASSET_MAX_FILE_BYTES = getMaxFileBytes();
 
 const COOKIE_NAME = 'dumbpad_auth';
@@ -253,8 +260,15 @@ const corsOptions = getCorsOptions(BASE_URL);
 // Middleware setup
 app.use(cors(corsOptions));
 app.use(compression({ threshold: 1024 }));
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ limit: '50mb', extended: true }));
+// Large JSON bodies are only legitimate on the content routes that carry
+// whole documents; every other route — including the unauthenticated auth
+// endpoints — is capped at 1MB so anonymous requests cannot force 50MB JSON
+// parses. body-parser instances skip requests an earlier instance parsed.
+for (const prefix of ['/api/notes', '/api/thoughts', '/api/notepads', '/api/instant-drafts', '/api/today-drafts']) {
+    app.use(prefix, express.json({ limit: '50mb' }));
+}
+app.use(express.json({ limit: '1mb' }));
+app.use(express.urlencoded({ limit: '1mb', extended: true }));
 app.use(cookieParser());
 
 // Serve static files
@@ -662,7 +676,8 @@ registerAgentRoutes(app, {
 registerTrashRoutes(app, {
     storage,
     scheduleIndexNotepads,
-    broadcastWebSocketMessage
+    broadcastWebSocketMessage,
+    withRelationWriteLock: aiQueue._private?.withRelationWriteLock
 });
 
 registerNoteRoutes(app, {

@@ -66,19 +66,23 @@ function socketIpFromReq(req) {
 }
 
 /**
- * Extract first IP from X-Forwarded-For header
- * @param {Object} req - Express request object
- * @returns {string|null} First IP from X-Forwarded-For or null
+ * Resolve the client IP from an X-Forwarded-For chain, walking from the
+ * rightmost entry: every trusted proxy prepends its upstream hop, so the
+ * first entry (from the right) that is NOT a trusted proxy is the closest
+ * untrusted client. Leftmost-first would let any client forge its apparent
+ * address by simply prepending a fake IP to the header.
+ * @param {string} headerValue - Raw X-Forwarded-For header
+ * @param {Array<string>} trustedProxies - Trusted proxy IPs/CIDRs (non-empty)
+ * @returns {string|null} Closest untrusted client IP from the chain
  */
-function firstIpFromXForwardedFor(req) {
-    // Guard: ensure req is a non-null object with headers property
-    if (!req || typeof req !== 'object' || !req.headers) {
-        return null;
+function clientIpFromForwardedFor(headerValue, trustedProxies) {
+    const parts = String(headerValue || '').split(',').map(p => p.trim()).filter(Boolean);
+    for (let i = parts.length - 1; i >= 0; i--) {
+        if (!isTrustedProxy(parts[i], trustedProxies)) {
+            return parts[i];
+        }
     }
-    
-    const h = req.headers['x-forwarded-for'];
-    if (!h) return null;
-    const parts = String(h).split(',').map(p => p.trim()).filter(Boolean);
+    // Chain fully covered by trusted proxies: fall back to the leftmost claim.
     return parts.length ? parts[0] : null;
 }
 
@@ -145,8 +149,9 @@ function isTrustedProxy(remoteAddress, trustedList) {
  * Get the real client IP address with security validation
  * - If TRUST_PROXY=false: Always return socket IP (secure default)
  * - If TRUST_PROXY=true with TRUSTED_PROXY_IPS: Validate proxy before trusting X-Forwarded-For
- * - If TRUST_PROXY=true without TRUSTED_PROXY_IPS: Fall back to Express-style trust (with warning)
- * 
+ * - If TRUST_PROXY=true without TRUSTED_PROXY_IPS: Fail closed to socket IP
+ *   (server.js disables Express proxy trust for this configuration too)
+ *
  * @param {Object} req - Express request object
  * @returns {string|null} Client IP address
  */
@@ -199,18 +204,17 @@ function getClientIp(req) {
             }
             return socketIp;
         }
-        // Proxy is trusted, use X-Forwarded-For if available
-        const xf = firstIpFromXForwardedFor(req);
-        return xf || socketIp;
+        // Proxy is trusted, resolve the client from the forwarded chain
+        const xf = req.headers['x-forwarded-for'];
+        return (xf ? clientIpFromForwardedFor(xf, trustedProxies) : null) || socketIp;
     }
 
-    // TRUST_PROXY=true but no trusted list: fall back to Express-style trust
-    // This is less secure but maintains backward compatibility
-    if (process.env.DEBUG === 'true') {
-        console.warn('TRUST_PROXY=true but TRUSTED_PROXY_IPS not set. Verify deployment proxy settings.');
-    }
-    const xf = firstIpFromXForwardedFor(req);
-    return xf || socketIp;
+    // TRUST_PROXY=true but no trusted list: fail closed to the socket IP.
+    // X-Forwarded-For is client-controlled here, so trusting it would let
+    // anyone rotate the header to defeat IP-keyed login rate limiting.
+    // server.js already disables Express proxy trust with a CRITICAL WARNING
+    // for this configuration; mirror that posture for rate-limit keys.
+    return socketIp;
 }
 
 module.exports = { getClientIp };

@@ -144,7 +144,17 @@ async function expectError(callback, code, message) {
         );
 
         const reloaded = new AuthService(options);
-        await reloaded.authorizeSession(firstLogin.sessionToken);
+        await reloaded.authorizeSession(recovered.sessionToken);
+        await expectError(
+            () => reloaded.authorizeSession(firstLogin.sessionToken),
+            'UNAUTHORIZED',
+            'sessions issued before recovery must be revoked'
+        );
+        await expectError(
+            () => reloaded.authenticate({ password: 'a strong password', trustedDeviceToken: firstLogin.deviceToken }),
+            'TOTP_REQUIRED',
+            'trusted devices enrolled before recovery must not skip TOTP'
+        );
         console.log('Authentication service checks passed');
     } finally {
         await fs.promises.rm(stateDirectory, { recursive: true, force: true });

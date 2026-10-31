@@ -29,6 +29,7 @@ async function request(route, options = {}) {
         ...options,
         headers: {
             'Content-Type': 'application/json',
+            'Authorization': `Bearer ${process.env.DUMBPAD_PIN}`,
             ...(options.headers || {})
         }
     });
@@ -98,7 +99,7 @@ async function run() {
             DATA_DIR: dataDir,
             STORAGE_BACKEND: 's3',
             STORAGE_LAYOUT: 'split',
-            DUMBPAD_PIN: 'x',
+            DUMBPAD_PIN: '123456',
             NODE_ENV: 'development'
         },
         stdio: ['ignore', 'pipe', 'pipe']

@@ -6,6 +6,13 @@ const {
     generateTotpSecret
 } = require('../scripts/security/auth-service');
 
+// Module-level so server.js can reuse the exact format rule for its
+// fail-fast startup check (a set-but-invalid PIN must never boot into the
+// legacy fail-open path below).
+function isValidPin(pin) {
+    return typeof pin === 'string' && /^\d{4,10}$/.test(pin);
+}
+
 function registerAuthRoutes(app, context) {
     const {
         originValidationMiddleware,
@@ -33,10 +40,8 @@ function registerAuthRoutes(app, context) {
     const maxAttempts = Number(process.env.MAX_ATTEMPTS || 5);
     const lockoutMs = Number(process.env.LOCKOUT_TIME || 15) * 60 * 1000;
     const bootstrapToken = String(process.env.AUTH_BOOTSTRAP_TOKEN || '');
-
-    function isValidPin(pin) {
-        return typeof pin === 'string' && /^\d{4,10}$/.test(pin);
-    }
+    // Hard cap on distinct rate-limit keys (see recordAttempt).
+    const MAX_LOGIN_ATTEMPT_IPS = 10000;
 
     function secureCompare(left, right) {
         if (typeof left !== 'string' || typeof right !== 'string') return false;
@@ -57,6 +62,12 @@ function registerAuthRoutes(app, context) {
     }
 
     function recordAttempt(ip) {
+        // Bound the table: a flood of distinct keys must not pin memory. The
+        // Map keeps insertion order, so evicting the oldest key on overflow
+        // keeps the newest (most relevant) attempt counters.
+        if (!loginAttempts.has(ip) && loginAttempts.size >= MAX_LOGIN_ATTEMPT_IPS) {
+            loginAttempts.delete(loginAttempts.keys().next().value);
+        }
         const attempts = loginAttempts.get(ip) || { count: 0, lastAttempt: 0 };
         attempts.count += 1;
         attempts.lastAttempt = Date.now();
@@ -217,7 +228,9 @@ function registerAuthRoutes(app, context) {
     app.get('/api/pin-required', (req, res) => {
         if (v2Enabled) return res.json({ required: false, mode: 'v2', locked: false });
         const ip = getClientIp(req);
-        return res.json({ required: Boolean(PIN && isValidPin(PIN)), length: PIN ? PIN.length : 0, locked: ip ? isLockedOut(ip) : true });
+        // No PIN length here: the endpoint is unauthenticated and a precise
+        // length would shrink a brute-force search space before any attempt.
+        return res.json({ required: Boolean(PIN && isValidPin(PIN)), locked: ip ? isLockedOut(ip) : true });
     });
 
     app.get('/api/auth/status', async (req, res) => {
@@ -260,6 +273,8 @@ function registerAuthRoutes(app, context) {
 
     app.post('/api/auth/setup/confirm', async (req, res) => {
         if (!v2Enabled) return res.status(404).json({ error: 'Authentication V2 is disabled' });
+        const ip = validateRateLimit(req, res);
+        if (!ip) return;
         const setup = pendingSetups.get(String(req.body?.setupId || ''));
         if (!setup || setup.expiresAt <= Date.now()) return res.status(400).json({ error: 'Authentication setup has expired' });
         try {
@@ -271,6 +286,7 @@ function registerAuthRoutes(app, context) {
             });
             pendingSetups.delete(String(req.body?.setupId || ''));
             setV2Cookies(res, login);
+            resetAttempts(ip);
             audit('auth.setup', req);
             return res.json({
                 success: true,
@@ -279,6 +295,7 @@ function registerAuthRoutes(app, context) {
                 deviceTrustLimited: login.deviceTrustLimited
             });
         } catch (error) {
+            recordAttempt(ip);
             return sendAuthError(res, error);
         }
     });
@@ -339,6 +356,8 @@ function registerAuthRoutes(app, context) {
 
     app.post('/api/auth/recovery/confirm', async (req, res) => {
         if (!v2Enabled) return res.status(404).json({ error: 'Authentication V2 is disabled' });
+        const ip = validateRateLimit(req, res);
+        if (!ip) return;
         const recovery = pendingRecoveries.get(String(req.body?.recoveryId || ''));
         if (!recovery || recovery.expiresAt <= Date.now()) return res.status(400).json({ error: 'Recovery setup has expired' });
         try {
@@ -351,20 +370,29 @@ function registerAuthRoutes(app, context) {
             });
             pendingRecoveries.delete(String(req.body?.recoveryId || ''));
             setV2Cookies(res, login);
+            resetAttempts(ip);
             audit('auth.recovery', req);
             return res.json({ success: true, expiresAt: login.expiresAt, deviceTrustLimited: login.deviceTrustLimited });
         } catch (error) {
+            recordAttempt(ip);
             return sendAuthError(res, error);
         }
     });
 
+    // Rate-limited like login: with a hijacked session cookie this endpoint is
+    // the only thing standing between an attacker and the destructive
+    // data-management operations, so its TOTP check must not be enumerable.
     app.post('/api/auth/elevate', async (req, res) => {
         if (!v2Enabled) return res.status(404).json({ error: 'Authentication V2 is disabled' });
+        const ip = validateRateLimit(req, res);
+        if (!ip) return;
         try {
             const result = await authService.elevate(req.cookies?.[sessionCookieName], req.body?.totpCode);
+            resetAttempts(ip);
             audit('auth.elevate', req);
             return res.json({ success: true, ...result });
         } catch (error) {
+            recordAttempt(ip);
             return sendAuthError(res, error);
         }
     });
@@ -495,4 +523,4 @@ function registerAuthRoutes(app, context) {
     });
 }
 
-module.exports = { registerAuthRoutes };
+module.exports = { registerAuthRoutes, isValidPin };

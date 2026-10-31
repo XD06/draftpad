@@ -18,7 +18,7 @@ process.env.OPENCODE_API_KEY = '';
 process.env.SILICON_API_KEY = '';
 process.env.PORT = process.env.TEST_PORT || '19009';
 process.env.BASE_URL = `http://127.0.0.1:${process.env.PORT}`;
-process.env.DUMBPAD_PIN = 'x';
+process.env.DUMBPAD_PIN = '123456';
 process.env.NODE_ENV = 'development';
 process.env.DATA_DIR = path.join(os.tmpdir(), `dumbpad-s3-api-${Date.now()}`);
 
@@ -143,6 +143,7 @@ async function request(route, options = {}) {
         ...options,
         headers: {
             'Content-Type': 'application/json',
+            'Authorization': `Bearer ${process.env.DUMBPAD_PIN}`,
             ...(options.headers || {})
         }
     });
