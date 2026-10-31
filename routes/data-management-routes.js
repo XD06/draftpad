@@ -35,7 +35,9 @@ function sendDataManagementError(res, label, err, fallbackMessage) {
     if (status >= 500) {
         console.error(label, err);
     }
-    res.status(status).json({ error: err.message || fallbackMessage });
+    // 5xx details (bucket names, host paths from S3/fs errors) stay in the
+    // server log; client-facing 4xx validation messages keep their text.
+    res.status(status).json({ error: status >= 500 ? fallbackMessage : (err.message || fallbackMessage) });
 }
 
 function assertSafeDataDir(dataDir) {
@@ -77,9 +79,12 @@ async function restorePrefixToLocal(prefix, targetDataDir, s3Service) {
         if (!resolvedTarget.startsWith(`${targetDataDir}${path.sep}`) && resolvedTarget !== targetDataDir) {
             throw new Error(`Unsafe S3 key: ${entry.key}`);
         }
-        const body = await s3Service.getObject(entry.key);
+        // Binary-exact restore: assets/<id>/original holds non-UTF-8 bytes, so
+        // the object must round-trip as a Buffer — decoding through utf8
+        // replaces invalid sequences with U+FFFD and silently corrupts files.
+        const body = await s3Service.getObjectBuffer(entry.key);
         await fs.mkdir(path.dirname(resolvedTarget), { recursive: true });
-        await fs.writeFile(resolvedTarget, body || '', 'utf8');
+        await fs.writeFile(resolvedTarget, body || Buffer.alloc(0));
         written++;
         totalBytes += entry.size || 0;
     }
@@ -220,7 +225,28 @@ function registerDataManagementRoutes(app, context) {
             const backupPrefix = cleanPrefix(req.body?.backupPrefix);
             const dryRun = req.body?.dryRun !== false;
             if (!dryRun) requireConfirmedPrefix(prefix, req.body?.confirmPrefix);
+            // Copying onto a non-empty prefix overwrites its objects, which may
+            // be another data space. A backup into an empty prefix stays a safe
+            // operation, but an overwriting one is gated like s3/delete: global
+            // destructive flag + explicit confirmation of the backup prefix.
+            let overwriteTarget = false;
+            if (!dryRun && backupPrefix) {
+                overwriteTarget = (await s3PrefixTools.inventoryPrefix(backupPrefix)).objectCount > 0;
+                if (overwriteTarget) {
+                    assertDestructiveDataOperationEnabled('Backing up an S3 data space onto an existing prefix');
+                    requireConfirmedPrefix(backupPrefix, req.body?.confirmBackupPrefix);
+                }
+            }
             const result = await s3PrefixTools.backupPrefix(prefix, backupPrefix, { dryRun });
+            if (!dryRun) {
+                audit(req, 's3.backup-prefix', {
+                    prefix: result.sourcePrefix,
+                    backupPrefix: result.backupPrefix,
+                    objectCount: result.objectCount,
+                    totalBytes: result.totalBytes,
+                    overwriteTarget
+                });
+            }
             res.json({
                 action: result.action,
                 sourcePrefix: result.sourcePrefix,
@@ -230,6 +256,7 @@ function registerDataManagementRoutes(app, context) {
                 dryRun: result.dryRun
             });
         } catch (err) {
+            auditFailure(req, 's3.backup-prefix', err);
             sendDataManagementError(res, 'Error backing up S3 prefix:', err, 'Error backing up S3 prefix');
         }
     });

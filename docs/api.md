@@ -116,10 +116,11 @@ Personal security V1 的初次设置用旧 PIN 或一次性 `AUTH_BOOTSTRAP_TOKE
 ```json
 {
   "required": true,
-  "length": 6,
   "locked": false
 }
 ```
+
+不返回 PIN 长度：该端点免鉴权，暴露长度会在尝试前缩小爆破空间。
 
 ### GET /api/config
 
@@ -1559,6 +1560,8 @@ loosely_related
 ```
 
 `dryRun: false` 时 `confirmPrefix` 必须和 `prefix` 完全一致。
+
+备份目标 prefix 下已有对象时（意味着同名对象将被覆盖，可能压掉另一个数据空间），非 dry-run 请求还会被视作破坏性操作：要求 `DUMBPAD_ENABLE_DESTRUCTIVE_DATA_OPERATIONS=true`，且 `confirmBackupPrefix` 必须与 `backupPrefix` 完全一致。备份到空 prefix 不受此限制。
 
 ### POST /api/data-management/s3/delete
 
