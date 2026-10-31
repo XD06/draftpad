@@ -94,6 +94,19 @@ async function withAgentRunWriteLock(task) {
     return run;
 }
 
+// Trash index entries are read-modify-written by three different callers:
+// the notepad/thought delete routes (holding their own locks) and the trash
+// routes directly. Without its own mutex those writers last-wins each other:
+// a fresh deletion can vanish from the index or an emptied entry reappear.
+// This is the innermost lock: acquired below the notepad/thought/relation
+// locks, never the reverse.
+let trashWriteLock = Promise.resolve();
+async function withTrashWriteLock(task) {
+    const run = trashWriteLock.then(task, task);
+    trashWriteLock = run.catch(() => {});
+    return run;
+}
+
 function isS3Backend() {
     return STORAGE_BACKEND === 's3';
 }
@@ -423,30 +436,32 @@ function trashPreview(text) {
 }
 
 async function addTrashItem({ type, sourceId, title, preview, payload }) {
-    const now = Date.now();
-    const trashId = createTrashId(type, sourceId);
-    const item = {
-        trashId,
-        type,
-        sourceId: String(sourceId || ''),
-        title: String(title || 'Untitled'),
-        preview: trashPreview(preview),
-        deletedAt: now,
-        originalUpdatedAt: payload?.notepad?.updatedAt || payload?.thought?.updatedAt || payload?.notepad?.createdAt || payload?.thought?.createdAt || 0,
-        payloadKey: trashPayloadKey(type, trashId)
-    };
-    await writeTrashPayload(type, trashId, {
-        version: 1,
-        trashId,
-        type,
-        sourceId: item.sourceId,
-        deletedAt: now,
-        payload
+    return withTrashWriteLock(async () => {
+        const now = Date.now();
+        const trashId = createTrashId(type, sourceId);
+        const item = {
+            trashId,
+            type,
+            sourceId: String(sourceId || ''),
+            title: String(title || 'Untitled'),
+            preview: trashPreview(preview),
+            deletedAt: now,
+            originalUpdatedAt: payload?.notepad?.updatedAt || payload?.thought?.updatedAt || payload?.notepad?.createdAt || payload?.thought?.createdAt || 0,
+            payloadKey: trashPayloadKey(type, trashId)
+        };
+        await writeTrashPayload(type, trashId, {
+            version: 1,
+            trashId,
+            type,
+            sourceId: item.sourceId,
+            deletedAt: now,
+            payload
+        });
+        const index = await readTrashIndex();
+        index.items = [item, ...index.items.filter(existing => existing.trashId !== trashId)];
+        await writeTrashIndex(index);
+        return item;
     });
-    const index = await readTrashIndex();
-    index.items = [item, ...index.items.filter(existing => existing.trashId !== trashId)];
-    await writeTrashIndex(index);
-    return item;
 }
 
 async function listTrashItems() {
@@ -463,22 +478,26 @@ async function getTrashItem(trashId) {
 }
 
 async function deleteTrashItem(trashId) {
-    const index = await readTrashIndex();
-    const item = index.items.find(entry => entry.trashId === trashId);
-    if (!item) return false;
-    await deleteTrashPayload(item.type, item.trashId);
-    index.items = index.items.filter(entry => entry.trashId !== trashId);
-    await writeTrashIndex(index);
-    return true;
+    return withTrashWriteLock(async () => {
+        const index = await readTrashIndex();
+        const item = index.items.find(entry => entry.trashId === trashId);
+        if (!item) return false;
+        await deleteTrashPayload(item.type, item.trashId);
+        index.items = index.items.filter(entry => entry.trashId !== trashId);
+        await writeTrashIndex(index);
+        return true;
+    });
 }
 
 async function emptyTrash() {
-    const index = await readTrashIndex();
-    for (const item of index.items) {
-        await deleteTrashPayload(item.type, item.trashId);
-    }
-    await writeTrashIndex({ version: 1, items: [] });
-    return { success: true, deleted: index.items.length };
+    return withTrashWriteLock(async () => {
+        const index = await readTrashIndex();
+        for (const item of index.items) {
+            await deleteTrashPayload(item.type, item.trashId);
+        }
+        await writeTrashIndex({ version: 1, items: [] });
+        return { success: true, deleted: index.items.length };
+    });
 }
 
 async function writeThoughtIndex(thoughts) {
@@ -1534,78 +1553,91 @@ async function restoreReverseSuppressed(restoredId, suppressed, now) {
     }
 }
 
+// Restore mutates the notepad/thought collections (read-modify-write) plus
+// relation files, so each branch runs under its domain lock; the trash route
+// additionally holds the shared relation lock for thought restores.
 async function restoreTrashItem(trashId) {
     const trash = await getTrashItem(trashId);
     if (!trash) return null;
     const now = Date.now();
 
     if (trash.item.type === 'notepad') {
-        const original = trash.payload.payload?.notepad;
-        if (!original?.id) return null;
-        const meta = await readNotepadsMeta();
-        const existingIds = new Set(meta.notepads.map(item => item.id));
-        const restored = {
-            ...original,
-            id: uniqueRestoredId(original.id, existingIds),
-            name: uniqueRestoredName(original.name, meta.notepads),
-            restoredAt: now,
-            updatedAt: now,
-            version: (original.version || 1) + 1
-        };
-        meta.notepads.push(restored);
-        await saveNotepadsMeta(meta);
-        await writeNoteContent(restored, trash.payload.payload?.content || '');
-        await deleteTrashItem(trashId);
-        await rebuildIndexes();
-        return { type: 'notepad', item: restored };
+        return withNotepadWriteLock(() => restoreNotepadFromTrash(trash, now));
     }
 
     if (trash.item.type === 'thought') {
-        const original = trash.payload.payload?.thought;
-        if (!original?.id) return null;
-        const thoughts = await readThoughts();
-        const existingIds = new Set(thoughts.map(item => item.id));
-        const validRelationTargetIds = new Set(thoughts.map(item => String(item.id)));
-        const restored = {
-            ...original,
-            id: uniqueRestoredId(original.id, existingIds),
-            restoredAt: now,
-            updatedAt: now,
-            version: (original.version || 1) + 1
-        };
-        await writeThought(restored);
-        if (trash.payload.payload?.meta) {
-            await writeThoughtMeta(restored.id, { ...trash.payload.payload.meta, id: restored.id, restoredAt: now });
-        }
-        const affectedRelationIds = new Set([restored.id]);
-        if (trash.payload.payload?.relations) {
-            const restoredRelations = normalizeRestoredRelations(
-                trash.payload.payload.relations,
-                restored.id,
-                validRelationTargetIds,
-                now
-            );
-            await writeRelations(restored.id, restoredRelations);
-            for (const affectedId of await restoreReverseRelations(restored.id, restoredRelations, now)) {
-                affectedRelationIds.add(affectedId);
-            }
-        }
-        if (trash.payload.payload?.suppressed) {
-            const restoredSuppressed = normalizeRestoredSuppressed(
-                trash.payload.payload.suppressed,
-                restored.id,
-                validRelationTargetIds,
-                now
-            );
-            await writeSuppressedRelations(restored.id, restoredSuppressed);
-            await restoreReverseSuppressed(restored.id, restoredSuppressed, now);
-        }
-        await deleteTrashItem(trashId);
-        await rebuildIndexes();
-        return { type: 'thought', item: restored, affectedRelationIds: Array.from(affectedRelationIds) };
+        return withThoughtWriteLock(() => restoreThoughtFromTrash(trash, now));
     }
 
     return null;
+}
+
+async function restoreNotepadFromTrash(trash, now) {
+    const trashId = trash.item.trashId;
+    const original = trash.payload.payload?.notepad;
+    if (!original?.id) return null;
+    const meta = await readNotepadsMeta();
+    const existingIds = new Set(meta.notepads.map(item => item.id));
+    const restored = {
+        ...original,
+        id: uniqueRestoredId(original.id, existingIds),
+        name: uniqueRestoredName(original.name, meta.notepads),
+        restoredAt: now,
+        updatedAt: now,
+        version: (original.version || 1) + 1
+    };
+    meta.notepads.push(restored);
+    await saveNotepadsMeta(meta);
+    await writeNoteContent(restored, trash.payload.payload?.content || '');
+    await deleteTrashItem(trashId);
+    await rebuildIndexes();
+    return { type: 'notepad', item: restored };
+}
+
+async function restoreThoughtFromTrash(trash, now) {
+    const trashId = trash.item.trashId;
+    const original = trash.payload.payload?.thought;
+    if (!original?.id) return null;
+    const thoughts = await readThoughts();
+    const existingIds = new Set(thoughts.map(item => item.id));
+    const validRelationTargetIds = new Set(thoughts.map(item => String(item.id)));
+    const restored = {
+        ...original,
+        id: uniqueRestoredId(original.id, existingIds),
+        restoredAt: now,
+        updatedAt: now,
+        version: (original.version || 1) + 1
+    };
+    await writeThought(restored);
+    if (trash.payload.payload?.meta) {
+        await writeThoughtMeta(restored.id, { ...trash.payload.payload.meta, id: restored.id, restoredAt: now });
+    }
+    const affectedRelationIds = new Set([restored.id]);
+    if (trash.payload.payload?.relations) {
+        const restoredRelations = normalizeRestoredRelations(
+            trash.payload.payload.relations,
+            restored.id,
+            validRelationTargetIds,
+            now
+        );
+        await writeRelations(restored.id, restoredRelations);
+        for (const affectedId of await restoreReverseRelations(restored.id, restoredRelations, now)) {
+            affectedRelationIds.add(affectedId);
+        }
+    }
+    if (trash.payload.payload?.suppressed) {
+        const restoredSuppressed = normalizeRestoredSuppressed(
+            trash.payload.payload.suppressed,
+            restored.id,
+            validRelationTargetIds,
+            now
+        );
+        await writeSuppressedRelations(restored.id, restoredSuppressed);
+        await restoreReverseSuppressed(restored.id, restoredSuppressed, now);
+    }
+    await deleteTrashItem(trashId);
+    await rebuildIndexes();
+    return { type: 'thought', item: restored, affectedRelationIds: Array.from(affectedRelationIds) };
 }
 
 async function renameNoteContent(oldNotepad, newNotepad) {
@@ -1707,6 +1739,7 @@ module.exports = {
     withInstantDraftWriteLock,
     withNotepadWriteLock,
     withAgentRunWriteLock,
+    withTrashWriteLock,
     readThoughts,
     saveThoughts,
     readInstantDrafts,
@@ -1748,6 +1781,7 @@ module.exports = {
     moveThoughtToTrash,
     listTrashItems,
     getTrashItem,
+    addTrashItem,
     restoreTrashItem,
     deleteTrashItem,
     emptyTrash,

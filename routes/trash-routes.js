@@ -2,7 +2,8 @@ function registerTrashRoutes(app, context) {
     const {
         storage,
         scheduleIndexNotepads,
-        broadcastWebSocketMessage
+        broadcastWebSocketMessage,
+        withRelationWriteLock
     } = context;
 
     function broadcastThoughtsUpdate(action, payload) {
@@ -37,7 +38,16 @@ function registerTrashRoutes(app, context) {
 
     app.post('/api/trash/:trashId/restore', async (req, res) => {
         try {
-            const restored = await storage.restoreTrashItem(req.params.trashId);
+            const trash = await storage.getTrashItem(req.params.trashId);
+            if (!trash) return res.status(404).json({ error: 'Trash item not found' });
+
+            // Thought restore writes reverse relation files; hold the same
+            // relation lock the AI pipeline and manual relation edits use so a
+            // concurrent relations write cannot lose the restored edges.
+            const restore = () => storage.restoreTrashItem(req.params.trashId);
+            const restored = trash.item.type === 'thought' && typeof withRelationWriteLock === 'function'
+                ? await withRelationWriteLock(restore)
+                : await restore();
             if (!restored) return res.status(404).json({ error: 'Trash item not found' });
 
             scheduleIndexNotepads(250);
