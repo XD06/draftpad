@@ -26,6 +26,7 @@ const CORE_ASSETS = [
   "/managers/floating-actions-config.js",
   "/managers/hybrid-display-sanitizer.js",
   "/managers/import-target-registry.js",
+  "/managers/markdown-html-sanitizer.js",
   "/managers/preview.js",
   "/managers/settings.js",
   "/managers/settings-data-panel.js",

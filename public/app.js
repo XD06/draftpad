@@ -694,9 +694,15 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     }
 
-    function renderMarkdown(markdown) {
+    // marked 15 no longer sanitizes; copy-all / print feed its output into
+    // innerHTML / document.write, so every render passes the sanitizer first.
+    let markdownSanitizerLoader = null;
+
+    async function renderMarkdown(markdown) {
         markedLoader ||= import('/js/marked/marked.esm.js');
-        return markedLoader.then(({ marked }) => marked.parse(markdown || ''));
+        markdownSanitizerLoader ||= import('./managers/markdown-html-sanitizer.js');
+        const [{ marked }, { sanitizeHtml }] = await Promise.all([markedLoader, markdownSanitizerLoader]);
+        return sanitizeHtml(marked.parse(markdown || ''));
     }
     
     // Stub PreviewManager since Vditor handles rendering
@@ -1070,6 +1076,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             prefix: settingsTargetPrefix?.value?.trim() || '',
             backupPrefix: settingsBackupPrefix?.value?.trim() || '',
             confirmPrefix: settingsConfirmPrefix?.value?.trim() || '',
+            confirmBackupPrefix: settingsConfirmPrefix?.value?.trim() || '',
             targetDataDir: settingsSourceDataDir?.value?.trim() || '',
             dryRun
         };
@@ -1079,9 +1086,14 @@ document.addEventListener('DOMContentLoaded', async () => {
         const payload = cloudPayload({ dryRun: !action.endsWith(':run') });
         const isDanger = action.endsWith(':run');
         if (isDanger) {
+            // 备份落到非空 prefix 会覆盖既有对象，服务端要求确认值与备份目标一致；
+            // 其余操作的确认值与源/目标 prefix 一致。
+            const confirmHint = action.startsWith('backup')
+                ? '即将执行备份。若备份目标 prefix 下已有对象（将被覆盖），确认 prefix 必须与备份目标 prefix 完全一致。'
+                : `即将执行 ${action}。确认 prefix 必须与目标 prefix 完全一致。`;
             const confirmed = await confirmationManager.show({
                 title: '确认云端操作',
-                message: `即将执行 ${action}。确认 prefix 必须与目标 prefix 完全一致。`,
+                message: confirmHint,
                 confirmText: '继续执行',
                 cancelText: '取消',
                 confirmType: 'danger'
@@ -3614,7 +3626,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const printWindow = window.open('', '_blank');
         try {
             const data = await previewManager.preparePrintContent(editor.value, name, settingsManager.getSettings(), currentTheme);
-            printWindow.document.write(`<html><head><title>${name}</title><style>${data.mainStyles}${data.previewStyles}${data.highlightStyles}${data.printStyles}</style></head><body>${data.formattedContent}</body></html>`);
+            printWindow.document.write(`<html><head><title>${escapeHtml(name)}</title><style>${data.mainStyles}${data.previewStyles}${data.highlightStyles}${data.printStyles}</style></head><body>${data.formattedContent}</body></html>`);
             printWindow.document.close();
             setTimeout(() => { printWindow.print(); printWindow.close(); }, 250);
         } catch (error) {
