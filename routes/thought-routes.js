@@ -21,6 +21,17 @@ function registerThoughtRoutes(app, context) {
     } = context;
     const assets = createAssetStorage(storage);
 
+    // Thought lists assume string text (toLowerCase), string subitem text and
+    // string tags; persisting anything else poisons the collection and turns
+    // every later list/search request into a 500, so validate up front.
+    function isValidTags(tags) {
+        return Array.isArray(tags) && tags.every(tag => typeof tag === 'string');
+    }
+
+    function isValidSubItems(subItems) {
+        return Array.isArray(subItems) && subItems.every(item => item && typeof item === 'object' && typeof item.text === 'string');
+    }
+
     async function hydrateAttachments(input) {
         if (input === undefined) return { attachments: [] };
         if (!Array.isArray(input)) return { error: 'attachments must be an array', code: 'INVALID_THOUGHT_ATTACHMENT' };
@@ -674,6 +685,9 @@ function registerThoughtRoutes(app, context) {
         try {
             const { text, subItems, tags, completed } = req.body;
             if (!text) return res.status(400).json({ error: 'Text is required' });
+            if (typeof text !== 'string') return res.status(400).json({ error: 'Text must be a string' });
+            if (subItems !== undefined && !isValidSubItems(subItems)) return res.status(400).json({ error: 'subItems must be objects with string text' });
+            if (tags !== undefined && !isValidTags(tags)) return res.status(400).json({ error: 'tags must be an array of strings' });
             const attachmentResult = await hydrateAttachments(req.body.attachments);
             if (attachmentResult.error) {
                 return res.status(400).json({
@@ -814,6 +828,15 @@ function registerThoughtRoutes(app, context) {
                         }
                         break;
                     case 'overwrite':
+                        if (text !== undefined && typeof text !== 'string') {
+                            return { status: 400, body: { error: 'Text must be a string' } };
+                        }
+                        if (req.body.subItems !== undefined && !isValidSubItems(req.body.subItems)) {
+                            return { status: 400, body: { error: 'subItems must be objects with string text' } };
+                        }
+                        if (req.body.tags !== undefined && !isValidTags(req.body.tags)) {
+                            return { status: 400, body: { error: 'tags must be an array of strings' } };
+                        }
                         if (text !== undefined) { thought.text = text; modified = true; }
                         if (req.body.subItems !== undefined) { thought.subItems = req.body.subItems; modified = true; }
                         if (req.body.tags !== undefined) { thought.tags = req.body.tags; modified = true; }
@@ -840,7 +863,10 @@ function registerThoughtRoutes(app, context) {
                     case 'update_subitem': {
                         const sub = thought.subItems.find(s => s.id === req.body.subId);
                         if (!sub) return { status: 404, body: { error: 'Subitem not found' } };
-                        if (text !== undefined) sub.text = text;
+                        if (text !== undefined) {
+                            if (typeof text !== 'string') return { status: 400, body: { error: 'Text must be a string' } };
+                            sub.text = text;
+                        }
                         if (req.body.completed !== undefined) sub.completed = req.body.completed;
                         modified = true;
                         break;
