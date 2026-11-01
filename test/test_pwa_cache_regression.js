@@ -148,6 +148,43 @@ for (const staleIcon of ['/Assets/dumbpad.png', '/Assets/dumbpad-192.png', '/Ass
 }
 assert(serviceWorker.includes('/Assets/dumbpad-icon-192.png'), 'service worker should precache the normalized favicon referenced by index.html');
 
+// 预缓存必须逐项 add：cache.addAll 是全有或全无，任一 404 会让整个 activate
+// 抛出，而 install 里的 skipWaiting 已生效、旧 SW 已让位 —— 离线会整段失效。
+assert(
+    serviceWorker.includes('const coreResults = await Promise.allSettled(') &&
+    serviceWorker.includes('await cache.add(asset)'),
+    'service worker must cache core assets one by one so a single 404 cannot abort the whole install'
+);
+
+// 清单里的每个路径都必须真的能取到（public/ 下，或由 server.js 从 node_modules /
+// font/ 挂载的等价路径）。改名、删文件、写错前缀都该在这里失败，而不是等到
+// 真机离线时才发现。
+const NODE_MODULES_ASSET_ROOTS = [
+    ['/js/marked/', 'node_modules/marked/lib'],
+    ['/css/@highlightjs/', 'node_modules/@highlightjs/cdn-assets/styles'],
+    ['/font/', 'font'],
+];
+function resolveCoreAsset(asset) {
+    const local = path.join(root, 'public', asset);
+    if (fs.existsSync(local)) return local;
+    for (const [prefix, dir] of NODE_MODULES_ASSET_ROOTS) {
+        if (!asset.startsWith(prefix)) continue;
+        const candidate = path.join(root, dir, asset.slice(prefix.length));
+        if (fs.existsSync(candidate)) return candidate;
+    }
+    return null;
+}
+const coreAssetsBlock = serviceWorker.match(/const CORE_ASSETS = \[([\s\S]*?)\];/);
+assert(coreAssetsBlock, 'service worker must declare CORE_ASSETS');
+const coreAssets = [...coreAssetsBlock[1].matchAll(/"([^"]+)"/g)].map(match => match[1]);
+assert(coreAssets.length > 50, `CORE_ASSETS 条目数量异常：${coreAssets.length}`);
+const missingCoreAssets = coreAssets.filter(asset => !resolveCoreAsset(asset));
+assert.deepStrictEqual(
+    missingCoreAssets,
+    [],
+    `CORE_ASSETS 里有取不到的路径（改名/删除后离线会 404）：${missingCoreAssets.join(', ')}`
+);
+
 const indexHtml = fs.readFileSync(path.join(root, 'public', 'index.html'), 'utf8');
 assert(indexHtml.includes('viewport-fit=cover'), 'index.html must opt into notch safe-area insets via viewport-fit=cover');
 const themeColorMetas = [...indexHtml.matchAll(/<meta[^>]*name="theme-color"[^>]*>/g)].map(match => match[0]);

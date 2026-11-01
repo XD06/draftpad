@@ -158,7 +158,22 @@ const installNewCache = async (version) => {
   
   try {
     console.log("Core assets to cache:", { assetsToCache: CORE_ASSETS });
-    await cache.addAll(CORE_ASSETS);
+    // 逐个 add 而不是 cache.addAll：addAll 是全有或全无，任一 404 会让整个
+    // activate 抛出——而 install 里的 skipWaiting 已经生效，旧 SW 与旧缓存都
+    // 可能已经让位，离线于是整段失效且没有补救路径。逐项失败只降级成「少缓存
+    // 了这一个文件」，其余照常可用，失败项进日志。
+    const coreResults = await Promise.allSettled(
+      CORE_ASSETS.map(async (asset) => {
+        if (await cache.match(asset)) return;
+        await cache.add(asset);
+      })
+    );
+    const coreFailed = coreResults
+      .map((result, index) => (result.status === "rejected" ? CORE_ASSETS[index] : null))
+      .filter(Boolean);
+    if (coreFailed.length) {
+      console.warn("Some core assets were not cached:", { failed: coreFailed });
+    }
     console.log("Warm assets to cache:", { assetsToCache: WARM_ASSETS });
     const warmResults = await Promise.allSettled(
       WARM_ASSETS.map(async (asset) => {
