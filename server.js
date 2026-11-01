@@ -9,6 +9,7 @@ const path = require('path');
 const crypto = require('crypto');
 const cookieParser = require('cookie-parser');
 const { generatePWAManifest } = require("./scripts/pwa-manifest-generator")
+const { getBuildVersion } = require('./scripts/build-version')
 const { originValidationMiddleware, getCorsOptions, validateOrigin } = require('./scripts/cors');
 const { 
     sanitizeFilename, 
@@ -121,52 +122,6 @@ function getShareToken(id) {
 const packageJson = require('./package.json');
 const VERSION = packageJson.version || '1.0.0';
 let BUILD_VERSION = VERSION;
-
-function collectPublicAssetStats(dir, baseDir = dir, stats = []) {
-    for (const entry of fsSync.readdirSync(dir, { withFileTypes: true })) {
-        const fullPath = path.join(dir, entry.name);
-        if (entry.isDirectory()) {
-            collectPublicAssetStats(fullPath, baseDir, stats);
-            continue;
-        }
-        const stat = fsSync.statSync(fullPath);
-        stats.push([
-            path.relative(baseDir, fullPath).replace(/\\/g, '/'),
-            stat.size,
-            Math.floor(stat.mtimeMs),
-        ].join(':'));
-    }
-    return stats;
-}
-
-function collectBuildFingerprintStats() {
-    const stats = collectPublicAssetStats(PUBLIC_DIR);
-    for (const fileName of ['package.json', 'package-lock.json']) {
-        const filePath = path.join(__dirname, fileName);
-        if (!fsSync.existsSync(filePath)) continue;
-        const stat = fsSync.statSync(filePath);
-        stats.push([
-            fileName,
-            stat.size,
-            Math.floor(stat.mtimeMs),
-        ].join(':'));
-    }
-    return stats;
-}
-
-function getBuildVersion() {
-    try {
-        const hash = crypto
-            .createHash('sha1')
-            .update(collectBuildFingerprintStats().sort().join('|'))
-            .digest('hex')
-            .slice(0, 10);
-        return `${VERSION}-${hash}`;
-    } catch (error) {
-        console.warn('Unable to compute asset build version:', error);
-        return VERSION;
-    }
-}
 
 const server = app.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);
@@ -321,7 +276,7 @@ app.use('/css/@highlightjs/github.min.css', express.static(
 
 
 generatePWAManifest(SITE_TITLE);
-BUILD_VERSION = getBuildVersion();
+BUILD_VERSION = getBuildVersion(PUBLIC_DIR, VERSION);
 
 // Security headers (lightweight helmet replacement — no extra dependency).
 // Applied before any route so static, API, and share pages all get them.

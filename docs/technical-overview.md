@@ -197,7 +197,7 @@ PWA 缓存策略分为三层：
 - HTML 导航使用 network-first，离线或慢网时回退到缓存的 `index.html`。
 - JS/CSS/JSON 这类无 hash 的代码与样式资源使用 network-first，离线或慢网时回退缓存，避免普通刷新继续拿到旧样式或旧模块；图片、字体等稳定大资源仍使用 cache-first。
 
-Service Worker 的核心缓存包含入口页面、主 JS/CSS、Thought 拆分模块和被 SW 控制页引用的图标。Tiptap bundle（`/vendor/tiptap/tiptap.bundle.js`）、`tiptap-editor.js` 与字体等大型可选资源不进安装预缓存（`WARM_ASSETS` 刻意留空，由 `test_pwa_cache_regression.js` 钉住），首屏靠 index.html 的 preload/modulepreload 并行拉取，之后由运行时静态缓存按首次使用落缓存，避免安装期下载大文件。
+Service Worker 的核心缓存包含入口页面、主 JS/CSS、Thought 拆分模块和被 SW 控制页引用的图标。Tiptap bundle（`/vendor/tiptap/tiptap.bundle.js`）、`tiptap-editor.js` 与字体等大型可选资源不进安装预缓存（`WARM_ASSETS` 刻意留空，由 `test_pwa_cache_regression.js` 钉住），首屏靠 index.html 的 preload/modulepreload 并行拉取，之后由运行时静态缓存按首次使用落缓存，避免安装期下载大文件。缓存名指纹（`scripts/build-version.js`）把 `public/` 全目录的 `路径:size:mtime` 与 `package.json`/`package-lock.json` 算成 sha1，但**排除启动时重写的 `Assets/manifest.json` 与 `Assets/asset-manifest.json`**——`writeFileSync` 每次都刷新 mtime，计入指纹会让每次服务重启都换缓存名，所有客户端因此重下整套预缓存并弹一条假的「新版本可用」。
 
 移动端 CSS 在支持 `100dvh` 的浏览器上覆盖主要容器高度，降低地址栏收起、虚拟键盘弹出时 `100vh` 导致的错位。PWA asset manifest 生成器会排除本地候选图片、临时图标和生成产物，避免把无关资源带进缓存清单。`index.html` 带 `viewport-fit=cover`，`ios-theme.css` 里的 `env(safe-area-inset-*)` 由此取到真实刘海/手势区数值。
 

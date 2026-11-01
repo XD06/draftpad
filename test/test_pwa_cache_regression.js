@@ -85,13 +85,27 @@ assert(
     'service worker should treat an older app cache as an update and clean it after installing the current cache'
 );
 assert(serviceWorker.includes('requestUrl.pathname.startsWith("/api/")'), 'service worker should bypass API requests');
+const buildVersionSource = fs.readFileSync(path.join(root, 'scripts', 'build-version.js'), 'utf8');
 assert(
-    serverSource.includes('collectBuildFingerprintStats') &&
-    serverSource.includes("'package.json', 'package-lock.json'"),
+    buildVersionSource.includes('collectBuildFingerprintStats') &&
+    buildVersionSource.includes("'package.json', 'package-lock.json'"),
     'build version should include dependency manifests so warmed vendor assets are invalidated after dependency updates'
 );
 
+// 启动时会重写两个 manifest 产物（writeFileSync 刷新 mtime）。它们必须留在
+// 指纹之外，否则每次服务重启都换缓存名：所有客户端判定"有新版本"、重下整套
+// 预缓存（约 80 项）、弹一条假的「新版本可用」，cache-first 的 vendor/字体
+// 缓存也一并失效。
+const { getBuildVersion } = require('../scripts/build-version');
+const buildVersionBeforeRegenerate = getBuildVersion(path.join(root, 'public'), 'fingerprint-test');
 generatePWAManifest('DumbPad');
+const buildVersionAfterRegenerate = getBuildVersion(path.join(root, 'public'), 'fingerprint-test');
+assert.strictEqual(
+    buildVersionAfterRegenerate,
+    buildVersionBeforeRegenerate,
+    'regenerating the PWA manifests must not change BUILD_VERSION, or every server restart busts the whole precache'
+);
+
 const manifest = JSON.parse(fs.readFileSync(path.join(root, 'public', 'Assets', 'asset-manifest.json'), 'utf8'));
 const excludedAssets = [
     '/Assets/1.png',
