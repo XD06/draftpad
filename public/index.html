@@ -61,10 +61,10 @@
             document.documentElement.dataset.initialWorkspace = workspace || 'editor';
         })();
     </script>
-    <link rel="icon" type="image/png" href="Assets/dumbpad-icon-192.png">
+    <link rel="icon" type="image/png" href="Assets/dumbpad-icon-192.png?v=3">
     <!-- 用不透明的 maskable 而非带透明上下边的 any 图：iOS 会把 apple-touch-icon
          的透明区按黑底处理，any 图 contain 后有 15px/13px 透明条。 -->
-    <link rel="apple-touch-icon" href="Assets/dumbpad-maskable-512.png">
+    <link rel="apple-touch-icon" href="Assets/dumbpad-maskable-512.png?v=3">
     <link rel="stylesheet" href="Assets/styles.css">
     <link rel="stylesheet" href="Assets/preview-styles.css">
     <!-- 代码块浅色 token 配色（暗色覆盖在 styles.css [data-theme=dark] 规则内）。
@@ -98,7 +98,7 @@
          this the boot textarea flashes its system fallback (which renders ~5.5%
          wider) for ~200ms before the font swaps in, causing a visible reflow. -->
     <link rel="preload" href="/font/changerwencai.woff2?v=2" as="font" type="font/woff2" crossorigin>
-    <link rel="manifest" href="Assets/manifest.json">
+    <link rel="manifest" href="Assets/manifest.json?v=3">
 </head>
 
 <body>

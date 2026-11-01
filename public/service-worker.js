@@ -384,7 +384,11 @@ self.addEventListener("fetch", (event) => {
   const staticAssetExtensions = [".js", ".css", ".json", ".png", ".ico", ".svg", ".woff", ".woff2", ".ttf", ".wasm"];
   const isNavigation = event.request.mode === "navigate";
   const isStaticAsset = staticAssetExtensions.some(ext => requestUrl.pathname.endsWith(ext));
-  const isNetworkFirstStaticAsset = NETWORK_FIRST_STATIC_EXTENSIONS.some(ext => requestUrl.pathname.endsWith(ext));
+  const isPwaBrandIcon =
+    requestUrl.pathname.startsWith("/Assets/dumbpad-") && requestUrl.pathname.endsWith(".png");
+  const isNetworkFirstStaticAsset =
+    NETWORK_FIRST_STATIC_EXTENSIONS.some(ext => requestUrl.pathname.endsWith(ext)) ||
+    isPwaBrandIcon;
 
   if (isNavigation) {
     // Always fetch fresh index.html, fallback to cache only when offline.
@@ -416,7 +420,7 @@ self.addEventListener("fetch", (event) => {
         networkFirstWithTimeout(event.request, {
           timeout: STATIC_NETWORK_TIMEOUT,
           fetchOptions: { cache: "no-cache" },
-          fallbackRequests: [event.request],
+          fallbackRequests: [event.request, requestUrl.pathname],
         })
       );
       return;

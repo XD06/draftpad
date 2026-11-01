@@ -85,34 +85,33 @@ function generatePWAManifest(siteTitle) {
         short_name: "新建",
         description: "打开即时草稿，记下现在要做的事",
         url: "/#today",
-        icons: [{ src: "dumbpad-icon-192.png", sizes: "192x192" }]
+        icons: [{ src: "dumbpad-icon-192.png?v=3", sizes: "192x192" }]
       },
       {
         name: "全文搜索",
         short_name: "搜索",
         description: "在所有文档中搜索",
         url: "/?action=search",
-        icons: [{ src: "dumbpad-icon-192.png", sizes: "192x192" }]
+        icons: [{ src: "dumbpad-icon-192.png?v=3", sizes: "192x192" }]
       }
     ],
+    // 仅声明圆角外 100% 透明（alpha = 0）的 purpose: "any" 图标，不声明填满方框的
+    // maskable 图标：Edge Android 在 PWA 启动屏上会把 maskable 图标原样画成整块
+    // 不透明正方形（不套蒙版），且不同浏览器/深浅色系统对启动屏背景有微调，实心
+    // 方形底色必然显出格格不入的方框；同时追加 ?v=3 破除卸载重装后浏览器与 WebAPK
+    // 对旧 URL 的磁盘缓存残留。
     icons: [
       {
-        src: "dumbpad-icon-192.png",
+        src: "dumbpad-icon-192.png?v=3",
         type: "image/png",
         sizes: "192x192",
         purpose: "any"
       },
       {
-        src: "dumbpad-icon-512.png",
+        src: "dumbpad-icon-512.png?v=3",
         type: "image/png",
         sizes: "512x512",
         purpose: "any"
-      },
-      {
-        src: "dumbpad-maskable-512.png",
-        type: "image/png",
-        sizes: "512x512",
-        purpose: "maskable"
       }
     ],
     orientation: "portrait-primary",

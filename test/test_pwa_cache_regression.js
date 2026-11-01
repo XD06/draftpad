@@ -141,8 +141,12 @@ assert.strictEqual(pwaManifest.background_color, '#f2f2f7');
 assert(
     pwaManifest.icons.some(icon => icon.purpose === 'any' && icon.sizes === '192x192') &&
     pwaManifest.icons.some(icon => icon.purpose === 'any' && icon.sizes === '512x512') &&
-    pwaManifest.icons.some(icon => icon.purpose === 'maskable' && icon.sizes === '512x512'),
-    'manifest should carry true-size any 192/512 icons plus a maskable 512 icon'
+    pwaManifest.icons.every(icon => icon.purpose === 'any' && icon.src.includes('?v=3')),
+    'manifest should carry only transparent-background purpose="any" 192/512 icons with cache-busting query string (never opaque-square maskable)'
+);
+assert(
+    serviceWorker.includes('isPwaBrandIcon'),
+    'service-worker.js must refresh PWA brand icons from network before falling back to cache'
 );
 assert(
     pwaManifest.shortcuts.some(shortcut => shortcut.url === '/#today') &&
@@ -192,6 +196,7 @@ assert.deepStrictEqual(
 );
 
 const indexHtml = fs.readFileSync(path.join(root, 'public', 'index.html'), 'utf8');
+assert(indexHtml.includes('href="Assets/manifest.json?v=3"'), 'index.html must reference versioned manifest URL to bust WebAPK / browser manifest caches');
 assert(indexHtml.includes('viewport-fit=cover'), 'index.html must opt into notch safe-area insets via viewport-fit=cover');
 const themeColorMetas = [...indexHtml.matchAll(/<meta[^>]*name="theme-color"[^>]*>/g)].map(match => match[0]);
 assert(themeColorMetas.length >= 2, 'index.html should carry light/dark theme-color metas for status bar tinting');
@@ -336,7 +341,8 @@ assert(
     const assetsDir = path.join(root, 'public', 'Assets');
 
     for (const icon of pwaManifest.icons) {
-        const filePath = path.join(assetsDir, icon.src);
+        const cleanSrc = icon.src.split('?')[0];
+        const filePath = path.join(assetsDir, cleanSrc);
         const meta = await sharp(filePath).metadata();
         const [declaredWidth, declaredHeight] = icon.sizes.split('x').map(Number);
         assert.strictEqual(meta.width, declaredWidth, `${icon.src} 实际宽度 ${meta.width} 与声明的 ${icon.sizes} 不符`);
@@ -345,12 +351,27 @@ assert(
         // 说明又退回了未压缩的真彩色 PNG（曾达 247KB）。
         const { size } = fs.statSync(filePath);
         assert(size < 120 * 1024, `${icon.src} 体积 ${Math.round(size / 1024)}KB 超出 120KB 预算，图标应走调色板 PNG`);
+
+        // manifest 里的所有启动屏图标四角必须 100% 透明（alpha = 0），防止 Edge/Android
+        // 启动屏把图标外圈画成与背景存在色差的方形色块。
+        const { data: iconData, info: iconInfo } = await sharp(filePath)
+            .ensureAlpha()
+            .raw()
+            .toBuffer({ resolveWithObject: true });
+        const iconCorners = [[0, 0], [iconInfo.width - 1, 0], [0, iconInfo.height - 1], [iconInfo.width - 1, iconInfo.height - 1]];
+        for (const [cx, cy] of iconCorners) {
+            const alphaOffset = (cy * iconInfo.width + cx) * iconInfo.channels + 3;
+            assert.strictEqual(
+                iconData[alphaOffset],
+                0,
+                `manifest 启动屏图标 ${icon.src} 四角 (${cx},${cy}) 必须完全透明 (alpha=0)，实际 alpha=${iconData[alphaOffset]}`
+            );
+        }
     }
 
-    // maskable 四角必须是不透明的 background_color：Edge 的启动屏把图标按正方形
-    // 原样画出（不套蒙版），底色只要和启动屏底色差一级，就会显出一块砖。
-    const maskable = pwaManifest.icons.find(icon => icon.purpose === 'maskable');
-    const { data, info } = await sharp(path.join(assetsDir, maskable.src))
+    // iOS apple-touch-icon 专用的 dumbpad-maskable-512.png 四角必须是不透明的 background_color
+    // （iOS 会把透明区按黑底渲染，不能进 manifest.json 但必须保留在磁盘供 apple-touch-icon 使用）。
+    const { data, info } = await sharp(path.join(assetsDir, 'dumbpad-maskable-512.png'))
         .ensureAlpha()
         .raw()
         .toBuffer({ resolveWithObject: true });
@@ -358,11 +379,11 @@ assert(
     const corners = [[0, 0], [info.width - 1, 0], [0, info.height - 1], [info.width - 1, info.height - 1]];
     for (const [x, y] of corners) {
         const offset = (y * info.width + x) * info.channels;
-        assert.strictEqual(data[offset + 3], 255, 'maskable 四角必须不透明，否则启动屏/蒙版下会露出透明角');
+        assert.strictEqual(data[offset + 3], 255, 'apple-touch-icon (dumbpad-maskable-512.png) 四角必须不透明');
         for (let channel = 0; channel < 3; channel += 1) {
             assert(
                 Math.abs(data[offset + channel] - expected[channel]) <= 1,
-                `maskable 底色 rgb(${data[offset]},${data[offset + 1]},${data[offset + 2]}) 必须等于 background_color ${pwaManifest.background_color}`
+                `dumbpad-maskable-512.png 底色 rgb(${data[offset]},${data[offset + 1]},${data[offset + 2]}) 必须等于 background_color ${pwaManifest.background_color}`
             );
         }
     }
