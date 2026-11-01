@@ -4681,12 +4681,18 @@ document.addEventListener('DOMContentLoaded', async () => {
         applySettings(appSettings);
         registerServiceWorker().catch(() => {});
         await router.init();
-        // manifest shortcuts「全文搜索」入口：/?action=search 直达命令面板，
-        // 打开后清掉参数，避免刷新或回退时反复弹出。
+        // manifest shortcuts「全文搜索」入口：/?action=search 直达命令面板。
+        // 打开后只摘掉 action 参数（保留 ?id= 等其它 query 与 hash），避免刷新
+        // 或回退时反复弹出；面板不可用时不动 URL，留一次刷新重试的机会。
         if (new URLSearchParams(window.location.search).get('action') === 'search') {
-            if (openCommandSearch) openCommandSearch();
-            else console.warn('Command search palette unavailable for ?action=search');
-            history.replaceState(null, '', window.location.pathname + (window.location.hash || ''));
+            if (openCommandSearch) {
+                openCommandSearch();
+                const url = new URL(window.location.href);
+                url.searchParams.delete('action');
+                history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
+            } else {
+                console.warn('Command search palette unavailable for ?action=search');
+            }
         }
         isInitialLoad = false;
     };

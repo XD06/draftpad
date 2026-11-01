@@ -165,6 +165,19 @@ assert(
     'index.html must paint the first frame background from the inline theme style block'
 );
 
+// 快捷方式入口清参只能摘 action：用 pathname+hash 重建 URL 会把 ?id= 一起
+// 抹掉（深链 /?id=xxx&action=search 会丢文章），且面板不可用时不该动 URL。
+const appSource = fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8');
+assert(
+    appSource.includes("url.searchParams.delete('action')"),
+    '?action=search 清参必须只摘 action 参数，不能用 pathname + hash 重建 URL'
+);
+assert(
+    !appSource.includes("history.replaceState(null, '', window.location.pathname + (window.location.hash || ''))"),
+    '?action=search 清参不得再用 pathname + hash 重建 URL（会丢掉 ?id= 等其它 query）'
+);
+
+
 // 图标必须是"声明即真实"的方形。只断言 manifest 里的 sizes 抓不到这类失真：
 // 改动前 dumbpad-192.png 实际 118x109、dumbpad-512.png 实际 608x558，而
 // manifest 声明 192x192/512x512 —— 旧断言同样全绿。
