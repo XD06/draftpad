@@ -36,6 +36,14 @@ assertNoCardLift(iosCss, 'ios-theme.css');
 const swipingCard = rule(thoughtsCss, '.thought-card.swiping');
 assert(/\bwill-change\s*:\s*transform/.test(swipingCard), 'only active swipe gestures may reserve transform compositing');
 assert(/\btransition\s*:\s*none/.test(swipingCard), 'swiping should track the pointer without delayed visual transitions');
+assert(!/\bbox-shadow\s*:/.test(swipingCard), 'swiping must not repaint card shadows or add a left-edge inset stripe');
+assert(!/\bborder-color\s*:/.test(swipingCard), 'swiping must not repaint card border color');
+assert(/@property\s+--swipe-x\s*\{[^}]*inherits\s*:\s*false/.test(thoughtsCss), '--swipe-x must disable inheritance to avoid per-frame card subtree style recalculation');
+assert(/@property\s+--swipe-action-opacity\s*\{[^}]*inherits\s*:\s*false/.test(thoughtsCss), '--swipe-action-opacity must disable inheritance to avoid per-frame card subtree style recalculation');
+
+const pinnedTimeBefore = rule(thoughtsCss, '.thought-card.pinned .thought-time::before');
+assert(/content\s*:\s*"置顶"/.test(pinnedTimeBefore), 'pinned Thought cards must show inline 置顶 badge in timestamp');
+assert(!/\.thought-card\.pinned::before/.test(thoughtsCss), 'pinned Thought cards must not draw a left-edge inset stripe');
 
 assert(!/\banimation\s*:\s*thoughtFadeIn/.test(thoughtsCss), 'opening Thoughts must not run a decorative view animation');
 assert(!/\bbackdrop-filter\s*:/.test(rule(thoughtsCss, '.thoughts-header-actions')), 'the Thoughts header should use an opaque surface');

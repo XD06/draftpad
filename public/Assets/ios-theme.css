@@ -787,6 +787,19 @@ main {
             height: calc(var(--dumbpad-vvh, 100dvh) - 56px) !important;
         }
 
+        .editor-main,
+        .boot-editor,
+        body:not(.thoughts-mode) .typora-editor-shell .vditor-wysiwyg .tiptap,
+        .typora-editor-shell .tiptap-source-textarea {
+            min-height: calc(var(--dumbpad-vvh, 100dvh) - 56px);
+        }
+
+        .boot-editor {
+            top: 0;
+            bottom: 0;
+            height: 100%;
+        }
+
         .sidebar {
             height: calc(var(--dumbpad-vvh, 100dvh) - 100px) !important;
             max-height: calc(var(--dumbpad-vvh, 100dvh) - 100px) !important;

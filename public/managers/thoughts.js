@@ -56,11 +56,14 @@ import { buildTimeMarker, buildUpdatedTimeMarker, deleteTimeMarker, handleTimeCo
 const THOUGHTS_CACHE_KEY = 'dumbpad_thoughts_cache_v1';
 
 function resetSubtaskSwipe(row) {
+    const swipeAction = row.querySelector?.('.subtask-swipe-action');
     row.classList.remove('swiping', 'swipe-ready', 'swipe-deleting');
     row.style.removeProperty('--subtask-swipe-x');
     row.style.removeProperty('transform');
     row.style.removeProperty('--subtask-swipe-progress');
     row.style.removeProperty('--subtask-swipe-opacity');
+    swipeAction?.style.removeProperty('--subtask-swipe-x');
+    swipeAction?.style.removeProperty('--subtask-swipe-opacity');
 }
 
 export class ThoughtsManager {
@@ -2634,6 +2637,7 @@ export class ThoughtsManager {
     }
 
     bindThoughtSwipeDelete(card, thought) {
+        const swipeAction = card.querySelector('.thought-swipe-action');
         let startX = 0;
         let startY = 0;
         let deltaX = 0;
@@ -2678,6 +2682,8 @@ export class ThoughtsManager {
             card.style.removeProperty('--swipe-x');
             card.style.removeProperty('transform');
             card.style.removeProperty('--swipe-action-opacity');
+            swipeAction?.style.removeProperty('--swipe-x');
+            swipeAction?.style.removeProperty('--swipe-action-opacity');
             tracking = false;
             isDragging = false;
             deltaX = 0;
@@ -2725,8 +2731,12 @@ export class ThoughtsManager {
                 const state = pendingSwipeState;
                 pendingSwipeState = null;
                 if (!tracking || !isDragging || !state) return;
-                card.style.setProperty('--swipe-x', `${state.swipeX}px`);
-                card.style.setProperty('--swipe-action-opacity', String(state.actionOpacity));
+                const swipeXValue = `${state.swipeX}px`;
+                const opacityValue = String(state.actionOpacity);
+                card.style.setProperty('--swipe-x', swipeXValue);
+                card.style.setProperty('--swipe-action-opacity', opacityValue);
+                swipeAction?.style.setProperty('--swipe-x', swipeXValue);
+                swipeAction?.style.setProperty('--swipe-action-opacity', opacityValue);
                 card.classList.toggle('swipe-ready', state.ready);
                 if (state.ready && !wasReady && (swipePointerType === 'touch' || swipePointerType === 'pen')) {
                     navigator.vibrate?.(10);
@@ -2749,6 +2759,8 @@ export class ThoughtsManager {
             card.classList.add('swipe-ready');
             card.style.setProperty('--swipe-x', `${threshold}px`);
             card.style.setProperty('--swipe-action-opacity', '1');
+            swipeAction?.style.setProperty('--swipe-x', `${threshold}px`);
+            swipeAction?.style.setProperty('--swipe-action-opacity', '1');
             const confirmed = await this.app.confirmationManager.show('确认移入垃圾桶吗？');
             if (!confirmed) {
                 resetSwipe();
@@ -2757,6 +2769,7 @@ export class ThoughtsManager {
 
             card.style.removeProperty('transform');
             card.style.removeProperty('--swipe-x');
+            swipeAction?.style.removeProperty('--swipe-x');
             card.classList.add('swipe-deleting');
             await new Promise(resolve => setTimeout(resolve, 220));
             await this.confirmAndDeleteThought(thought.id, { skipConfirm: true });
@@ -4067,6 +4080,7 @@ export class ThoughtsManager {
     // already opt out of text selection so a drag cannot start a selection.
     bindSubtaskSwipeDelete(row, thought) {
         const subId = row.dataset.subid;
+        const swipeAction = row.querySelector?.('.subtask-swipe-action');
         let startX = 0;
         let startY = 0;
         let deltaX = 0;
@@ -4128,6 +4142,8 @@ export class ThoughtsManager {
                 row.style.transform = `translate3d(${state.swipeX}px, 0, 0)`;
                 row.style.setProperty('--subtask-swipe-progress', String(state.progress));
                 row.style.setProperty('--subtask-swipe-opacity', String(state.actionOpacity));
+                swipeAction?.style.setProperty('--subtask-swipe-x', `${state.swipeX}px`);
+                swipeAction?.style.setProperty('--subtask-swipe-opacity', String(state.actionOpacity));
                 row.classList.toggle('swipe-ready', state.ready);
                 if (state.ready && !wasReady) navigator.vibrate?.(8);
                 wasReady = state.ready;

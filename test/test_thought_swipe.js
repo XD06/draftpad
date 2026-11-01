@@ -65,4 +65,9 @@ assert(
         moveBody.includes("'--swipe-action-opacity'"),
     'card swipe move must still update the consumed swipe variables'
 );
+assert(
+    moveBody.includes("swipeAction?.style.setProperty('--swipe-x'") &&
+        moveBody.includes("swipeAction?.style.setProperty('--swipe-action-opacity'"),
+    'card swipe move must update swipeAction directly so custom properties can opt out of subtree inheritance'
+);
 console.log('Thought swipe card performance checks passed');

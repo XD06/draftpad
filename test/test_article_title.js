@@ -124,6 +124,11 @@ const wysiwygPadAt = iosSource.indexOf('padding-bottom: 64px;');
 expectSource(wysiwygPadAt > -1, '桌面：滚动容器底部留白 64px，与卡片顶部 64px margin 对齐（贴底）');
 const tiptapMinAt = stylesSource.indexOf('min-height: calc(100% - 64px)');
 expectSource(tiptapMinAt > -1 && wysiwygPadAt > -1, '满屏卡片几何依赖上下各 64px 留白对齐');
+expectSource(
+    /\.boot-editor[\s\S]{0,160}?bottom:\s*0;\s*height:\s*100%;/.test(stylesSource) &&
+        /\.boot-editor,[\s\S]{0,160}?\.tiptap[\s\S]{0,120}?min-height:\s*calc\(var\(--dumbpad-vvh,\s*100dvh\)\s*-\s*56px\)/.test(iosSource),
+    '移动端：刷新预水合 .boot-editor 与渲染后 .tiptap 高度统一对齐视口底边'
+);
 
 console.log(`\narticle-title: ${passed} passed, ${failed} failed`);
 process.exitCode = failed > 0 ? 1 : 0;

@@ -499,6 +499,30 @@
 }
 
 
+@property --swipe-x {
+    syntax: '<length>';
+    inherits: false;
+    initial-value: 0px;
+}
+
+@property --swipe-action-opacity {
+    syntax: '<number>';
+    inherits: false;
+    initial-value: 0;
+}
+
+@property --subtask-swipe-x {
+    syntax: '<length>';
+    inherits: false;
+    initial-value: 0px;
+}
+
+@property --subtask-swipe-opacity {
+    syntax: '<number>';
+    inherits: false;
+    initial-value: 0;
+}
+
 .thought-card {
     position: relative;
     background: linear-gradient(180deg, color-mix(in srgb, var(--header-bg) 97%, #fff 3%), var(--header-bg));
@@ -528,9 +552,10 @@
 .thought-card.swiping {
     transition: none;
     will-change: transform;
-    border-color: rgba(217, 71, 67, 0.42);
-    background: var(--header-bg);
-    box-shadow: inset 3px 0 0 rgba(217, 71, 67, 0.28);
+}
+
+.thought-card.swiping .thought-swipe-action {
+    will-change: transform, opacity;
 }
 
 .thought-swipe-action {
@@ -552,13 +577,13 @@
 .thought-swipe-action-icon {
     display: grid;
     place-items: center;
-    width: 42px;
-    height: 42px;
-    border: 1px solid rgba(217, 71, 67, 0.22);
-    border-radius: 14px;
-    background: rgba(217, 71, 67, 0.10);
-    box-shadow: 0 7px 18px rgba(217, 71, 67, 0.10);
-    transition: color 0.16s ease, background-color 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease, transform 0.16s cubic-bezier(0.23, 1, 0.32, 1);
+    width: 40px;
+    height: 40px;
+    border: 1px solid rgba(217, 71, 67, 0.18);
+    border-radius: 50%;
+    background: color-mix(in srgb, var(--header-bg) 88%, rgba(217, 71, 67, 0.12));
+    box-shadow: 0 6px 16px rgba(217, 71, 67, 0.12);
+    transition: color 0.16s ease, background-color 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease, transform 0.18s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .thought-swipe-action-icon svg {
@@ -582,8 +607,8 @@
     color: #fff;
     background: #d94743;
     border-color: #d94743;
-    box-shadow: 0 8px 20px rgba(217, 71, 67, 0.28);
-    transform: scale(1.04);
+    box-shadow: 0 8px 20px rgba(217, 71, 67, 0.32);
+    transform: scale(1.08);
 }
 
 .thought-card.swipe-ready .thought-swipe-action-label {
@@ -2338,8 +2363,6 @@ color: var(--primary-color);
     transition: none;
     will-change: transform;
     transform: translate3d(var(--subtask-swipe-x, 0), 0, 0);
-    background: var(--header-bg);
-    box-shadow: inset 2px 0 0 rgba(217, 71, 67, 0.28);
 }
 
 .subtask-swipe-action {
@@ -3253,14 +3276,25 @@ body.quick-add-open {
     height: 14px;
 }
 
-/* Pinned card visual indicator */
-.thought-card.pinned {
-    border-color: rgba(var(--primary-rgb), 0.28);
-    box-shadow: 0 1px 1px rgba(15, 23, 42, 0.025), 0 12px 30px rgba(var(--primary-rgb), 0.08);
+/* Pinned card visual indicator (Scheme D: inline time badge, zero border intrusion) */
+.thought-card.pinned .thought-time {
+    opacity: 1;
+    color: color-mix(in srgb, var(--muted-text) 80%, transparent);
 }
 
-.thought-card.pinned::before {
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55), inset 2px 0 0 0 var(--primary-color);
+.thought-card.pinned .thought-time::before {
+    content: "置顶";
+    display: inline-block;
+    margin-right: 6px;
+    padding: 1px 6px;
+    border-radius: 5px;
+    font-size: 10.5px;
+    font-weight: 700;
+    line-height: 1.5;
+    letter-spacing: 0;
+    background: rgba(var(--primary-rgb), 0.14);
+    color: var(--primary-color);
+    vertical-align: 1px;
 }
 
 /* --- Attachments in Cards --- */
@@ -3850,11 +3884,6 @@ body.thought-lightbox-open { overflow: hidden; }
 
 .thought-lightbox-prev { grid-column: 1; }
 .thought-lightbox-next { grid-column: 3; }
-
-[data-theme="dark"] .thought-card.swiping {
-    border-color: rgba(244, 108, 101, 0.46);
-    background: var(--header-bg);
-}
 
 @media (max-width: 640px) {
     .thought-attachments.has-files {
