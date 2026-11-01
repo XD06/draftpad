@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="light">
+<html lang="zh-CN" data-theme="light">
 
 <head>
     <meta charset="UTF-8">
@@ -82,7 +82,11 @@
          wider) for ~200ms before the font swaps in, causing a visible reflow. -->
     <link rel="preload" href="/font/changerwencai.woff2?v=2" as="font" type="font/woff2" crossorigin>
     <meta name="mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <!-- default（黑字、状态栏不透明）：浅色 UI 下 black-translucent 会强制白色
+         状态栏文字，#f2f2f7 上几乎不可读；default 还把内容排在状态栏下方，
+         env(safe-area-inset-top) 归零，不会与 body::before 的假状态栏带叠加。 -->
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
     <meta name="apple-mobile-web-app-title" content="DumbPad">
     <link rel="manifest" href="Assets/manifest.json">
 </head>

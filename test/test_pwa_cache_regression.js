@@ -202,6 +202,23 @@ assert(
     'index.html must paint the first frame background from the inline theme style block'
 );
 
+// viewport-fit=cover 只是「允许内容铺到状态栏下面」；固定定位的 header 不参与
+// 文档流，必须自己把 safe-area-inset-top 吃进 top，否则会被系统状态栏或
+// body::before 的假状态栏带盖住（inset=0 时行为不变，所以普通机型看不出来）。
+const iosThemeCss = fs.readFileSync(path.join(root, 'public', 'Assets', 'ios-theme.css'), 'utf8');
+assert(
+    iosThemeCss.includes('top: calc(12px + env(safe-area-inset-top, 0px));') &&
+    iosThemeCss.includes('top: calc(8px + env(safe-area-inset-top, 0px));') &&
+    iosThemeCss.includes('padding-top: calc(76px + env(safe-area-inset-top, 0px)) !important;') &&
+    iosThemeCss.includes('padding-top: calc(60px + env(safe-area-inset-top, 0px)) !important;'),
+    '固定 header 与 .container 必须把 safe-area-inset-top 吃进布局，否则 viewport-fit=cover 下会被状态栏盖住'
+);
+assert(
+    indexHtml.includes('name="apple-mobile-web-app-capable"') &&
+    indexHtml.includes('name="apple-mobile-web-app-status-bar-style" content="default"'),
+    'iOS 需要 apple-mobile-web-app-capable 才进 standalone；浅色 UI 下状态栏样式必须用 default（black-translucent 是白字）'
+);
+
 // 快捷方式入口清参只能摘 action：用 pathname+hash 重建 URL 会把 ?id= 一起
 // 抹掉（深链 /?id=xxx&action=search 会丢文章），且面板不可用时不该动 URL。
 const appSource = fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8');

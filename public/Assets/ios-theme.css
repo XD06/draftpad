@@ -122,11 +122,14 @@ body {
     letter-spacing: -0.01em;
 }
 
-/* 容器撑开页面，补偿 fixed header 高度 */
+/* 容器撑开页面，补偿 fixed header 高度。
+   viewport-fit=cover 下 env(safe-area-inset-top) 会拿到真实状态栏/刘海高度，
+   固定定位的 header 不参与文档流，必须自己把这个 inset 吃进 top，否则会被
+   系统状态栏或 body::before 的假状态栏带盖住（inset 为 0 时行为不变）。 */
 .container {
     height: auto !important;
     min-height: 100vh;
-    padding-top: 76px !important;
+    padding-top: calc(76px + env(safe-area-inset-top, 0px)) !important;
 }
 
 ::-webkit-scrollbar {
@@ -152,7 +155,7 @@ body {
 
 header {
     position: fixed !important;
-    top: 12px;
+    top: calc(12px + env(safe-area-inset-top, 0px));
     left: 12px;
     right: 12px;
     width: auto;
@@ -506,11 +509,11 @@ body::before {
 
 @media (max-width: 640px) {
     .container {
-        padding-top: 60px !important;
+        padding-top: calc(60px + env(safe-area-inset-top, 0px)) !important;
     }
 
     header {
-        top: 8px;
+        top: calc(8px + env(safe-area-inset-top, 0px));
         left: 10px;
         right: 10px;
         border-radius: 12px !important;
