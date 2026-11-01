@@ -136,9 +136,63 @@ assert(serviceWorker.includes('/Assets/dumbpad-icon-192.png'), 'service worker s
 
 const indexHtml = fs.readFileSync(path.join(root, 'public', 'index.html'), 'utf8');
 assert(indexHtml.includes('viewport-fit=cover'), 'index.html must opt into notch safe-area insets via viewport-fit=cover');
+const themeColorMetas = [...indexHtml.matchAll(/<meta[^>]*name="theme-color"[^>]*>/g)].map(match => match[0]);
+assert(themeColorMetas.length >= 2, 'index.html should carry light/dark theme-color metas for status bar tinting');
 assert(
-    (indexHtml.match(/<meta name="theme-color"/g) || []).length === 2,
-    'index.html should carry light/dark theme-color metas for status bar tinting'
+    themeColorMetas.some(tag => tag.includes('prefers-color-scheme: light')) &&
+    themeColorMetas.some(tag => tag.includes('prefers-color-scheme: dark')),
+    'theme-color metas must cover both light and dark color schemes'
+);
+// 首帧背景：styles.css 到达前画布是 UA 默认白底，必须由内联样式兜住，
+// 且亮色值要和 manifest 的 background_color 同源（启动屏 → 首帧不跳色）。
+assert(
+    indexHtml.includes(`html { background: ${pwaManifest.background_color}; }`) &&
+    indexHtml.includes('html[data-theme="dark"] { background: #1c1c1e; }'),
+    'index.html must paint the first frame background from the inline theme style block'
 );
 
-console.log('PWA cache regression checks passed');
+// 图标必须是"声明即真实"的方形。只断言 manifest 里的 sizes 抓不到这类失真：
+// 改动前 dumbpad-192.png 实际 118x109、dumbpad-512.png 实际 608x558，而
+// manifest 声明 192x192/512x512 —— 旧断言同样全绿。
+(async () => {
+    const sharp = require('sharp');
+    const assetsDir = path.join(root, 'public', 'Assets');
+
+    for (const icon of pwaManifest.icons) {
+        const filePath = path.join(assetsDir, icon.src);
+        const meta = await sharp(filePath).metadata();
+        const [declaredWidth, declaredHeight] = icon.sizes.split('x').map(Number);
+        assert.strictEqual(meta.width, declaredWidth, `${icon.src} 实际宽度 ${meta.width} 与声明的 ${icon.sizes} 不符`);
+        assert.strictEqual(meta.height, declaredHeight, `${icon.src} 实际高度 ${meta.height} 与声明的 ${icon.sizes} 不符`);
+        // 图标是渐变+噪点的照片质感图，调色板量化后 512 约 70KB；超过 120KB
+        // 说明又退回了未压缩的真彩色 PNG（曾达 247KB）。
+        const { size } = fs.statSync(filePath);
+        assert(size < 120 * 1024, `${icon.src} 体积 ${Math.round(size / 1024)}KB 超出 120KB 预算，图标应走调色板 PNG`);
+    }
+
+    // maskable 四角必须是不透明的 background_color：Edge 的启动屏把图标按正方形
+    // 原样画出（不套蒙版），底色只要和启动屏底色差一级，就会显出一块砖。
+    const maskable = pwaManifest.icons.find(icon => icon.purpose === 'maskable');
+    const { data, info } = await sharp(path.join(assetsDir, maskable.src))
+        .ensureAlpha()
+        .raw()
+        .toBuffer({ resolveWithObject: true });
+    const expected = pwaManifest.background_color.replace('#', '').match(/../g).map(part => parseInt(part, 16));
+    const corners = [[0, 0], [info.width - 1, 0], [0, info.height - 1], [info.width - 1, info.height - 1]];
+    for (const [x, y] of corners) {
+        const offset = (y * info.width + x) * info.channels;
+        assert.strictEqual(data[offset + 3], 255, 'maskable 四角必须不透明，否则启动屏/蒙版下会露出透明角');
+        for (let channel = 0; channel < 3; channel += 1) {
+            assert(
+                Math.abs(data[offset + channel] - expected[channel]) <= 1,
+                `maskable 底色 rgb(${data[offset]},${data[offset + 1]},${data[offset + 2]}) 必须等于 background_color ${pwaManifest.background_color}`
+            );
+        }
+    }
+
+    console.log('PWA cache regression checks passed');
+})().catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+});
+

@@ -7,8 +7,13 @@
     <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f2f2f7">
     <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#1c1c1e">
     <title id="page-title">DumbPad - Simple Notes</title>
+    <!-- 首帧背景：styles.css 到达前画布是 UA 默认白底，慢网/暗色主题下会闪一帧
+         白。这里按 data-theme 直接给 html 上色，主题内联脚本写入属性后立即生效。 -->
+    <style>html { background: #f2f2f7; } html[data-theme="dark"] { background: #1c1c1e; }</style>
     <link rel="icon" type="image/png" href="Assets/dumbpad-icon-192.png">
-    <link rel="apple-touch-icon" href="Assets/dumbpad-icon-192.png">
+    <!-- 用不透明的 maskable 而非带透明上下边的 any 图：iOS 会把 apple-touch-icon
+         的透明区按黑底处理，any 图 contain 后有 15px/13px 透明条。 -->
+    <link rel="apple-touch-icon" href="Assets/dumbpad-maskable-512.png">
     <link rel="stylesheet" href="Assets/styles.css">
     <link rel="stylesheet" href="Assets/preview-styles.css">
     <!-- 代码块浅色 token 配色（暗色覆盖在 styles.css [data-theme=dark] 规则内）。

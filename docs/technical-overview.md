@@ -201,7 +201,7 @@ Service Worker 的核心缓存包含入口页面、主 JS/CSS、Thought 拆分�
 
 移动端 CSS 在支持 `100dvh` 的浏览器上覆盖主要容器高度，降低地址栏收起、虚拟键盘弹出时 `100vh` 导致的错位。PWA asset manifest 生成器会排除本地候选图片、临时图标和生成产物，避免把无关资源带进缓存清单。`index.html` 带 `viewport-fit=cover`，`ios-theme.css` 里的 `env(safe-area-inset-*)` 由此取到真实刘海/手势区数值。
 
-沉浸式（无栏）安装的关键在 manifest，而不在 Service Worker：`display_override` 按「第一个被支持的模式」解析，Edge Android 支持 `minimal-ui`，写了它安装出的应用就会带标题栏退化为浏览器观感，所以 `scripts/pwa-manifest-generator.js` 只输出纯 `standalone`，并补 `id: "/"`、`scope: "/"`；`theme_color`/`background_color` 用浅色界面底色 `#f2f2f7`（与 index.html 亮/暗两条 theme-color meta、`ios-theme.css` 的 `--bg-color` 同源，启动屏与状态栏不闪色，meta 在主题内联脚本与 app.js 切换处同步覆盖）。图标由 `scripts/generate-maskable-icon.js` 从源图 `dumbpad-512.png`（实际 608×558 非方形）派生尺寸真实的 192/512 "any" 与 512 "maskable"（内容收进 80% 安全区、底色取源图不透明均色），源图只读不改。快捷方式「新建草稿」指向 `/#today`（workspace 路由），「全文搜索」指向 `/?action=search`（app.js 启动时打开命令面板并 `history.replaceState` 清参）。
+沉浸式（无栏）安装的关键在 manifest，而不在 Service Worker：`display_override` 按「第一个被支持的模式」解析，Edge Android 支持 `minimal-ui`，写了它安装出的应用就会带标题栏退化为浏览器观感，所以 `scripts/pwa-manifest-generator.js` 只输出纯 `standalone`，并补 `id: "/"`、`scope: "/"`；`theme_color`/`background_color` 用浅色界面底色 `#f2f2f7`（与 index.html 亮/暗两条 theme-color meta、`ios-theme.css` 的 `--bg-color` 同源，启动屏与状态栏不闪色，meta 在主题内联脚本与 app.js 切换处同步覆盖）。图标由 `scripts/generate-maskable-icon.js` 从源图 `dumbpad-512.png`（实际 608×558 非方形）派生尺寸真实的 192/512 "any" 与 512 "maskable"（内容收进 80% 安全区、底色必须等于 `background_color`——Edge 启动屏把图标按正方形原样画出、不套蒙版，底色差一级就会显出一块砖，取源图均色 `rgb(217,216,212)` 时实测肉眼非常明显；产物走调色板 PNG，512 从 247KB 压到 71KB）。源图只读不改。快捷方式「新建草稿」指向 `/#today`（workspace 路由），「全文搜索」指向 `/?action=search`（app.js 启动时打开命令面板并 `history.replaceState` 清参）。`index.html` 的内联样式按 `data-theme` 直接给 `html` 上色，兜住 `styles.css` 到达前那一帧的 UA 白底。
 
 ## 6. 重构约束
 
