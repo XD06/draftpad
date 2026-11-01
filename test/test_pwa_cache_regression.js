@@ -237,6 +237,80 @@ assert(
     '?action=search 清参不得再用 pathname + hash 重建 URL（会丢掉 ?id= 等其它 query）'
 );
 
+// 递归遍历前端静态与动态 ES module 依赖树，确保 CORE_ASSETS 100% 覆盖本地模块，
+// 防止新增 managers/*.js 漏加进预缓存导致离线或 450ms 回退窗口下整棵模块树报错。
+const coreAssetSet = new Set(coreAssets);
+const visitedModules = new Set();
+function walkModuleGraph(entryUrl) {
+    if (visitedModules.has(entryUrl)) return;
+    visitedModules.add(entryUrl);
+    const filePath = resolveCoreAsset(entryUrl);
+    assert(filePath, `模块 ${entryUrl} 必须在本地存在`);
+    const content = fs.readFileSync(filePath, 'utf8');
+    const importRegex = /(?:import\s+(?:[^'"]+from\s+)?|import\s*\(\s*)['"]([^'"]+)['"]/g;
+    for (const match of content.matchAll(importRegex)) {
+        const spec = match[1];
+        if (!spec.startsWith('.') && !spec.startsWith('/')) continue;
+        const resolved = spec.startsWith('/')
+            ? spec
+            : path.posix.resolve(path.posix.dirname(entryUrl), spec);
+        assert(
+            coreAssetSet.has(resolved),
+            `前端模块 ${entryUrl} 依赖的 ${resolved} 必须加入 service-worker.js 的 CORE_ASSETS，否则离线冷启动会因模块缺失白屏`
+        );
+        if (resolved.endsWith('.js') && !resolved.startsWith('/js/')) {
+            walkModuleGraph(resolved);
+        }
+    }
+}
+walkModuleGraph('/app.js');
+walkModuleGraph('/tiptap-editor.js');
+
+// 验证 static-routes.js 注入真实版本号后，SW 被唤醒时的初始 CURRENT_CACHE_NAME
+// 与注入的 APP_VERSION 同源，不会分裂回硬编码的 DUMBPAD_CACHE_1.0.0。
+const vm = require('vm');
+const staticRoutesSource = fs.readFileSync(path.join(root, 'routes', 'static-routes.js'), 'utf8');
+assert(
+    staticRoutesSource.includes("'/Assets/manifest.json'") &&
+    staticRoutesSource.includes("'/Assets/asset-manifest.json'"),
+    'static-routes.js 必须同时为 /Assets/manifest.json 与 /Assets/asset-manifest.json 设置 Cache-Control: no-cache'
+);
+const injectedSwHeader = serviceWorker
+    .slice(0, serviceWorker.indexOf('const CORE_ASSETS'))
+    .replace(/let APP_VERSION = ".*?";/, 'let APP_VERSION = "2026.11-test";')
+    + '\nthis.__result = { APP_VERSION, CURRENT_CACHE_NAME };';
+const swHeaderCtx = {};
+vm.runInNewContext(injectedSwHeader, swHeaderCtx);
+assert.strictEqual(
+    swHeaderCtx.__result.CURRENT_CACHE_NAME,
+    'DUMBPAD_CACHE_2026.11-test',
+    'SW 唤醒执行顶层代码时，CURRENT_CACHE_NAME 必须跟随注入的 APP_VERSION，不得滞留 1.0.0'
+);
+
+// 验证 index.html 的主题与工作区解析内联脚本位于首个外部样式表之前（避免 CSS 阻塞首帧主题导致暗色闪白），
+// 且正文区域包含 0ms 预水合逻辑与正确的 ?action=search 执行次序。
+const firstStylesheetPos = indexHtml.indexOf('<link rel="stylesheet"');
+const themeScriptPos = indexHtml.indexOf("localStorage.getItem('dumbpad_theme')");
+const workspaceScriptPos = indexHtml.indexOf("localStorage.getItem('dumbpad_last_workspace_v1')");
+assert(
+    themeScriptPos > 0 && workspaceScriptPos > 0 &&
+    themeScriptPos < firstStylesheetPos && workspaceScriptPos < firstStylesheetPos,
+    'index.html 的主题与工作区初始化内联脚本必须排在首个 <link rel="stylesheet"> 之前，防止外部样式表阻塞暗色首帧'
+);
+assert(
+    indexHtml.includes('bootEditor.dataset.prehydratedNotepadId = selected.id') &&
+    indexHtml.indexOf('bootEditor.dataset.prehydratedNotepadId') < indexHtml.indexOf('<script src="app.js" type="module">'),
+    'index.html 应在加载 app.js 模块树前同步预水合缓存文章至 .boot-editor，消除空状态闪屏与卡片突变'
+);
+const initAppBlock = appSource.slice(appSource.indexOf('const initializeApp = async () =>'));
+const searchActionPos = initAppBlock.indexOf("url.searchParams.delete('action')");
+const hydrateCallPos = initAppBlock.indexOf('hydrateStartupCache()');
+const loadNotepadsCallPos = initAppBlock.indexOf('await loadNotepads(');
+assert(
+    searchActionPos > 0 && searchActionPos < hydrateCallPos && searchActionPos < loadNotepadsCallPos,
+    '?action=search 必须在 hydrateStartupCache 与 loadNotepads 之前消费并清参，防止 pushState 污染历史栈或阻塞搜索面板'
+);
+
 // 主题色在四处重复：manifest 生成器、index.html 内联脚本、app.js 的切换处、
 // ios-theme.css 的 --bg-color。任一处漂移都会让启动屏 / 状态栏 / 首帧背景与
 // UI 跳色，这里把它们钉到 manifest 的 background_color 上。

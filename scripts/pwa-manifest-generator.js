@@ -1,7 +1,23 @@
+/**
+ * 生成 PWA Web App Manifest（public/Assets/manifest.json）与静态资源清单
+ * （public/Assets/asset-manifest.json），仅在内容变化时落盘以避免无意义 mtime 抖动。
+ */
 const fs = require("fs");
 const path = require("path");
 const PUBLIC_DIR = path.join(__dirname, "..", "public");
 const ASSETS_DIR = path.join(PUBLIC_DIR, "Assets");
+
+function writeFileIfChanged(targetPath, content) {
+  try {
+    if (fs.existsSync(targetPath) && fs.readFileSync(targetPath, "utf8") === content) {
+      return false;
+    }
+  } catch (_error) {
+    // 读旧文件失败时直接覆盖重写。
+  }
+  fs.writeFileSync(targetPath, content);
+  return true;
+}
 
 function getFiles(dir, basePath = "/") {
   let fileList = [];
@@ -37,7 +53,7 @@ function getFiles(dir, basePath = "/") {
 
 function generateAssetManifest() {
   const assets = getFiles(PUBLIC_DIR);
-  fs.writeFileSync(path.join(ASSETS_DIR, "asset-manifest.json"), JSON.stringify(assets, null, 2));
+  writeFileIfChanged(path.join(ASSETS_DIR, "asset-manifest.json"), JSON.stringify(assets, null, 2));
   console.log("Asset manifest generated!", assets);
 }
 
@@ -55,6 +71,9 @@ function generatePWAManifest(siteTitle) {
     // 不写 display_override：它按「第一个被支持的模式」解析，Edge Android
     // 支持 minimal-ui，会让安装出的应用退化成带标题栏的浏览器观感。纯
     // standalone 才是 Chrome/AIHOT 式的无栏沉浸。
+    launch_handler: {
+      client_mode: ["focus-existing", "auto"]
+    },
     background_color: "#f2f2f7",
     theme_color: "#f2f2f7",
     categories: ["productivity", "utilities", "education"],
@@ -100,7 +119,7 @@ function generatePWAManifest(siteTitle) {
     prefer_related_applications: false
   };
 
-  fs.writeFileSync(path.join(ASSETS_DIR, "manifest.json"), JSON.stringify(pwaManifest, null, 2));
+  writeFileIfChanged(path.join(ASSETS_DIR, "manifest.json"), JSON.stringify(pwaManifest, null, 2));
   console.log("PWA manifest generated!", pwaManifest);
 }
 

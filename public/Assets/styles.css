@@ -1825,31 +1825,87 @@ main {
     font-weight: 600;
 }
 
-/* Premium Empty State */
+/* Premium Empty State & Cold-Start Paper Skeleton */
 .empty-state-container {
+    position: relative;
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    height: 100%;
     width: 100%;
+    max-width: 800px;
+    min-height: calc(100% - 128px);
+    margin: 64px auto;
     padding: 40px;
+    box-sizing: border-box;
+    background: var(--textarea-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    box-shadow: 0 10px 30px rgba(15, 23, 42, 0.05);
     text-align: center;
     color: var(--muted-text);
+    overflow: hidden;
+}
+
+/* 启动首帧（data-app-ready 写入前）：把 #empty-state 渲染为安静的纸面微骨架，
+   不闪大号英文引导词，避免网络返回后白纸卡片突然弹出的突兀跳变。 */
+html:not([data-app-ready]) .empty-state-container {
+    justify-content: flex-start;
+    align-items: flex-start;
+    padding: 28px 40px;
+}
+
+html:not([data-app-ready]) .empty-state-glow,
+html:not([data-app-ready]) .empty-state-title,
+html:not([data-app-ready]) .empty-state-subtitle {
+    opacity: 0;
+    pointer-events: none;
+    height: 0;
+    margin: 0;
+    overflow: hidden;
+}
+
+html:not([data-app-ready]) .empty-state-container::before {
+    content: "";
+    display: block;
+    width: 100%;
+    height: 112px;
+    background-image:
+        linear-gradient(90deg, color-mix(in srgb, var(--muted-text) 14%, transparent) 0%, color-mix(in srgb, var(--muted-text) 7%, transparent) 38%, transparent 38%),
+        linear-gradient(90deg, color-mix(in srgb, var(--muted-text) 10%, transparent) 0%, color-mix(in srgb, var(--muted-text) 5%, transparent) 84%, transparent 84%),
+        linear-gradient(90deg, color-mix(in srgb, var(--muted-text) 10%, transparent) 0%, color-mix(in srgb, var(--muted-text) 5%, transparent) 66%, transparent 66%);
+    background-size: 100% 20px, 100% 13px, 100% 13px;
+    background-position: 0 4px, 0 44px, 0 72px;
+    background-repeat: no-repeat;
+    border-radius: 4px;
+    animation: emptyStatePaperBreath 1.5s ease-in-out infinite alternate;
+}
+
+@keyframes emptyStatePaperBreath {
+    from {
+        opacity: 0.55;
+    }
+
+    to {
+        opacity: 0.95;
+    }
 }
 
 .empty-state-glow {
     width: 300px;
     height: 300px;
     background: radial-gradient(circle, var(--primary-color) 0%, transparent 70%);
-    opacity: 0.1;
+    opacity: 0.08;
     filter: blur(60px);
     position: absolute;
-    z-index: -1;
+    z-index: 0;
+    pointer-events: none;
     animation: pulse 4s infinite alternate;
 }
 
 .empty-state-title {
+    position: relative;
+    z-index: 1;
     font-size: 36px;
     font-weight: 800;
     color: var(--text-color);
@@ -1858,12 +1914,16 @@ main {
     background: linear-gradient(to right, var(--text-color), var(--primary-color));
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
+    animation: fadeIn 180ms ease-out;
 }
 
 .empty-state-subtitle {
+    position: relative;
+    z-index: 1;
     font-size: 16px;
     max-width: 400px;
     line-height: 1.6;
+    animation: fadeIn 180ms ease-out;
 }
 
 @keyframes pulse {
@@ -2094,7 +2154,7 @@ main {
        card exactly: */
     position: absolute;
     top: 64px;
-    bottom: 0;
+    bottom: 64px;
     left: 50%;
     transform: translateX(-50%);
     z-index: 3;
@@ -2109,14 +2169,14 @@ main {
     border-radius: 8px;
     box-shadow: 0 10px 30px rgba(15, 23, 42, 0.05);
     color: var(--text-color);
-    /* Same font stack + line-height as vditor so glyph widths match and the text
-       does not re-wrap at handoff ("DumbPad Reading" first; 1.72 == 28.38px/16.5). */
+    /* Same font stack + line-height as .tiptap so glyph widths and vertical rhythm
+       match and the text does not re-wrap or shift at handoff. */
     font-family: var(--font-reading);
     font-size: 16.5px;
-    line-height: 1.72;
-    /* 24px top + 35px side padding == vditor's runtime inline padding, giving the
-       aligned text column inside the 800px card. */
-    padding: 24px 35px 64px;
+    line-height: 1.68;
+    /* 24px top/bottom + 40px side padding == .tiptap's desktop padding, giving the
+       exact aligned text column inside the 800px card. */
+    padding: 24px 40px 24px;
     overflow: auto;
     -webkit-appearance: none;
     appearance: none;
@@ -2131,38 +2191,32 @@ main {
     opacity: 0.7;
 }
 
-/* Mobile: the boot card must mirror the MOBILE vditor card, not the desktop
-   one. Measured at 375px, the running vditor card differs from the desktop
-   geometry in four ways:
-     1. vditor's setPadding gives pre.vditor-reset an inline "10px 10px"
-        padding on narrow viewports (its 35px gutter only applies when
-        innerWidth > MOBILE_WIDTH, and (clientWidth - preview.maxWidth)/2 is
-        negative here);
-     2. ios-theme.css puts the bottom gap OUTSIDE the card
-        (.vditor-wysiwyg padding-bottom: env(safe-area) + 64px), so the card
-        itself stops 64px above the container bottom;
-     3. the desktop-only @media (min-width:981px) rules (margin-top 64px /
-        padding-top 24px) never apply, so the card sits at top: 0;
-     4. the card runs vditor's own line-height (1.68) and its scoped
-        --border-color (#d1d5da light / #141414 dark).
-   The global top:64px / 24px 35px 64px rules above are desktop measurements;
-   leaving them in place parks the boot card 64px below the vditor card on
-   phones with the text starting 78px lower -- the mobile "region swelling"
-   (vertical). Mirror the measured mobile geometry instead: */
 @media (max-width: 980px) {
+    .editor-main {
+        min-height: calc(100vh - 135px);
+    }
+
+    .empty-state-container {
+        margin: 0 auto;
+        min-height: calc(100vh - 135px);
+        padding: 24px 16px;
+    }
+
+    html:not([data-app-ready]) .empty-state-container {
+        padding: 18px 14px;
+    }
+
     .boot-editor {
         top: 0;
-        /* The bottom breathing room lives on .vditor-wysiwyg (outside the
-           card), so stop the boot card 64px above the container bottom to
-           match pre.vditor-reset's measured height. */
-        bottom: calc(env(safe-area-inset-bottom, 0px) + 64px);
+        bottom: auto;
+        height: calc(100vh - 135px);
         padding: 10px 10px 64px;
         line-height: 1.68;
-        border-color: #d1d5da;
+        border-color: var(--border-color);
     }
 
     [data-theme="dark"] .boot-editor {
-        border-color: #141414;
+        border-color: var(--border-color);
     }
 
     /* 活编辑卡片（旧 vditor 的 pre / Tiptap 的 .tiptap）在移动端同样回到

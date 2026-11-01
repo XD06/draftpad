@@ -2,21 +2,34 @@
 <html lang="zh-CN" data-theme="light">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="theme-color" content="#f4f5f8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f4f5f8">
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0e1014">
     <title>DumbPad</title>
+    <style>html { background: #f4f5f8; color-scheme: light; } html[data-theme="dark"] { background: #0e1014; color-scheme: dark; } body { background: inherit; margin: 0; }</style>
+    <script>
+        (() => {
+            const THEME_COLOR = { light: '#f4f5f8', dark: '#0e1014' };
+            let theme = null;
+            try {
+                const stored = localStorage.getItem('dumbpad_theme');
+                theme = stored ? JSON.parse(stored) : null;
+            } catch (_error) {}
+            if (!theme) {
+                theme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+            }
+            document.documentElement.setAttribute('data-theme', theme);
+            const color = THEME_COLOR[theme] || THEME_COLOR.light;
+            document.querySelectorAll('meta[name="theme-color"]').forEach((meta) => {
+                meta.setAttribute('content', color);
+            });
+        })();
+    </script>
     <!-- 图标指向真实尺寸的派生图：原先 favicon 是 253KB 的 608x558 原图（声明成
          icon 用），apple-touch-icon 是 118x109 的旧图，在 2x/3x 屏上都会发虚。 -->
     <link rel="icon" type="image/png" href="Assets/dumbpad-icon-192.png">
     <link rel="apple-touch-icon" href="Assets/dumbpad-maskable-512.png">
     <link rel="stylesheet" href="Assets/login.css">
-    <script>
-        (() => {
-            const stored = localStorage.getItem('dumbpad_theme');
-            const theme = stored ? JSON.parse(stored) : (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-            document.documentElement.setAttribute('data-theme', theme);
-        })();
-    </script>
 </head>
 <body class="dumbpad-login-body">
     <main class="dumbpad-login-shell">
@@ -34,7 +47,7 @@
                 <aside class="dumbpad-login-story" aria-hidden="true">
                     <div class="dumbpad-login-spine"></div>
                     <div class="dumbpad-login-story-main">
-                        <img src="Assets/dumbpad-512.png" alt="" class="dumbpad-login-story-icon">
+                        <img src="Assets/dumbpad-512.png" srcset="Assets/dumbpad-icon-192.png 1x, Assets/dumbpad-512.png 3x" loading="lazy" decoding="async" alt="" class="dumbpad-login-story-icon">
                         <p class="dumbpad-login-eyebrow">
                             <span class="dumbpad-login-eyebrow-dot"></span>
                             写下 · 连接 · 延续

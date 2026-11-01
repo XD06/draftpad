@@ -1,7 +1,10 @@
+/**
+ * DumbPad Service Worker：管理核心模块预缓存、HTML/JS/CSS 网络优先限时回退与
+ * 静态运行时（vendor/font）缓存优先策略，确保离线冷启动与多端更新一致。
+ */
 let APP_VERSION = "1.0.0";
-let CURRENT_CACHE_NAME = "DUMBPAD_CACHE_1.0.0";
-
 const getCacheName = (version) => `DUMBPAD_CACHE_${version}`;
+let CURRENT_CACHE_NAME = getCacheName(APP_VERSION);
 const CORE_ASSETS = [
   "/index.html",
   "/app.js",
@@ -54,6 +57,7 @@ const CORE_ASSETS = [
   "/managers/file-type-icons.js",
   "/managers/article-file-command.js",
   "/managers/article-meta-footer.js",
+  "/managers/article-title.js",
   "/managers/thought-attachments.js",
   "/managers/thought-card-renderer.js",
   "/managers/thought-editor.js",
@@ -165,7 +169,16 @@ const installNewCache = async (version) => {
     const coreResults = await Promise.allSettled(
       CORE_ASSETS.map(async (asset) => {
         if (await cache.match(asset)) return;
-        await cache.add(asset);
+        try {
+          await cache.add(asset);
+        } catch (error) {
+          const fallback = await caches.match(asset);
+          if (fallback && fallback.ok) {
+            await cache.put(asset, fallback.clone());
+            return;
+          }
+          throw error;
+        }
       })
     );
     const coreFailed = coreResults
@@ -185,7 +198,26 @@ const installNewCache = async (version) => {
     if (warmFailed) {
       console.warn("Some warm assets were not cached:", { failed: warmFailed, total: WARM_ASSETS.length });
     }
+    // 继承旧缓存里已按需拉取过的不可变运行时（/vendor/、/font/），避免小版本
+    // 升级后清理旧桶把 800KB+ 的编辑器内核与字体一并蒸发。
+    try {
+      const existingNames = (await caches.keys()).filter(name => isDumbPadCache(name) && name !== cacheName);
+      for (const oldName of existingNames) {
+        const oldCache = await caches.open(oldName);
+        const requests = await oldCache.keys();
+        for (const req of requests) {
+          const pathname = new URL(req.url).pathname;
+          if (isCacheFirstPath(pathname) && !(await cache.match(req))) {
+            const res = await oldCache.match(req);
+            if (res && res.ok) await cache.put(req, res.clone());
+          }
+        }
+      }
+    } catch (carryError) {
+      console.warn("Failed to carry over runtime cache entries:", carryError);
+    }
     console.log("Cache installation complete for version:", version);
+    return { coreFailed };
   } catch (error) {
     console.error("Failed to install cache:", error);
     throw error;
@@ -219,8 +251,10 @@ const checkAndUpdateCache = async () => {
   if (!cacheState.hasCurrent) {
     // Current version is missing. Install it, then clean older DumbPad caches when this is an update.
     console.log(cacheState.hasAnyAppCache ? "Version mismatch - updating cache" : "First time installation - installing cache");
-    await installNewCache(appVersion);
-    if (cacheState.hasAnyAppCache) await cleanupOldCaches(appVersion);
+    const { coreFailed } = await installNewCache(appVersion);
+    if (cacheState.hasAnyAppCache && (!coreFailed || coreFailed.length === 0)) {
+      await cleanupOldCaches(appVersion);
+    }
     return { updated: true, firstInstall: !cacheState.hasAnyAppCache };
   }
   

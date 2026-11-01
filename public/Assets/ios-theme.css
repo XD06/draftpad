@@ -2456,6 +2456,8 @@ main {
     }
 
     /* 绕开 .vditor 类对 --border-color (#d1d5da) 的污染，让编辑卡片边框与分栏线同用 --separator-color */
+    html:not([data-initial-workspace="thoughts"]):not([data-initial-workspace="today"]) body:not(.thoughts-mode):not(.today-drafts-mode) .empty-state-container,
+    html:not([data-initial-workspace="thoughts"]):not([data-initial-workspace="today"]) body:not(.thoughts-mode):not(.today-drafts-mode) .boot-editor,
     html:not([data-initial-workspace="thoughts"]):not([data-initial-workspace="today"]) body:not(.thoughts-mode):not(.today-drafts-mode) .typora-editor-shell .tiptap,
     html:not([data-initial-workspace="thoughts"]):not([data-initial-workspace="today"]) body:not(.thoughts-mode):not(.today-drafts-mode) .typora-editor-shell.is-source-mode .typora-source-editor {
         border-color: var(--separator-color);

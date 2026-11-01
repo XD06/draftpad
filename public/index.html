@@ -9,23 +9,26 @@
     <title id="page-title">DumbPad - Simple Notes</title>
     <!-- 首帧背景：styles.css 到达前画布是 UA 默认白底，慢网/暗色主题下会闪一帧
          白。这里按 data-theme 直接给 html 上色，主题内联脚本写入属性后立即生效。 -->
-    <style>html { background: #f2f2f7; } html[data-theme="dark"] { background: #1c1c1e; }</style>
-    <link rel="icon" type="image/png" href="Assets/dumbpad-icon-192.png">
-    <!-- 用不透明的 maskable 而非带透明上下边的 any 图：iOS 会把 apple-touch-icon
-         的透明区按黑底处理，any 图 contain 后有 15px/13px 透明条。 -->
-    <link rel="apple-touch-icon" href="Assets/dumbpad-maskable-512.png">
-    <link rel="stylesheet" href="Assets/styles.css">
-    <link rel="stylesheet" href="Assets/preview-styles.css">
-    <!-- 代码块浅色 token 配色（暗色覆盖在 styles.css [data-theme=dark] 规则内）。
-         旧 vditor 自带该样式，切换 Tiptap 后由页面直接加载。 -->
-    <link rel="stylesheet" href="/css/@highlightjs/github.min.css">
+    <style>html { background: #f2f2f7; } html[data-theme="dark"] { background: #1c1c1e; } html { color-scheme: light; } html[data-theme="dark"] { color-scheme: dark; } body { background: inherit; margin: 0; }</style>
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <!-- default（黑字、状态栏不透明）：浅色 UI 下 black-translucent 会强制白色
+         状态栏文字，#f2f2f7 上几乎不可读；default 还把内容排在状态栏下方，
+         env(safe-area-inset-top) 归零，不会与 body::before 的假状态栏带叠加。 -->
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <meta name="apple-mobile-web-app-title" content="DumbPad">
     <script>
         (function () { // Initialize theme immediately - Prevents theme flicker
             const THEME_COLOR = { light: '#f2f2f7', dark: '#1c1c1e' };
-            let theme = JSON.parse(localStorage.getItem('dumbpad_theme'))
+            let theme = null;
+            try {
+                theme = JSON.parse(localStorage.getItem('dumbpad_theme'));
+            } catch (_error) {}
             if (!theme) {
                 theme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-                localStorage.setItem('dumbpad_theme', JSON.stringify(theme));
+                try {
+                    localStorage.setItem('dumbpad_theme', JSON.stringify(theme));
+                } catch (_error) {}
             }
             document.documentElement.setAttribute('data-theme', theme);
             // Edge/Chrome Android 用 theme-color 给状态栏着色。主题一旦落库就不再
@@ -35,6 +38,10 @@
             document.querySelectorAll('meta[name="theme-color"]').forEach((meta) => {
                 meta.setAttribute('content', color);
             });
+            const statusMeta = document.querySelector('meta[name="apple-mobile-web-app-status-bar-style"]');
+            if (statusMeta) {
+                statusMeta.setAttribute('content', theme === 'dark' ? 'black-translucent' : 'default');
+            }
         })();
     </script>
     <script>
@@ -54,6 +61,15 @@
             document.documentElement.dataset.initialWorkspace = workspace || 'editor';
         })();
     </script>
+    <link rel="icon" type="image/png" href="Assets/dumbpad-icon-192.png">
+    <!-- 用不透明的 maskable 而非带透明上下边的 any 图：iOS 会把 apple-touch-icon
+         的透明区按黑底处理，any 图 contain 后有 15px/13px 透明条。 -->
+    <link rel="apple-touch-icon" href="Assets/dumbpad-maskable-512.png">
+    <link rel="stylesheet" href="Assets/styles.css">
+    <link rel="stylesheet" href="Assets/preview-styles.css">
+    <!-- 代码块浅色 token 配色（暗色覆盖在 styles.css [data-theme=dark] 规则内）。
+         旧 vditor 自带该样式，切换 Tiptap 后由页面直接加载。 -->
+    <link rel="stylesheet" href="/css/@highlightjs/github.min.css">
     <!-- Keep editor boot lean, but Thought must have its stylesheet before its
          first paint or native controls flash briefly during a refresh. -->
     <link id="thoughts-stylesheet" rel="stylesheet" href="Assets/thoughts.css" media="print" onload="this.media='all';document.documentElement.dataset.thoughtsStylesReady='true'">
@@ -76,18 +92,12 @@
     <link rel="modulepreload" href="managers/tiptap-file-command.js">
     <link rel="modulepreload" href="managers/tiptap-image-interactions.js">
     <link rel="preload" href="/vendor/tiptap/tiptap.bundle.js" as="script">
+    <link rel="preload" href="/vendor/vditor/index.css" as="style">
     <!-- Preload the reading webfont so the instant boot editor and the vditor
          surface both paint in "DumbPad Reading" from the very first frame. Without
          this the boot textarea flashes its system fallback (which renders ~5.5%
          wider) for ~200ms before the font swaps in, causing a visible reflow. -->
     <link rel="preload" href="/font/changerwencai.woff2?v=2" as="font" type="font/woff2" crossorigin>
-    <meta name="mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-capable" content="yes">
-    <!-- default（黑字、状态栏不透明）：浅色 UI 下 black-translucent 会强制白色
-         状态栏文字，#f2f2f7 上几乎不可读；default 还把内容排在状态栏下方，
-         env(safe-area-inset-top) 归零，不会与 body::before 的假状态栏带叠加。 -->
-    <meta name="apple-mobile-web-app-status-bar-style" content="default">
-    <meta name="apple-mobile-web-app-title" content="DumbPad">
     <link rel="manifest" href="Assets/manifest.json">
 </head>
 
@@ -292,6 +302,66 @@
                 </div>
             </aside>
         </main>
+        <script>
+            // 0ms 首帧预水合：在 app.js 及其 ES 模块图下载完成前，同步从 localStorage
+            // 恢复上次打开的文章标题与正文到 .boot-editor 纸面卡片，消除「先闪英文空状态、
+            // 再弹白卡片、标题再跳变」的启动割裂感。
+            (function () {
+                if (document.documentElement.dataset.initialWorkspace !== 'editor') return;
+                try {
+                    var raw = localStorage.getItem('dumbpad_startup_cache_v1');
+                    if (!raw) return;
+                    var cache = JSON.parse(raw);
+                    if (!cache || cache.version !== 2 || !Array.isArray(cache.notepads) || !cache.notepads.length) return;
+                    var list = cache.notepads;
+                    var queryId = new URLSearchParams(window.location.search).get('id');
+                    var find = function (key) {
+                        if (!key) return null;
+                        var lower = String(key).toLowerCase();
+                        for (var i = 0; i < list.length; i++) {
+                            var item = list[i];
+                            if (item && (item.id === key || (item.name && item.name.toLowerCase() === lower))) return item;
+                        }
+                        return null;
+                    };
+                    var selected = (queryId && find(queryId))
+                        || find(cache.currentNotepadId)
+                        || find(cache.noteHistory)
+                        || list[0];
+                    if (!selected || !selected.id) return;
+                    if (selected.name) {
+                        var titleEl = document.querySelector('#header-title h1');
+                        if (titleEl) titleEl.textContent = selected.name;
+                        document.title = selected.name + ' - DumbPad';
+                    }
+                    var note = cache.notes && cache.notes[selected.id];
+                    if (!note || typeof note.content !== 'string') return;
+                    var emptyState = document.getElementById('empty-state');
+                    var hybridEditor = document.getElementById('hybrid-editor');
+                    var bootEditor = document.getElementById('boot-editor');
+                    if (emptyState) emptyState.style.display = 'none';
+                    if (hybridEditor) hybridEditor.style.display = 'block';
+                    if (bootEditor && localStorage.getItem('dumbpad_reading_mode') !== 'true') {
+                        bootEditor.value = note.content;
+                        bootEditor.hidden = false;
+                        bootEditor.dataset.prehydratedNotepadId = selected.id;
+                        bootEditor.addEventListener('input', function () {
+                            bootEditor.dataset.prehydratedDirty = '1';
+                        }, { once: true });
+                        var caretsRaw = localStorage.getItem('dumbpad_caret_positions_v1');
+                        if (caretsRaw) {
+                            var carets = JSON.parse(caretsRaw);
+                            var snap = carets && carets[selected.id];
+                            if (snap && Number(snap.scrollTop) > 0) {
+                                bootEditor.scrollTop = Number(snap.scrollTop) || 0;
+                            }
+                        }
+                    }
+                } catch (_error) {
+                    // 预水合仅做首帧加速，异常静默交由 app.js 接管。
+                }
+            })();
+        </script>
 
         <div id="thoughts-view" class="view-container" style="display: none;">
 

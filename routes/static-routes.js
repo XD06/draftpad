@@ -28,16 +28,29 @@ function registerStaticRoutes(app, context) {
         }
     });
 
-    app.get('/asset-manifest.json', (req, res) => {
+    const sendAssetManifest = (req, res) => {
         // 两份 manifest 在启动时重写，必须协商缓存让客户端及时拿到新版本。
         res.setHeader('Cache-Control', 'no-cache');
         res.sendFile(path.join(assetsDir, 'asset-manifest.json'));
-    });
+    };
 
-    app.get('/manifest.json', (req, res) => {
+    const sendPwaManifest = (req, res) => {
         res.setHeader('Cache-Control', 'no-cache');
         res.sendFile(path.join(assetsDir, 'manifest.json'));
-    });
+    };
+
+    app.get('/asset-manifest.json', sendAssetManifest);
+    app.get('/Assets/asset-manifest.json', sendAssetManifest);
+    app.get('/manifest.json', sendPwaManifest);
+    app.get('/Assets/manifest.json', sendPwaManifest);
+
+    // PWA 图标衍生自同一文件名，协商缓存避免启动屏长期滞留旧底色图。
+    for (const iconName of ['dumbpad-icon-192.png', 'dumbpad-icon-512.png', 'dumbpad-maskable-512.png']) {
+        app.get(`/Assets/${iconName}`, (req, res) => {
+            res.setHeader('Cache-Control', 'no-cache');
+            res.sendFile(path.join(assetsDir, iconName));
+        });
+    }
 
     app.get('/health', (req, res) => {
         res.json({ status: 'ok', timestamp: new Date().toISOString() });

@@ -86,6 +86,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         document.querySelectorAll('meta[name="theme-color"]').forEach((meta) => {
             meta.setAttribute('content', color);
         });
+        const statusMeta = document.querySelector('meta[name="apple-mobile-web-app-status-bar-style"]');
+        if (statusMeta) {
+            statusMeta.setAttribute('content', theme === 'dark' ? 'black-translucent' : 'default');
+        }
     };
     // 源码模式开关状态（布尔值）。与主题、阅读模式一样放在 localStorage，
     // 刷新/重开 PWA 后保持用户上次的选择。
@@ -1796,7 +1800,19 @@ document.addEventListener('DOMContentLoaded', async () => {
         const selectedId = handleQueryParameterSelection(currentNotepads, cache.currentNotepadId || cache.noteHistory);
         const note = selectedId ? cache.notes?.[selectedId] : null;
         if (!selectedId || !note) return false;
-        return renderCachedNotepad(selectedId, note.content || '');
+        const prehydratedDirty = Boolean(
+            bootEditor &&
+            bootEditor.dataset.prehydratedNotepadId === selectedId &&
+            bootEditor.dataset.prehydratedDirty === '1'
+        );
+        const initialContent = prehydratedDirty ? bootEditor.value : (note.content || '');
+        const rendered = renderCachedNotepad(selectedId, initialContent);
+        if (prehydratedDirty) {
+            hasUnsavedChanges = true;
+            editorRevision += 1;
+            debouncedSave(initialContent);
+        }
+        return rendered;
     }
 
     function escapeHtml(value = '') {
@@ -4649,6 +4665,37 @@ document.addEventListener('DOMContentLoaded', async () => {
         addEventListeners();
         // Apply the shell synchronously; data and feature managers can load behind it.
         router.applyShellState(initialWorkspace);
+        // manifest shortcuts「全文搜索」入口：/?action=search 直达命令面板。
+        // 必须在 hydrateStartupCache / loadNotepads 之前执行：否则它们内部调用的
+        // updateUrlWithNotepad（pushState）会把 ?action=search 写进多条历史记录，
+        // 还会让搜索面板被网络请求与编辑器加载阻塞。
+        // 打开后只摘掉 action 参数（保留 ?id= 等其它 query 与 hash），避免刷新
+        // 或回退时反复弹出；面板不可用时不动 URL，留一次刷新重试的机会。
+        if (new URLSearchParams(window.location.search).get('action') === 'search') {
+            if (openCommandSearch) {
+                openCommandSearch();
+                const url = new URL(window.location.href);
+                url.searchParams.delete('action');
+                history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
+            } else {
+                console.warn('Command search palette unavailable for ?action=search');
+            }
+        }
+        if (window.launchQueue?.setConsumer) {
+            window.launchQueue.setConsumer((launchParams) => {
+                if (!launchParams?.targetURL) return;
+                try {
+                    const target = new URL(launchParams.targetURL, window.location.origin);
+                    if (target.hash === '#today') {
+                        void router.open('today');
+                    } else if (target.hash === '#thoughts') {
+                        void router.open('thoughts');
+                    } else if (target.searchParams.get('action') === 'search') {
+                        openCommandSearch?.();
+                    }
+                } catch (_err) {}
+            });
+        }
         appSettings = settingsManager.loadSettings();
         if (initialWorkspace === 'thoughts') {
             await ensureThoughtsManager();
@@ -4676,24 +4723,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
         loadAppConfig();
         await loadNotepads({ loadCurrentNote: startsInEditor });
+        document.documentElement.dataset.appReady = 'true';
         if (startsInEditor) await syncCurrentDirtyNote();
         if (startsInEditor) void reconcileCurrentNote('startup');
         applySettings(appSettings);
         registerServiceWorker().catch(() => {});
         await router.init();
-        // manifest shortcuts「全文搜索」入口：/?action=search 直达命令面板。
-        // 打开后只摘掉 action 参数（保留 ?id= 等其它 query 与 hash），避免刷新
-        // 或回退时反复弹出；面板不可用时不动 URL，留一次刷新重试的机会。
-        if (new URLSearchParams(window.location.search).get('action') === 'search') {
-            if (openCommandSearch) {
-                openCommandSearch();
-                const url = new URL(window.location.href);
-                url.searchParams.delete('action');
-                history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
-            } else {
-                console.warn('Command search palette unavailable for ?action=search');
-            }
-        }
         isInitialLoad = false;
     };
 
