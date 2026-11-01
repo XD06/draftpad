@@ -48,11 +48,15 @@ function generatePWAManifest(siteTitle) {
     name: siteTitle || "DumbPad",
     short_name: "DumbPad",
     description: "极简、高效、Agent友好的 Markdown 记事本",
+    id: "/",
     start_url: "/",
+    scope: "/",
     display: "standalone",
-    display_override: ["window-controls-overlay", "minimal-ui"],
-    background_color: "#0f172a",
-    theme_color: "#0f172a",
+    // 不写 display_override：它按「第一个被支持的模式」解析，Edge Android
+    // 支持 minimal-ui，会让安装出的应用退化成带标题栏的浏览器观感。纯
+    // standalone 才是 Chrome/AIHOT 式的无栏沉浸。
+    background_color: "#f2f2f7",
+    theme_color: "#f2f2f7",
     categories: ["productivity", "utilities", "education"],
     lang: "zh-CN",
     dir: "ltr",
@@ -60,30 +64,36 @@ function generatePWAManifest(siteTitle) {
       {
         name: "新建草稿",
         short_name: "新建",
-        description: "创建一个新的草稿文档",
-        url: "/?action=new",
-        icons: [{ src: "dumbpad-192.png", sizes: "192x192" }]
+        description: "打开即时草稿，记下现在要做的事",
+        url: "/#today",
+        icons: [{ src: "dumbpad-icon-192.png", sizes: "192x192" }]
       },
       {
         name: "全文搜索",
         short_name: "搜索",
         description: "在所有文档中搜索",
         url: "/?action=search",
-        icons: [{ src: "dumbpad-192.png", sizes: "192x192" }]
+        icons: [{ src: "dumbpad-icon-192.png", sizes: "192x192" }]
       }
     ],
     icons: [
       {
-        src: "dumbpad-192.png",
+        src: "dumbpad-icon-192.png",
         type: "image/png",
         sizes: "192x192",
         purpose: "any"
       },
       {
-        src: "dumbpad-512.png",
+        src: "dumbpad-icon-512.png",
         type: "image/png",
         sizes: "512x512",
         purpose: "any"
+      },
+      {
+        src: "dumbpad-maskable-512.png",
+        type: "image/png",
+        sizes: "512x512",
+        purpose: "maskable"
       }
     ],
     orientation: "portrait-primary",

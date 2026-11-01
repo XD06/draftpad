@@ -29,10 +29,13 @@ function registerStaticRoutes(app, context) {
     });
 
     app.get('/asset-manifest.json', (req, res) => {
+        // 两份 manifest 在启动时重写，必须协商缓存让客户端及时拿到新版本。
+        res.setHeader('Cache-Control', 'no-cache');
         res.sendFile(path.join(assetsDir, 'asset-manifest.json'));
     });
 
     app.get('/manifest.json', (req, res) => {
+        res.setHeader('Cache-Control', 'no-cache');
         res.sendFile(path.join(assetsDir, 'manifest.json'));
     });
 

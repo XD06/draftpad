@@ -12,10 +12,9 @@ const CORE_ASSETS = [
   "/Assets/today-drafts.css",
   "/Assets/ios-theme.css",
   "/Assets/manifest.json",
-  "/Assets/dumbpad.png",
-  "/Assets/dumbpad-192.png",
-  "/Assets/dumbpad-512.png",
-  "/Assets/favicon-512.png",
+  // 唯一被 SW 控制页（index.html favicon/apple-touch）引用的图标；maskable
+  // 与 512 只在安装期由系统拉取，login.html 不受 SW 控制都不进预缓存。
+  "/Assets/dumbpad-icon-192.png",
   "/js/marked/marked.esm.js",
   "/css/@highlightjs/github.min.css",
   "/css/@highlightjs/github-dark.min.css",

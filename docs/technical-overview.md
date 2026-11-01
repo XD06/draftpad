@@ -197,9 +197,11 @@ PWA 缓存策略分为三层：
 - HTML 导航使用 network-first，离线或慢网时回退到缓存的 `index.html`。
 - JS/CSS/JSON 这类无 hash 的代码与样式资源使用 network-first，离线或慢网时回退缓存，避免普通刷新继续拿到旧样式或旧模块；图片、字体等稳定大资源仍使用 cache-first。
 
-Service Worker 的核心缓存包含入口页面、主 JS/CSS、Thought 拆分模块和图标。Tiptap bundle（`/vendor/tiptap/tiptap.bundle.js`）和 `tiptap-editor.js` 从安装核心资源中移出，由文章模式按需加载并走运行时静态资源缓存，避免直接进入 `#thoughts` 时抢占移动端首屏网络。`WARM_ASSETS` 额外预热中文字体、代码字体和 highlight 主包；这些资源较大但变化很少，第一次安装或版本更新时缓存，后续打开直接复用。
+Service Worker 的核心缓存包含入口页面、主 JS/CSS、Thought 拆分模块和被 SW 控制页引用的图标。Tiptap bundle（`/vendor/tiptap/tiptap.bundle.js`）、`tiptap-editor.js` 与字体等大型可选资源不进安装预缓存（`WARM_ASSETS` 刻意留空，由 `test_pwa_cache_regression.js` 钉住），首屏靠 index.html 的 preload/modulepreload 并行拉取，之后由运行时静态缓存按首次使用落缓存，避免安装期下载大文件。
 
-移动端 CSS 在支持 `100dvh` 的浏览器上覆盖主要容器高度，降低地址栏收起、虚拟键盘弹出时 `100vh` 导致的错位。PWA asset manifest 生成器会排除本地候选图片、临时图标和生成产物，避免把无关资源带进缓存清单。
+移动端 CSS 在支持 `100dvh` 的浏览器上覆盖主要容器高度，降低地址栏收起、虚拟键盘弹出时 `100vh` 导致的错位。PWA asset manifest 生成器会排除本地候选图片、临时图标和生成产物，避免把无关资源带进缓存清单。`index.html` 带 `viewport-fit=cover`，`ios-theme.css` 里的 `env(safe-area-inset-*)` 由此取到真实刘海/手势区数值。
+
+沉浸式（无栏）安装的关键在 manifest，而不在 Service Worker：`display_override` 按「第一个被支持的模式」解析，Edge Android 支持 `minimal-ui`，写了它安装出的应用就会带标题栏退化为浏览器观感，所以 `scripts/pwa-manifest-generator.js` 只输出纯 `standalone`，并补 `id: "/"`、`scope: "/"`；`theme_color`/`background_color` 用浅色界面底色 `#f2f2f7`（与 index.html 亮/暗两条 theme-color meta、`ios-theme.css` 的 `--bg-color` 同源，启动屏与状态栏不闪色，meta 在主题内联脚本与 app.js 切换处同步覆盖）。图标由 `scripts/generate-maskable-icon.js` 从源图 `dumbpad-512.png`（实际 608×558 非方形）派生尺寸真实的 192/512 "any" 与 512 "maskable"（内容收进 80% 安全区、底色取源图不透明均色），源图只读不改。快捷方式「新建草稿」指向 `/#today`（workspace 路由），「全文搜索」指向 `/?action=search`（app.js 启动时打开命令面板并 `history.replaceState` 清参）。
 
 ## 6. 重构约束
 

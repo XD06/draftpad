@@ -3,10 +3,12 @@
 
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, interactive-widget=resizes-content">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content">
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f2f2f7">
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#1c1c1e">
     <title id="page-title">DumbPad - Simple Notes</title>
-    <link rel="icon" type="image/png" href="Assets/favicon-512.png">
-    <link rel="apple-touch-icon"  href="Assets/dumbpad-192.png">
+    <link rel="icon" type="image/png" href="Assets/dumbpad-icon-192.png">
+    <link rel="apple-touch-icon" href="Assets/dumbpad-icon-192.png">
     <link rel="stylesheet" href="Assets/styles.css">
     <link rel="stylesheet" href="Assets/preview-styles.css">
     <!-- 代码块浅色 token 配色（暗色覆盖在 styles.css [data-theme=dark] 规则内）。
@@ -14,12 +16,20 @@
     <link rel="stylesheet" href="/css/@highlightjs/github.min.css">
     <script>
         (function () { // Initialize theme immediately - Prevents theme flicker
+            const THEME_COLOR = { light: '#f2f2f7', dark: '#1c1c1e' };
             let theme = JSON.parse(localStorage.getItem('dumbpad_theme'))
             if (!theme) {
                 theme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
                 localStorage.setItem('dumbpad_theme', JSON.stringify(theme));
             }
             document.documentElement.setAttribute('data-theme', theme);
+            // Edge/Chrome Android 用 theme-color 给状态栏着色。主题一旦落库就不再
+            // 跟随系统，这里与 app.js 的切换处同步覆盖；带 media 的两条 meta 只兜
+            // 脚本执行前与禁用 JS 的帧。
+            const color = THEME_COLOR[theme] || THEME_COLOR.light;
+            document.querySelectorAll('meta[name="theme-color"]').forEach((meta) => {
+                meta.setAttribute('content', color);
+            });
         })();
     </script>
     <script>
@@ -69,7 +79,6 @@
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="DumbPad">
-    <meta name="theme-color" content="#0f172a">
     <link rel="manifest" href="Assets/manifest.json">
 </head>
 

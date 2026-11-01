@@ -78,6 +78,15 @@ import { registerResultType } from './managers/command-search/result-type-regist
 document.addEventListener('DOMContentLoaded', async () => {
     const DEBUG = false;
     const THEME_KEY = 'dumbpad_theme';
+    // 与 index.html 内联脚本同一套色值：Edge/Chrome Android 读取 theme-color
+    // meta 给状态栏着色，主题切换时必须同步。
+    const THEME_COLOR_BY_MODE = { light: '#f2f2f7', dark: '#1c1c1e' };
+    const syncThemeColorMeta = (theme) => {
+        const color = THEME_COLOR_BY_MODE[theme] || THEME_COLOR_BY_MODE.light;
+        document.querySelectorAll('meta[name="theme-color"]').forEach((meta) => {
+            meta.setAttribute('content', color);
+        });
+    };
     // 源码模式开关状态（布尔值）。与主题、阅读模式一样放在 localStorage，
     // 刷新/重开 PWA 后保持用户上次的选择。
     const SOURCE_MODE_KEY = 'dumbpad_source_mode';
@@ -4226,6 +4235,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             themeToggle.addEventListener('click', () => {
                 currentTheme = currentTheme === 'dark' ? 'light' : 'dark';
                 document.documentElement.setAttribute('data-theme', currentTheme);
+                syncThemeColorMeta(currentTheme);
                 previewManager.updateHighlightTheme(currentTheme);
                 storageManager.save(THEME_KEY, currentTheme);
             });
@@ -4671,6 +4681,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         applySettings(appSettings);
         registerServiceWorker().catch(() => {});
         await router.init();
+        // manifest shortcuts「全文搜索」入口：/?action=search 直达命令面板，
+        // 打开后清掉参数，避免刷新或回退时反复弹出。
+        if (new URLSearchParams(window.location.search).get('action') === 'search') {
+            if (openCommandSearch) openCommandSearch();
+            else console.warn('Command search palette unavailable for ?action=search');
+            history.replaceState(null, '', window.location.pathname + (window.location.hash || ''));
+        }
         isInitialLoad = false;
     };
 

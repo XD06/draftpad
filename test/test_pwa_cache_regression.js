@@ -109,4 +109,36 @@ for (const asset of excludedAssets) {
     assert(!manifest.includes(asset), `asset manifest should not include local candidate asset ${asset}`);
 }
 
+const pwaManifest = JSON.parse(fs.readFileSync(path.join(root, 'public', 'Assets', 'manifest.json'), 'utf8'));
+// Edge Android 对 display_override 取「第一个被支持的模式」，minimal-ui 会让
+// 安装出的应用带标题栏退化为浏览器观感——manifest 必须保持纯 standalone。
+assert.strictEqual(pwaManifest.display, 'standalone');
+assert(!('display_override' in pwaManifest), 'manifest must not set display_override: Edge Android resolves it to minimal-ui and adds a title bar');
+assert.strictEqual(pwaManifest.id, '/');
+assert.strictEqual(pwaManifest.scope, '/');
+assert.strictEqual(pwaManifest.theme_color, '#f2f2f7');
+assert.strictEqual(pwaManifest.background_color, '#f2f2f7');
+assert(
+    pwaManifest.icons.some(icon => icon.purpose === 'any' && icon.sizes === '192x192') &&
+    pwaManifest.icons.some(icon => icon.purpose === 'any' && icon.sizes === '512x512') &&
+    pwaManifest.icons.some(icon => icon.purpose === 'maskable' && icon.sizes === '512x512'),
+    'manifest should carry true-size any 192/512 icons plus a maskable 512 icon'
+);
+assert(
+    pwaManifest.shortcuts.some(shortcut => shortcut.url === '/#today') &&
+    pwaManifest.shortcuts.some(shortcut => shortcut.url === '/?action=search'),
+    'manifest shortcuts must point at routes the frontend actually handles'
+);
+for (const staleIcon of ['/Assets/dumbpad.png', '/Assets/dumbpad-192.png', '/Assets/dumbpad-512.png', '/Assets/favicon-512.png']) {
+    assert(!serviceWorker.includes(staleIcon), `service worker should not precache the odd-sized legacy icon ${staleIcon}`);
+}
+assert(serviceWorker.includes('/Assets/dumbpad-icon-192.png'), 'service worker should precache the normalized favicon referenced by index.html');
+
+const indexHtml = fs.readFileSync(path.join(root, 'public', 'index.html'), 'utf8');
+assert(indexHtml.includes('viewport-fit=cover'), 'index.html must opt into notch safe-area insets via viewport-fit=cover');
+assert(
+    (indexHtml.match(/<meta name="theme-color"/g) || []).length === 2,
+    'index.html should carry light/dark theme-color metas for status bar tinting'
+);
+
 console.log('PWA cache regression checks passed');
