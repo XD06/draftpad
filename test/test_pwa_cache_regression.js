@@ -91,6 +91,12 @@ assert(
     buildVersionSource.includes("'package.json', 'package-lock.json'"),
     'build version should include dependency manifests so warmed vendor assets are invalidated after dependency updates'
 );
+// 安全头：Express 默认回传 X-Powered-By，且此前没有任何 Permissions-Policy。
+assert(
+    serverSource.includes("app.disable('x-powered-by')") &&
+    serverSource.includes("res.setHeader('Permissions-Policy',"),
+    'server should disable X-Powered-By and send a Permissions-Policy header'
+);
 
 // 启动时会重写两个 manifest 产物（writeFileSync 刷新 mtime）。它们必须留在
 // 指纹之外，否则每次服务重启都换缓存名：所有客户端判定"有新版本"、重下整套
@@ -229,6 +235,22 @@ assert(
 assert(
     !appSource.includes("history.replaceState(null, '', window.location.pathname + (window.location.hash || ''))"),
     '?action=search 清参不得再用 pathname + hash 重建 URL（会丢掉 ?id= 等其它 query）'
+);
+
+// 主题色在四处重复：manifest 生成器、index.html 内联脚本、app.js 的切换处、
+// ios-theme.css 的 --bg-color。任一处漂移都会让启动屏 / 状态栏 / 首帧背景与
+// UI 跳色，这里把它们钉到 manifest 的 background_color 上。
+assert(
+    iosThemeCss.includes(`--bg-color: ${pwaManifest.background_color};`) &&
+    indexHtml.includes(`light: '${pwaManifest.background_color}'`) &&
+    appSource.includes(`light: '${pwaManifest.background_color}'`),
+    `亮色主题值必须在 manifest background_color(${pwaManifest.background_color})、index.html 内联脚本、app.js 与 ios-theme.css 之间保持一致`
+);
+assert(
+    iosThemeCss.includes('--bg-color: #1c1c1e;') &&
+    indexHtml.includes("dark: '#1c1c1e'") &&
+    appSource.includes("dark: '#1c1c1e'"),
+    '暗色主题值必须在 index.html 内联脚本、app.js 与 ios-theme.css 之间保持一致'
 );
 
 

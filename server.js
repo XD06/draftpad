@@ -283,11 +283,15 @@ BUILD_VERSION = getBuildVersion(PUBLIC_DIR, VERSION);
 // CSP allows unsafe-inline for scripts/styles to stay compatible with the
 // existing inline scripts in the share page and login page; XSS is mitigated
 // at the source (escapeHtml + sanitizeHtml) rather than relying on CSP alone.
+// 应用自身不用摄像头/麦克风/定位/支付（全仓无 getUserMedia / MediaRecorder /
+// geolocation 调用），默认一律关掉，需要时再按 origin 放开。
+app.disable('x-powered-by');
 app.use((req, res, next) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('X-Frame-Options', 'SAMEORIGIN');
     res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
     res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+    res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=()');
     res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' ws: wss:;");
     next();
 });

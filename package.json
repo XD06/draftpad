@@ -152,7 +152,7 @@
     "test:safety": "npm run test:data-operation-policy && npm run test:backup-repository && npm run test:s3-backup-repository && npm run test:canonical-s3-source && npm run test:backup-cli && npm run test:backup-readiness && npm run test:backup-health && npm run test:backup-restore-policy && npm run test:deployment-safety && npm run test:auth-service && npm run test:auth-routes && npm run test:audit-log && npm run test:share-sanitizer && npm run test:share-secret",
     "test:s3-real": "node test/test_s3_real_smoke.js",
     "ai:backfill-prefix": "node scripts/ai-backfill-prefix.js",
-    "generate-icons": "node scripts/generate-png.js",
+    "generate-icons": "node scripts/generate-maskable-icon.js",
     "build:tiptap": "node scripts/build-tiptap-bundle.js",
     "docker:update": "node scripts/update-docker-container.js",
     "seed:demo": "node scripts/seed-demo-data.js --reset",
