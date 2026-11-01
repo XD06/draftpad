@@ -693,7 +693,10 @@
         height: 48px;
         margin: 0 auto 16px;
         border-radius: 12px;
-        background: url("dumbpad-512.png") center / contain no-repeat;
+        /* 48px 的槽位不需要 253KB 的 608x558 原图：192px 派生图在 3x 屏
+           （144px）依然锐利，移动端登录页因此少下 ~237KB（故事配图在
+           ≤820px 已被 display:none，不会再触发原图下载）。 */
+        background: url("dumbpad-icon-192.png") center / contain no-repeat;
         filter: drop-shadow(0 6px 14px color-mix(in srgb, var(--login-brand) 22%, transparent));
     }
 

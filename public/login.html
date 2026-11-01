@@ -5,8 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#f4f5f8">
     <title>DumbPad</title>
-    <link rel="icon" type="image/png" href="Assets/dumbpad-512.png">
-    <link rel="apple-touch-icon" href="Assets/dumbpad-192.png">
+    <!-- 图标指向真实尺寸的派生图：原先 favicon 是 253KB 的 608x558 原图（声明成
+         icon 用），apple-touch-icon 是 118x109 的旧图，在 2x/3x 屏上都会发虚。 -->
+    <link rel="icon" type="image/png" href="Assets/dumbpad-icon-192.png">
+    <link rel="apple-touch-icon" href="Assets/dumbpad-maskable-512.png">
     <link rel="stylesheet" href="Assets/login.css">
     <script>
         (() => {
