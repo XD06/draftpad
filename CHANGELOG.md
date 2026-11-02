@@ -24,6 +24,8 @@
 
 ### 修复
 
+- **Thought 子任务复选框形状纠正为标准正方形（规避 flex-basis 约束拉伸）**：原先 `thoughts.css` 声明 `flex: 0 0 15px`，随后 `ios-theme.css` 仅覆写 `height: 18px` 且无 `box-sizing` 与比例约束，导致 flex 主轴宽度被锁死在 15px（加上边框约 18px），高度被撑至 18px（加上边框约 21px），实测渲染为 18×21 纵向长方形。现统一补齐 `box-sizing: border-box; width: 16px; height: 16px; flex: 0 0 16px; aspect-ratio: 1 / 1; border-radius: 4px;`，锁定为标准的 16×16 正方形。回归：`npm run test:css-integrity`、`npm run test:thought-editor` 全绿。
+- **AI 待更新状态与重试操作图标重构为极简顺滑单弧（替换粗重直角双箭头）**：原先 `stale`（待更新）状态使用了带有粗重 90° 直角杆的双向折角箭头，缩放至卡片工具栏 13px 极小槽位时挤压糊成一团，类似回收站或粗糙刷新。现将 `public/managers/thought-ai-status.js` 的 `stale` 状态与 `AI_RETRY_ICON_SVG` 替换为极简顺滑单弧更新图标（270° 流畅单弧 + 45° 锐角微箭头），在小尺寸下清晰通透、符合极简设计语言。回归：`npm run test:thought-ai-status` 全绿。
 - **Thought 卡片置顶与右滑删除左边缘样式重构（方案 D：内联时间标签与纯净圆角）**：彻底取消置顶卡片 `.thought-card.pinned::before` 的黄色左边条与外框变色，移除滑动中卡片的红色左边条与内阴影，卡片四周与普通卡片保持一致的纯净圆角底色；改为在时间戳前内联暖色「置顶」标签（`.thought-card.pinned .thought-time::before`），并将左侧垃圾桶动作图标调整为圆润的圆形徽标（到达阈值松手删除时放大变实心红底）。回归：`npm run test:thought-motion`、`npm run test:css-integrity` 全绿。
 - **文章区域刷新预水合态与渲染态底部容器高度跳变统一**：移动端整页滚动下，主容器 `.three-column-layout` 在 `ios-theme.css` 中为 `calc(var(--dumbpad-vvh, 100dvh) - 56px)`（延伸至视口底部浮动操作栏后方）；但刷新瞬间展示 Markdown 源码的 `.boot-editor` 原先锁定为 `bottom: auto; height: calc(100vh - 135px)`，比实际容器短约 79px，导致刷新时底部露出一截灰底，Tiptap 渲染完成后又向下撑满。现在移动端 `.boot-editor` 改为 `top: 0; bottom: 0; height: 100%`，并将 `.editor-main`、`.boot-editor`、`.tiptap` 与 `.tiptap-source-textarea` 的最小高度统一对齐至 `calc(var(--dumbpad-vvh, 100dvh) - 56px)`，彻底消除刷新交接时的底部伸缩跳跃。回归：`npm run test:article-title` 全绿。
 

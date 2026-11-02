@@ -2409,17 +2409,19 @@ color: var(--primary-color);
 }
 
 .subtask-check {
+    box-sizing: border-box;
     cursor: pointer;
-    width: 15px;
-    height: 15px;
-    flex: 0 0 15px;
+    width: 16px;
+    height: 16px;
+    flex: 0 0 16px;
+    aspect-ratio: 1 / 1;
     margin: 0;
     appearance: none;
     -webkit-appearance: none;
     display: inline-grid;
     place-content: center;
     border: 1.5px solid color-mix(in srgb, var(--muted-text) 55%, var(--border-color));
-    border-radius: 3px;
+    border-radius: 4px;
     background: transparent;
     color: #fff;
     transition: background-color 140ms ease-out, border-color 140ms ease-out, transform 140ms ease-out;
@@ -2431,7 +2433,7 @@ color: var(--primary-color);
     height: 4px;
     border-bottom: 2px solid #fff;
     border-left: 2px solid #fff;
-    transform: translateY(-1px) rotate(-45deg) scale(0);
+    transform: translateY(-0.8px) rotate(-45deg) scale(0);
     transform-origin: center;
     transition: transform 140ms ease-out;
 }
@@ -2442,7 +2444,7 @@ color: var(--primary-color);
 }
 
 .subtask-check:checked::after {
-    transform: translateY(-1px) rotate(-45deg) scale(1);
+    transform: translateY(-0.8px) rotate(-45deg) scale(1);
 }
 
 .subtask-check:focus-visible {

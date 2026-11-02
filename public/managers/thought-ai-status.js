@@ -1,5 +1,5 @@
 export const AI_PENDING_MIN_VISIBLE_MS = 1200;
-const AI_RETRY_ICON_SVG = '<svg class="thought-ai-retry-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11a8.1 8.1 0 0 0-15.5-2L3 11"></path><path d="M3 4v7h7"></path><path d="M4 13a8.1 8.1 0 0 0 15.5 2L21 13"></path><path d="M21 20v-7h-7"></path></svg>';
+const AI_RETRY_ICON_SVG = '<svg class="thought-ai-retry-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.85.83 6.72 2.24L21 7"></path><path d="M21 3v4.5h-4.5"></path></svg>';
 const AI_INSIGHT_ICON_SVG = '<svg class="thought-ai-insight-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.15" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3a4 4 0 0 0-4 4v.3A4.5 4.5 0 0 0 6 16h1"></path><path d="M12 3a4 4 0 0 1 4 4v.3A4.5 4.5 0 0 1 18 16h-1"></path><path d="M9 12h6"></path><path d="M10 16h4"></path><path d="M12 16v5"></path><path d="M8 21h8"></path></svg>';
 
 export function normalizeAIStatus(status = '') {
@@ -74,7 +74,7 @@ export function aiStatusIcon(status) {
         return '<svg class="thought-tool-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4"></path><path d="M12 17h.01"></path><path d="M10.3 3.9 2.7 17a2 2 0 0 0 1.7 3h15.2a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"></path></svg>';
     }
     if (status === 'stale') {
-        return '<svg class="thought-tool-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8.1 8.1 0 0 0-15.5-2L3 11"></path><path d="M3 4v7h7"></path><path d="M4 13a8.1 8.1 0 0 0 15.5 2L21 13"></path><path d="M21 20v-7h-7"></path></svg>';
+        return '<svg class="thought-tool-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.85.83 6.72 2.24L21 7"></path><path d="M21 3v4.5h-4.5"></path></svg>';
     }
     if (status === 'empty') {
         return '<svg class="thought-tool-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M5 12h14"></path></svg>';
