@@ -1362,6 +1362,28 @@ async function readNoteContent(notepad) {
     return fs.readFile(notePath, 'utf8').catch(() => '');
 }
 
+// Same content, but a failed read is an error instead of an empty article.
+// Maintenance tools that treat "no content" as "no references" (orphan asset
+// GC) must not silently lose a root when the disk/S3 read fails: an unreadable
+// article would otherwise look like it references nothing.
+async function readNoteContentStrict(notepad) {
+    await init();
+    if (isS3Backend()) {
+        const key = await getS3NotepadKey(notepad);
+        const content = await s3.getObject(s3Key(key));
+        return content === null || content === undefined ? '' : content;
+    }
+
+    const notePath = await getNotepadFilePath(notepad, DATA_DIR);
+    try {
+        return await fs.readFile(notePath, 'utf8');
+    } catch (error) {
+        // A notepad created but never saved legitimately has no file yet.
+        if (error.code === 'ENOENT') return '';
+        throw error;
+    }
+}
+
 async function writeNoteContent(notepad, content) {
     await init();
     const safeContent = content || '';
@@ -1774,6 +1796,7 @@ module.exports = {
     readNotepadsMeta,
     saveNotepadsMeta,
     readNoteContent,
+    readNoteContentStrict,
     writeNoteContent,
     deleteNoteContent,
     renameNoteContent,
@@ -1781,6 +1804,7 @@ module.exports = {
     moveThoughtToTrash,
     listTrashItems,
     getTrashItem,
+    readTrashPayload,
     addTrashItem,
     restoreTrashItem,
     deleteTrashItem,
