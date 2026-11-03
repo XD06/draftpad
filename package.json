@@ -105,6 +105,7 @@
     "test:command-search": "node test/test_command_search_frontend.js",
     "test:thought-reveal": "node test/test_thought_reveal.js",
     "test:thought-attachment-payloads": "node test/test_thought_attachment_payloads.js",
+    "test:thought-attachment-migration": "node test/test_thought_attachment_migration.js",
     "test:today-drafts-reveal": "node test/test_today_drafts_reveal.js",
     "test:thought-modules": "npm run test:thought-ai-status && npm run test:thought-attachments && npm run test:thought-card-renderer && npm run test:thought-editor && npm run test:thought-quick-add && npm run test:thought-relations-panel && npm run test:thought-relations-state && npm run test:thought-swipe && npm run test:thought-motion && npm run test:thought-tags && npm run test:thought-text-formatting && npm run test:time-command && npm run test:hybrid-editor-time-command",
     "test:note-sync": "node test/test_note_sync_controller.js && node test/test_note_sync_reconciliation.js",

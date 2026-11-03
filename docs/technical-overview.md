@@ -18,6 +18,7 @@
 关键模块：
 
 - `scripts/storage.js`：唯一的用户数据读写边界。调用方通过同一套方法读写 Notepad、Thought、Instant Draft、Trash、AI meta、relations、indexes，不直接关心 local/S3 或 legacy/split layout。
+- `scripts/migrate-thought-attachments.js`：存量内联附件迁移。把 Thought 里 base64 `dataUrl` 的附件写进 asset store（`createAssetStorage`，与 `/api/assets/files` 同形：`kind:'file'` + `assetId/originalUrl/downloadUrl`），逐条 `readAsset` 回读做字节校验后才替换；base64 要求规范化往返一致（否则损坏的 data URL 会被当成另一段字节）；附件实例 `id` 与共享的 `assetId` 解耦。默认 dry-run，`--apply` 才写，`--thought`/`--limit` 可缩小范围；写盘用**逐条 `writeThought()`**（不做集合级 `saveThoughts()`，split 布局的全量 save 会删掉快照外的对象），写前把整份集合备份到 `data/legacy/`；幂等（已有 `assetId` 跳过），空集合拒绝执行，部分失败以 exit 2 退出。脚本拿不到 `withThoughtWriteLock`，必须在停服/静默期运行。**asset 没有 GC**：永久删除 Thought 不会删 asset，且 asset 可能被多个 Thought 通过 hash 去重共享，所以不要在删除路径里直接删。
 - `scripts/ai-provider.js`：封装 AI provider。关系分析使用 chat/embedding/rerank；手动 Thought insight 使用独立 `AI_INSIGHT_MODEL`，没有可用配置时降级为 noop provider。
 - `scripts/ai-queue.js`：负责后台 AI 队列、pending meta、extract、embedding、relations、rebuild 和状态广播；同时提供手动 insight 生成函数，但 insight 不进入自动队列。
 - `scripts/agent/`：交互 Agent 的独立边界。`agent-run-service.js` 维护可取消运行和 SSE 事件；`agent-context-service.js`/`agent-tool-registry.js` 限制只读来源与上下文预算；`agent-model-client.js` 只读取显式 `AI_AGENT_*` 配置；这些模块不调用 `ai-queue` 或用户内容写入路由。
@@ -50,7 +51,7 @@ Thought 前端 helper 拆分模块有聚合测试入口：`npm run test:thought-
 - `public/managers/thought-ai-status.js`：Thought AI 状态边界。负责 AI 状态/阶段归一化、pending 最短显示时间计算、socket detail 应用到 Thought 对象、标签文案、按钮图标、状态详情 HTML、手动 insight 区块、loading/error 片段；`ThoughtsManager` 保留 timer 调度、点击、拉取状态、Markdown hydrate、重试和 insight 触发协调。
 - `public/managers/agent-api-client.js`、`thought-agent-state.js`、`thought-agent-panel.js`、`thought-agent-controller.js`：交互 Agent 的 API、纯状态、纯视图和 SSE 生命周期边界；Thought 卡片只提供明确入口和局部面板，不混入后台 AI 状态面板。
 - `public/managers/thought-card-renderer.js`：Thought 卡片纯 HTML 渲染边界。负责正文、legacy checkbox 子任务、标签、AI 状态入口、关系计数和折叠子任务摘要；`ThoughtsManager` 只保留 DOM 插入、复制文本和交互事件绑定。
-- `public/managers/thought-attachments.js`：Thought 附件纯逻辑边界。负责统一的 4 MB 校验、文件读取结果归一化、附件对象构造和图片附件筛选；Quick Add、编辑态和卡片浏览态复用同一流程。
+- `public/managers/thought-attachments.js`：Thought 附件纯逻辑边界。负责统一的 4 MB 校验、文件读取结果归一化、附件对象构造和图片附件筛选；Quick Add、编辑态和卡片浏览态复用同一流程。图片走 `uploadImage`（asset store），**非图片文件也走 `uploadFile`**（`/api/assets/files`），只有上传失败（离线 / 413 / 类型白名单外）才回退成内联 `dataUrl` —— 内联形态会随每次列表/跳转响应下发，还会永久撑大集合对象（S3 legacy 下等于每次请求都多传一次）。
 - `public/managers/thought-relations-panel.js`：关系面板纯渲染 helper。负责关系列表、推荐列表、手动关联输入控件、候选摘要截断/高亮和空状态 HTML；保留事件、防抖、API 协调在 `ThoughtsManager`。
 - `public/managers/thought-editor.js`：Thought 编辑 helper。负责 legacy 子任务解析、编辑态正文/子任务拆分、子任务清理/排序、编辑行与 inline 新增子任务输入 HTML 片段，以及新增/修改/删除/toggle 子任务的本地对象变更；保存触发、失焦、快捷键和 API 协调仍保留在 `ThoughtsManager`。
 - `public/managers/thought-renderer.js`：Thought 过滤和排序 helper。

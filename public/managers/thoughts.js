@@ -243,7 +243,11 @@ export class ThoughtsManager {
         if (!fileList || !fileList.length) return [];
         const result = await buildAttachmentsFromFiles(fileList, {
             readFileAsDataURL: file => this.readFileAsDataURL(file),
-            uploadImage: file => this.assetApi.uploadImage(file)
+            uploadImage: file => this.assetApi.uploadImage(file),
+            // Non-image files are uploaded too (inline base64 would travel with
+            // every list/jump response); failures fall back to inline so adding
+            // an attachment still works offline.
+            uploadFile: file => this.assetApi.uploadFile(file)
         });
 
         result.rejected.forEach(({ file, reason, error }) => {
