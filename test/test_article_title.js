@@ -129,6 +129,11 @@ expectSource(
         /\.boot-editor,[\s\S]{0,160}?\.tiptap[\s\S]{0,120}?min-height:\s*calc\(var\(--dumbpad-vvh,\s*100dvh\)\s*-\s*56px\)/.test(iosSource),
     '移动端：刷新预水合 .boot-editor 与渲染后 .tiptap 高度统一对齐视口底边'
 );
+expectSource(
+    /\.boot-editor\[data-overflowing="true"\][\s\S]{0,120}?bottom:\s*0;/.test(stylesSource) &&
+        /\.boot-editor\[data-overflowing="true"\][\s\S]{0,120}?bottom:\s*0\s*!important;/.test(iosSource),
+    '桌面端：内容溢出时刷新预水合 .boot-editor 与长文 .tiptap 卡片同样铺至底边，消除容器下沿跳动'
+);
 
 console.log(`\narticle-title: ${passed} passed, ${failed} failed`);
 process.exitCode = failed > 0 ? 1 : 0;

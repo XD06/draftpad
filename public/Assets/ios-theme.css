@@ -2480,6 +2480,14 @@ main {
         border-radius: 12px;
     }
 
+    .boot-editor[data-overflowing="true"] {
+        bottom: 0 !important;
+        border-bottom: none !important;
+        border-bottom-left-radius: 0 !important;
+        border-bottom-right-radius: 0 !important;
+        padding-bottom: 64px !important;
+    }
+
     /* 覆盖 styles.css 的 `* { scrollbar-width: thin }`，消除 Windows 下侧栏分割线旁自带上下三角箭头的原生灰轨滚动条 */
     html:not([data-initial-workspace="thoughts"]):not([data-initial-workspace="today"]) body:not(.thoughts-mode):not(.today-drafts-mode) .directory-tree,
     html:not([data-initial-workspace="thoughts"]):not([data-initial-workspace="today"]) body:not(.thoughts-mode):not(.today-drafts-mode) .recent-files-list,

@@ -345,8 +345,16 @@
                         bootEditor.value = note.content;
                         bootEditor.hidden = false;
                         bootEditor.dataset.prehydratedNotepadId = selected.id;
+                        if (bootEditor.scrollHeight > bootEditor.clientHeight) {
+                            bootEditor.dataset.overflowing = 'true';
+                        }
                         bootEditor.addEventListener('input', function () {
                             bootEditor.dataset.prehydratedDirty = '1';
+                            if (bootEditor.scrollHeight > bootEditor.clientHeight) {
+                                bootEditor.dataset.overflowing = 'true';
+                            } else {
+                                delete bootEditor.dataset.overflowing;
+                            }
                         }, { once: true });
                         var caretsRaw = localStorage.getItem('dumbpad_caret_positions_v1');
                         if (caretsRaw) {

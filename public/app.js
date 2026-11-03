@@ -292,6 +292,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
 
+    function updateBootEditorOverflow() {
+        if (!bootEditor) return;
+        if (bootEditor.scrollHeight > bootEditor.clientHeight) {
+            bootEditor.dataset.overflowing = 'true';
+        } else {
+            delete bootEditor.dataset.overflowing;
+        }
+    }
+
     function wireBootEditor() {
         if (bootEditorWired || !bootEditor) return;
         bootEditorWired = true;
@@ -299,6 +308,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         bootEditor.addEventListener('input', () => {
             const value = bootEditor.value;
             pendingEditorValue = value || '';
+            updateBootEditorOverflow();
             if (isApplyingRemoteUpdate) return;
             hasUnsavedChanges = true;
             editorRevision += 1;
@@ -317,12 +327,16 @@ document.addEventListener('DOMContentLoaded', async () => {
         bootEditorActive = true;
         if (bootEditor.value !== (pendingEditorValue || '')) bootEditor.value = pendingEditorValue || '';
         bootEditor.hidden = false;
+        updateBootEditorOverflow();
         return true;
     }
 
     function deactivateBootEditor() {
         bootEditorActive = false;
-        if (bootEditor) bootEditor.hidden = true;
+        if (bootEditor) {
+            bootEditor.hidden = true;
+            delete bootEditor.dataset.overflowing;
+        }
     }
 
     // Reveal the editing area, choosing the instant boot editor while the rich
