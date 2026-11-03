@@ -14,6 +14,9 @@ const INLINE_TEXT = 'hello-migrated-attachment';
 const INLINE_DATA_URL = `data:text/plain;base64,${Buffer.from(INLINE_TEXT).toString('base64')}`;
 const UNSUPPORTED_DATA_URL = `data:application/x-unknown;base64,${Buffer.from('weird').toString('base64')}`;
 const BAD_BASE64_DATA_URL = 'data:text/plain;base64,@@@definitely-not-base64@@@';
+const INLINE_PNG_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+const INLINE_PNG = Buffer.from(INLINE_PNG_BASE64, 'base64');
+const INLINE_PNG_DATA_URL = `data:image/png;base64,${INLINE_PNG_BASE64}`;
 
 function prepareDataDir() {
     const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dumbpad-att-migrate-'));
@@ -47,6 +50,18 @@ function prepareDataDir() {
             attachments: [{ id: 'a1-dup', name: 'copy.txt', type: 'text/plain', size: INLINE_TEXT.length, dataUrl: INLINE_DATA_URL }],
             createdAt: 1700000000500,
             updatedAt: 1700000000500,
+            version: 1
+        },
+        {
+            id: 't-image',
+            text: '内联图片走图片通道',
+            subItems: [],
+            tags: [],
+            completed: false,
+            pinned: false,
+            attachments: [{ id: 'img-1', name: 'shot.png', type: 'image/png', size: INLINE_PNG.length, dataUrl: INLINE_PNG_DATA_URL }],
+            createdAt: 1700000000700,
+            updatedAt: 1700000000700,
             version: 1
         },
         {
@@ -138,10 +153,10 @@ async function run() {
         const before = fs.readFileSync(path.join(dataDir, 'thoughts.json'), 'utf8');
         const report = await migrate({ apply: false });
         assert.strictEqual(report.apply, false);
-        assert.strictEqual(report.thoughts, 6, 'all thoughts are scanned');
-        assert.strictEqual(report.inlineAttachments, 4, 'four inline attachments are found');
-        assert.strictEqual(report.inlineBytes, INLINE_TEXT.length * 2 + 5 + BAD_BASE64_DATA_URL.length, 'inline bytes are reported');
-        assert.strictEqual(report.migratable, 2, 'only decodable, supported attachments are migratable');
+        assert.strictEqual(report.thoughts, 7, 'all thoughts are scanned');
+        assert.strictEqual(report.inlineAttachments, 5, 'five inline attachments are found');
+        assert.strictEqual(report.inlineBytes, INLINE_TEXT.length * 2 + INLINE_PNG.length + 5 + BAD_BASE64_DATA_URL.length, 'inline bytes are reported');
+        assert.strictEqual(report.migratable, 3, 'text, duplicate and image attachments are migratable');
         assert.strictEqual(report.migrated, 0, 'dry run migrates nothing');
         assert.strictEqual(report.skipped.length, 2, 'unsupported type and bad base64 are reported as skipped');
         assert.strictEqual(report.backup, null, 'dry run writes no backup');
@@ -152,7 +167,7 @@ async function run() {
     // 2b. --limit 只缩小处理量，不改变扫描结果
     {
         const report = await migrate({ apply: false, limit: 1 });
-        assert.strictEqual(report.inlineAttachments, 4, 'limit does not change the scan');
+        assert.strictEqual(report.inlineAttachments, 5, 'limit does not change the scan');
         assert.strictEqual(report.migratable, 1, 'limit caps the migrated set');
     }
 
@@ -160,8 +175,8 @@ async function run() {
     let migratedAssetId = '';
     {
         const report = await migrate({ apply: true });
-        assert.strictEqual(report.migrated, 2, 'both decodable attachments are migrated');
-        assert.strictEqual(report.thoughtsWritten, 2, 'each touched Thought is written once');
+        assert.strictEqual(report.migrated, 3, 'text, duplicate and image attachments are migrated');
+        assert.strictEqual(report.thoughtsWritten, 3, 'each touched Thought is written once');
         assert.ok(report.backup && fs.existsSync(report.backup), 'a backup of the collection is written');
         assert.strictEqual(report.failed.length, 0, 'no failures');
 
@@ -186,9 +201,21 @@ async function run() {
         assert.strictEqual(meta.kind, 'file');
         assert.strictEqual(meta.type, 'text/plain');
 
-        assert(readAttachment('t-unsupported').dataUrl, 'unsupported types stay inline');
+        assert(readAttachment('t-unsupported').dataUrl, 'unsupported types stay inline by default');
         assert.strictEqual(readAttachment('t-bad').dataUrl, BAD_BASE64_DATA_URL, 'a corrupted data URL is left untouched');
         assert.strictEqual(readAttachment('t-asset').assetId, 'asset-already-there', 'already migrated attachments are untouched');
+
+        // 图片走图片通道：kind=image + webp 预览，与 /api/assets/images 同形
+        const image = readAttachment('t-image');
+        assert.strictEqual(image.dataUrl, undefined, 'the inline image payload is gone');
+        assert.ok(image.assetId, 'the image points at an asset');
+        assert.ok(image.previewUrl, 'a migrated image gets a preview url');
+        const imageMeta = JSON.parse(fs.readFileSync(path.join(dataDir, 'assets', image.assetId, 'meta.json'), 'utf8'));
+        assert.strictEqual(imageMeta.kind, 'image', 'the image asset is stored in the image channel');
+        assert.strictEqual(imageMeta.previewType, 'image/webp', 'a webp preview is generated');
+        assert(fs.existsSync(path.join(dataDir, 'assets', image.assetId, 'preview')), 'the preview bytes exist');
+        const imageBytes = fs.readFileSync(path.join(dataDir, 'assets', image.assetId, 'original'));
+        assert(imageBytes.equals(INLINE_PNG), 'the original image bytes are preserved');
     }
 
     // 4. 幂等 + 索引仍可搜
@@ -202,6 +229,23 @@ async function run() {
         assert(results.some(item => item.id === 't-inline'), 'the thoughts index still finds the migrated thought');
         const thought = await storage.readThought('t-inline');
         assert.strictEqual(thought.attachments[0].assetId, migratedAssetId, 'readThought returns the asset reference');
+    }
+
+    // 5. 白名单外的老类型：默认保持内联，显式放行时以不透明 file 资产落库
+    {
+        const blocked = await migrate({ apply: true });
+        assert.strictEqual(blocked.migratable, 0, 'unsupported types stay inline unless explicitly allowed');
+        assert(readAttachment('t-unsupported').dataUrl);
+
+        const report = await migrate({ apply: true, allowUnsupportedTypes: true });
+        assert.strictEqual(report.migrated, 1, 'the unsupported attachment is migrated when allowed');
+        const migrated = readAttachment('t-unsupported');
+        assert.strictEqual(migrated.dataUrl, undefined, 'the inline payload is gone');
+        assert.ok(migrated.assetId);
+        assert.strictEqual(migrated.type, 'application/x-unknown', 'the Thought keeps the original display type');
+        const meta = JSON.parse(fs.readFileSync(path.join(dataDir, 'assets', migrated.assetId, 'meta.json'), 'utf8'));
+        assert.strictEqual(meta.kind, 'file');
+        assert.strictEqual(meta.type, 'application/octet-stream', 'the stored asset is an opaque download, never inline');
     }
 
     fs.rmSync(dataDir, { recursive: true, force: true });

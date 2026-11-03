@@ -1,14 +1,23 @@
 /**
  * 存量内联附件迁移：把 Thought 里以 base64 dataUrl 存储的附件搬进 asset store，
- * 换成与 `POST /api/assets/files` 完全一致的 asset 引用（assetId + originalUrl/
- * downloadUrl）。默认 dry-run，`--apply` 才写；幂等（已有 assetId 的跳过）；
- * 逐条 `readAsset` 回读做字节校验后才替换，写盘前把整份集合并存到 data/legacy/。
+ * 换成与上传端点一致的 asset 引用（assetId + originalUrl/downloadUrl）。
+ * 图片走图片通道（sharp 生成 webp preview，与 /api/assets/images 同形），
+ * 其它文件走 /api/assets/files 的白名单；白名单外的老类型（ps1/html/tar.gz…）
+ * 默认保持内联，加 `--allow-unsupported-types` 则以 application/octet-stream
+ * 存成只读资产（服务端仍以 attachment 下发，不放宽上传白名单）。
+ *
+ * 默认 dry-run，`--apply` 才写；幂等（已有 assetId 的跳过）；逐条 `readAsset`
+ * 回读做字节校验后才替换，写盘前把整份集合并存到 data/legacy/。
  *
  * 用法（**必须停服或确认无写入时运行**：脚本拿不到 withThoughtWriteLock）：
- *   node scripts/migrate-thought-attachments.js                 # dry-run 报告
- *   node scripts/migrate-thought-attachments.js --apply         # 执行
- *   node scripts/migrate-thought-attachments.js --thought <id>  # 只处理一条
- *   node scripts/migrate-thought-attachments.js --limit 1       # 只处理一条附件
+ *   node scripts/migrate-thought-attachments.js                          # dry-run
+ *   node scripts/migrate-thought-attachments.js --apply                  # 执行
+ *   node scripts/migrate-thought-attachments.js --apply --allow-unsupported-types
+ *   node scripts/migrate-thought-attachments.js --thought <id>           # 只处理一条
+ *   node scripts/migrate-thought-attachments.js --limit 1                # 只处理一个附件
+ *
+ * 容器内运行（生产）：本地 data/ 常为 root 拥有，备份目录需要写权限：
+ *   docker compose run --rm --no-deps --user root dumbpad node scripts/migrate-thought-attachments.js --apply
  */
 
 'use strict';
@@ -24,11 +33,12 @@ const { getMaxFileBytes, validateFileAssetUpload } = require('./file-asset-polic
 const LARGEST_LIMIT = 10;
 
 function parseArgs(argv = process.argv.slice(2)) {
-    const args = { apply: false, thoughtId: '', limit: 0 };
+    const args = { apply: false, thoughtId: '', limit: 0, allowUnsupportedTypes: false };
     for (let index = 0; index < argv.length; index += 1) {
         const arg = argv[index];
         if (arg === '--apply') args.apply = true;
         else if (arg === '--dry-run') args.apply = false;
+        else if (arg === '--allow-unsupported-types') args.allowUnsupportedTypes = true;
         else if (arg === '--thought') args.thoughtId = String(argv[++index] || '');
         else if (arg.startsWith('--thought=')) args.thoughtId = arg.slice('--thought='.length);
         else if (arg === '--limit') args.limit = Number(argv[++index]) || 0;
@@ -90,32 +100,84 @@ function toAssetAttachment(attachment, metadata) {
 
 // One metadata scan instead of `findByHash()` + `uniqueName()` per attachment
 // (each of those re-lists every asset; on S3 that is O(attachments × assets)
-// object GETs). Mirrors asset-storage's file-kind name uniquing.
+// object GETs). Mirrors asset-storage's per-kind name uniquing.
 function createAssetIndex(metadatas) {
     const byHash = new Map();
-    const names = new Set();
+    const namesByKind = new Map([['file', new Set()], ['image', new Set()]]);
     const remember = (meta) => {
         if (!meta) return;
         if (meta.hash) byHash.set(String(meta.hash), meta);
-        if (String(meta.kind || 'image') === 'file' && meta.name) names.add(String(meta.name));
+        const kind = String(meta.kind || 'image');
+        if (!namesByKind.has(kind)) namesByKind.set(kind, new Set());
+        if (meta.name) namesByKind.get(kind).add(String(meta.name));
     };
     (Array.isArray(metadatas) ? metadatas : []).forEach(remember);
     return {
         find: hash => byHash.get(String(hash || '')) || null,
         remember,
-        uniqueName(name) {
+        uniqueName(name, kind = 'file') {
+            const taken = namesByKind.get(String(kind)) || new Set();
             const wanted = String(name || '');
-            if (!wanted || !names.has(wanted)) return wanted;
+            if (!wanted || !taken.has(wanted)) return wanted;
             const dot = wanted.lastIndexOf('.');
             const hasExt = dot > 0 && dot < wanted.length - 1;
             const base = hasExt ? wanted.slice(0, dot) : wanted;
             const ext = hasExt ? wanted.slice(dot) : '';
             for (let n = 1; ; n += 1) {
                 const candidate = ext ? `${base} (${n})${ext}` : `${base} (${n})`;
-                if (!names.has(candidate)) return candidate;
+                if (!taken.has(candidate)) return candidate;
             }
         }
     };
+}
+
+// Inline images never went through `/api/assets/images`, so they are not in the
+// file-asset whitelist either. Reproduce that route's pipeline (metadata +
+// webp preview) so a migrated image is indistinguishable from an uploaded one.
+const PREVIEW_EDGE = 2560;
+const MAX_IMAGE_PIXELS = 100 * 1000 * 1000;
+const MIME_BY_FORMAT = {
+    jpeg: 'image/jpeg',
+    png: 'image/png',
+    webp: 'image/webp',
+    avif: 'image/avif',
+    gif: 'image/gif'
+};
+
+let sharpModule;
+function getSharp() {
+    if (sharpModule === undefined) {
+        try {
+            sharpModule = require('sharp');
+        } catch (_error) {
+            sharpModule = null;
+        }
+    }
+    return sharpModule;
+}
+
+async function prepareImageAsset(buffer) {
+    const sharp = getSharp();
+    if (!sharp) return null;
+    try {
+        const image = sharp(buffer, { animated: false, limitInputPixels: MAX_IMAGE_PIXELS });
+        const info = await image.metadata();
+        const type = MIME_BY_FORMAT[info.format];
+        if (!type) return null;
+        const previewBuffer = await sharp(buffer, { animated: false, limitInputPixels: MAX_IMAGE_PIXELS })
+            .rotate()
+            .resize({ width: PREVIEW_EDGE, height: PREVIEW_EDGE, fit: 'inside', withoutEnlargement: true })
+            .webp({ quality: 82, effort: 4 })
+            .toBuffer();
+        return {
+            type,
+            previewBuffer,
+            width: Number(info.width || 0),
+            height: Number(info.height || 0)
+        };
+    } catch (_error) {
+        return null;
+    }
 }
 
 async function backupCollection(thoughts) {
@@ -138,6 +200,7 @@ async function migrate(options = {}) {
         dataDir: storage.paths.DATA_DIR,
         s3Prefix: typeof storage.getS3Prefix === 'function' ? storage.getS3Prefix() : '',
         apply: Boolean(args.apply),
+        allowUnsupportedTypes: Boolean(args.allowUnsupportedTypes),
         thoughts: thoughts.length,
         inlineAttachments: 0,
         inlineBytes: 0,
@@ -170,17 +233,32 @@ async function migrate(options = {}) {
                 report.skipped.push({ thoughtId: thought.id, attachmentId: id, reason: 'undecodable-data-url' });
                 continue;
             }
+            // Inline images never passed the file-asset whitelist; they belong to
+            // the image channel (sharp preview + original), same as /api/assets/images.
+            const declaredType = String(decoded.type || attachment.type || '');
+            if (/^image\//i.test(declaredType)) {
+                candidates.push({ thought, attachment, kind: 'image', type: declaredType });
+                continue;
+            }
             const validation = validateFileAssetUpload({
                 name: attachment.name || 'attachment',
                 type: decoded.type || attachment.type,
                 size: decoded.buffer.length,
                 maxBytes
             });
-            if (!validation.ok) {
-                report.skipped.push({ thoughtId: thought.id, attachmentId: id, reason: validation.error || 'unsupported-type' });
+            if (validation.ok) {
+                candidates.push({ thought, attachment, kind: 'file', type: validation.type });
                 continue;
             }
-            candidates.push({ thought, attachment, type: validation.type });
+            // Legacy code/config/archive attachments (ps1/html/tar.gz/...) are
+            // outside the /file upload whitelist. Storing them as an opaque
+            // octet-stream asset keeps the bytes reachable without widening what
+            // the upload API accepts; serving stays Content-Disposition: attachment.
+            if (args.allowUnsupportedTypes) {
+                candidates.push({ thought, attachment, kind: 'file', type: 'application/octet-stream', unsupported: true });
+                continue;
+            }
+            report.skipped.push({ thoughtId: thought.id, attachmentId: id, reason: validation.error || 'unsupported-type' });
         }
     }
 
@@ -208,20 +286,52 @@ async function migrate(options = {}) {
             let metadata = assetIndex.find(hash);
             if (!metadata) {
                 const assetId = createAssetId();
-                metadata = {
-                    version: 1,
-                    kind: 'file',
-                    id: assetId,
-                    name: assetIndex.uniqueName(String(candidate.attachment.name || 'attachment')),
-                    type: candidate.type,
-                    size: decoded.buffer.length,
-                    hash,
-                    createdAt: Date.now()
-                };
+                const name = String(candidate.attachment.name || 'attachment');
+                let preview = null;
+                if (candidate.kind === 'image') {
+                    const prepared = await prepareImageAsset(decoded.buffer);
+                    if (!prepared) {
+                        // Unreadable/unsupported image bytes: keep the bytes as an
+                        // opaque file when the operator allowed it, never drop them.
+                        if (!args.allowUnsupportedTypes) throw new Error('unsupported-image');
+                        candidate.kind = 'file';
+                        candidate.type = 'application/octet-stream';
+                    } else {
+                        candidate.type = prepared.type;
+                        preview = { buffer: prepared.previewBuffer, contentType: 'image/webp' };
+                        metadata = {
+                            version: 1,
+                            kind: 'image',
+                            id: assetId,
+                            name: assetIndex.uniqueName(name, 'image'),
+                            type: prepared.type,
+                            size: decoded.buffer.length,
+                            hash,
+                            previewType: 'image/webp',
+                            previewSize: prepared.previewBuffer.length,
+                            width: prepared.width,
+                            height: prepared.height,
+                            createdAt: Date.now()
+                        };
+                    }
+                }
+                if (!metadata) {
+                    metadata = {
+                        version: 1,
+                        kind: 'file',
+                        id: assetId,
+                        name: assetIndex.uniqueName(name, 'file'),
+                        type: candidate.type,
+                        size: decoded.buffer.length,
+                        hash,
+                        createdAt: Date.now()
+                    };
+                }
                 await assets.writeAsset({
                     id: assetId,
                     metadata,
-                    original: { buffer: decoded.buffer, contentType: candidate.type }
+                    original: { buffer: decoded.buffer, contentType: metadata.type },
+                    preview
                 });
                 assetIndex.remember(metadata);
             }
