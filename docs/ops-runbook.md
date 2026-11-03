@@ -113,15 +113,16 @@ S3 legacy 下每次 Thought 请求都要拉整份集合。
 | 迁移（`--apply`） | 4 个内联附件 → asset（含 3.2MB PDF）；备份 5,036,056 B |
 | 集合读取成本 | 服务端 ~700ms → **~150ms**（RTT 基线 517ms） |
 | GC（`--apply --expect-orphans 20`） | 删除 20 个孤儿 / **28,690,198 B** |
+| 迁移收尾（`--apply --allow-unsupported-types`） | 剩余 5 个（2 张图片 + ps1/html/tar.gz，393,393 B）全部迁移，`thoughtsWritten=3`，`skipped=0`、`failed=0` |
+| 最终状态 | dry-run 复核 `inlineAttachments: 0`；列表里 `anyDataUrl=false`；图片预览 `/api/assets/<id>/preview` → 200 `image/webp` |
 
-遗留（下次收尾）：
+遗留（下次可以再看）：
 
-- 白名单外的 5 个内联附件（`setup-codex.ps1`、`apple-frosted-glass.html`、
-  `grok-search-mcp-v0.1.0.tar.gz` + 2 张图片）当时未迁；脚本现在已支持图片通道与
-  `--allow-unsupported-types`，可再跑一次迁移收掉。
-- `data/` 仍是 root 拥有且为空；跑维护脚本记得 `--user root`。
-- 集合仍是 legacy 布局（整份 JSON）；想再降延迟可评估迁到 split 布局
+- 集合仍是 legacy 布局（整份 JSON，当前约 1MB+）。想再降延迟可评估迁到 split 布局
   （`scripts/migrate-thoughts-local.js`），但它**不能替代**附件迁移。
+- `data/` 仍是 root 拥有且为空；跑维护脚本记得 `--user root`。
+- 新附件已默认走 asset（图片 + 白名单内文件）；白名单外的类型仍会回退内联，
+  如果经常传 `ps1`/`html`/`tar.gz`，需要评估是否扩展 `scripts/file-asset-policy.js` 白名单。
 
 ## 4. 验证命令
 
