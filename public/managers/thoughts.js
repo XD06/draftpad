@@ -54,6 +54,29 @@ import { buildQuickAddCreateOutboxItem, createLocalPendingThought, markCreatedTh
 import { buildTimeMarker, buildUpdatedTimeMarker, deleteTimeMarker, handleTimeCommandKeydown, replaceTimeMarker } from './time-command.js';
 
 const THOUGHTS_CACHE_KEY = 'dumbpad_thoughts_cache_v1';
+// Progressive first paint: render just the top of the timeline synchronously
+// (the user sees cards immediately) and fill the rest of the first page in the
+// following frames. The batch core stays synchronous — `renderThoughtCardIntoView`
+// and `reassertRevealFocus` depend on `_renderedCount` advancing in place.
+const RENDER_FIRST_PAINT = 8;
+const RENDER_FILL_CHUNK = 10;
+// How long a global-search jump keeps re-asserting its landing highlight after
+// the first focus. Covers the re-renders that background pushes trigger right
+// after the jump (the rebuilt card would otherwise lose the flash/scroll).
+const REVEAL_FOCUS_WINDOW_MS = 3000;
+
+// Merge overlapping/adjacent keyword hits so a nested keyword (「信息」inside
+// 「信息流」) becomes one mark instead of two overlapping ranges.
+function mergeHitRanges(hits) {
+    const sorted = hits.slice().sort((left, right) => left[0] - right[0] || left[1] - right[1]);
+    const merged = [];
+    for (const [start, end] of sorted) {
+        const last = merged[merged.length - 1];
+        if (last && start <= last[1]) last[1] = Math.max(last[1], end);
+        else merged.push([start, end]);
+    }
+    return merged;
+}
 
 function resetSubtaskSwipe(row) {
     const swipeAction = row.querySelector?.('.subtask-swipe-action');
@@ -101,6 +124,11 @@ export class ThoughtsManager {
         this.attachmentLightboxState = null;
 
         this.thoughts = this.loadThoughtsCache();
+        // Thoughts fetched by id for an explicit jump (global search, agent
+        // citation). Re-merged into every list rebuild so pagination/filter
+        // state cannot drop a target the user just asked to see.
+        this.revealedThoughts = new Map();
+        this._revealFocus = null;
         this.quickAddTags = [];
         this.activeTag = '';
         this.tagRegistry = app.tagRegistry || new ThoughtTagRegistry();
@@ -782,7 +810,7 @@ export class ThoughtsManager {
             });
             if (requestSeq !== this.fetchThoughtsSeq || filters.key !== this.getThoughtListFilters().key) return;
             const items = Array.isArray(page?.items) ? page.items : [];
-            this.thoughts = this.mergeOutboxThoughts(this.mergeThoughtDetails(items));
+            this.thoughts = this.mergeRevealedThoughts(this.mergeOutboxThoughts(this.mergeThoughtDetails(items)));
             this._nextThoughtCursor = typeof page?.nextCursor === 'string' ? page.nextCursor : null;
             this._hasMoreThoughts = page?.hasMore === true && Boolean(this._nextThoughtCursor);
             if (!filters.date && !filters.query && !filters.tag && filters.status === 'all') {
@@ -828,10 +856,10 @@ export class ThoughtsManager {
 
             const incoming = this.mergeThoughtDetails(Array.isArray(page?.items) ? page.items : []);
             const incomingIds = new Set(incoming.map(thought => thought.id));
-            this.thoughts = this.mergeOutboxThoughts([
+            this.thoughts = this.mergeRevealedThoughts(this.mergeOutboxThoughts([
                 ...this.thoughts.filter(thought => !incomingIds.has(thought.id)),
                 ...incoming
-            ]);
+            ]));
             this._nextThoughtCursor = typeof page?.nextCursor === 'string' ? page.nextCursor : null;
             this._hasMoreThoughts = page?.hasMore === true && Boolean(this._nextThoughtCursor);
             if (!filters.date && !filters.query && !filters.tag && filters.status === 'all') {
@@ -841,7 +869,7 @@ export class ThoughtsManager {
 
             const filtered = this.getFilteredThoughts();
             this._lastFilteredIds = filtered.map(thought => thought.id);
-            this._renderBatch(filtered, this.searchInput.value.toLowerCase());
+            this._renderBatch(filtered, this.searchInput.value.trim().toLowerCase());
             this.restoreOpenPanelsAfterRender();
         } catch (err) {
             console.error('Failed to load more thoughts:', err);
@@ -1102,6 +1130,7 @@ export class ThoughtsManager {
                 Object.assign(current, payload);
             }
         } else if (action === 'delete') {
+            this.forgetRevealedThought(payload.id);
             this.thoughts = this.thoughts.filter(t => t.id !== payload.id);
         }
 
@@ -1299,6 +1328,7 @@ export class ThoughtsManager {
         }
 
         // Optimistic delete: Remove from local array immediately
+        this.forgetRevealedThought(id);
         this.thoughts = this.thoughts.filter(t => t.id !== id);
         this.render();
 
@@ -1367,7 +1397,10 @@ export class ThoughtsManager {
     }
 
     getFilteredThoughts() {
-        const query = this.searchInput.value.toLowerCase();
+        // Same normalization as getThoughtListFilters(): an untrimmed query
+        // would filter everything out while hasActiveListFilters() still
+        // reported "no filters", leaving a jump target unreachable.
+        const query = this.searchInput.value.trim().toLowerCase();
         const status = this.statusFilter.dataset.value || 'all';
         const activeTag = this.activeTag.toLowerCase();
         return sortThoughts(filterThoughts(this.thoughts, { query, status, activeTag }));
@@ -1387,7 +1420,7 @@ export class ThoughtsManager {
     }
 
     render() {
-        const query = this.searchInput.value.toLowerCase();
+        const query = this.searchInput.value.trim().toLowerCase();
         this.renderTagFilters();
 
         const filtered = this.getFilteredThoughts();
@@ -1395,15 +1428,59 @@ export class ThoughtsManager {
 
         this.timeline.innerHTML = '';
         this._renderedCount = 0;
+        const renderSeq = (this._renderSeq = (this._renderSeq || 0) + 1);
 
         if (filtered.length === 0) {
             this.renderEmptyState();
             return;
         }
 
-        this._renderBatch(filtered, query);
+        this._renderBatch(filtered, query, RENDER_FIRST_PAINT);
         this._ensureScrollListener();
         this.restoreOpenPanelsAfterRender();
+        this.reassertRevealFocus();
+        this._scheduleRestOfFirstPage(renderSeq);
+    }
+
+    // Fills the first page after the first paint. A newer render invalidates
+    // the pending frames through `_renderSeq`; a jump that already rendered
+    // past the first page simply makes the next frame a no-op. The query is
+    // read at fill time so a filter change cannot paint cards with a stale
+    // highlight term.
+    _scheduleRestOfFirstPage(renderSeq, afterPaint = true) {
+        const firstPage = Math.min(this._renderBatchSize, this._lastFilteredIds.length);
+        if (this._renderedCount >= firstPage) return;
+        if (typeof requestAnimationFrame !== 'function') {
+            this._renderBatch(
+                this.getFilteredThoughts(),
+                this.searchInput.value.trim().toLowerCase(),
+                firstPage - this._renderedCount
+            );
+            return;
+        }
+        const fill = () => {
+            if (renderSeq !== this._renderSeq) return;
+            const filtered = this.getFilteredThoughts();
+            // A list shorter than one page has nothing left to fill: without
+            // this bound the frame would re-schedule itself forever (no batch
+            // progress) and keep rebuilding the load-more control.
+            const limit = Math.min(this._renderBatchSize, Math.max(filtered.length, this._lastFilteredIds.length));
+            if (this._renderedCount >= limit) return;
+            const before = this._renderedCount;
+            this._renderBatch(
+                filtered,
+                this.searchInput.value.trim().toLowerCase(),
+                Math.min(RENDER_FILL_CHUNK, limit - before)
+            );
+            if (this._renderedCount === before) return;
+            this.restoreOpenPanelsAfterRender();
+            this._scheduleRestOfFirstPage(renderSeq, false);
+        };
+        // A rAF callback runs *before* the frame's paint, so the first fill
+        // waits one extra frame to guarantee the first cards were actually
+        // shown before the rest is appended.
+        if (afterPaint) requestAnimationFrame(() => requestAnimationFrame(fill));
+        else requestAnimationFrame(fill);
     }
 
     createThoughtCard(thought, query) {
@@ -1431,9 +1508,9 @@ export class ThoughtsManager {
         return card;
     }
 
-    _renderBatch(filtered, query) {
+    _renderBatch(filtered, query, batchSize = this._renderBatchSize) {
         const start = this._renderedCount;
-        const end = Math.min(start + this._renderBatchSize, filtered.length);
+        const end = Math.min(start + batchSize, filtered.length);
         if (start >= end) {
             this.updateThoughtLoadMoreControl(filtered.length);
             return;
@@ -1474,7 +1551,7 @@ export class ThoughtsManager {
                 if (hasBufferedItems) {
                     const filtered = this.getFilteredThoughts();
                     this._lastFilteredIds = filtered.map(thought => thought.id);
-                    this._renderBatch(filtered, this.searchInput.value.toLowerCase());
+                    this._renderBatch(filtered, this.searchInput.value.trim().toLowerCase());
                     return;
                 }
                 this.loadNextThoughtPage();
@@ -1515,7 +1592,7 @@ export class ThoughtsManager {
             const containerRect = (this.scrollArea || this.view).getBoundingClientRect();
             if (rect.top <= containerRect.bottom + 300) {
                 if (this._renderedCount < this._lastFilteredIds.length) {
-                    this._renderBatch(this.getFilteredThoughts(), this.searchInput.value.toLowerCase());
+                    this._renderBatch(this.getFilteredThoughts(), this.searchInput.value.trim().toLowerCase());
                 } else {
                     this.loadNextThoughtPage();
                 }
@@ -1543,7 +1620,7 @@ export class ThoughtsManager {
         });
 
         const control = this.timeline.querySelector('.thoughts-load-more');
-        const query = this.searchInput.value.toLowerCase();
+        const query = this.searchInput.value.trim().toLowerCase();
         visibleThoughts.forEach(thought => {
             let card = cardsById.get(thought.id);
             if (!card || thought.id === thoughtId) {
@@ -1558,6 +1635,7 @@ export class ThoughtsManager {
         this._renderedCount = visibleThoughts.length;
         this.updateThoughtLoadMoreControl(filtered.length);
         this.restoreOpenPanelsAfterRender();
+        this.reassertRevealFocus();
     }
 
     restoreOpenPanelsAfterRender() {
@@ -1984,18 +2062,13 @@ export class ThoughtsManager {
         };
         if (highlight()) return true;
 
-        const target = await this.apiClient.get(id);
+        const target = await this.apiClient.get(id, { light: true });
         if (!target?.id) throw new Error('引用 Thought 已不存在');
         if (!this.thoughts.some(item => item.id === target.id)) {
-            // A citation is a direct, user-initiated navigation request. Keep
-            // the fetched card locally so pagination/filter state cannot make
-            // a verified source unreachable; the next normal refresh restores
-            // the user's filtered timeline.
-            this.thoughts = [{
-                ...target,
-                relationCount: Number(target.relationCount || 0),
-                aiStatus: target.aiStatus || 'missing'
-            }, ...this.thoughts];
+            // A citation is a direct, user-initiated navigation request. Pin
+            // the fetched card so pagination/filter state — and any refresh
+            // that follows — cannot make a verified source unreachable.
+            this.rememberRevealedThought(target);
             this.render();
         }
         if (!highlight()) throw new Error('无法定位引用 Thought');
@@ -2011,6 +2084,17 @@ export class ThoughtsManager {
     async revealThoughtById(targetId, { keyword = '', keywords = null } = {}) {
         const id = String(targetId || '').trim();
         if (!id) throw new Error('revealThoughtById requires an id');
+        const terms = Array.isArray(keywords) ? keywords : (keyword ? [keyword] : []);
+
+        // Fetch the target in parallel with the workspace activation: activating
+        // awaits the first page (hundreds of KB on a slow link) while the target
+        // usually is not part of it, so doing the two sequentially doubles the
+        // jump latency. The prefetch is only started when the card cannot come
+        // from memory; its rejection is surfaced where the value is consumed.
+        const prefetched = (!this.isActive && !this.thoughts.some(item => item.id === id))
+            ? this.loadThoughtForReveal(id)
+            : null;
+        prefetched?.catch(() => {});
 
         if (!this.isActive) {
             await this.app?.navigateWorkspace?.('thoughts');
@@ -2023,28 +2107,117 @@ export class ThoughtsManager {
         }
 
         if (!(await this.renderThoughtCardIntoView(id))) {
-            const target = await this.apiClient.get(id);
+            // Reuse an already fetched card first: the target may be pinned in
+            // memory but hidden by a filter the check above could not detect.
+            const target = this.thoughts.find(item => item.id === id)
+                || (prefetched ? await prefetched : null)
+                || await this.loadThoughtForReveal(id);
             if (!target?.id) throw new Error('该 Thought 已不存在');
-            if (!this.thoughts.some(item => item.id === target.id)) {
-                // Keep the fetched card locally so pagination state cannot
-                // make a verified target unreachable (same policy as agent
-                // citations); the next normal refresh restores the order.
-                this.thoughts = [{
-                    ...target,
-                    relationCount: Number(target.relationCount || 0),
-                    aiStatus: target.aiStatus || 'missing'
-                }, ...this.thoughts];
-                this.render();
-            }
+            this.rememberRevealedThought(target);
+            this.render();
             if (!(await this.renderThoughtCardIntoView(id))) {
-                throw new Error('无法定位该 Thought');
+                // Last resort: a filter still hides it (e.g. tag/date state the
+                // pre-check could not see). Clearing here keeps the jump a
+                // direct user request rather than a silent no-op.
+                this.clearListFilters();
+                this.render();
+                if (!(await this.renderThoughtCardIntoView(id))) {
+                    throw new Error('无法定位该 Thought');
+                }
             }
         }
 
         const card = this.timeline?.querySelector(`.thought-card[data-id="${CSS.escape(id)}"]`);
         if (!card) throw new Error('无法定位该 Thought');
-        this.focusThoughtCard(card, keywords || keyword);
+        this.focusThoughtCard(card, terms);
+        this.trackRevealFocus(id, terms);
         return true;
+    }
+
+    // The jump is a direct user request: a single failed GET (WAN hiccup, 502,
+    // reload race) must not be reported as "该 Thought 已不存在". One retry
+    // covers the transient cases; a 404 is authoritative and returns null.
+    async loadThoughtForReveal(id) {
+        try {
+            return await this.apiClient.get(id, { light: true });
+        } catch (error) {
+            if (Number(error?.status) === 404) return null;
+            await new Promise(resolve => setTimeout(resolve, 260));
+            try {
+                return await this.apiClient.get(id, { light: true });
+            } catch (_retryError) {
+                throw new Error('Thought 加载失败，请稍后重试');
+            }
+        }
+    }
+
+    // The timeline is paginated and filtered server-side, so a jumped-to
+    // Thought usually is not part of the loaded page. Remembering it here (and
+    // re-merging on every list rebuild) is what makes the landing durable:
+    // a socket push / page refresh used to replace `thoughts` wholesale and
+    // silently drop the injected card a moment after the jump.
+    rememberRevealedThought(thought) {
+        if (!thought?.id) return null;
+        const next = {
+            ...thought,
+            relationCount: Number(thought.relationCount || 0),
+            aiStatus: thought.aiStatus || 'missing'
+        };
+        this.revealedThoughts.set(next.id, next);
+        // ponytail: 24-entry cap, only grows with explicit jumps per session.
+        while (this.revealedThoughts.size > 24) {
+            this.revealedThoughts.delete(this.revealedThoughts.keys().next().value);
+        }
+        this.thoughts = this.mergeRevealedThoughts(this.thoughts);
+        return next;
+    }
+
+    forgetRevealedThought(id) {
+        this.revealedThoughts?.delete(String(id || ''));
+    }
+
+    mergeRevealedThoughts(thoughts) {
+        const list = Array.isArray(thoughts) ? thoughts.slice() : [];
+        if (!this.revealedThoughts?.size) return list;
+        const known = new Set(list.map(thought => thought.id));
+        const missing = [];
+        this.revealedThoughts.forEach((thought, id) => {
+            if (!known.has(id)) missing.push(thought);
+        });
+        // Display order always comes from sortThoughts(); keeping the pinned
+        // cards at the head only preserves the historical "kept locally at the
+        // top" shape for the in-memory list.
+        return missing.length ? [...missing, ...list] : list;
+    }
+
+    // Keep the landing highlighted across the re-renders that background
+    // updates trigger right after the jump (the rebuilt card loses the class).
+    // A rebuild also drops every batch past the first page, so the target has
+    // to be pulled back into the DOM before it can be flashed again.
+    trackRevealFocus(id, keywords = []) {
+        this._revealFocus = {
+            id,
+            keywords: Array.isArray(keywords) ? keywords : (keywords ? [keywords] : []),
+            expiresAt: Date.now() + REVEAL_FOCUS_WINDOW_MS
+        };
+    }
+
+    reassertRevealFocus() {
+        const reveal = this._revealFocus;
+        if (!reveal) return;
+        if (Date.now() > reveal.expiresAt) {
+            this._revealFocus = null;
+            return;
+        }
+        let card = this.timeline?.querySelector(`.thought-card[data-id="${CSS.escape(reveal.id)}"]`);
+        if (!card) {
+            // The batch rendering in renderThoughtCardIntoView is synchronous;
+            // the returned promise is only the async shell.
+            void this.renderThoughtCardIntoView(reveal.id);
+            card = this.timeline?.querySelector(`.thought-card[data-id="${CSS.escape(reveal.id)}"]`);
+        }
+        if (!card) return;
+        this.focusThoughtCard(card, reveal.keywords);
     }
 
     hasActiveListFilters() {
@@ -2069,7 +2242,7 @@ export class ThoughtsManager {
     async renderThoughtCardIntoView(id) {
         if (this.timeline?.querySelector(`.thought-card[data-id="${CSS.escape(id)}"]`)) return true;
         if (!this.getFilteredThoughts().some(item => item.id === id)) return false;
-        const query = this.searchInput.value.toLowerCase();
+        const query = this.searchInput.value.trim().toLowerCase();
         let guard = 0;
         while (!this.timeline?.querySelector(`.thought-card[data-id="${CSS.escape(id)}"]`)) {
             const before = this._renderedCount;
@@ -2083,7 +2256,20 @@ export class ThoughtsManager {
 
     focusThoughtCard(card, keywords = []) {
         const terms = Array.isArray(keywords) ? keywords : (keywords ? [keywords] : []);
-        const marks = this.applyTransientKeywordHighlight(card, terms);
+        // The landing (scroll + flash) must never depend on the keyword
+        // highlight: a marking failure used to abort the whole jump and
+        // surface as 「未能定位该 Thought」.
+        let marks = [];
+        try {
+            marks = this.applyTransientKeywordHighlight(card, terms);
+        } catch (error) {
+            console.warn('Failed to highlight search keywords:', error);
+        }
+        // A long Thought is clamped to 100px and its subtasks past the second
+        // are hidden, so a hit there would leave only the card flash — the
+        // user would see the entry but not *why* it matched. Expand once and
+        // then scroll to the hit.
+        this.expandCardForHiddenMatch(card, marks);
         const target = marks[0] || card;
         target.scrollIntoView({ behavior: 'smooth', block: 'center' });
         card.classList.add('relation-focus');
@@ -2093,10 +2279,31 @@ export class ThoughtsManager {
         }
     }
 
-    // Wrap EVERY keyword hit inside the card's body text with transient
-    // thought-highlight marks (in place, no re-render, no filter change) and
-    // return them in document order so the caller can scroll to the first
-    // and unwrap them all later.
+    // Only a real browser has layout; jsdom reports an all-zero rect, in which
+    // case the card is left alone (the tests assert the DOM, not the clip).
+    expandCardForHiddenMatch(card, marks) {
+        if (!marks.length || !this.expandedThoughtIds) return false;
+        if (!card.classList.contains('can-expand') || card.classList.contains('expanded')) return false;
+        const textRect = card.querySelector('.thought-text')?.getBoundingClientRect?.();
+        const hidden = marks.some((mark) => {
+            if (!mark.isConnected) return false;
+            if (mark.closest('.subtask-extra')) return true;
+            const rect = mark.getBoundingClientRect?.();
+            if (!rect || (rect.width === 0 && rect.height === 0)) return false;
+            // Clipped by the collapsed card's 100px max-height on .thought-text.
+            return Boolean(textRect) && (rect.top >= textRect.bottom - 1 || rect.bottom <= textRect.top + 1);
+        });
+        if (!hidden) return false;
+        const id = card.dataset.id;
+        if (!id) return false;
+        this.setThoughtCardExpanded(card, id, true);
+        return true;
+    }
+
+    // Wrap EVERY keyword hit inside the card — body text, subtask lines and
+    // tags — with transient thought-highlight marks (in place, no re-render,
+    // no filter change) and return them in document order so the caller can
+    // scroll to the first and unwrap them all later.
     applyTransientKeywordHighlight(card, terms) {
         const body = card.querySelector('.thought-text');
         if (!body) return [];
@@ -2104,11 +2311,16 @@ export class ThoughtsManager {
             .map(term => String(term || '').trim().toLowerCase())
             .filter(Boolean);
         if (!list.length) return [];
-        const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT);
+        const walker = document.createTreeWalker(card, NodeFilter.SHOW_TEXT);
         const textNodes = [];
         let node = walker.nextNode();
         while (node) {
-            if (!node.parentElement?.closest?.('mark, input, textarea')) textNodes.push(node);
+            // Search indexes text + subtasks + tags, so the jump must mark the
+            // same three places or a tag/subtask hit would land unhighlighted.
+            const host = node.parentElement?.closest?.('.thought-text, .subtask-text, .thought-tag');
+            if (host && card.contains(host) && !node.parentElement?.closest?.('mark, input, textarea')) {
+                textNodes.push(node);
+            }
             node = walker.nextNode();
         }
         const marks = [];
@@ -2119,27 +2331,31 @@ export class ThoughtsManager {
             for (const term of list) {
                 let at = lower.indexOf(term);
                 while (at >= 0) {
-                    hits.push([at, term.length]);
+                    hits.push([at, at + term.length]);
                     at = lower.indexOf(term, at + Math.max(term.length, 1));
                 }
             }
-            // 从后往前包裹，前面的偏移不会被破坏；命中区间重叠时
-            // surroundContents 会失败，跳过该处即可。
-            hits.sort((left, right) => right[0] - left[0]);
-            for (const [at, length] of hits) {
+            if (!hits.length) continue;
+            // Rebuild the node from segments instead of wrapping ranges one by
+            // one: overlapping hits (one keyword nested in another, e.g.
+            // 「信息」+「信息流」) used to leave the previous wrap's split node
+            // shorter than the next range, so `range.setEnd` threw out of the
+            // whole jump — the card never flashed and the search catch showed
+            // 「未能定位该 Thought」.
+            const merged = mergeHitRanges(hits);
+            const fragment = document.createDocumentFragment();
+            let cursor = 0;
+            for (const [start, end] of merged) {
+                if (start > cursor) fragment.appendChild(document.createTextNode(text.slice(cursor, start)));
                 const mark = document.createElement('mark');
                 mark.className = 'thought-highlight thought-highlight-transient';
-                mark.textContent = text.slice(at, at + length);
-                const range = document.createRange();
-                range.setStart(textNode, at);
-                range.setEnd(textNode, at + length);
-                try {
-                    range.surroundContents(mark);
-                } catch (_error) {
-                    continue;
-                }
-                marks.unshift(mark); // unshift 保持文档顺序
+                mark.textContent = text.slice(start, end);
+                fragment.appendChild(mark);
+                marks.push(mark);
+                cursor = end;
             }
+            if (cursor < text.length) fragment.appendChild(document.createTextNode(text.slice(cursor)));
+            textNode.parentNode?.replaceChild(fragment, textNode);
         }
         return marks;
     }

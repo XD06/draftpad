@@ -692,7 +692,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             await manager.revealThoughtById(id, { keywords: list });
         } catch (error) {
             console.warn('Failed to reveal thought from search:', error);
-            toaster.show('未能定位该 Thought', 'error');
+            // The manager already distinguishes "gone" / "load failed" /
+            // "cannot locate"; surface that instead of one vague message.
+            toaster.show(error?.message || '未能定位该 Thought', 'error');
         }
     }
 

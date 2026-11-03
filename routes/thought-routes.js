@@ -32,6 +32,52 @@ function registerThoughtRoutes(app, context) {
         return Array.isArray(subItems) && subItems.every(item => item && typeof item === 'object' && typeof item.text === 'string');
     }
 
+    // Inline (base64) attachment payloads must never travel with list or
+    // by-id jump responses: one 4MB PDF becomes a 5.3MB data URL inside every
+    // page load and every jump (measured 4.3MB / 10s on a home link). Cards
+    // only need the metadata plus a URL that serves the bytes on demand.
+    // The URL carries the Thought version so a cached copy can never outlive
+    // an attachment replacement.
+    function toAttachmentReference(thought, attachment) {
+        if (!attachment?.dataUrl) return attachment;
+        const { dataUrl: _inline, ...rest } = attachment;
+        const version = Number(thought?.version) || 1;
+        return {
+            ...rest,
+            url: `/api/thoughts/${encodeURIComponent(String(thought?.id))}/attachments/${encodeURIComponent(String(attachment.id || ''))}?v=${version}`
+        };
+    }
+
+    function toLightAttachments(thought) {
+        const list = Array.isArray(thought?.attachments) ? thought.attachments : [];
+        return list.map(attachment => toAttachmentReference(thought, attachment));
+    }
+
+    // A client may round-trip a reference (e.g. "add attachment" overwrites the
+    // whole array). Without the inline payload that write would wipe the stored
+    // bytes, so the server restores them from the attachment with the same id.
+    // Only a pure reference (no payload and no URL/asset of its own) qualifies:
+    // a deliberate replacement must never be overwritten by the old bytes.
+    function restoreInlineAttachmentPayloads(incoming, stored) {
+        const byId = new Map(
+            (Array.isArray(stored) ? stored : [])
+                .filter(attachment => attachment && String(attachment.id || ''))
+                .map(attachment => [String(attachment.id), attachment])
+        );
+        return (Array.isArray(incoming) ? incoming : []).map(attachment => {
+            if (!attachment || typeof attachment !== 'object') return attachment;
+            const id = String(attachment.id || '');
+            if (!id) return attachment;
+            if (attachment.dataUrl || attachment.assetId || attachment.originalUrl || attachment.downloadUrl || attachment.previewUrl) {
+                return attachment;
+            }
+            const previous = byId.get(id);
+            if (!previous?.dataUrl) return attachment;
+            const { url: _derived, ...rest } = attachment;
+            return { ...previous, ...rest, dataUrl: previous.dataUrl };
+        });
+    }
+
     async function hydrateAttachments(input) {
         if (input === undefined) return { attachments: [] };
         if (!Array.isArray(input)) return { error: 'attachments must be an array', code: 'INVALID_THOUGHT_ATTACHMENT' };
@@ -454,9 +500,59 @@ function registerThoughtRoutes(app, context) {
             const { id } = req.params;
             const thought = await storage.readThought(id);
             if (!thought) return res.status(404).json({ error: 'Thought not found' });
-            res.json(thought);
+            // Jump targets only need the card's metadata; inline base64
+            // payloads would otherwise make a single jump download megabytes.
+            const light = req.query.light === '1' || req.query.light === 'true';
+            res.json(light ? { ...thought, attachments: toLightAttachments(thought) } : thought);
         } catch (err) {
             res.status(500).json({ error: 'Error fetching thought' });
+        }
+    });
+
+    // Serves one attachment's bytes on demand. Inline (base64) attachments are
+    // stored inside the Thought itself and therefore have no asset URL of their
+    // own; this endpoint is that URL. URL-backed attachments redirect to their
+    // asset route so one link shape works for both.
+    app.get('/api/thoughts/:id/attachments/:attId', async (req, res) => {
+        try {
+            const { id, attId } = req.params;
+            const thought = await storage.readThought(id);
+            if (!thought) return res.status(404).json({ error: 'Thought not found' });
+            const attachment = (Array.isArray(thought.attachments) ? thought.attachments : [])
+                .find(item => String(item?.id || '') === String(attId));
+            if (!attachment) return res.status(404).json({ error: 'Attachment not found' });
+
+            // Only an asset path this server itself issues may be redirected to:
+            // attachment URLs are client-writable fields, so an unvalidated
+            // redirect would be a persistent open redirect.
+            const direct = String(attachment.downloadUrl || attachment.originalUrl || '');
+            if (!attachment.dataUrl) {
+                if (/^\/api\/assets\/[A-Za-z0-9._-]+(\/[A-Za-z0-9._-]+)?$/.test(direct)) return res.redirect(direct);
+                return res.status(404).json({ error: 'Attachment payload not found' });
+            }
+
+            const match = /^data:([^;,]*)(;base64)?,([\s\S]*)$/.exec(String(attachment.dataUrl || ''));
+            if (!match) return res.status(404).json({ error: 'Attachment payload not found' });
+            const type = match[1] || attachment.type || 'application/octet-stream';
+            const buffer = match[2]
+                ? Buffer.from(match[3], 'base64')
+                : Buffer.from(decodeURIComponent(match[3]), 'utf8');
+            const name = String(attachment.name || 'attachment');
+            res.setHeader('X-Content-Type-Options', 'nosniff');
+            res.setHeader('Cache-Control', 'private, max-age=300');
+            // Raster images may render inline (the card previews them); anything
+            // else — including SVG, which would become a same-origin document —
+            // is forced to download.
+            if (/^image\/(png|jpe?g|gif|webp|avif|bmp)$/i.test(String(type))) {
+                res.setHeader('Content-Type', type);
+                res.setHeader('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(name)}`);
+            } else {
+                res.attachment(name);
+                res.setHeader('Content-Type', type);
+            }
+            res.send(buffer);
+        } catch (err) {
+            res.status(500).json({ error: 'Error fetching attachment' });
         }
     });
 
@@ -626,7 +722,7 @@ function registerThoughtRoutes(app, context) {
                     tags: Array.isArray(thought.tags) ? thought.tags : [],
                     completed: thought.completed === true,
                     pinned: thought.pinned === true,
-                    attachments: Array.isArray(thought.attachments) ? thought.attachments : [],
+                    attachments: toLightAttachments(thought),
                     relationCount: Number(thought.relationCount || 0),
                     aiStatus: thought.aiStatus || 'missing',
                     aiError: thought.aiError || null,
@@ -842,7 +938,10 @@ function registerThoughtRoutes(app, context) {
                         if (req.body.tags !== undefined) { thought.tags = req.body.tags; modified = true; }
                         if (req.body.completed !== undefined) { thought.completed = req.body.completed === true; modified = true; }
                         if (req.body.pinned !== undefined) { thought.pinned = req.body.pinned === true; modified = true; }
-                        if (attachmentResult) { thought.attachments = attachmentResult.attachments; modified = true; }
+                        if (attachmentResult) {
+                            thought.attachments = restoreInlineAttachmentPayloads(attachmentResult.attachments, thought.attachments);
+                            modified = true;
+                        }
                         break;
                     case 'add_subitem':
                         if (!text) return { status: 400, body: { error: 'Subitem text is required' } };

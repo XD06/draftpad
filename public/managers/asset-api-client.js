@@ -49,15 +49,15 @@ export function isAudioFile(file) {
 }
 
 export function getAssetPreviewUrl(attachment = {}) {
-    return String(attachment.previewUrl || attachment.dataUrl || '');
+    return String(attachment.previewUrl || attachment.url || attachment.dataUrl || '');
 }
 
 export function getAssetOriginalUrl(attachment = {}) {
-    return String(attachment.originalUrl || attachment.dataUrl || '');
+    return String(attachment.originalUrl || attachment.url || attachment.dataUrl || '');
 }
 
 export function getAssetDownloadUrl(attachment = {}) {
-    return String(attachment.downloadUrl || attachment.originalUrl || attachment.dataUrl || '');
+    return String(attachment.downloadUrl || attachment.originalUrl || attachment.url || attachment.dataUrl || '');
 }
 
 function normalizeMaxFileBytes(value) {

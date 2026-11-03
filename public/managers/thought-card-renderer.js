@@ -134,7 +134,7 @@ function renderAttachments(attachments) {
         const name = escapeAttText(att.name || '文件');
         if (isImage) {
             return `<button type="button" class="thought-attachment thought-attachment-image thought-attachment-preview" data-att-id="${escapeAttText(att.id || '')}" data-preview-att="${escapeAttText(att.id || '')}" aria-label="预览图片：${name}">
-                        <img src="${escapeAttText(getAttachmentPreviewUrl(att))}" alt="${name}" loading="lazy">
+                        <img src="${escapeAttText(getAttachmentPreviewUrl(att))}" alt="${name}" loading="lazy" decoding="async">
                     </button>`;
         }
         const sizeText = formatAttSize(att.size);
@@ -160,11 +160,13 @@ function escapeAttText(text) {
 }
 
 function getAttachmentPreviewUrl(attachment = {}) {
-    return String(attachment.previewUrl || attachment.dataUrl || '');
+    // `url` is the server-side reference for inline (base64) payloads: list and
+    // jump responses strip the bytes, so the card must not depend on dataUrl.
+    return String(attachment.previewUrl || attachment.url || attachment.dataUrl || '');
 }
 
 function getAttachmentDownloadUrl(attachment = {}) {
-    return String(attachment.downloadUrl || attachment.originalUrl || attachment.dataUrl || '');
+    return String(attachment.downloadUrl || attachment.originalUrl || attachment.url || attachment.dataUrl || '');
 }
 
 function formatAttSize(bytes) {

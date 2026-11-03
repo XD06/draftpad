@@ -171,9 +171,13 @@
     },
     "/api/thoughts/{id}": {
       "parameters": [{ "$ref": "#/components/parameters/ThoughtId" }],
-      "get": { "summary": "Read a Thought", "responses": { "200": { "description": "Thought", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Thought" } } } }, "404": { "$ref": "#/components/responses/Error" } } },
+      "get": { "summary": "Read a Thought", "parameters": [{ "name": "light", "in": "query", "schema": { "type": "boolean" }, "description": "Strip inline attachment payloads; each attachment keeps its metadata and gains a url that serves the bytes on demand (jump/card use case)" }], "responses": { "200": { "description": "Thought", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Thought" } } } }, "404": { "$ref": "#/components/responses/Error" } } },
       "patch": { "summary": "Mutate a Thought with optimistic concurrency", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ThoughtMutation" } } } }, "responses": { "200": { "description": "Updated Thought and its new version", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ThoughtMutationResult" } } } }, "400": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" } } },
       "delete": { "summary": "Move a Thought to trash", "responses": { "200": { "description": "Trashed" }, "404": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/thoughts/{id}/attachments/{attId}": {
+      "parameters": [{ "$ref": "#/components/parameters/ThoughtId" }, { "name": "attId", "in": "path", "required": true, "schema": { "type": "string" } }],
+      "get": { "summary": "Serve one Thought attachment on demand", "description": "Inline (base64) attachments have no asset URL of their own; list and ?light=1 responses replace the payload with this URL. Raster images are served inline, everything else downloads with its stored name.", "responses": { "200": { "description": "Attachment bytes with the stored content type" }, "404": { "$ref": "#/components/responses/Error" } } }
     },
     "/api/thoughts/{id}/relations": {
       "parameters": [{ "$ref": "#/components/parameters/ThoughtId" }],

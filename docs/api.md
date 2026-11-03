@@ -831,11 +831,38 @@ curl "http://localhost:3000/api/thoughts/search?q=%E5%A4%87%E4%BB%BD&limit=8"
 
 获取单条 Thought。
 
+**查询参数：**
+
+| 参数 | 说明 |
+| :-- | :-- |
+| `light=1` | 剥掉附件里的内联 `dataUrl`（base64），只留元数据 + `url`。跳转/卡片渲染用这个：一条带 3MB 内联 PDF 的 Thought，完整响应约 4.3MB，light 响应约 300 字节。 |
+
 **响应：** `Thought` 或 `404`
 
 ```bash
 curl http://localhost:3000/api/thoughts/1778966668430
+curl "http://localhost:3000/api/thoughts/1778966668430?light=1"
 ```
+
+**附件的两种形态：**
+
+- 图片走 asset store：`previewUrl` / `originalUrl` / `downloadUrl`。
+- 其它文件默认内联：`dataUrl`（base64，上限 4MB）。列表与 `?light=1` 不返回 `dataUrl`，改为返回 `url`（见下），字节按需取。
+
+---
+
+### GET /api/thoughts/:id/attachments/:attId
+
+按需取某个附件的字节。
+
+- 内联附件：直接吐出解码后的内容，`Content-Type` 取附件声明；光栅图 `inline`，其余（含 SVG）`attachment` + 原始文件名。
+- asset 型附件：302 到 `/api/assets/...`（只允许本站 asset 路径）。
+
+```bash
+curl -OJ "http://localhost:3000/api/thoughts/1778966668430/attachments/att-1?v=3"
+```
+
+`url` 里的 `?v=` 是 Thought 版本号：附件被替换后 URL 会变，避免浏览器缓存显示旧字节。
 
 ---
 

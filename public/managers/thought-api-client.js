@@ -88,8 +88,12 @@ export default class ThoughtApiClient {
         });
     }
 
-    get(id) {
-        return this.request(this.thoughtUrl(id));
+    // `light` asks the server for a card-ready Thought: inline attachment
+    // payloads (base64) are replaced by a URL that serves the bytes on demand.
+    // Jump/citation paths must use it — a single 4MB inline PDF otherwise makes
+    // every by-id fetch download ~5MB before the card can render.
+    get(id, { light = false } = {}) {
+        return this.request(this.thoughtUrl(id, light ? '?light=1' : ''));
     }
 
     patch(id, body, baseVersion) {
