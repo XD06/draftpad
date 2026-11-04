@@ -286,7 +286,9 @@ function assertThoughtsFrontendRegressions() {
         thoughtRelationsPanelSource.includes('m15 7 2-2a4.24 4.24') &&
         !thoughtRelationsPanelSource.includes('img.icons8.com/fluency-systems-regular/48/disconnected.png') &&
         thoughtAIStatusSource.includes('AI_RETRY_ICON_SVG') &&
-        thoughtAIStatusSource.includes('M20 11a8.1 8.1 0 0 0-15.5-2L3 11') &&
+        // 与 thought-ai-status.js 里当前的内联刷新图标对齐（旧断言还钉着被换掉的
+        // 'M20 11a8.1…' 路径，图标早改成 'M21 12a9…'，基线一直假红）。
+        thoughtAIStatusSource.includes('M21 12a9 9 0 1 1-9-9c2.52 0 4.85.83 6.72 2.24L21 7') &&
         !thoughtAIStatusSource.includes('AI_RUN_COMMAND_ICON_SRC'),
         'relation deletion and AI retry controls should use inline unlink and refresh icons'
     );

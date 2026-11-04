@@ -797,65 +797,37 @@
     padding-bottom: 12px;
 }
 
+/* Thought 卡片选区工具条：直接复用文章编辑器 iOS 风格选区菜单的基类
+   （.selection-menu.typora-selection-menu）与图标精灵——材质、24px 圆角、
+   40px 按钮 / 20px 图标、hover / 焦点环、指向选区的尖角与 sm-below 翻转
+   全部由 styles.css 统一给。这里只留 Thought 自己需要的四件事：堆叠层级、
+   隐藏态、按模式显隐按钮，以及复制成功态。 */
 .thought-selection-toolbar {
-    position: absolute;
     z-index: 1300;
-    display: inline-flex;
-    gap: 4px;
-    padding: 5px;
-    border-radius: 999px;
-    background: color-mix(in srgb, var(--header-bg) 66%, transparent);
-    border: 1px solid rgba(120, 128, 140, 0.16);
-    box-shadow: 0 10px 26px rgba(15, 23, 42, 0.13), inset 0 1px 0 rgba(255, 255, 255, 0.28);
-    backdrop-filter: blur(16px) saturate(1.25);
-    -webkit-backdrop-filter: blur(16px) saturate(1.25);
 }
 
 .thought-selection-toolbar[hidden] {
     display: none;
 }
 
-.thought-selection-toolbar button {
-    width: 32px;
-    height: 30px;
-    border: none;
-    border-radius: 999px;
-    background: rgba(255, 255, 255, 0.02);
-    color: var(--text-color);
-    display: inline-grid;
-    place-items: center;
-    cursor: pointer;
+/* 选中普通文字只给「高亮 / 画线 / 复制」，点已标记文字只给「复制 / 清除样式」。
+   ‼ 选择器必须补足 .selection-menu.typora-selection-menu 前缀：styles.css 里
+   .selection-menu.typora-selection-menu:not(.time-marker-menu) button 是 (0,3,1)，
+   会压过只带 .thought-selection-toolbar (0,3,0) 的 display:none，按钮就藏不住了。 */
+.selection-menu.typora-selection-menu.thought-selection-toolbar[data-mode="format"] [data-thought-style="clear"],
+.selection-menu.typora-selection-menu.thought-selection-toolbar[data-mode="clear"] [data-thought-style="highlight"],
+.selection-menu.typora-selection-menu.thought-selection-toolbar[data-mode="clear"] [data-thought-style="draw"] {
+    display: none;
 }
 
-.thought-selection-toolbar button svg {
-    width: 15px;
-    height: 15px;
-    stroke-width: 2;
-}
-
-.thought-selection-toolbar button:hover {
-    background: rgba(var(--primary-rgb), 0.12);
-    color: var(--primary-color);
-}
-
-.thought-selection-toolbar button:focus-visible {
-    outline: 2px solid color-mix(in srgb, var(--primary-color) 70%, transparent);
-    outline-offset: 2px;
-}
-
-.thought-selection-toolbar button.copied {
+/* 复制成功：短暂染绿按钮。选择器补到 (0,5,1) 才压得过共享按钮的 :hover / :active。 */
+.selection-menu.typora-selection-menu.thought-selection-toolbar .menu-btn-group button.copied {
     background: color-mix(in srgb, #16a34a 18%, transparent);
     color: #15803d;
 }
 
-[data-theme="dark"] .thought-selection-toolbar button.copied {
+[data-theme="dark"] .selection-menu.typora-selection-menu.thought-selection-toolbar .menu-btn-group button.copied {
     color: #86efac;
-}
-
-.thought-selection-toolbar[data-mode="format"] [data-thought-style="clear"],
-.thought-selection-toolbar[data-mode="clear"] [data-thought-style="highlight"],
-.thought-selection-toolbar[data-mode="clear"] [data-thought-style="draw"] {
-    display: none;
 }
 
 .thought-inline-highlight {

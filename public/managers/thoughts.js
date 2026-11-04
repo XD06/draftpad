@@ -49,6 +49,7 @@ import { renderThoughtAgentPanel } from './thought-agent-panel.js';
 import { buildAttachmentsFromFiles, getImageAttachments } from './thought-attachments.js';
 import { AssetApiClient, getAssetDownloadUrl, getAssetOriginalUrl, getAssetPreviewUrl, isImageFile } from './asset-api-client.js';
 import { getThoughtSwipeState } from './thought-swipe.js';
+import { ensureSelectionMenuSprite } from './selection-menu-icons.js';
 import { applyThoughtTextStyle, escapeHtml as escapeThoughtHtml, formatThoughtText } from './thought-text-formatting.js';
 import { buildQuickAddCreateOutboxItem, createLocalPendingThought, markCreatedThoughtPending } from './thought-quick-add.js';
 import { buildTimeMarker, buildUpdatedTimeMarker, deleteTimeMarker, handleTimeCommandKeydown, replaceTimeMarker } from './time-command.js';
@@ -76,6 +77,14 @@ function mergeHitRanges(hits) {
         else merged.push([start, end]);
     }
     return merged;
+}
+
+/**
+ * 选区样式动作的成功提示文案：与文章编辑器选区菜单的「已高亮 / 已画线」
+ * 用同一句式，Thought 侧多一个「清除样式」（取消已落的内联标记）。
+ */
+function thoughtStyleToast(style) {
+    return style === 'clear' ? '已清除样式' : (style === 'draw' ? '已画线' : '已高亮');
 }
 
 function resetSubtaskSwipe(row) {
@@ -171,6 +180,18 @@ export class ThoughtsManager {
         this.updateOutboxStatus();
         window.addEventListener('online', () => this.retryOutbox({ silent: true }));
     }
+
+    /**
+     * Thought 操作的统一轻提示出口。文案统一走「已…」句式，与文章编辑器选区菜单
+     * 的 notify 同一语气；只负责「操作成功」的确认，失败路径仍由 outbox 的
+     * handleOutboxResult 或各操作自己那条 error 提示负责——一次失败只弹一条，
+     * 不与成功提示叠加。全部写操作（增删改、切换、关联、标签、样式、时间标记）
+     * 都从这里出去，避免每个动作各写一套 show 参数。
+     */
+    notifyThoughtAction(message, type = 'success', timeoutMs = 1600) {
+        this.app?.toaster?.show?.(message, type, false, timeoutMs);
+    }
+
     initDateFilter() {
         this.dateFilter.value = '';
     }
@@ -1024,6 +1045,7 @@ export class ThoughtsManager {
                 if (card) card.scrollIntoView({ behavior: 'smooth', block: 'center' });
             }, 50);
 
+            this.notifyThoughtAction('已添加 Thought');
             setTimeout(() => this.pendingCreateIds.delete(data.id), 2000);
         } catch (err) {
             console.error('Failed to add thought:', err);
@@ -1277,8 +1299,9 @@ export class ThoughtsManager {
         try {
             this.beginThoughtSync();
             const data = await this.apiClient.toggleComplete(id, thought?.version);
-            this.applySavedThought(thought, data);
+            const saved = this.applySavedThought(thought, data);
             this.patchRenderedThought(id);
+            this.notifyThoughtAction(saved?.completed ? '已标记完成' : '已取消完成');
         } catch (err) {
             console.error('Failed to toggle complete:', err);
             if (thought) {
@@ -1303,8 +1326,9 @@ export class ThoughtsManager {
         try {
             this.beginThoughtSync();
             const data = await this.apiClient.togglePin(id, thought?.version);
-            this.applySavedThought(thought, data);
+            const saved = this.applySavedThought(thought, data);
             this.patchRenderedThought(id);
+            this.notifyThoughtAction(saved?.pinned ? '已置顶' : '已取消置顶');
         } catch (err) {
             console.error('Failed to toggle pin:', err);
             if (thought) {
@@ -1338,6 +1362,7 @@ export class ThoughtsManager {
 
         try {
             await this.apiClient.delete(id);
+            this.notifyThoughtAction('已移入垃圾桶');
         } catch (err) {
             console.error('Failed to delete thought:', err);
             this.handleOutboxResult(this.outbox.enqueueDeleteThought(id));
@@ -2404,6 +2429,7 @@ export class ThoughtsManager {
             const data = await this.apiClient.overwrite(thought.id, thought);
             this.applySavedThought(thought, data);
             this.render();
+            this.notifyThoughtAction('已添加附件');
         } catch (error) {
             console.error('Failed to append thought attachments:', error);
             this.enqueueThoughtOverwrite(thought, error);
@@ -2582,23 +2608,48 @@ export class ThoughtsManager {
         const toolbar = this.ensureThoughtSelectionToolbar();
         toolbar.dataset.mode = mode;
         toolbar.hidden = false;
-        const toolbarWidth = toolbar.offsetWidth || 150;
-        const left = Math.max(12, Math.min(window.innerWidth - toolbarWidth - 12, rect.left + rect.width / 2 - toolbarWidth / 2));
-        const top = Math.max(12, rect.top + window.scrollY - 46);
+        // 与文章编辑器选区菜单同一套定位：桌面在选区上方、窄屏（≤720px）在下方，
+        // 上下放不下时翻转并挂 .sm-below（尖角与动画方向随之反转，见 styles.css）。
+        const menuRect = toolbar.getBoundingClientRect();
+        const menuWidth = toolbar.offsetWidth || menuRect.width || 150;
+        const menuHeight = toolbar.offsetHeight || menuRect.height || 40;
+        const isMobile = window.innerWidth <= 720;
+        const scrollY = window.scrollY || 0;
+        let left = rect.left + rect.width / 2 - menuWidth / 2;
+        left = Math.min(Math.max(left, 10), window.innerWidth - menuWidth - 10);
+        let top = isMobile ? rect.bottom + scrollY + 10 : rect.top + scrollY - menuHeight - 10;
+        if (isMobile && top + menuHeight > scrollY + window.innerHeight - 12) {
+            top = rect.top + scrollY - menuHeight - 10;
+        }
+        if (!isMobile && top < scrollY + 10) top = rect.bottom + scrollY + 10;
+        top = Math.max(top, scrollY + 10);
         toolbar.style.left = `${left}px`;
         toolbar.style.top = `${top}px`;
+        toolbar.classList.toggle('sm-below', top > rect.bottom + scrollY);
+        // 菜单被视口夹住后尖角仍要指向选区中心（tiptap 菜单用同一个变量）。
+        const tailX = rect.left + rect.width / 2 - left - 6;
+        toolbar.style.setProperty('--sm-tail-x', `${Math.max(10, Math.min(tailX, menuWidth - 16))}px`);
     }
 
     ensureThoughtSelectionToolbar() {
         if (this.thoughtSelectionToolbar) return this.thoughtSelectionToolbar;
+        // 图标与文章编辑器选区菜单共用同一份精灵（全局只挂一次）。
+        ensureSelectionMenuSprite(document);
         const toolbar = document.createElement('div');
-        toolbar.className = 'thought-selection-toolbar';
+        // 借用 iOS 风格图标条的基类：材质、圆角、40px 按钮、20px 图标、hover /
+        // 焦点环、尖角与 sm-below 翻转全部由 styles.css 的
+        // .selection-menu.typora-selection-menu 统一给；本视图只保留模式显隐与
+        // 复制成功态（见 thoughts.css）。
+        toolbar.className = 'selection-menu typora-selection-menu thought-selection-toolbar';
         toolbar.hidden = true;
+        // <use> 的 href 与 xlink:href 双写：iOS 15 以下的 Safari 只认后者，漏写会静默丢图标。
         toolbar.innerHTML = `
-            <button type="button" data-thought-style="highlight" title="高亮" aria-label="高亮"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 11-6 6v3h9l3-3"></path><path d="m22 12-4.6-4.6a2 2 0 0 0-2.8 0L9 13"></path><path d="m12.5 6.5 5 5"></path></svg></button>
-            <button type="button" data-thought-style="draw" title="画线" aria-label="画线"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3v7a6 6 0 0 0 12 0V3"></path><path d="M4 21h16"></path></svg></button>
-            <button type="button" data-thought-style="copy" data-copy-icon="true" title="复制已选文字" aria-label="复制已选文字"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M15 9V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h3"></path></svg></button>
-            <button type="button" data-thought-style="clear" title="清除样式" aria-label="清除样式"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7 21 7-7"></path><path d="m3 17 4 4 14-14-4-4L3 17Z"></path><path d="M6 14 3 11l7-7 3 3"></path></svg></button>
+            <div class="menu-btn-group" role="toolbar" aria-label="文字样式" aria-orientation="horizontal">
+                <button type="button" data-thought-style="highlight" title="高亮" aria-label="高亮"><svg class="sm-ic" aria-hidden="true" focusable="false"><use href="#sm-highlight" xlink:href="#sm-highlight"></use></svg><span class="sm-label">高亮</span></button>
+                <button type="button" data-thought-style="draw" title="画线" aria-label="画线"><svg class="sm-ic" aria-hidden="true" focusable="false"><use href="#sm-draw" xlink:href="#sm-draw"></use></svg><span class="sm-label">画线</span></button>
+                <button type="button" data-thought-style="copy" data-copy-icon="true" title="复制已选文字" aria-label="复制已选文字"><svg class="sm-ic" aria-hidden="true" focusable="false"><use href="#sm-copy" xlink:href="#sm-copy"></use></svg><span class="sm-label">复制已选文字</span></button>
+                <button type="button" data-thought-style="clear" title="清除样式" aria-label="清除样式"><svg class="sm-ic" aria-hidden="true" focusable="false"><use href="#sm-trash" xlink:href="#sm-trash"></use></svg><span class="sm-label">清除样式</span></button>
+            </div>
         `;
         toolbar.addEventListener('mousedown', (event) => {
             if (event.target.closest('[data-thought-style]')) event.preventDefault();
@@ -2661,6 +2712,7 @@ export class ThoughtsManager {
             .then(data => {
                 this.applySavedThought(thought, data);
                 this.render();
+                this.notifyThoughtAction(thoughtStyleToast(style));
             })
             .catch(err => {
                 console.error('Failed to style thought text:', err);
@@ -2680,6 +2732,7 @@ export class ThoughtsManager {
                 .then(data => {
                     this.applySavedThought(thought, data);
                     this.render();
+                    this.notifyThoughtAction(thoughtStyleToast(style));
                 })
                 .catch(err => {
                     console.error('Failed to style legacy subtask text:', err);
@@ -2700,6 +2753,7 @@ export class ThoughtsManager {
             this.beginThoughtSync();
             await this.mutateThought(thought, () => this.apiClient.updateSubitem(thought.id, subId, nextText, thought.version));
             this.render();
+            this.notifyThoughtAction(thoughtStyleToast(style));
         } catch (err) {
             console.error('Failed to style subtask text:', err);
             this.enqueueThoughtOverwrite(thought, err);
@@ -2831,6 +2885,7 @@ export class ThoughtsManager {
                 this.beginThoughtSync();
                 await this.mutateThought(thought, () => this.apiClient.updateSubitem(thought.id, marker.subId, nextText, thought.version));
                 this.render();
+                this.notifyThoughtAction(action === 'delete' ? '已删除时间标记' : '已更新为当前时间');
             } catch (err) {
                 console.error('Failed to update thought time marker:', err);
                 this.enqueueThoughtOverwrite(thought, err);
@@ -2849,6 +2904,7 @@ export class ThoughtsManager {
             const data = await this.apiClient.overwrite(thought.id, thought);
             this.applySavedThought(thought, data);
             this.render();
+            this.notifyThoughtAction(action === 'delete' ? '已删除时间标记' : '已更新为当前时间');
         } catch (err) {
             console.error('Failed to update thought time marker:', err);
             this.enqueueThoughtOverwrite(thought, err);
@@ -3050,7 +3106,7 @@ export class ThoughtsManager {
                 if (defaultTitle) button.setAttribute('title', defaultTitle);
             }
         }, 1200);
-        this.app.toaster?.show('已复制', 'success', false, 1500);
+        this.notifyThoughtAction('已复制', 'success', 1500);
     }
 
     renderAISuggestedTags(thought, userTags = []) {
@@ -3089,6 +3145,7 @@ export class ThoughtsManager {
             });
             this.applySavedThought(thought, data);
             this.render();
+            this.notifyThoughtAction('已添加标签');
         } catch (err) {
             console.error('Failed to accept AI tag:', err);
             this.enqueueThoughtOverwrite(thought, err);
@@ -3127,6 +3184,7 @@ export class ThoughtsManager {
             });
             this.applySavedThought(thought, data);
             this.render();
+            this.notifyThoughtAction('已移除标签');
         } catch (err) {
             console.error('Failed to remove thought tag:', err);
             this.enqueueThoughtOverwrite(thought, err);
@@ -3353,6 +3411,7 @@ export class ThoughtsManager {
 
         try {
             await this.apiClient.retryAI(thoughtId);
+            this.notifyThoughtAction('已重新提交 AI 处理');
         } catch (err) {
             console.error('Failed to retry thought AI processing:', err);
             if (thought) {
@@ -3625,6 +3684,7 @@ export class ThoughtsManager {
                     if (hadFocus) nextInput.focus();
                 }
             }
+            this.notifyThoughtAction('已添加关联');
         } catch (err) {
             console.error('Failed to create manual relation:', err);
             applyManualRelationCreateFailure(thought);
@@ -3648,7 +3708,7 @@ export class ThoughtsManager {
                 const panel = card.querySelector('.thought-relations-panel');
                 if (panel) panel.innerHTML = this.renderRelationsPanelContent(sourceId, 'ready', [], []);
             }
-            this.app.toaster?.show('已忽略推荐关联', 'success', false, 1600);
+            this.notifyThoughtAction('已忽略推荐关联', 'success', 1600);
         } catch (err) {
             console.error('Failed to ignore suggested relation:', err);
             item?.remove();
@@ -3711,7 +3771,7 @@ export class ThoughtsManager {
                 if (panel) panel.innerHTML = '<div class="thought-relations-state">暂无关联想法</div>';
             }
 
-            this.app.toaster?.show('已删除关联', 'success', false, 1600);
+            this.notifyThoughtAction('已删除关联', 'success', 1600);
         } catch (err) {
             console.error('Failed to delete thought relation:', err);
             item?.remove();
@@ -3949,6 +4009,7 @@ export class ThoughtsManager {
                     .then(data => {
                         this.applySavedThought(thought, data);
                         this.render();
+                        this.notifyThoughtAction('已保存修改');
                     })
                     .catch(err => {
                         console.error('Failed to save thought:', err);
@@ -4088,6 +4149,7 @@ export class ThoughtsManager {
                 await this.mutateThought(thought, () => this.apiClient.addSubitem(thought.id, text, thought.version));
                 this.refreshThoughtSubtaskView(thought);
                 this.reorderTimelineInPlace();
+                this.notifyThoughtAction('已添加子任务');
             } catch (err) {
                 console.error('Failed to add subtask:', err);
                 this.enqueueThoughtOverwrite(thought, err);
@@ -4187,6 +4249,7 @@ export class ThoughtsManager {
                 await this.mutateThought(thought, () => this.apiClient.updateSubitem(thought.id, subId, edit.text, thought.version));
             }
             this.render();
+            this.notifyThoughtAction('已保存子任务');
         } catch (err) {
             console.error('Failed to edit subtask:', err);
             this.enqueueThoughtOverwrite(thought, err);
@@ -4207,6 +4270,7 @@ export class ThoughtsManager {
                 this.beginThoughtSync();
                 await this.mutateThought(thought, () => this.apiClient.overwrite(id, thought), { rebase: false });
                 this.render();
+                this.notifyThoughtAction('已更新子任务');
             } catch (err) {
                 console.error('Failed to toggle legacy subtask:', err);
                 this.enqueueThoughtOverwrite(thought, err);
@@ -4226,6 +4290,7 @@ export class ThoughtsManager {
             await this.mutateThought(thought, () => this.apiClient.toggleSubitem(id, subId, thought.version));
             this.refreshThoughtSubtaskView(thought);
             this.reorderTimelineInPlace();
+            this.notifyThoughtAction('已更新子任务');
         } catch (err) {
             console.error('Failed to toggle subtask:', err);
             this.enqueueThoughtOverwrite(thought, err);
@@ -4406,6 +4471,7 @@ export class ThoughtsManager {
             this.beginThoughtSync();
             await this.mutateThought(thought, () => this.apiClient.deleteSubitem(thought.id, subId, thought.version), { rebase: false });
             this.reorderTimelineInPlace();
+            this.notifyThoughtAction('已删除子任务');
         } catch (err) {
             console.error('Failed to delete subtask:', err);
             this.enqueueThoughtOverwrite(thought, err);

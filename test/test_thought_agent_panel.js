@@ -43,7 +43,10 @@ function run() {
     assert(html.includes('&lt;b&gt;原始 Thought&lt;/b&gt;'), 'citation labels must be escaped');
     assert(html.includes('data-agent-citation="src-1"'), 'citations must expose a bounded click target');
 
-    const thoughtsSource = fs.readFileSync(path.join(__dirname, '..', 'public', 'managers', 'thoughts.js'), 'utf8');
+    // 源码断言按 LF 比对：Windows 下 core.autocrlf=true 会把工作区文件写成
+    // CRLF，直接拿 '\n' 拼 needle 会永远匹配不上（基线在 Windows 上假红）。
+    const thoughtsSource = fs.readFileSync(path.join(__dirname, '..', 'public', 'managers', 'thoughts.js'), 'utf8')
+        .replace(/\r\n/g, '\n');
     assert(thoughtsSource.includes("e.target.closest('[data-agent-toggle]')"), 'AI detail should delegate the related-content recovery toggle');
     assert(thoughtsSource.includes("querySelector('[data-agent-panel-host]')"), 'agent output should mount inside the AI detail host');
     assert(thoughtsSource.includes("panel.dataset.agentEventsBound = 'true'"), 'reopening the embedded panel must not duplicate its action handlers');
