@@ -105,6 +105,12 @@ function checkSource() {
     check('the lightbulb keeps the 22px optical compensation from floating-actions',
         todayCss.includes('button[data-tdam-action="thought"] .sm-ic') &&
         todayCss.includes('width: 22px'));
+    check('the article glyph gets a measured 14-unit optical stroke',
+        todayCss.includes('button[data-tdam-action="article"] .sm-ic') &&
+        /stroke:\s*currentColor;/.test(todayCss) &&
+        /stroke-width:\s*14;/.test(todayCss) &&
+        /stroke-linejoin:\s*round;/.test(todayCss) &&
+        /stroke-linecap:\s*round;/.test(todayCss));
 }
 
 async function checkDom() {

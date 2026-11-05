@@ -982,8 +982,9 @@ body.clipboard-import-open {
     与文章编辑器选区菜单共用 .selection-menu.typora-selection-menu 基类：材质、
     24px 圆角、40/44px 按钮、20/21px 图标、hover/焦点环、::after 尖角与
     .sm-below 翻转全部由 styles.css 统一给；图标走全局 .sm-sprite。这里只留
-    本视图的五个差异：position:fixed（菜单挂在 body 上，坐标是视口坐标）、
-    层级、删除动作的警示色、灯泡图标的 22px 视觉补偿、[hidden] 关掉。
+    本视图只留少量本地差异：position:fixed（菜单挂在 body 上，坐标是视口坐标）、
+    层级、删除动作的警示色、灯泡图标的 22px 视觉补偿、文档图标的细描边补粗、
+    [hidden] 关掉。
     ‼ 选择器一律带三个基类前缀：共享的移动端媒体查询里
     .selection-menu.typora-selection-menu 是 (0,2,0) 且写在 styles.css（先加载），
     低特异性的局部规则压不过它；删除色还要压过共享 button:hover 的 (0,4,1)。 */
@@ -1009,6 +1010,18 @@ body.clipboard-import-open {
 .selection-menu.typora-selection-menu.today-draft-action-menu button[data-tdam-action="thought"] .sm-ic {
     width: 22px;
     height: 22px;
+}
+
+/* 「转为文章」是线框 + 三根横线的描边式图形，墨迹比同排的双方块/日历/灯泡
+   细一档：真机在 256px 渲染下沿中央竖列量到线宽 12px，邻居是 14~21px。
+   沿轮廓补一圈 currentColor 描边把它提到 16~17px（20px 实际尺寸约
+   0.94px → 1.29px），形状与尺寸都不变；14 是肉眼对比 0/6/10/14/18 后定的值。
+   这条必须压过共享 .sm-ic 的 stroke:none，所以补足三个基类前缀。 */
+.selection-menu.typora-selection-menu.today-draft-action-menu button[data-tdam-action="article"] .sm-ic {
+    stroke: currentColor;
+    stroke-width: 14;
+    stroke-linejoin: round;
+    stroke-linecap: round;
 }
 
 @media (prefers-reduced-motion: reduce) {

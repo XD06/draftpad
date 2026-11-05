@@ -7,8 +7,8 @@
  * .typora-selection-menu 基类（styles.css 统一给圆角、40/44px 按钮、20/21px
  * 图标、hover/焦点环、::after 尖角与 .sm-below 翻转），图标走
  * selection-menu-icons.js 的全局精灵。本视图只留少量本地差异（position:fixed
- * 相对视口、层级、删除动作警示色、灯泡图标尺寸补偿、[hidden]），见
- * today-drafts.css。
+ * 相对视口、层级、删除动作警示色、灯泡尺寸补偿、文档图标描边补粗、[hidden]），
+ * 见 today-drafts.css。
  * 菜单挂在 document.body，不挂在纸张里——纸张有 overflow:hidden，靠近顶部的行
  * 上方浮出会被裁掉。
  */
