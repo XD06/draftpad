@@ -179,14 +179,14 @@ async function main() {
         const options = { bubbles: true, cancelable: true, composed: true, pointerId: 7, isPrimary: true, pointerType: 'touch', clientX: x, clientY: y };
         row.dispatchEvent(new PointerEvent('pointerdown', options));
         await new Promise(resolve => setTimeout(resolve, 560));
-        const menu = document.querySelector('.tdam');
+        const menu = document.querySelector('.today-draft-action-menu');
         const open = Boolean(menu && !menu.hidden);
-        const actions = [...document.querySelectorAll('.tdam__btn')].map(button => button.dataset.tdamAction);
+        const actions = [...document.querySelectorAll('.today-draft-action-menu button[data-tdam-action]')].map(button => button.dataset.tdamAction);
         const highlighted = row.classList.contains('is-menu-target');
         // 松手不关菜单：菜单要留在原地等用户选动作
         row.dispatchEvent(new PointerEvent('pointerup', options));
         await new Promise(resolve => setTimeout(resolve, 80));
-        const stillOpen = Boolean(document.querySelector('.tdam') && !document.querySelector('.tdam').hidden);
+        const stillOpen = Boolean(document.querySelector('.today-draft-action-menu') && !document.querySelector('.today-draft-action-menu').hidden);
         return { open, actions, highlighted, stillOpen };
     });
     assert.equal(longPress.open, true, 'holding still on a row must open the action menu');
@@ -195,12 +195,12 @@ async function main() {
         'the today menu offers copy, Thought, article, the plan placeholder and delete');
     assert.equal(longPress.stillOpen, true, 'lifting the finger must not close the menu');
 
-    await page.click('.tdam__btn[data-tdam-action="copy"]');
+    await page.click('.today-draft-action-menu button[data-tdam-action="copy"]');
     await page.waitForTimeout(250);
     assert.equal(await page.evaluate(() => navigator.clipboard.readText()), 'WiFi和我',
         'the menu copy action must write that draft into the clipboard');
     assert.equal(await page.evaluate(() => {
-        const menu = document.querySelector('.tdam');
+        const menu = document.querySelector('.today-draft-action-menu');
         return !menu || menu.hidden;
     }), true, 'choosing an action must close the menu');
     assert.equal(await page.$eval('#today-drafts-base [data-today-draft-id="t2"]', row => row.classList.contains('is-menu-target')), false,
@@ -216,7 +216,7 @@ async function main() {
         row.dispatchEvent(new PointerEvent('pointerdown', options));
         row.dispatchEvent(new PointerEvent('pointermove', { ...options, clientX: x + 26 }));
         await new Promise(resolve => setTimeout(resolve, 560));
-        const menu = document.querySelector('.tdam');
+        const menu = document.querySelector('.today-draft-action-menu');
         const opened = Boolean(menu && !menu.hidden);
         row.dispatchEvent(new PointerEvent('pointerup', { ...options, clientX: x + 26 }));
         return opened;

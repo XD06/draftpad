@@ -174,7 +174,7 @@ async function run() {
     await new Promise(resolve => setTimeout(resolve, 520));
     assert(manager.menu.isOpen, 'holding still past the delay must open the action menu');
     assert(longPressRow.classList.contains('is-menu-target'), 'the row under the menu must highlight');
-    const menuActions = [...document.querySelectorAll('.tdam__btn')].map(button => button.dataset.tdamAction);
+    const menuActions = [...document.querySelectorAll('.today-draft-action-menu button[data-tdam-action]')].map(button => button.dataset.tdamAction);
     assert.deepStrictEqual(menuActions, ['copy', 'thought', 'article', 'plan', 'delete'],
         'the today menu offers copy, Thought, article, the plan placeholder and delete');
     document.getElementById('today-drafts-view').dispatchEvent(pointerEvent(dom, 'pointerup', { clientX: 200, clientY: 20 }));
@@ -185,7 +185,7 @@ async function run() {
         value: { writeText: async value => { clipboardWrites.push(value); } }
     });
     clipboardWrites.length = 0;
-    document.querySelector('.tdam__btn[data-tdam-action="copy"]').click();
+    document.querySelector('.today-draft-action-menu button[data-tdam-action="copy"]').click();
     await new Promise(resolve => setTimeout(resolve, 0));
     assert.deepStrictEqual(clipboardWrites, ['第一条要复制的内容'], 'the menu copy action must write the draft text');
     assert(!manager.menu.isOpen, 'choosing an action must close the menu');
@@ -204,7 +204,7 @@ async function run() {
         await new Promise(resolve => setTimeout(resolve, 520));
     };
     await pressRow();
-    document.querySelector('.tdam__btn[data-tdam-action="thought"]').click();
+    document.querySelector('.today-draft-action-menu button[data-tdam-action="thought"]').click();
     await new Promise(resolve => setTimeout(resolve, 0));
     assert.deepStrictEqual(thoughtCalls, ['draft-1'], '转为 Thought must create the Thought through the app callback');
     assert(manager.items.some(item => item.id === 'draft-1'),
@@ -213,7 +213,7 @@ async function run() {
     assert(toastCalls.some(([message]) => message === '已转为 Thought，草稿保留'), 'keeping the draft must be surfaced as a toast');
 
     await pressRow();
-    document.querySelector('.tdam__btn[data-tdam-action="article"]').click();
+    document.querySelector('.today-draft-action-menu button[data-tdam-action="article"]').click();
     await new Promise(resolve => setTimeout(resolve, 0));
     assert(manager.items.some(item => item.id === 'draft-1'),
         '转为文章 must KEEP the draft in the pad (copy semantics, not move)');
@@ -221,7 +221,7 @@ async function run() {
 
     // ---- 3d. 计划是占位：点了只提示开发中，不动数据 ----
     await pressRow();
-    document.querySelector('.tdam__btn[data-tdam-action="plan"]').click();
+    document.querySelector('.today-draft-action-menu button[data-tdam-action="plan"]').click();
     await new Promise(resolve => setTimeout(resolve, 0));
     assert(toastCalls.some(([message, type]) => message === '计划功能开发中' && type === 'info'),
         'the plan action must be a placeholder that only announces it is not built yet');

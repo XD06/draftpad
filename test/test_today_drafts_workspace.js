@@ -229,7 +229,11 @@ function run() {
     assert(/\.today-draft-text-display\s*\{[^}]*line-height:\s*44px;/.test(todayStyles), 'each wrapped text line should sit on one 44px ruled band');
     assert(/\.today-draft-text-display\s*\{[^}]*text-indent:\s*36px;[^}]*white-space:\s*pre-wrap;/.test(todayStyles), 'the first line keeps the checkbox indent while wrapped lines start flush at the paper edge');
     assert(/\.today-draft-check\s*\{[^}]*z-index:\s*1;/.test(todayStyles), 'the checkbox must stay clickable above the flush text box');
-    assert(todayStyles.includes('.tdam__bar') && todayStyles.includes('.tdam__btn') && todayStyles.includes('.tdam__tail'), 'the long-press action menu must ship its own glass bar, buttons and pointer tail');
+    assert(todayStyles.includes('.selection-menu.typora-selection-menu.today-draft-action-menu') &&
+        todayStyles.includes('.selection-menu.typora-selection-menu.today-draft-action-menu[hidden]') &&
+        !todayStyles.includes('.tdam__bar') && !todayStyles.includes('.tdam__btn') && !todayStyles.includes('.tdam__tail') &&
+        styles.includes('.selection-menu.typora-selection-menu.sm-below::after'),
+        'the long-press action menu must reuse the shared iOS icon bar (classes, tail and sm-below) instead of shipping its own glass bar');
     assert(!todayStyles.includes('.today-draft-swipe-action'), 'the removed swipe action layer must not linger in the stylesheet');
     assert(todayManagerSource.includes('copyDraftToThought'), 'historical rows should expose the copy-to-thought action');
     assert(/\.today-drafts-header\s*\{[\s\S]*?margin:\s*0;[\s\S]*?padding:\s*0 0 4px;/.test(todayStyles), 'the title group should connect to the writing paper without the former footer-sized gap');
@@ -274,8 +278,14 @@ function run() {
     assert(todayManagerSource.includes('this.onMoveToArticle'), 'turning a draft into an article should stay behind an application-level callback');
     assert(todayManagerSource.includes('contextmenu'),
         'desktop right-click opens the same action menu as the touch long-press');
-    assert(todayMenuSource.includes('tdam-idea') && todayMenuSource.includes('tdam-note') && todayMenuSource.includes('tdam-copy') && todayMenuSource.includes('tdam-delete') && todayMenuSource.includes('tdam-plan'),
-        'the action menu ships the ported icon sprite for every offered action');
+    assert(todayMenuSource.includes("root.className = 'selection-menu typora-selection-menu today-draft-action-menu'") &&
+        todayMenuSource.includes('ensureSelectionMenuSprite') && todayMenuSource.includes('createSelectionMenuIcon') &&
+        todayMenuSource.includes("classList.toggle('sm-below'") && todayMenuSource.includes("setProperty('--sm-tail-x'") &&
+        !todayMenuSource.includes('SPRITE_HTML') && !todayMenuSource.includes('tdam-idea'),
+        'the action menu must reuse the shared sprite and icon bar classes instead of a private sprite');
+    const iconsSource = fs.readFileSync(path.join(ROOT, 'public', 'managers', 'selection-menu-icons.js'), 'utf8');
+    assert(['sm-thought', 'sm-drafts', 'sm-article', 'sm-plan'].every(id => iconsSource.includes(`id: '${id}'`)),
+        'the shared sprite must own the four draft-only icons so only one sprite is mounted');
     assert(!todayRendererSource.includes('today-draft-swipe-action'),
         'the row renderer no longer emits swipe action layers');
     assert(!todayManagerSource.includes('const pagerBox ='), 'the pager geometry has a single definition shared by gestures');

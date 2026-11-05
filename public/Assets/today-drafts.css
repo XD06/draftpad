@@ -979,143 +979,40 @@ body.clipboard-import-open {
 }
 
 /* ================= 行操作菜单（长按草稿行浮出的横向图标条） =================
-   独立命名空间 tdam-，挂在 body 上（position:fixed 相对视口），不参与纸张的
-   overflow 裁剪。材质/图标色全部走主题变量，深浅色自动跟随。 */
-.tdam {
-    --tdam-surface-a: color-mix(in srgb, var(--header-bg) 96%, #fff);
-    --tdam-surface-b: color-mix(in srgb, var(--header-bg) 88%, var(--bg-color));
-    --tdam-border: color-mix(in srgb, var(--border-color) 82%, transparent);
-    --tdam-gloss: color-mix(in srgb, #fff 88%, transparent);
-    --tdam-icon: var(--text-color);
-    --tdam-hover: color-mix(in srgb, var(--muted-text) 15%, transparent);
-    --tdam-split: color-mix(in srgb, var(--border-color) 92%, transparent);
-    --tdam-danger: #d94743;
-    --tdam-radius: 22px;
-    --tdam-btn: 40px;
-    --tdam-icon-size: 20px;
+    与文章编辑器选区菜单共用 .selection-menu.typora-selection-menu 基类：材质、
+    24px 圆角、40/44px 按钮、20/21px 图标、hover/焦点环、::after 尖角与
+    .sm-below 翻转全部由 styles.css 统一给；图标走全局 .sm-sprite。这里只留
+    本视图的五个差异：position:fixed（菜单挂在 body 上，坐标是视口坐标）、
+    层级、删除动作的警示色、灯泡图标的 22px 视觉补偿、[hidden] 关掉。
+    ‼ 选择器一律带三个基类前缀：共享的移动端媒体查询里
+    .selection-menu.typora-selection-menu 是 (0,2,0) 且写在 styles.css（先加载），
+    低特异性的局部规则压不过它；删除色还要压过共享 button:hover 的 (0,4,1)。 */
+.selection-menu.typora-selection-menu.today-draft-action-menu {
     position: fixed;
     z-index: 2500;
-    display: block;
-    line-height: 1;
+    width: max-content;
+    max-width: calc(100vw - 20px);
 }
 
-.tdam[hidden] {
+.selection-menu.typora-selection-menu.today-draft-action-menu[hidden] {
     display: none;
 }
 
-.tdam.is-open {
-    animation: tdam-pop 0.24s cubic-bezier(0.22, 1.15, 0.36, 1) both;
+/* 破坏性动作保持红色：特异性 (0,5,1)，hover / 焦点环也压不住。 */
+.selection-menu.typora-selection-menu.today-draft-action-menu button.tdam--danger[data-tdam-action="delete"] {
+    color: #d94743;
 }
 
-@keyframes tdam-pop {
-    from {
-        opacity: 0;
-        transform: scale(0.94);
-    }
-    to {
-        opacity: 1;
-        transform: scale(1);
-    }
-}
-
-.tdam-sprite {
-    position: absolute;
-    width: 0;
-    height: 0;
-    overflow: hidden;
-}
-
-.tdam__bar {
-    position: relative;
-    display: flex;
-    align-items: center;
-    padding: 5px;
-    border-radius: var(--tdam-radius);
-    width: max-content;
-    background: linear-gradient(180deg, var(--tdam-surface-a), var(--tdam-surface-b));
-    border: 0.5px solid var(--tdam-border);
-    box-shadow: 0 12px 26px rgba(15, 23, 42, 0.18), 0 2px 6px rgba(15, 23, 42, 0.08);
-}
-
-/* 上缘 0.7px 高光：玻璃厚度感的关键，别删。 */
-.tdam__bar::before {
-    content: "";
-    position: absolute;
-    inset: 0;
-    border-radius: inherit;
-    pointer-events: none;
-    box-shadow: inset 0 0.7px 0 var(--tdam-gloss);
-}
-
-.tdam__btn {
-    width: var(--tdam-btn);
-    height: var(--tdam-btn);
-    flex: 0 0 auto;
-    border: 0;
-    background: transparent;
-    border-radius: 14px;
-    display: grid;
-    place-items: center;
-    color: var(--tdam-icon);
-    cursor: pointer;
-    transition: background 0.15s ease, transform 0.11s ease;
-    -webkit-tap-highlight-color: transparent;
-}
-
-.tdam--danger {
-    color: var(--tdam-danger);
-}
-
-.tdam__btn:hover {
-    background: var(--tdam-hover);
-}
-
-.tdam__btn:focus-visible {
-    outline: 2px solid currentColor;
-    outline-offset: -3px;
-}
-
-.tdam__btn:active {
-    transform: scale(0.87);
-    background: var(--tdam-hover);
-}
-
-.tdam__ic {
-    width: var(--tdam-icon-size);
-    height: var(--tdam-icon-size);
-    display: block;
-    fill: currentColor;
-    stroke: none;
-}
-
-.tdam__split {
-    width: 1px;
-    height: 19px;
-    margin: 0 4px;
-    flex: 0 0 auto;
-    background: var(--tdam-split);
-    border-radius: 1px;
-}
-
-/* 小尖角指向被长按的行：默认在条的下缘（菜单浮在行上方），翻到下方时移到上缘。 */
-.tdam__tail {
-    position: absolute;
-    bottom: -5px;
-    left: 50%;
-    width: 12px;
-    height: 12px;
-    border-radius: 2.5px;
-    background: var(--tdam-surface-b);
-    transform: rotate(45deg);
-}
-
-.tdam.tdam--below .tdam__tail {
-    bottom: auto;
-    top: -5px;
+/* 灯泡在 viewBox 里的填充率低于同排邻居（floating-actions 里 #toggle-thoughts
+   也是按 22px 渲染才与 20px 邻居视觉等量，见 docs/technical-overview.md）：
+   草稿菜单沿用同一补偿，避免 Thought 图标看起来小一圈。 */
+.selection-menu.typora-selection-menu.today-draft-action-menu button[data-tdam-action="thought"] .sm-ic {
+    width: 22px;
+    height: 22px;
 }
 
 @media (prefers-reduced-motion: reduce) {
-    .tdam.is-open {
+    .selection-menu.typora-selection-menu.today-draft-action-menu {
         animation: none;
     }
 }
