@@ -11,6 +11,7 @@ const CORE_ASSETS = [
   "/sidebar.js",
   "/Assets/styles.css",
   "/Assets/preview-styles.css",
+  "/Assets/attachment-viewer-modal.css",
   "/Assets/thoughts.css",
   "/Assets/today-drafts.css",
   "/Assets/ios-theme.css",
@@ -19,6 +20,12 @@ const CORE_ASSETS = [
   // 与 512 只在安装期由系统拉取，login.html 不受 SW 控制都不进预缓存。
   "/Assets/dumbpad-icon-192.png",
   "/js/marked/marked.esm.js",
+  // managers/preview.js 现在从 app.js 的模块图可达（附件浮层复用它的渲染），
+  // 它的动态 import 也必须能在离线冷启动时命中预缓存。
+  "/js/@highlightjs/highlight.min.js",
+  "/js/marked-highlight/index.js",
+  "/js/marked-extended-tables/index.js",
+  "/js/marked-alert/index.js",
   "/css/@highlightjs/github.min.css",
   "/css/@highlightjs/github-dark.min.css",
   "/managers/confirmation.js",
@@ -54,6 +61,7 @@ const CORE_ASSETS = [
   "/managers/thought-ai-status.js",
   "/managers/thought-api-client.js",
   "/managers/asset-api-client.js",
+  "/managers/attachment-viewer-modal.js",
   "/managers/file-type-icons.js",
   "/managers/article-file-command.js",
   "/managers/article-meta-footer.js",

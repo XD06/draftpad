@@ -1812,6 +1812,19 @@ export class ThoughtsManager {
             });
         });
 
+        // 文件类附件：demo 的方案 A 浮层入口（图片仍走上面的 lightbox）。
+        card.querySelectorAll('.thought-attachment-file').forEach((anchor) => {
+            anchor.addEventListener('click', (event) => {
+                if (typeof window.openAttachmentViewer !== 'function') return;
+                const att = (Array.isArray(thought.attachments) ? thought.attachments : [])
+                    .find(item => String(item?.id || '') === String(anchor.dataset.attId || ''));
+                if (!att) return;
+                event.preventDefault();
+                event.stopPropagation();
+                window.openAttachmentViewer(att, anchor);
+            });
+        });
+
         const aiStatusBtn = card.querySelector('.thought-ai-status');
         if (aiStatusBtn) {
             aiStatusBtn.addEventListener('click', (e) => {

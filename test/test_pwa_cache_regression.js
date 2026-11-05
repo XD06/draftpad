@@ -171,6 +171,10 @@ assert(
 // 真机离线时才发现。
 const NODE_MODULES_ASSET_ROOTS = [
     ['/js/marked/', 'node_modules/marked/lib'],
+    ['/js/marked-highlight/', 'node_modules/marked-highlight/src'],
+    ['/js/marked-extended-tables/', 'node_modules/marked-extended-tables/src'],
+    ['/js/marked-alert/', 'node_modules/marked-alert/dist'],
+    ['/js/@highlightjs/', 'node_modules/@highlightjs/cdn-assets/es'],
     ['/css/@highlightjs/', 'node_modules/@highlightjs/cdn-assets/styles'],
     ['/font/', 'font'],
 ];

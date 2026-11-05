@@ -59,6 +59,36 @@ export function isArticleFileLink(link) {
 }
 
 /**
+ * 文章附件胶囊 → 方案 A 浮层的附件描述对象（与设置列表 / Thought 卡同一形态）。
+ * title 里的 size / type / name 是插入时写下的元数据（article-file-command.js:93-104）。
+ */
+export function describeArticleFileLink(link) {
+    const href = String(link?.getAttribute?.('href') || '');
+    const title = String(link?.getAttribute?.('title') || '');
+    const read = (key) => {
+        const match = title.match(new RegExp(`(?:^|;)${key}=([^;]*)`));
+        if (!match) return '';
+        try {
+            return decodeURIComponent(match[1]);
+        } catch {
+            return match[1];
+        }
+    };
+    const label = String(link?.textContent || '').replace(/^\s*\u{1F4CE}\s*/u, '').trim();
+    const name = read('name') || (label.includes(' · ') ? label.slice(0, label.lastIndexOf(' · ')).trim() : label) || '附件';
+    const idMatch = href.match(/\/api\/assets\/([a-f0-9-]{16,64})\/(?:preview|original|download)(?:$|[?#])/i);
+    const id = idMatch ? idMatch[1] : articleAssetIdFromSource(href);
+    return {
+        id,
+        name,
+        type: read('type'),
+        size: Number(read('size')) || 0,
+        originalUrl: id ? `/api/assets/${id}/original` : href,
+        downloadUrl: id ? `/api/assets/${id}/download` : href,
+    };
+}
+
+/**
  * 解析期归一化：旧附件 label 以「📎 」开头（图标已改由 CSS 提供），载入时把这段
  * 装饰前缀从渲染 DOM 的文本节点里去掉，避免出现「主题图标 + 📎」双图标。
  * 只动第一个文本节点，不 flatten 链接内部的其他元素。
@@ -401,6 +431,9 @@ class ArticleImageInteractionView {
         menu.setAttribute('role', 'toolbar');
         menu.setAttribute('aria-label', '附件操作');
         menu.innerHTML = `
+            <button type="button" class="article-file-download" data-file-view title="浏览 / 编辑附件" aria-label="浏览 / 编辑附件">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+            </button>
             <a class="article-file-download" data-file-download download title="下载附件" aria-label="下载附件">
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"></path><path d="m7 10 5 5 5-5"></path><path d="M5 21h14"></path></svg>
             </a>
@@ -410,6 +443,13 @@ class ArticleImageInteractionView {
         `;
         menu.addEventListener('mousedown', (event) => event.preventDefault());
         menu.addEventListener('click', (event) => {
+            if (event.target.closest('[data-file-view]')) {
+                const link = this.activeFileLink;
+                if (link && typeof window.openAttachmentViewer === 'function') {
+                    window.openAttachmentViewer(describeArticleFileLink(link), link);
+                }
+                return;
+            }
             if (!event.target.closest('[data-file-delete]')) return;
             this.deleteFileLink();
         });

@@ -12,6 +12,7 @@ import NoteSyncController from './managers/note-sync-controller.js';
 import SettingsDataPanel from './managers/settings-data-panel.js';
 import { AssetApiClient } from './managers/asset-api-client.js';
 import { renderAssetThumbHtml } from './managers/file-type-icons.js';
+import { installAttachmentViewerModal } from './managers/attachment-viewer-modal.js';
 import { WorkspaceRouter } from './managers/workspace-router.js';
 import { ImportTargetRegistry } from './managers/import-target-registry.js';
 import { ClipboardImportCoordinator } from './managers/clipboard-import-coordinator.js';
@@ -356,6 +357,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     const floatingActions = document.querySelector('.floating-actions');
     const toaster = new ToastManager(document.getElementById('toast-container'));
     window.toaster = toaster;
+    // 方案 A 附件浮层：在 toaster 就绪后安装（模块内部只在真正用到时才读 window.toaster）
+    installAttachmentViewerModal();
     const copyLinkBtn = document.getElementById('copy-link');
     const newNotepadBtn = document.getElementById('new-notepad');
     const renameNotepadBtn = document.getElementById('rename-notepad');
@@ -1374,6 +1377,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                         <div class="settings-asset-meta">${meta}</div>
                     </div>
                     <div class="settings-asset-actions">
+                        <button type="button" class="settings-asset-insert" data-asset-action="view">查看 / 编辑</button>
                         <button type="button" class="settings-asset-insert" data-asset-action="insert">插入</button>
                         <a class="settings-asset-download" href="${downloadUrl}" download data-asset-action="download">下载</a>
                         <button type="button" class="danger" data-asset-action="delete">删除</button>
@@ -4161,6 +4165,12 @@ document.addEventListener('DOMContentLoaded', async () => {
                 } else if (button.dataset.assetAction === 'insert') {
                     event.preventDefault();
                     insertAssetIntoArticle(item.dataset.assetId);
+                } else if (button.dataset.assetAction === 'view') {
+                    event.preventDefault();
+                    const asset = assetItemsById.get(item.dataset.assetId);
+                    if (asset && typeof window.openAttachmentViewer === 'function') {
+                        window.openAttachmentViewer(asset, button);
+                    }
                 }
             });
             settingsAssetsList.addEventListener('change', (event) => {
