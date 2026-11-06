@@ -4,7 +4,7 @@
  * 其余 HTML 结构、class、状态机、字数统计、焦点与键盘行为全部照搬 demo。
  */
 import { PreviewManager } from './preview.js';
-import { getFileCategory } from './file-type-icons.js';
+import { getFileCategory, getFileIconSvg } from './file-type-icons.js';
 import { formatFileSize } from './article-file-command.js';
 import NoteSyncController from './note-sync-controller.js';
 import {
@@ -31,6 +31,7 @@ const state = {
     currentContent: '',
     loadedBaseline: null,
     lastSavedContent: null,
+    caretOffset: 0,
     lastFocused: null,
     saving: false,
     loadToken: 0,
@@ -111,12 +112,15 @@ async function readAttachmentContent(att, assetId) {
 
 function fillFileMeta(att) {
     const title = document.getElementById('file-title-a');
-    const tag = document.querySelector('.modal-header-a .file-tag');
-    const sub = document.querySelector('.modal-header-a .file-sub-meta');
+    const tag = document.getElementById('file-tag-a');
+    const sub = document.getElementById('file-sub-meta-a');
+    const badge = document.querySelector('.modal-header-a .file-icon-badge');
     const category = getFileCategory(att.name, att.type);
     if (title) title.textContent = att.name || '未命名附件';
     if (tag) tag.textContent = category.badge || 'FILE';
     if (sub) sub.textContent = `${formatFileSize(att.size)} · ${detectEncoding(att)}`;
+    // 复用项目自己的文件类型图标（badge 的琥珀底色/圆角仍按 demo 保持不变）
+    if (badge) badge.innerHTML = getFileIconSvg(category, att.type, { size: 17 });
 }
 
 /* ------------------------------------------------------------------
@@ -129,19 +133,95 @@ function triggerToast(text, type = 'success') {
 }
 
 /* ------------------------------------------------------------------
-   markdown 渲染：复用 managers/preview.js 的 PreviewManager 实现，
-   输出再过项目自己的 sanitizer（app.js:730-735 同一条链路）。
+   视线 / 光标保持：预览与编辑两个面的总高不同（渲染有代码块/标题/图片的
+   额外高度），像素值不可移植，只能按滚动比例传递——与
+   tiptap-editor.js:1162-1175 的 getScrollFraction/applyScrollFraction 同思路。
    ------------------------------------------------------------------ */
-async function renderMarkdown(md) {
-    markedLoader ||= import('/js/marked/marked.esm.js');
-    sanitizerLoader ||= import('./markdown-html-sanitizer.js');
-    const [{ marked }, { sanitizeHtml }] = await Promise.all([markedLoader, sanitizerLoader]);
-    const html = PreviewManager.prototype.getFormattedContentForPrint.call({ marked }, md || '', true);
-    if (state.previewPane) state.previewPane.innerHTML = sanitizeHtml(html);
+function scrollFractionOf(el) {
+    if (!el) return 0;
+    const max = el.scrollHeight - el.clientHeight;
+    return max > 0 ? Math.max(0, Math.min(1, el.scrollTop / max)) : 0;
 }
 
-function renderMarkdownSafely(md) {
-    Promise.resolve(renderMarkdown(md)).catch((error) => {
+function applyScrollFraction(el, fraction) {
+    if (!el || !Number.isFinite(fraction)) return;
+    const max = el.scrollHeight - el.clientHeight;
+    if (max > 0) el.scrollTop = Math.max(0, Math.min(1, fraction)) * max;
+}
+
+/** 渲染后高度会异步稳定（marked + 高亮 + 字体）；多帧回写，且用户自己滚了就立刻停。
+ *  代次不匹配的旧渲染立刻退出，避免和下一次渲染抢 scrollTop。 */
+function stabilizeScroll(el, fraction, generation) {
+    if (!el) return;
+    let frames = 8;
+    let lastWritten = null;
+    const step = () => {
+        if (generation !== renderGeneration) return;
+        if (frames-- <= 0) return;
+        if (lastWritten !== null && Math.abs(el.scrollTop - lastWritten) > 1) return;
+        const max = el.scrollHeight - el.clientHeight;
+        if (max > 0) {
+            el.scrollTop = Math.max(0, Math.min(1, fraction)) * max;
+            lastWritten = el.scrollTop;
+        }
+        requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+}
+
+/* ------------------------------------------------------------------
+   markdown 渲染：用独立的 Marked 实例（不污染 app.js 复制/打印共用的全局
+   marked 单例），复用项目已装的 marked-highlight + hljs 做代码块语法高亮，
+   过 sanitizer 后交给 preview.js 的 addCopyLangButtonsToCodeBlocks 加语言标签
+   与复制按钮（含失败提示）。
+   ------------------------------------------------------------------ */
+async function attachHighlighting(instance, md) {
+    try {
+        const [{ default: hljs }, { markedHighlight }] = await Promise.all([
+            import('/js/@highlightjs/highlight.min.js'),
+            import('/js/marked-highlight/index.js')
+        ]);
+        await PreviewManager.prototype.loadAdditionalLanguages.call({ DEBUG: false }, md);
+        instance.use(markedHighlight({
+            langPrefix: 'hljs language-',
+            highlight(code, lang) {
+                return hljs.getLanguage(lang)
+                    ? hljs.highlight(code, { language: lang }).value
+                    : hljs.highlightAuto(code).value;
+            }
+        }));
+    } catch (error) {
+        // 高亮是增强项：离线 / 语言模块缺失时退回纯文本代码块，不影响预览与复制
+        console.warn('attachment modal: syntax highlighting unavailable', error);
+    }
+}
+
+async function renderMarkdown(md, generation) {
+    markedLoader ||= import('/js/marked/marked.esm.js');
+    sanitizerLoader ||= import('./markdown-html-sanitizer.js');
+    const [{ Marked }, { sanitizeHtml }] = await Promise.all([markedLoader, sanitizerLoader]);
+    const instance = new Marked({ gfm: true, breaks: true });
+    await attachHighlighting(instance, md || '');
+    if (!state.previewPane || generation !== renderGeneration) return false;
+    state.previewPane.innerHTML = sanitizeHtml(instance.parse(md || ''));
+    // 复用 managers/preview.js 的代码块语言标签 + 复制按钮（含失败提示）
+    const helper = Object.create(PreviewManager.prototype);
+    helper.previewPane = state.previewPane;
+    helper.toaster = window.toaster;
+    helper.addCopyLangButtonsToCodeBlocks(state.previewPane);
+    return true;
+}
+
+// 每次渲染领一个代次：打开浮层会先用旧内容渲染一次、读接口回来再渲染一次，
+// 两个 Promise 的完成顺序不保证，旧的那次必须被丢弃，否则会覆盖新内容。
+let renderGeneration = 0;
+function renderMarkdownSafely(md, restoreFraction = null) {
+    const generation = ++renderGeneration;
+    return Promise.resolve(renderMarkdown(md, generation)).then((applied) => {
+        if (applied && restoreFraction !== null) {
+            stabilizeScroll(document.getElementById('pane-preview-a'), restoreFraction, generation);
+        }
+    }).catch((error) => {
         triggerToast(error?.message || '预览渲染失败', 'error');
     });
 }
@@ -380,6 +460,13 @@ function handleOverlayClick(event) {
 // 方案 A 模式切换
 function setModeA(mode) {
     const isPrev = mode === 'preview';
+    // ⚠️ 必须在切换 pane 显隐「之前」量：显隐一变，不可见的那个面
+    // scrollHeight === clientHeight，量出来必然是 0，视线就丢了。
+    const previewPane = document.getElementById('pane-preview-a');
+    const editPane = document.getElementById('pane-edit-a');
+    const fromFraction = isPrev ? scrollFractionOf(state.textarea) : scrollFractionOf(previewPane);
+    if (isPrev && state.textarea) state.caretOffset = Number(state.textarea.selectionStart) || 0;
+
     const setBtn = (id, on) => {
         const btn = document.getElementById(id);
         if (!btn) return;
@@ -391,8 +478,6 @@ function setModeA(mode) {
     setBtn('btn-mob-prev-a', isPrev);
     setBtn('btn-mob-edit-a', !isPrev);
 
-    const previewPane = document.getElementById('pane-preview-a');
-    const editPane = document.getElementById('pane-edit-a');
     if (previewPane) previewPane.classList.toggle('active', isPrev);
     if (editPane) editPane.classList.toggle('active', !isPrev);
     document.querySelector('.modal-header-a')?.classList.toggle('is-editing', !isPrev);
@@ -403,9 +488,21 @@ function setModeA(mode) {
     document.getElementById('btn-save-a')?.classList.toggle('is-hidden', isPrev);
 
     if (isPrev) {
-        renderMarkdownSafely(state.currentContent);
+        // 编辑 → 预览：渲染是异步的，等高稳定后把视线放回原比例
+        renderMarkdownSafely(state.currentContent, fromFraction);
     } else {
-        state.textarea?.focus();
+        // 预览 → 编辑：syncContent 重写 value 会把光标推到末尾，这里按视线比例
+        // 把光标与滚动一起放回去，focus 用 preventScroll 免得浏览器再滚一次。
+        syncContent();
+        const text = state.textarea?.value || '';
+        const offset = Math.min(text.length, Math.max(0, Math.round(fromFraction * text.length)));
+        try {
+            state.textarea?.setSelectionRange(offset, offset);
+        } catch {
+            /* 无布局环境下 setSelectionRange 可能抛错，忽略即可 */
+        }
+        applyScrollFraction(state.textarea, fromFraction);
+        state.textarea?.focus({ preventScroll: true });
     }
 }
 
@@ -426,7 +523,12 @@ async function openAttachmentViewer(raw, trigger) {
     state.attachment = base;
     state.assetId = assetId;
     state.contentVersion = 0;
+    state.caretOffset = 0;
     state.lastFocused = trigger || document.activeElement;
+    // 新附件一律从顶部开始，不继承上一个附件的视线位置
+    const freshPreviewPane = document.getElementById('pane-preview-a');
+    if (freshPreviewPane) freshPreviewPane.scrollTop = 0;
+    if (state.textarea) state.textarea.scrollTop = 0;
 
     fillFileMeta(base);
     setModeA('preview');
@@ -503,6 +605,106 @@ function installKeyHandlers() {
             }
         }
     });
+}
+
+/* ------------------------------------------------------------------
+   附件类型分流 + 原生预览层（附件管理用）。
+   只有后端 /api/assets/:id/content 白名单内的文本类走方案 A 浮层；
+   图片由 app.js 转给已有的 thought-attachment-lightbox；音视频走原生
+   <video>/<audio>（服务端已支持 inline + Range）；PDF 走浏览器内置 viewer
+   （零依赖，需 asset-routes.js 对 application/pdf 下发 inline）。
+   ------------------------------------------------------------------ */
+const TEXT_PREVIEW_EXTENSIONS = new Set(['txt', 'md', 'markdown', 'csv']);
+
+export function classifyAsset(asset = {}) {
+    const name = String(asset?.name || '');
+    const ext = (name.toLowerCase().match(/\.([a-z0-9]{1,12})$/) || [])[1] || '';
+    const type = String(asset?.type || '').toLowerCase();
+    const category = getFileCategory(name, type);
+    if (TEXT_PREVIEW_EXTENSIONS.has(ext)) return 'text';
+    if (category.id === 'image' || type.startsWith('image/')) return 'image';
+    if (category.id === 'video' || category.id === 'audio' || /^(video|audio)\//.test(type)) return 'media';
+    if (category.id === 'pdf' || type === 'application/pdf') return 'pdf';
+    return 'unsupported';
+}
+
+/** 只接受本站 asset 路径，避免把客户端可写的 URL 字段变成任意 iframe src。 */
+function safeAssetUrl(value, fallback = '') {
+    const url = String(value || '');
+    return /^\/api\/assets\/[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)?(?:\?[^#]*)?$/.test(url) ? url : fallback;
+}
+
+let nativeOverlay = null;
+let nativeTrigger = null;
+
+function closeNativePreview() {
+    if (!nativeOverlay || nativeOverlay.hidden) return;
+    nativeOverlay.hidden = true;
+    nativeOverlay.querySelector('.asset-native-stage').innerHTML = '';
+    if (nativeTrigger && document.contains(nativeTrigger)) {
+        nativeTrigger.focus({ preventScroll: true });
+    }
+    nativeTrigger = null;
+}
+
+function ensureNativePreviewOverlay() {
+    if (nativeOverlay) return nativeOverlay;
+    const overlay = document.createElement('div');
+    overlay.className = 'asset-native-overlay';
+    overlay.hidden = true;
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-modal', 'true');
+    overlay.setAttribute('aria-label', '附件预览');
+    overlay.innerHTML = `
+        <div class="asset-native-panel" role="document">
+            <div class="asset-native-header">
+                <span class="asset-native-name"></span>
+                <a class="asset-native-download" download>下载原文件</a>
+                <button type="button" class="asset-native-close" aria-label="关闭预览">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                </button>
+            </div>
+            <div class="asset-native-stage"></div>
+        </div>`;
+    overlay.addEventListener('click', (event) => {
+        if (event.target === overlay) closeNativePreview();
+    });
+    overlay.querySelector('.asset-native-close').addEventListener('click', closeNativePreview);
+    window.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') closeNativePreview();
+    });
+    document.body.appendChild(overlay);
+    nativeOverlay = overlay;
+    return overlay;
+}
+
+export function openNativeAssetPreview(asset = {}, kind = 'media', trigger = null) {
+    const overlay = ensureNativePreviewOverlay();
+    const src = safeAssetUrl(getAssetOriginalUrl(asset));
+    if (!src) {
+        triggerToast('附件地址不可用，无法预览', 'error');
+        return false;
+    }
+    const stage = overlay.querySelector('.asset-native-stage');
+    const eye = `<svg width="42" height="42" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>`;
+    if (kind === 'pdf') {
+        // 独立的 cache key：历史上 PDF 的 original 曾以 immutable+attachment
+        // 缓存过一年，直接用同一个 URL 会让老浏览器继续走下载而不是 iframe 渲染。
+        const frameSrc = `${src}${src.includes('?') ? '&' : '?'}preview=1`;
+        stage.innerHTML = `<iframe class="asset-native-frame" src="${frameSrc}" title="PDF 预览"></iframe>`;
+    } else if (/\.mp3$|\.m4a$|\.wav$|\.ogg$|\.flac$|\.aac$/i.test(String(asset.name || '')) || /^audio\//.test(String(asset.type || ''))) {
+        stage.innerHTML = `<div class="asset-native-audio-wrap">${eye}<audio class="asset-native-audio" src="${src}" controls></audio></div>`;
+    } else {
+        stage.innerHTML = `<video class="asset-native-video" src="${src}" controls playsinline></video>`;
+    }
+    overlay.querySelector('.asset-native-name').textContent = String(asset.name || '附件预览');
+    const download = overlay.querySelector('.asset-native-download');
+    download.href = safeAssetUrl(getAssetDownloadUrl(asset), '#');
+    download.download = String(asset.name || 'attachment');
+    nativeTrigger = trigger || document.activeElement;
+    overlay.hidden = false;
+    overlay.querySelector('.asset-native-close').focus({ preventScroll: true });
+    return true;
 }
 
 /**
