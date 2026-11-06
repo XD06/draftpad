@@ -140,7 +140,12 @@ async function run() {
 
         const fileOriginal = await fetch(`${baseUrl}${fileAsset.originalUrl}`);
         assert.strictEqual(fileOriginal.status, 200);
-        assert.match(fileOriginal.headers.get('content-disposition') || '', /attachment/i, 'ordinary file originals must force download');
+        // PDF 的 original 改成 inline 供浏览器内置 viewer 预览；download 变体仍强制下载。
+        assert.match(fileOriginal.headers.get('content-disposition') || '', /inline/i,
+            'PDF originals are inline for native preview');
+        const fileDownload = await fetch(`${baseUrl}${fileAsset.downloadUrl}`);
+        assert.match(fileDownload.headers.get('content-disposition') || '', /attachment/i,
+            'ordinary file downloads must force attachment behavior');
         assert.deepStrictEqual(Buffer.from(await fileOriginal.arrayBuffer()), fileBytes, 'ordinary file bytes must round-trip unchanged');
 
         // Re-uploading identical file bytes must dedupe to the existing asset.
@@ -453,9 +458,23 @@ async function run() {
             body: 'overwrite'
         });
         assert.strictEqual(pdfPut.status, 415, 'a PDF must not be overwritable through the content endpoint');
+        // PDF 走浏览器内置 viewer：original 必须 inline + nosniff，且不能 immutable
+        // （历史上 attachment 响应会躺在浏览器缓存里一年，iframe 会继续触发下载）。
         const pdfOriginal = await fetch(`${baseUrl}${pdfAsset.originalUrl}`);
-        assert.match(pdfOriginal.headers.get('cache-control') || '', /immutable/i,
-            'non-editable assets must keep the original immutable cache policy');
+        assert.strictEqual(pdfOriginal.headers.get('content-disposition'), 'inline',
+            'PDF originals must be inline so the built-in browser viewer can render them');
+        assert.strictEqual(pdfOriginal.headers.get('x-content-type-options'), 'nosniff',
+            'inline PDFs must be protected by nosniff');
+        assert.match(pdfOriginal.headers.get('cache-control') || '', /no-store/i,
+            'PDF variants must not be cached immutably');
+        const pdfDownload = await fetch(`${baseUrl}${pdfAsset.downloadUrl}`);
+        assert.match(pdfDownload.headers.get('content-disposition') || '', /attachment/i,
+            'the download variant must still force a download for PDFs');
+
+        // 图片等未改动的资源维持原有 immutable 策略。
+        const imageOriginal = await fetch(`${baseUrl}${asset.originalUrl}`);
+        assert.match(imageOriginal.headers.get('cache-control') || '', /immutable/i,
+            'non-previewable image assets must keep the original immutable cache policy');
 
         console.log('Asset route checks passed');
     } finally {

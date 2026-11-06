@@ -23,14 +23,38 @@ module.exports = async function testAttachmentModalLayout(browser) {
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <link rel="stylesheet" href="/Assets/styles.css">
         <link rel="stylesheet" href="/Assets/attachment-viewer-modal.css">
-        <style>html,body{margin:0;height:100%;overflow:hidden}</style>
-        </head><body><button id="entry" type="button">入口</button>${modalHtml}
+        <style>html,body{margin:0;overflow-x:hidden}#filler{height:3000px}</style>
+        </head><body><button id="entry" type="button">入口</button>
+        <div class="settings-asset-item" id="thumb-probe" data-preview-kind="pdf" data-asset-id="thumb-probe">
+            <label class="settings-asset-select-wrap"><input type="checkbox" class="settings-asset-select"></label>
+            <button type="button" class="settings-asset-preview" data-asset-action="view">
+                <div class="settings-asset-thumb settings-asset-thumb-file" style="--file-theme:#e74c3c">
+                    <svg class="settings-asset-icon-svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path></svg>
+                    <span class="settings-asset-thumb-badge">PDF</span>
+                </div>
+                <span class="settings-asset-preview-mask" aria-hidden="true">eye</span>
+            </button>
+            <div class="settings-asset-info"><div class="settings-asset-name">probe.pdf</div></div>
+            <div class="settings-asset-actions"></div>
+        </div>
+        <div style="height:1200px" aria-hidden="true"></div>
+        <a id="thought-file" class="thought-attachment thought-attachment-file"
+           href="/api/assets/0123456789abcdef0123456789abcdef/original"
+           download="context-compaction.md" title="context-compaction.md"
+           data-att-id="0123456789abcdef0123456789abcdef" data-att-size="30100" data-att-type="text/markdown">点击预览</a>
+        ${modalHtml}
         <div id="toast-container" class="toast-container"></div>
+        <div id="filler" aria-hidden="true"></div>
         <script type="module">
           import { installAttachmentViewerModal } from '/managers/attachment-viewer-modal.js';
+          import { installThoughtFileAttachmentDelegation } from '/managers/thoughts.js';
+          installThoughtFileAttachmentDelegation();
           const ASSET_ID = '0123456789abcdef0123456789abcdef';
-          const CONTENT = '# 真实附件内容\\n\\n正文来自读接口';
+          const CONTENT = '# 真实附件内容\\n\\n正文来自读接口\\n\\n\`\`\`javascript\\nconst answer = 42;\\n\`\`\`';
+          const LONG = Array.from({ length: 220 }, (_, i) =>
+            '## 第 ' + (i + 1) + ' 节\\n\\n这是第 ' + (i + 1) + ' 段的正文内容，用于验证预览与编辑之间的视线保持。').join('\\n\\n');
           window.__serverContent = CONTENT;
+          window.__initialContent = CONTENT;
           window.__serverVersion = 0;
           window.__putCalls = [];
           window.__toasts = [];
@@ -62,7 +86,8 @@ module.exports = async function testAttachmentModalLayout(browser) {
             hide() {}
           };
           installAttachmentViewerModal();
-          window.__openModal = async () => {
+          window.__openModal = async (long) => {
+            if (long) window.__serverContent = LONG;
             await window.openAttachmentViewer({
               id: ASSET_ID, name: 'context-compaction.md', type: 'text/markdown', size: 30100,
               originalUrl: '/api/assets/' + ASSET_ID + '/original',
@@ -72,12 +97,41 @@ module.exports = async function testAttachmentModalLayout(browser) {
           window.__ready = true;
         </script></body></html>`;
 
+    // 桩：只实现浮层用到的最小 marked API，代码块仍产出 <pre><code class="language-*">，
+    // 这样 addCopyLangButtonsToCodeBlocks 的复制按钮能被真机验证。
+    const markedStub = `
+      const esc = (s) => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      export class Marked {
+        constructor(opts) { this.opts = opts || {}; }
+        use() { return this; }
+        parse(src) {
+          const text = String(src || '');
+          let out = '', last = 0, m;
+          const re = /\`\`\`([\\w-]*)\\n([\\s\\S]*?)\`\`\`/g;
+          const paras = (chunk) => esc(chunk).split(/\\n{2,}/)
+            .filter((p) => p.length).map((p) => '<p>' + p.replace(/\\n/g, '<br>') + '</p>').join('');
+          while ((m = re.exec(text))) {
+            out += paras(text.slice(last, m.index));
+            out += '<pre><code class="language-' + (m[1] || 'text') + '">' + esc(m[2]) + '</code></pre>';
+            last = m.index + m[0].length;
+          }
+          out += paras(text.slice(last));
+          return out;
+        }
+      }
+      export const marked = { parse: (s) => String(s || '') };
+    `;
+
     const app = express();
     app.get('/', (_req, res) => res.type('html').send(fixture));
     app.use('/Assets', express.static(path.join(ROOT, 'public', 'Assets')));
     app.use('/managers', express.static(path.join(ROOT, 'public', 'managers')));
-    app.get('/js/marked/marked.esm.js', (_req, res) =>
-        res.type('application/javascript').send('export const marked = { parse: (s) => String(s || "") };'));
+    app.get('/js/marked/marked.esm.js', (_req, res) => res.type('application/javascript').send(markedStub));
+    app.get('/js/@highlightjs/highlight.min.js', (_req, res) => res.type('application/javascript').send(
+        'export default { getLanguage: () => null, highlight: (c) => ({ value: c }), highlightAuto: (c) => ({ value: c }), registerLanguage() {} };'));
+    app.get('/js/marked-highlight/index.js', (_req, res) => res.type('application/javascript').send(
+        'export function markedHighlight() { return {}; }'));
+    app.use('/js/@highlightjs/languages', (_req, res) => res.type('application/javascript').send('export default {};'));
     const server = await new Promise((resolve) => {
         const listener = app.listen(0, '127.0.0.1', () => resolve(listener));
     });
@@ -94,6 +148,7 @@ module.exports = async function testAttachmentModalLayout(browser) {
                 viewport: { width: item.width, height: item.height },
                 hasTouch: item.label === 'mobile',
                 isMobile: item.label === 'mobile',
+                permissions: ['clipboard-read', 'clipboard-write'],
             });
             const page = await context.newPage();
             const pageErrors = [];
@@ -102,12 +157,59 @@ module.exports = async function testAttachmentModalLayout(browser) {
             await page.waitForFunction(() => window.__ready === true);
             await page.evaluate(() => window.__openModal());
             await page.waitForTimeout(350);
-            assert.equal(await page.locator('#textarea-a').inputValue(), '# 真实附件内容\n\n正文来自读接口',
+            assert.ok((await page.locator('#textarea-a').inputValue()).startsWith('# 真实附件内容'),
                 `${item.label} 真实读接口必须替换 SAMPLE_MARKDOWN`);
             assert.ok(/· UTF-8/.test(await page.locator('.modal-header-a .file-sub-meta').innerText()),
                 `${item.label} 体积 / 编码必须来自真实元数据`);
             assert.ok(await page.locator('#modal-overlay').evaluate((el) => el.classList.contains('open')),
                 `${item.label} 入口必须打开同一个浮层`);
+
+            /* 问题 3：页面滚动后浮层必须仍贴在视口（absolute + 无定位祖先会顶到 y=-scrollY） */
+            const fixedCheck = await page.evaluate(() => {
+                window.scrollTo(0, 1000);
+                const overlay = document.getElementById('modal-overlay');
+                return {
+                    position: getComputedStyle(overlay).position,
+                    y: overlay.getBoundingClientRect().y,
+                    scrollY: window.scrollY,
+                };
+            });
+            assert.equal(fixedCheck.position, 'fixed', `${item.label} 浮层必须相对视口定位`);
+            assert.ok(Math.abs(fixedCheck.y) < 1,
+                `${item.label} 下滚 ${fixedCheck.scrollY}px 后浮层 y=${fixedCheck.y}，PC 端曾整块不可见`);
+            await page.evaluate(() => window.scrollTo(0, 0));
+
+            /* 问题 2：file-tag / file-sub-meta 同一行；图标来自 file-type-icons.js */
+            const metaLayout = await page.evaluate(() => {
+                const tag = document.getElementById('file-tag-a');
+                const sub = document.getElementById('file-sub-meta-a');
+                const title = document.getElementById('file-title-a');
+                const badge = document.querySelector('.modal-header-a .file-icon-badge svg');
+                return {
+                    tagCenter: tag.getBoundingClientRect().top + tag.getBoundingClientRect().height / 2,
+                    subCenter: sub.getBoundingClientRect().top + sub.getBoundingClientRect().height / 2,
+                    titleTop: title.getBoundingClientRect().top,
+                    tagText: tag.textContent,
+                    viewBox: badge?.getAttribute('viewBox'),
+                    strokeWidth: badge?.getAttribute('stroke-width'),
+                };
+            });
+            assert.ok(Math.abs(metaLayout.tagCenter - metaLayout.subCenter) < 3,
+                `${item.label} file-tag 与 file-sub-meta 必须同一行 (${metaLayout.tagCenter} / ${metaLayout.subCenter})`);
+            assert.equal(metaLayout.tagText, 'MD');
+            assert.ok(metaLayout.subCenter > metaLayout.titleTop + 4, `${item.label} 文件名应单独占上一行`);
+            assert.equal(metaLayout.viewBox, '0 0 24 24', 'file-icon-badge 必须换成项目文件类型图标');
+            assert.equal(metaLayout.strokeWidth, '1.8', '图标必须来自 file-type-icons.js');
+
+            /* 问题 1：代码块右上角语言标签 + 一键复制 */
+            const codeButton = page.locator('.preview-content pre .code-lang-copy-button');
+            assert.equal(await codeButton.count(), 1, `${item.label} 代码块必须带语言/复制按钮`);
+            assert.equal(await codeButton.locator('.lang-text').innerText(), 'javascript');
+            await codeButton.click();
+            await page.waitForTimeout(200);
+            const copyToasts = await page.evaluate(() => window.__toasts.map((t) => t.message));
+            assert.ok(copyToasts.includes('Copied to clipboard'),
+                `${item.label} 复制按钮必须真的复制代码：${copyToasts.join(' | ')}`);
 
             const xOf = () => page.locator(item.segment).evaluate((el) => el.getBoundingClientRect().x);
             const xPreview = await xOf();
@@ -125,6 +227,46 @@ module.exports = async function testAttachmentModalLayout(browser) {
                 `${item.label} 编辑→预览 分段器位移 ${xPreview} -> ${xPreviewAgain}`);
 
             if (item.label === 'desktop') {
+                /* 问题 1：预览 ↔ 编辑的视线 / 光标保持（长文档，真布局） */
+                await page.evaluate(() => window.__openModal(true));
+                await page.waitForTimeout(450);
+                await page.evaluate(() => {
+                    const pane = document.getElementById('pane-preview-a');
+                    pane.scrollTop = (pane.scrollHeight - pane.clientHeight) * 0.5;
+                });
+                const previewGeometry = await page.evaluate(() => {
+                    const pane = document.getElementById('pane-preview-a');
+                    return {
+                        scrollHeight: pane.scrollHeight, clientHeight: pane.clientHeight,
+                        display: getComputedStyle(pane).display,
+                        htmlLen: document.getElementById('render-preview-a').innerHTML.length,
+                        textLen: document.getElementById('textarea-a').value.length,
+                    };
+                });
+                const previewTopBefore = await page.locator('#pane-preview-a').evaluate((el) => el.scrollTop);
+                assert.ok(previewTopBefore > 0, `长文档预览必须可滚动 ${JSON.stringify(previewGeometry)}`);
+                await page.click('#btn-desk-edit-a');
+                await page.waitForTimeout(250);
+                const editState = await page.evaluate(() => {
+                    const ta = document.getElementById('textarea-a');
+                    return {
+                        top: ta.scrollTop,
+                        max: ta.scrollHeight - ta.clientHeight,
+                        caret: ta.selectionStart,
+                        len: ta.value.length,
+                    };
+                });
+                assert.ok(editState.max > 0, '长文档编辑态必须可滚动');
+                assert.ok(editState.top > 0,
+                    `预览→编辑 视线不应回到顶部 (scrollTop=${editState.top})`);
+                assert.ok(editState.caret > 0 && editState.caret < editState.len,
+                    `预览→编辑 光标不应跑到末尾 (caret=${editState.caret}/${editState.len})`);
+                await page.click('#btn-desk-prev-a');
+                await page.waitForTimeout(600);
+                const previewTopAfter = await page.locator('#pane-preview-a').evaluate((el) => el.scrollTop);
+                assert.ok(previewTopAfter > 0,
+                    `编辑→预览 视线应恢复到原比例 (scrollTop=${previewTopAfter})`);
+
                 // 真浏览器里的真实保存链路：PUT /content → 刷新后仍读到新字节，
                 // 且不产生任何 localStorage 桥、不新建资产 id。
                 await page.click(item.edit);
@@ -152,6 +294,64 @@ module.exports = async function testAttachmentModalLayout(browser) {
                 assert.equal(await page.locator('#textarea-a').inputValue(), '浏览器端保存的内容',
                     '刷新后内容还在（同一个资产 id）');
             }
+
+            /* 问题 3：Thought 文件附件的事件委托——PC 真实鼠标 / 移动真实触摸
+               都必须打开浮层，且页面已滚动时浮层仍完整可见、不触发下载。 */
+            await page.evaluate(() => {
+                window.closeModal();
+                window.__serverContent = window.__initialContent;
+                window.__serverVersion = 0;
+            });
+            await page.waitForTimeout(360);
+            const downloads = [];
+            page.on('download', (d) => downloads.push(d.url()));
+            const thoughtLink = page.locator('#thought-file');
+            await thoughtLink.scrollIntoViewIfNeeded();
+            if (item.label === 'mobile') {
+                await thoughtLink.tap();
+            } else {
+                await thoughtLink.click();
+            }
+            await page.waitForTimeout(500);
+            const delegated = await page.evaluate(() => {
+                const overlay = document.getElementById('modal-overlay');
+                const rect = overlay.getBoundingClientRect();
+                const hit = document.elementFromPoint(innerWidth / 2, innerHeight / 2);
+                return {
+                    open: overlay.classList.contains('open'),
+                    y: rect.y,
+                    scrollY: window.scrollY,
+                    hitInsideModal: !!hit?.closest('#modal-a'),
+                    text: document.getElementById('textarea-a').value.slice(0, 40),
+                };
+            });
+            assert.ok(delegated.open, `${item.label} 委托点击必须打开浮层`);
+            assert.ok(Math.abs(delegated.y) < 1 && delegated.hitInsideModal,
+                `${item.label} 下滚 ${delegated.scrollY}px 后浮层必须在视口内且可点 (y=${delegated.y})`);
+            assert.ok(delegated.text.startsWith('# 真实附件内容'), `${item.label} 委托路径必须读到真实内容`);
+            /* 附件管理缩略图：文件图标必须 flex 居中，不能被高特异性
+               display:block 顶到左上角（用户实测 SVG 溢出容器顶部）。 */
+            const thumbGeometry = await page.evaluate(() => {
+                const thumb = document.querySelector('#thumb-probe .settings-asset-thumb-file');
+                const svg = thumb.querySelector('svg');
+                const t = thumb.getBoundingClientRect();
+                const s = svg.getBoundingClientRect();
+                return {
+                    display: getComputedStyle(thumb).display,
+                    dx: (s.x + s.width / 2) - (t.x + t.width / 2),
+                    dy: (s.y + s.height / 2) - (t.y + t.height / 2),
+                    inside: s.x >= t.x - 0.5 && s.y >= t.y - 0.5
+                        && s.right <= t.right + 0.5 && s.bottom <= t.bottom + 0.5,
+                };
+            });
+            assert.equal(thumbGeometry.display, 'flex', `${item.label} 文件图标容器必须保持 flex`);
+            assert.ok(Math.abs(thumbGeometry.dx) < 1,
+                `${item.label} 文件图标水平必须居中 (dx=${thumbGeometry.dx})`);
+            assert.ok(Math.abs(thumbGeometry.dy) < 3,
+                `${item.label} 文件图标垂直偏移异常 (dy=${thumbGeometry.dy})`);
+            assert.ok(thumbGeometry.inside, `${item.label} 文件图标不得溢出缩略图容器`);
+
+            assert.deepEqual(downloads, [], `${item.label} 点击预览不得触发原生下载`);
 
             assert.deepEqual(pageErrors, [], `${item.label} 控制台零报错：${pageErrors.join(' | ')}`);
             await context.close();

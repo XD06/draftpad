@@ -64,7 +64,10 @@ async function main() {
     check('toast replaced by window.toaster.show', modalJs.includes('window.toaster')
         && /toaster\.show\(text, type, false, 2200\)/.test(modalJs));
     check('markdown rendering reuses managers/preview.js',
-        modalJs.includes("from './preview.js'") && modalJs.includes('getFormattedContentForPrint'));
+        modalJs.includes("from './preview.js'")
+        && modalJs.includes('addCopyLangButtonsToCodeBlocks')
+        && modalJs.includes('loadAdditionalLanguages')
+        && modalJs.includes('new Marked('));
     check('file type metadata reuses managers/file-type-icons.js',
         modalJs.includes('getFileCategory'));
     check('three-state machine preserved',
@@ -73,10 +76,16 @@ async function main() {
     check('failure keeps the textarea (no clear on error)',
         !/textarea\.value\s*=\s*''/.test(modalJs));
 
-    check('settings entry wired', appJs.includes("data-asset-action=\"view\"")
-        && appJs.includes('window.openAttachmentViewer(asset, button)'));
-    check('Thought entry wired', thoughtsJs.includes("querySelectorAll('.thought-attachment-file')")
-        && thoughtsJs.includes('window.openAttachmentViewer(att, anchor)'));
+    check('settings entry wired to the type dispatcher', appJs.includes("data-asset-action=\"view\"")
+        && appJs.includes('openAssetPreview(asset, button)'));
+    check('Thought entry uses capture-phase delegation (survives every card re-render)',
+        thoughtsJs.includes('installThoughtFileAttachmentDelegation')
+        && thoughtsJs.includes("document.addEventListener('click'")
+        && thoughtsJs.includes("closest('.thought-attachment-file')")
+        && !thoughtsJs.includes("querySelectorAll('.thought-attachment-file').forEach")
+        && thoughtsJs.includes("'附件预览未就绪，请刷新页面后重试'")
+        && fs.readFileSync(path.join(ROOT, 'public/managers/thought-card-renderer.js'), 'utf8').includes('data-att-size')
+        && fs.readFileSync(path.join(ROOT, 'public/Assets/attachment-viewer-modal.css'), 'utf8').includes('position: fixed;'));
     check('article chip entry wired', interactionsJs.includes('data-file-view')
         && interactionsJs.includes('window.openAttachmentViewer(describeArticleFileLink(link), link)'));
     check('module installed from app.js', appJs.includes('installAttachmentViewerModal()')
@@ -100,6 +109,18 @@ async function main() {
     check('localStorage bridge is fully removed',
         !modalJs.includes('localStorage') && !modalJs.includes('OVERLAY_KEY')
         && !index.includes('dumbpad_attachment_overlay_v1'));
+    check('settings list drops the button and makes thumb/name the preview entry',
+        appJs.includes('settings-asset-preview')
+        && appJs.includes('classifyAsset')
+        && appJs.includes('openNativeAssetPreview')
+        && appJs.includes('ensureThoughtsManager')
+        && !appJs.includes('data-asset-action="view">查看 / 编辑')
+        && css.includes('.settings-asset-preview-mask')
+        && css.includes('.asset-native-overlay'));
+    check('settings thumb keeps flex centering (no high-specificity display:block)',
+        /\.settings-asset-preview \.settings-asset-thumb-file\s*\{[^}]*display:\s*flex/.test(css)
+        && /\.settings-asset-preview img\.settings-asset-thumb\s*\{[^}]*display:\s*block/.test(css)
+        && !/\.settings-asset-preview \.settings-asset-thumb\s*\{[^}]*display:\s*block/.test(css));
     check('no new UI / icon / CSS / date dependency',
         !['react', 'vue', 'lucide', 'lucide-static', 'dayjs', 'date-fns', 'moment', 'bootstrap', 'tailwindcss']
             .some((dep) => dep in pkg.dependencies || dep in pkg.devDependencies));
@@ -171,8 +192,19 @@ async function main() {
         return { ok: false, status: 404, json: async () => ({}), text: async () => '' };
     };
 
-    const { installAttachmentViewerModal } = await import('../public/managers/attachment-viewer-modal.js');
+    const { installAttachmentViewerModal, classifyAsset } = await import('../public/managers/attachment-viewer-modal.js');
     check('installAttachmentViewerModal mounts', installAttachmentViewerModal() === true);
+    check('asset type dispatch is exact',
+        classifyAsset({ name: 'notes.md', type: 'text/markdown' }) === 'text'
+        && classifyAsset({ name: 'data.csv', type: 'text/csv' }) === 'text'
+        && classifyAsset({ name: 'a.txt', type: 'text/plain' }) === 'text'
+        && classifyAsset({ name: 'photo.png', type: 'image/png' }) === 'image'
+        && classifyAsset({ name: 'clip.mp4', type: 'video/mp4' }) === 'media'
+        && classifyAsset({ name: 'song.mp3', type: 'audio/mpeg' }) === 'media'
+        && classifyAsset({ name: 'book.pdf', type: 'application/pdf' }) === 'pdf'
+        && classifyAsset({ name: 'doc.docx', type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }) === 'unsupported'
+        && classifyAsset({ name: 'app.exe', type: 'application/octet-stream' }) === 'unsupported'
+        && classifyAsset({ name: 'bundle.zip', type: 'application/zip' }) === 'unsupported');
     check('demo inline handler names are exposed',
         ['openAttachmentViewer', 'saveFileContent', 'copyFullContent', 'triggerToast',
             'setModeA', 'handleEditorInput', 'closeModal', 'handleOverlayClick',
