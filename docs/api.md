@@ -567,12 +567,12 @@ curl -X POST http://localhost:3000/api/assets/files \
 | `variant` | 行为 |
 |---|---|
 | `preview` | 仅图片可用，返回 WebP 预览，适合正文渲染 |
-| `original` | 返回上传时的原始字节与原始 MIME；普通附件强制下载；**音视频附件**（`video/*`、`audio/*`）以 `Content-Disposition: inline` 返回并支持 `Range` 请求（`206` 分段 + `Accept-Ranges: bytes`），供编辑器内嵌播放器引用 |
-| `download` | 返回原始字节，并带 `Content-Disposition: attachment` |
+| `original` | 返回上传时的原始字节与原始 MIME；**PDF** 返回 `Content-Disposition: inline` + `X-Content-Type-Options: nosniff`，供浏览器内置 PDF viewer 以 `<iframe>` 原生渲染；**音视频附件**（`video/*`、`audio/*`）以 `Content-Disposition: inline` 返回并支持 `Range` 请求（`206` 分段 + `Accept-Ranges: bytes`），供编辑器内嵌播放器引用；其余普通附件强制下载 |
+| `download` | 返回原始字节，并带 `Content-Disposition: attachment`（PDF 同样强制下载） |
 
 不存在或非法 id 返回 `404`；`preview`、`original`、`download` 之外的 variant 同样返回 `404`。
 
-> **可编辑文本附件**（`kind=file` 且扩展名为 `txt` / `md` / `markdown` / `csv`）：这三个 variant 返回 `Cache-Control: no-store, private` 而不是 `immutable`，因为内容可通过下面的 `/content` 端点原地改写；其余资源维持一年 immutable 缓存。
+> **可编辑文本附件**（`kind=file` 且扩展名为 `txt` / `md` / `markdown` / `csv`）与 **PDF**：这些 variant 返回 `Cache-Control: no-store, private` 而不是 `immutable`。文本附件可通过下面的 `/content` 端点原地改写；PDF 的 `Content-Disposition` 由 `attachment` 改成了 `inline`，旧响应不能继续躺在浏览器缓存里。其余资源维持一年 immutable 缓存。
 
 ### GET /api/assets/:id/content
 
