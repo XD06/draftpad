@@ -6,6 +6,10 @@
 
 ## [Unreleased]
 
+### 新增
+
+- **方案 A 附件浮层 + 文本附件原地保存**：`public/index.html` 挂载 demo 的 iOS 卡片式浮层（HTML/class/CSS 变量/间距/阴影/SVG/动效 1:1 冻结，样式独立在 `Assets/attachment-viewer-modal.css` 并限定到 `.modal-overlay` 作用域，不改现有样式文件）。三个真实入口（文章附件胶囊菜单、Thought 文件附件卡、设置附件列表）都打开同一个浮层；预览/编辑、三态保存状态、字数统计、ESC/遮罩关闭与焦点回归照搬 demo。数据接真接口：`GET /api/assets/:id/content` 读 UTF-8 正文 + `contentVersion`，`PUT /api/assets/:id/content`（`X-Asset-Base-Version`）**原地**写回同一个资产 id，版本落后返回 `409 + currentVersion`，前端复用 `app.js` 的 `NoteSyncController.mergeContents()` 三方合并、冲突 toast 与「保留用户输入」分支；同一 id 读-改-写进程内串行化。可编辑文本资产（`txt`/`md`/`markdown`/`csv`）的变体响应改 `no-store`，避免保存后下载命中 immutable 旧缓存；其余资源缓存策略不变。请求失败一律 error toast 且不清空 textarea。回归：`npm run test:attachment-viewer-modal`（jsdom）、`npm run test:attachment-viewer-modal-browser`（真机 Chrome，分段器 x 零位移 + 真实 PUT 保存）、`test:assets` 补 409/并发/字节往返用例。
+
 ### 性能
 
 - **新附件不再内联 base64 + 存量内联附件迁移脚本（S3 legacy 的「每次请求都重传整份集合」根治）**：上一条把内联载荷从**响应**里剥掉了，但集合对象本身仍带着它——线上是 S3 + legacy，`GET /api/thoughts?limit=1` 也要 1.2s（`/api/config` 基线 510ms），差值是每次请求都要把整份 `thoughts.json` 从 S3 拉下来；本地 benchmark 交叉验证 4.12MB 的集合解析只要 10ms，所以那 ~700ms 几乎全是下载。同时**新**非图片附件仍会继续内联（4MB 文件 → 5.3MB base64 永久进集合），等于把问题重新装回去。两处一起修：

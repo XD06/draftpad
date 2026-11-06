@@ -120,6 +120,18 @@
         "responses": { "200": { "description": "Reused an existing byte-identical ordinary file asset", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/FileAsset" } } } }, "201": { "description": "Created ordinary file asset", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/FileAsset" } } } }, "413": { "$ref": "#/components/responses/Error" }, "415": { "$ref": "#/components/responses/Error" } }
       }
     },
+    "/api/assets/{id}/content": {
+      "parameters": [
+        { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "pattern": "^[a-fA-F0-9-]{16,64}$" } }
+      ],
+      "get": { "summary": "Read a text asset as UTF-8 content with its optimistic contentVersion", "responses": { "200": { "description": "Text content and version (Cache-Control: no-store)", "content": { "application/json": { "schema": { "type": "object", "required": ["id", "content", "contentVersion"], "properties": { "id": { "type": "string" }, "name": { "type": "string" }, "type": { "type": "string" }, "size": { "type": "integer" }, "contentVersion": { "type": "integer", "minimum": 0 }, "content": { "type": "string" } } } } } }, "404": { "$ref": "#/components/responses/Error" }, "415": { "$ref": "#/components/responses/Error" } } },
+      "put": {
+        "summary": "Overwrite a text asset in place with optimistic concurrency (409 on stale baseVersion)",
+        "parameters": [{ "name": "X-Asset-Base-Version", "in": "header", "required": true, "description": "contentVersion returned by GET /content", "schema": { "type": "integer", "minimum": 0 } }],
+        "requestBody": { "required": true, "content": { "text/plain": { "schema": { "type": "string" } } } },
+        "responses": { "200": { "description": "Saved in place; unchanged=true when bytes were identical", "content": { "application/json": { "schema": { "type": "object", "required": ["success", "contentVersion"], "properties": { "success": { "type": "boolean" }, "unchanged": { "type": "boolean" }, "contentVersion": { "type": "integer" }, "size": { "type": "integer" } } } } } }, "400": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "409": { "description": "Stale baseVersion; body carries currentVersion", "content": { "application/json": { "schema": { "type": "object", "properties": { "error": { "type": "string" }, "currentVersion": { "type": "integer" } } } } } }, "413": { "$ref": "#/components/responses/Error" }, "415": { "$ref": "#/components/responses/Error" } }
+      }
+    },
     "/api/assets/{id}": {
       "delete": { "summary": "Delete a single asset", "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "description": "Deleted" }, "404": { "$ref": "#/components/responses/Error" } } }
     },

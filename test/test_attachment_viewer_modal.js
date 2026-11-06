@@ -85,8 +85,21 @@ async function main() {
     check('new assets are in service worker CORE_ASSETS',
         swJs.includes('/Assets/attachment-viewer-modal.css')
         && swJs.includes('/managers/attachment-viewer-modal.js'));
-    check('routes/asset-routes.js untouched (no new content update endpoint)',
-        !/app\.(put|patch)\([^)]*content/.test(assetRoutes));
+    // 用户已明确授权改 routes/：后端改动必须只包含 /content 原地保存端点。
+    check('authorized backend change is the /content read+write endpoint',
+        assetRoutes.includes("app.get('/api/assets/:id/content'")
+        && /app\.put\(\s*'\/api\/assets\/:id\/content'/.test(assetRoutes)
+        && assetRoutes.includes('currentVersion')
+        && assetRoutes.includes('withAssetContentLock'));
+    check('save is a real in-place PUT, not a re-upload',
+        modalJs.includes("method: 'PUT'") && modalJs.includes('X-Asset-Base-Version')
+        && !modalJs.includes('uploadFile'));
+    check('409 handling reuses app.js merge logic',
+        modalJs.includes('mergeContents') && modalJs.includes('CONFLICT_MESSAGE')
+        && modalJs.includes('response.status === 409'));
+    check('localStorage bridge is fully removed',
+        !modalJs.includes('localStorage') && !modalJs.includes('OVERLAY_KEY')
+        && !index.includes('dumbpad_attachment_overlay_v1'));
     check('no new UI / icon / CSS / date dependency',
         !['react', 'vue', 'lucide', 'lucide-static', 'dayjs', 'date-fns', 'moment', 'bootstrap', 'tailwindcss']
             .some((dep) => dep in pkg.dependencies || dep in pkg.devDependencies));
@@ -116,14 +129,47 @@ async function main() {
         hide() {},
     };
 
-    const readResponses = new Map();
-    window.fetch = async (url) => {
-        if (readResponses.has(url)) return { ok: true, status: 200, text: async () => readResponses.get(url) };
-        return { ok: false, status: 404, text: async () => '' };
-    };
-
+    const ASSET_ID = '0123456789abcdef0123456789abcdef';
+    const CONTENT_URL = `/api/assets/${ASSET_ID}/content`;
     const ORIGINAL = '# Real attachment\n\n真实正文';
-    readResponses.set('/api/assets/asset-1/original', ORIGINAL);
+    let serverContent = ORIGINAL;
+    let serverVersion = 0;
+    const putCalls = [];
+
+    // 模拟 GET/PUT /api/assets/:id/content：服务端只在 baseVersion 匹配时写入。
+    window.fetch = async (url, options = {}) => {
+        const method = options.method || 'GET';
+        const okJson = (data) => ({
+            ok: true, status: 200,
+            json: async () => data,
+            text: async () => JSON.stringify(data)
+        });
+        if (url === CONTENT_URL && method === 'GET') {
+            return okJson({
+                id: ASSET_ID, name: 'context-compaction.md', type: 'text/markdown',
+                size: Buffer.byteLength(serverContent),
+                contentVersion: serverVersion,
+                content: serverContent
+            });
+        }
+        if (url === CONTENT_URL && method === 'PUT') {
+            const sentVersion = Number(options.headers['X-Asset-Base-Version']);
+            putCalls.push({ body: String(options.body), version: sentVersion });
+            if (sentVersion !== serverVersion) {
+                return {
+                    ok: false, status: 409,
+                    json: async () => ({ error: 'conflict', currentVersion: serverVersion })
+                };
+            }
+            if (String(options.body) === serverContent) {
+                return okJson({ success: true, unchanged: true, contentVersion: serverVersion, size: serverContent.length });
+            }
+            serverContent = String(options.body);
+            serverVersion += 1;
+            return okJson({ success: true, unchanged: false, contentVersion: serverVersion, size: serverContent.length });
+        }
+        return { ok: false, status: 404, json: async () => ({}), text: async () => '' };
+    };
 
     const { installAttachmentViewerModal } = await import('../public/managers/attachment-viewer-modal.js');
     check('installAttachmentViewerModal mounts', installAttachmentViewerModal() === true);
@@ -133,12 +179,12 @@ async function main() {
             'downloadActiveAttachment'].every((name) => typeof window[name] === 'function'));
 
     const descriptor = {
-        id: 'asset-1',
+        id: ASSET_ID,
         name: 'context-compaction.md',
         type: 'text/markdown',
         size: 30100,
-        originalUrl: '/api/assets/asset-1/original',
-        downloadUrl: '/api/assets/asset-1/download',
+        originalUrl: `/api/assets/${ASSET_ID}/original`,
+        downloadUrl: `/api/assets/${ASSET_ID}/download`,
     };
     const trigger = document.createElement('button');
     document.body.appendChild(trigger);
@@ -155,7 +201,9 @@ async function main() {
     check('real size / encoding / category replace hardcoded meta',
         document.getElementById('file-title-a').textContent === 'context-compaction.md'
         && document.querySelector('.modal-header-a .file-tag').textContent === 'MD'
-        && /KB · UTF-8/.test(document.querySelector('.modal-header-a .file-sub-meta').textContent));
+        && document.querySelector('.modal-header-a .file-sub-meta').textContent
+            === `${Buffer.byteLength(ORIGINAL)} B · UTF-8`,
+        document.querySelector('.modal-header-a .file-sub-meta').textContent);
     check('word count is computed from real content (pure frontend)',
         document.getElementById('word-count-a').textContent === `${ORIGINAL.length} 字 · UTF-8`,
         document.getElementById('word-count-a').textContent);
@@ -213,55 +261,70 @@ async function main() {
         document.getElementById('save-status-text-a').textContent === '有未保存改动...');
     Object.defineProperty(window.navigator, 'onLine', { value: true, configurable: true });
 
-    /* 保存成功 → 真实上传 → 刷新（重新打开）后内容还在 */
-    class FakeXHR {
-        constructor() {
-            this.upload = { addEventListener() {} };
-            this.status = 0;
-            this.responseText = '';
-            this.handlers = {};
-        }
-        open() {}
-        setRequestHeader() {}
-        addEventListener(name, cb) { this.handlers[name] = cb; }
-        send() {
-            this.status = 201;
-            this.responseText = JSON.stringify({
-                id: 'asset-new', assetId: 'asset-new', name: 'context-compaction.md',
-                type: 'text/markdown', size: 24, kind: 'file', previewUrl: null,
-                originalUrl: '/api/assets/asset-new/original',
-                downloadUrl: '/api/assets/asset-new/download',
-            });
-            this.handlers.load?.();
-        }
-    }
-    global.XMLHttpRequest = FakeXHR;
+    /* 409 冲突：复用 app.js 的冲突 toast，输入不丢、服务端内容不被覆盖 */
+    serverContent = '另一台设备写入的远端内容';
+    serverVersion = 1;
+    textarea.value = '本地未保存的输入';
+    window.handleEditorInput();
+    toasts.length = 0;
+    await window.saveFileContent();
+    check('409 shows the app.js conflict toast',
+        toasts.some((t) => t.type === 'error' && /内容已在其他设备更新/.test(t.message)), toasts);
+    check('409 keeps user input', textarea.value === '本地未保存的输入', textarea.value);
+    check('409 keeps dirty state',
+        document.getElementById('save-status-text-a').textContent === '有未保存改动...');
+    check('409 must not overwrite server content', serverContent === '另一台设备写入的远端内容');
+
+    /* 保存成功 → 同一个资产 id 原地写入 → 刷新后内容还在 */
+    await window.openAttachmentViewer(descriptor, trigger);
+    await wait(30);
     const EDITED = '用户保存后的真实内容';
-    readResponses.set('/api/assets/asset-new/original', EDITED);
     textarea.value = EDITED;
     window.handleEditorInput();
+    putCalls.length = 0;
     toasts.length = 0;
     await window.saveFileContent();
     check('successful save shows success toast',
         toasts.some((t) => t.type === 'success' && /成功保存/.test(t.message)), toasts);
     check('successful save enters saved state',
         /^已保存于 /.test(document.getElementById('save-status-text-a').textContent));
-    check('saved bytes are tracked as a real server asset',
-        JSON.parse(window.localStorage.getItem('dumbpad_attachment_overlay_v1'))['asset-1'].id === 'asset-new');
+    check('save sends baseVersion read from the real interface',
+        putCalls.length === 1 && putCalls[0].version === 1 && putCalls[0].body === EDITED, putCalls);
+    check('save is in-place: no localStorage bridge',
+        window.localStorage.getItem('dumbpad_attachment_overlay_v1') === null);
+    check('save writes to the same asset, not a new upload', serverContent === EDITED && serverVersion === 2);
 
     await window.openAttachmentViewer(descriptor, trigger);
     await wait(30);
     check('content survives a reopen/refresh from the real read interface',
         textarea.value === EDITED, textarea.value);
 
-    /* 下载按钮走 getAssetDownloadUrl 的真实地址 */
+    /* 下载按钮仍指向同一个资产 id（不再指向某个「新资产」） */
     let downloaded = '';
     const realClick = dom.window.HTMLAnchorElement.prototype.click;
     dom.window.HTMLAnchorElement.prototype.click = function () { downloaded = this.getAttribute('href'); };
     toasts.length = 0;
     window.downloadActiveAttachment();
-    check('download uses real asset download URL', downloaded === '/api/assets/asset-new/download', downloaded);
+    check('download uses the unchanged real asset download URL',
+        downloaded === `/api/assets/${ASSET_ID}/download`, downloaded);
     dom.window.HTMLAnchorElement.prototype.click = realClick;
+
+    /* unchanged 保存返回 contentVersion 0 时不能误把版本 +1（否则下次保存必 409） */
+    serverContent = ORIGINAL;
+    serverVersion = 0;
+    await window.openAttachmentViewer(descriptor, trigger);
+    await wait(30);
+    putCalls.length = 0;
+    await window.saveFileContent();
+    check('byte-identical save keeps version 0',
+        putCalls.length === 1 && putCalls[0].version === 0, putCalls);
+    textarea.value = '随后一次真实改动';
+    window.handleEditorInput();
+    putCalls.length = 0;
+    await window.saveFileContent();
+    check('a later real save is not rejected by a bogus 409',
+        putCalls.length === 1 && putCalls[0].version === 0 && serverVersion === 1,
+        { putCalls, serverVersion });
 
     if (failures) {
         console.error(`\n${failures} check(s) failed`);

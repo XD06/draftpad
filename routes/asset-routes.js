@@ -2,7 +2,7 @@ const crypto = require('crypto');
 const express = require('express');
 const sharp = require('sharp');
 const { createAssetStorage, safeAssetId } = require('../scripts/asset-storage');
-const { getMaxFileBytes, validateFileAssetUpload } = require('../scripts/file-asset-policy');
+const { getMaxFileBytes, validateFileAssetUpload, FILE_TYPES } = require('../scripts/file-asset-policy');
 
 const MAX_IMAGE_BYTES = 50 * 1024 * 1024;
 const MAX_IMAGE_PIXELS = 100 * 1000 * 1000;
@@ -55,6 +55,41 @@ function createAssetId() {
 
 function sha256(buffer) {
     return crypto.createHash('sha256').update(buffer).digest('hex');
+}
+
+// 只有「文本类普通文件」的字节可以原地改写：图片带 preview 变体（改 original
+// 会让预览失真），音视频/压缩包是二进制。白名单直接取自上传策略里 type 以
+// text/ 开头的扩展名（txt / md / markdown / csv），与 /api/assets/files 同源。
+const TEXT_CONTENT_EXTENSIONS = new Set(
+    Object.entries(FILE_TYPES)
+        .filter(([, policy]) => String(policy.type).startsWith('text/'))
+        .map(([ext]) => ext)
+);
+
+function isEditableTextAsset(metadata) {
+    if (!metadata || String(metadata.kind || 'image') !== 'file') return false;
+    const base = String(metadata.name || '').trim().split(/[\\/]/).pop() || '';
+    const ext = base.toLowerCase().match(/\.([a-z0-9]{1,12})$/)?.[1] || '';
+    return TEXT_CONTENT_EXTENSIONS.has(ext);
+}
+
+function contentVersionOf(metadata) {
+    const value = Number(metadata?.contentVersion);
+    return Number.isFinite(value) && value >= 0 ? value : 0;
+}
+
+// 与 storage.withNotepadWriteLock 同形的进程内串行化：同一资产 id 的
+// 读-改-写必须排队，否则两个并发 PUT 会各自读到同一个 contentVersion 并
+// 双双通过 baseVersion 校验，409 就形同虚设。
+const contentWriteLocks = new Map();
+function withAssetContentLock(id, task) {
+    const previous = contentWriteLocks.get(id) || Promise.resolve();
+    const next = previous.catch(() => {}).then(task);
+    contentWriteLocks.set(id, next);
+    next.finally(() => {
+        if (contentWriteLocks.get(id) === next) contentWriteLocks.delete(id);
+    }).catch(() => {});
+    return next;
 }
 
 function responseAsset(metadata) {
@@ -280,6 +315,104 @@ function registerAssetRoutes(app, { storage, originValidationMiddleware, maxFile
         }
     });
 
+    // 文本类附件的「读接口」：把字节解成 UTF-8 文本并带出乐观并发版本。
+    // 必须 no-store —— 通用变体路由给的是 immutable 一年缓存，原地改写后
+    // 复用同一个 URL 会读到浏览器缓存里的旧字节。
+    app.get('/api/assets/:id/content', async (req, res) => {
+        const id = safeAssetId(req.params.id);
+        if (!id) return res.status(404).json({ error: 'Asset not found' });
+        try {
+            const metadata = await assets.readMetadata(id);
+            if (!metadata) return res.status(404).json({ error: 'Asset not found' });
+            if (!isEditableTextAsset(metadata)) {
+                return res.status(415).json({ error: 'Asset type does not support content editing' });
+            }
+            const asset = await assets.readAsset(id, 'original');
+            if (!asset) return res.status(404).json({ error: 'Asset not found' });
+            res.setHeader('Cache-Control', 'no-store, private');
+            res.json({
+                id,
+                name: metadata.name,
+                type: metadata.type,
+                size: Number(metadata.size) || asset.buffer.length,
+                contentVersion: contentVersionOf(metadata),
+                content: asset.buffer.toString('utf8')
+            });
+        } catch (error) {
+            console.error('Failed to read asset content:', error);
+            res.status(500).json({ error: 'Unable to read asset content' });
+        }
+    });
+
+    // 文本类附件的「原地保存」：body 是 UTF-8 原文（与 /api/assets/files 的
+    // raw body + X-Asset-* 头同形），X-Asset-Base-Version 用于乐观并发。
+    // 409 语义照抄 note-routes.js 的 POST /api/notes/:id：版本落后就拒绝，
+    // 前端复用 app.js:3044-3101 的合并 / 冲突 toast / 保留输入分支。
+    app.put(
+        '/api/assets/:id/content',
+        originValidationMiddleware,
+        express.raw({ type: ['text/plain', 'text/markdown', 'application/octet-stream'], limit: fileByteLimit }),
+        async (req, res) => {
+            const id = safeAssetId(req.params.id);
+            if (!id) return res.status(404).json({ error: 'Asset not found' });
+            const input = Buffer.isBuffer(req.body) ? req.body : null;
+            if (!input) return res.status(400).json({ error: 'Text body is required' });
+            // 与 file-asset-policy.js 的 MIN_FILE_BYTES 一致：不产生 0 字节资产。
+            if (input.length === 0) return res.status(400).json({ error: 'Text body is required' });
+            if (input.length > fileByteLimit) {
+                return res.status(413).json({ error: 'Asset content exceeds the size limit' });
+            }
+            let content;
+            try {
+                content = new TextDecoder('utf-8', { fatal: true }).decode(input);
+            } catch {
+                return res.status(400).json({ error: 'Asset content must be valid UTF-8' });
+            }
+            const rawVersion = req.get('x-asset-base-version');
+            const clientVersion = rawVersion === undefined || rawVersion === '' ? null : Number(rawVersion);
+            if (clientVersion !== null && (!Number.isInteger(clientVersion) || clientVersion < 0)) {
+                return res.status(400).json({ error: 'X-Asset-Base-Version must be a non-negative integer' });
+            }
+
+            try {
+                const result = await withAssetContentLock(id, async () => {
+                    const metadata = await assets.readMetadata(id);
+                    if (!metadata) return { status: 404, body: { error: 'Asset not found' } };
+                    if (!isEditableTextAsset(metadata)) {
+                        return { status: 415, body: { error: 'Asset type does not support content editing' } };
+                    }
+                    const currentVersion = contentVersionOf(metadata);
+                    const existing = await assets.readAsset(id, 'original');
+                    const currentContent = existing ? existing.buffer.toString('utf8') : '';
+                    // 与 note-routes.js:104-106 一致：内容没变就不计版本、不刷新时间。
+                    if (currentContent === content) {
+                        return { status: 200, body: { success: true, unchanged: true, contentVersion: currentVersion, size: input.length } };
+                    }
+                    if (clientVersion !== null && clientVersion !== currentVersion) {
+                        return { status: 409, body: { error: 'Asset content has been updated on another device', currentVersion } };
+                    }
+                    const nextVersion = currentVersion + 1;
+                    await assets.writeAsset({
+                        id,
+                        metadata: {
+                            ...metadata,
+                            size: input.length,
+                            hash: sha256(input),
+                            contentVersion: nextVersion,
+                            updatedAt: Date.now()
+                        },
+                        original: { buffer: input, contentType: String(metadata.type || 'text/plain') }
+                    });
+                    return { status: 200, body: { success: true, unchanged: false, contentVersion: nextVersion, size: input.length } };
+                });
+                return res.status(result.status).json(result.body);
+            } catch (error) {
+                console.error('Failed to write asset content:', error);
+                return res.status(500).json({ error: 'Unable to write asset content' });
+            }
+        }
+    );
+
     app.get('/api/assets/:id/:variant', async (req, res) => {
         const id = safeAssetId(req.params.id);
         if (!id) return res.status(404).json({ error: 'Asset not found' });
@@ -295,7 +428,11 @@ function registerAssetRoutes(app, { storage, originValidationMiddleware, maxFile
             // 'private' keeps shared caches (reverse proxies/CDNs) from
             // serving one account's authenticated asset responses to another;
             // browser caching behaviour is unaffected.
-            res.setHeader('Cache-Control', 'private, max-age=31536000, immutable');
+            // 文本类附件可被 /content 原地改写，不能再声明 immutable，否则保存后
+            // 下载同一个 URL 会命中浏览器缓存里的旧字节。
+            res.setHeader('Cache-Control', isEditableTextAsset(asset.metadata)
+                ? 'no-store, private'
+                : 'private, max-age=31536000, immutable');
             res.type(asset.contentType);
             // 媒体文件必须 inline 供 <video>/<audio> 引用，其余文件维持
             // attachment（download 变体永远强制下载）。

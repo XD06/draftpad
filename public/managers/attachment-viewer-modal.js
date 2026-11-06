@@ -6,15 +6,19 @@
 import { PreviewManager } from './preview.js';
 import { getFileCategory } from './file-type-icons.js';
 import { formatFileSize } from './article-file-command.js';
+import NoteSyncController from './note-sync-controller.js';
 import {
-    AssetApiClient,
     getAssetPreviewUrl,
     getAssetOriginalUrl,
     getAssetDownloadUrl,
 } from './asset-api-client.js';
 
-const OVERLAY_KEY = 'dumbpad_attachment_overlay_v1';
 const CONFLICT_MESSAGE = '内容已在其他设备更新，请刷新后再保存或复制当前内容';
+// 只借用 NoteSyncController 的纯函数 mergeContents()（app.js:3051 的同一套
+// 三方合并）；不碰它的启动缓存，所以给它一个不会落盘的 storageManager。
+const noteSyncController = new NoteSyncController({
+    storageManager: { load: () => null, save: () => {} }
+});
 
 const state = {
     overlay: null,
@@ -22,8 +26,8 @@ const state = {
     previewPane: null,
     textarea: null,
     attachment: null,
-    baseId: '',
-    overlayAtOpen: '',
+    assetId: '',
+    contentVersion: 0,
     currentContent: '',
     loadedBaseline: null,
     lastSavedContent: null,
@@ -31,8 +35,6 @@ const state = {
     saving: false,
     loadToken: 0,
 };
-
-const assetApi = new AssetApiClient();
 let markedLoader = null;
 let sanitizerLoader = null;
 
@@ -43,9 +45,11 @@ function normalizeAttachment(raw = {}) {
     const previewUrl = getAssetPreviewUrl(raw) || '';
     const originalUrl = getAssetOriginalUrl(raw) || '';
     const downloadUrl = getAssetDownloadUrl(raw) || '';
-    const id = String(raw.assetId || raw.id || '').trim();
     return {
-        id,
+        // Thought 附件的 id 是「实例 id」，assetId 才是服务端资产 id；
+        // 设置列表 / 文章胶囊则只有 id。统一由 resolveAssetId() 判定。
+        assetId: String(raw.assetId || '').trim(),
+        id: String(raw.id || '').trim(),
         name: String(raw.name || '未命名附件'),
         type: String(raw.type || ''),
         size: Number(raw.size || 0),
@@ -54,6 +58,17 @@ function normalizeAttachment(raw = {}) {
         downloadUrl,
         dataUrl: String(raw.dataUrl || ''),
     };
+}
+
+/** 资产 id 以 URL 为准（三个入口的 URL 都由服务端下发），字段只作提示。 */
+function resolveAssetId(att) {
+    const hint = String(att.assetId || '').trim();
+    if (/^[a-f0-9-]{16,64}$/i.test(hint)) return hint;
+    for (const url of [att.originalUrl, att.downloadUrl, att.previewUrl]) {
+        const match = String(url || '').match(/\/api\/assets\/([a-f0-9-]{16,64})\//i);
+        if (match) return match[1];
+    }
+    return '';
 }
 
 function resolveReadUrl(att) {
@@ -67,37 +82,31 @@ function detectEncoding(att) {
     return match ? match[1].toUpperCase() : 'UTF-8';
 }
 
-function readOverlay() {
-    try {
-        const parsed = JSON.parse(window.localStorage.getItem(OVERLAY_KEY) || '{}');
-        return parsed && typeof parsed === 'object' ? parsed : {};
-    } catch {
-        return {};
-    }
+function contentEndpoint(assetId) {
+    return `/api/assets/${encodeURIComponent(assetId)}/content`;
 }
 
-function writeOverlay(assetId, descriptor) {
-    if (!assetId) return;
-    try {
-        const map = readOverlay();
-        map[assetId] = descriptor;
-        window.localStorage.setItem(OVERLAY_KEY, JSON.stringify(map));
-    } catch {
-        /* 隐私模式下 localStorage 不可用：保存仍已落到服务端，只是下次打开不追新资产 */
-    }
-}
-
-function overlaySnapshot(assetId) {
-    const entry = readOverlay()[assetId];
-    return entry ? JSON.stringify(entry) : '';
-}
-
-async function readAttachmentContent(att) {
-    const url = resolveReadUrl(att);
+/**
+ * 读接口：资产型附件走 GET /content（UTF-8 文本 + contentVersion，no-store）；
+ * 遗留内联附件（dataUrl，没有资产 id）仍走它自己的 URL 读文本，但不可编辑保存。
+ */
+async function readAttachmentContent(att, assetId) {
+    const url = assetId ? contentEndpoint(assetId) : resolveReadUrl(att);
     if (!url) throw new Error('附件地址不可用，无法读取内容');
     const response = await window.fetch(url, { credentials: 'same-origin' });
+    if (assetId) {
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data?.error || `附件读取失败（HTTP ${response.status}）`);
+        return {
+            text: String(data.content ?? ''),
+            contentVersion: Number(data.contentVersion) || 0,
+            name: String(data.name || att.name),
+            type: String(data.type || att.type),
+            size: Number(data.size) || att.size,
+        };
+    }
     if (!response.ok) throw new Error(`附件读取失败（HTTP ${response.status}）`);
-    return await response.text();
+    return { text: await response.text(), contentVersion: 0, name: att.name, type: att.type, size: att.size };
 }
 
 function fillFileMeta(att) {
@@ -180,53 +189,88 @@ function handleEditorInput() {
 }
 
 /* ------------------------------------------------------------------
-   保存动作：真实写入服务端。
-   routes/asset-routes.js 没有内容更新端点（硬约束 7 禁止改后端），
-   因此复用现成的 POST /api/assets/files 上传端点把编辑后的字节存成真实资产；
-   资产没有 version 字段，所以 409 冲突用「打开时的快照 vs 保存时的快照」
-   做等价判定，行为复用 app.js:3044-3101 的冲突分支（error toast + 保留输入）。
+   保存动作：真正原地写回同一个资产（PUT /api/assets/:id/content）。
+   routes/asset-routes.js 的 baseVersion 冲突返回 409 + currentVersion；
+   这里复用 app.js:3044-3101 的处理顺序：拉远端 → 三方合并 → 可合就带新
+   版本重存，不可合就冲突 toast + 保持 dirty + 保留用户输入。
    ------------------------------------------------------------------ */
 async function saveFileContent() {
     if (!state.attachment || state.saving) return;
-    const text = state.textarea ? state.textarea.value : state.currentContent;
-    state.currentContent = text;
     state.saving = true;
+    let text = state.textarea ? state.textarea.value : state.currentContent;
     try {
-        // app.js:2977-2980 同款离线守卫：断网必须响亮失败且不清空 textarea
-        if (!window.navigator.onLine) throw new Error('网络已断开，保存失败，内容已保留');
+        // 最多两轮：第一轮被 409 打断并自动合并后，第二轮带新版本重存。
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+            state.currentContent = text;
+            // app.js:2977-2980 同款离线守卫：断网必须响亮失败且不清空 textarea
+            if (!window.navigator.onLine) throw new Error('网络已断开，保存失败，内容已保留');
+            if (!state.assetId) throw new Error('该附件不支持在线编辑（缺少资产 id），内容已保留');
 
-        // 409 等价冲突：另一个标签页 / 设备已经改写过同一附件
-        if (overlaySnapshot(state.baseId) !== state.overlayAtOpen) {
-            window.toaster?.show?.(CONFLICT_MESSAGE, 'error', true, 6000);
-            setSaveState('dirty');
+            const response = await window.fetch(contentEndpoint(state.assetId), {
+                method: 'PUT',
+                credentials: 'same-origin',
+                headers: {
+                    'Content-Type': 'text/plain; charset=utf-8',
+                    'X-Asset-Base-Version': String(state.contentVersion)
+                },
+                body: text
+            });
+            const data = await response.json().catch(() => ({}));
+
+            if (response.status === 409) {
+                let remote;
+                try {
+                    remote = await readAttachmentContent(state.attachment, state.assetId);
+                } catch (error) {
+                    throw new Error(error?.message || '读取远端内容失败，内容已保留');
+                }
+                const merge = noteSyncController.mergeContents({
+                    base: state.loadedBaseline,
+                    local: text,
+                    remote: remote.text
+                });
+                const conflictVersion = Number(data.currentVersion);
+                state.contentVersion = Number.isFinite(conflictVersion) ? conflictVersion : remote.contentVersion;
+                if (!merge.ok) {
+                    window.toaster?.show?.(CONFLICT_MESSAGE, 'error', true, 6000);
+                    setSaveState('dirty');
+                    return;
+                }
+                text = merge.content;
+                state.currentContent = text;
+                syncContent();
+                updateContentMetrics();
+                if (merge.content === remote.text) {
+                    // 远端已包含本地改动：直接采用远端，不必再写
+                    state.loadedBaseline = text;
+                    state.lastSavedContent = text;
+                    state.attachment = { ...state.attachment, size: remote.size };
+                    fillFileMeta(state.attachment);
+                    renderMarkdownSafely(text);
+                    setSaveState('saved');
+                    triggerToast('已自动合并远端修改', 'success');
+                    return;
+                }
+                triggerToast('已自动合并远端修改，正在同步', 'success');
+                continue;
+            }
+
+            if (!response.ok) throw new Error(data?.error || `保存失败（HTTP ${response.status}）`);
+            const savedVersion = Number(data.contentVersion);
+            state.contentVersion = Number.isFinite(savedVersion) ? savedVersion : state.contentVersion + 1;
+            state.loadedBaseline = text;
+            state.lastSavedContent = text;
+            state.attachment = { ...state.attachment, size: Number(data.size) || text.length };
+            fillFileMeta(state.attachment);
+            renderMarkdownSafely(text);
+            syncContent();
+            setSaveState('saved');
+            triggerToast('附件修改已成功保存至服务端！', 'success');
             return;
         }
-
-        const file = new File([text], state.attachment.name || 'attachment.md', {
-            type: state.attachment.type || 'text/markdown',
-        });
-        const saved = await assetApi.uploadFile(file);
-        const next = normalizeAttachment({ ...state.attachment, ...saved });
-
-        writeOverlay(state.baseId, {
-            id: String(saved.assetId || saved.id || ''),
-            name: next.name,
-            type: next.type,
-            size: next.size,
-            previewUrl: next.previewUrl,
-            originalUrl: next.originalUrl,
-            downloadUrl: next.downloadUrl,
-        });
-
-        state.attachment = next;
-        state.loadedBaseline = text;
-        state.lastSavedContent = text;
-        state.overlayAtOpen = overlaySnapshot(state.baseId);
-        fillFileMeta(next);
-        renderMarkdownSafely(text);
-        syncContent();
-        setSaveState('saved');
-        triggerToast('附件修改已成功保存至服务端！', 'success');
+        // 两轮都被 409 打断：不静默失败
+        window.toaster?.show?.(CONFLICT_MESSAGE, 'error', true, 6000);
+        setSaveState('dirty');
     } catch (error) {
         triggerToast(error?.message || '保存失败，内容已保留', 'error');
         setSaveState('dirty');
@@ -373,19 +417,18 @@ function setModeA(mode) {
 async function openAttachmentViewer(raw, trigger) {
     if (!state.overlay || !state.modal) return;
     const base = normalizeAttachment(raw);
-    if (!base.id && !resolveReadUrl(base)) {
+    const assetId = resolveAssetId(base);
+    if (!assetId && !resolveReadUrl(base)) {
         triggerToast('附件信息不完整，无法打开', 'error');
         return;
     }
 
-    const saved = readOverlay()[base.id] || null;
-    const active = saved ? normalizeAttachment({ ...base, ...saved }) : base;
-    state.attachment = active;
-    state.baseId = base.id;
-    state.overlayAtOpen = overlaySnapshot(base.id);
+    state.attachment = base;
+    state.assetId = assetId;
+    state.contentVersion = 0;
     state.lastFocused = trigger || document.activeElement;
 
-    fillFileMeta(active);
+    fillFileMeta(base);
     setModeA('preview');
     openActiveModal();
     // openActiveModal 会把 lastFocused 设为当前 activeElement，用入口覆盖回来
@@ -393,13 +436,16 @@ async function openAttachmentViewer(raw, trigger) {
 
     const token = ++state.loadToken;
     try {
-        const text = await readAttachmentContent(active);
+        const loaded = await readAttachmentContent(base, assetId);
         if (token !== state.loadToken || !state.overlay.classList.contains('open')) return;
-        state.currentContent = text;
-        state.loadedBaseline = text;
-        state.lastSavedContent = text;
+        state.currentContent = loaded.text;
+        state.contentVersion = loaded.contentVersion;
+        state.loadedBaseline = loaded.text;
+        state.lastSavedContent = loaded.text;
+        state.attachment = { ...base, name: loaded.name, type: loaded.type, size: loaded.size };
+        fillFileMeta(state.attachment);
         syncContent();
-        renderMarkdownSafely(text);
+        renderMarkdownSafely(loaded.text);
         updateContentMetrics();
         setSaveState('idle');
     } catch (error) {

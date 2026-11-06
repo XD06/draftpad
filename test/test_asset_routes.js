@@ -330,6 +330,133 @@ async function run() {
             'bulk-deleted assets must disappear from the listing'
         );
 
+        /* ---- 文本附件原地保存（GET/PUT /api/assets/:id/content） ---- */
+        const mdBytes = Buffer.from('# 原始正文\n\n第一行', 'utf8');
+        const mdUpload = await fetch(`${baseUrl}/api/assets/files`, {
+            method: 'POST',
+            headers: {
+                'content-type': 'application/octet-stream',
+                'x-asset-name': encodeURIComponent('笔记.md'),
+                'x-asset-type': 'text/markdown'
+            },
+            body: mdBytes
+        });
+        assert.strictEqual(mdUpload.status, 201, 'a markdown file asset should be accepted');
+        const mdAsset = await mdUpload.json();
+        const contentUrl = `${baseUrl}/api/assets/${mdAsset.id}/content`;
+
+        const readContent = async () => {
+            const response = await fetch(contentUrl);
+            assert.strictEqual(response.status, 200);
+            assert.match(response.headers.get('cache-control') || '', /no-store/i,
+                'editable text content must never be cached immutably');
+            return response.json();
+        };
+        const putContent = (body, version, extraHeaders = {}) => fetch(contentUrl, {
+            method: 'PUT',
+            headers: {
+                'content-type': 'text/plain; charset=utf-8',
+                'x-asset-base-version': String(version),
+                ...extraHeaders
+            },
+            body
+        });
+
+        const initial = await readContent();
+        assert.strictEqual(initial.content, mdBytes.toString('utf8'));
+        assert.strictEqual(initial.contentVersion, 0);
+        assert.strictEqual(initial.size, mdBytes.length);
+        assert.strictEqual(initial.name, '笔记.md');
+
+        const firstSave = await putContent('# 修改后的正文\n\n第二行', 0);
+        assert.strictEqual(firstSave.status, 200, 'in-place save with the right baseVersion should succeed');
+        const firstBody = await firstSave.json();
+        assert.strictEqual(firstBody.contentVersion, 1, 'each real change must bump the optimistic version');
+        assert.strictEqual(firstBody.size, Buffer.byteLength('# 修改后的正文\n\n第二行', 'utf8'));
+
+        const afterSave = await readContent();
+        assert.strictEqual(afterSave.content, '# 修改后的正文\n\n第二行', 'the SAME asset id must now return the edited bytes');
+        assert.strictEqual(afterSave.contentVersion, 1);
+
+        const originalAfterSave = await fetch(`${baseUrl}${mdAsset.originalUrl}`);
+        assert.match(originalAfterSave.headers.get('cache-control') || '', /no-store/i,
+            'the original/download variants of an editable text asset must not be immutable');
+        assert.strictEqual(Buffer.from(await originalAfterSave.arrayBuffer()).toString('utf8'),
+            '# 修改后的正文\n\n第二行', 'downloads must serve the edited bytes, not a stale cache');
+        const downloadAfterSave = await fetch(`${baseUrl}${mdAsset.downloadUrl}`);
+        assert.match(downloadAfterSave.headers.get('cache-control') || '', /no-store/i);
+        assert.strictEqual(Buffer.from(await downloadAfterSave.arrayBuffer()).toString('utf8'),
+            '# 修改后的正文\n\n第二行');
+
+        // No new asset may be created: the store still holds exactly one asset for these bytes.
+        const listAfterSave = await (await fetch(`${baseUrl}/api/assets`)).json();
+        assert.strictEqual(listAfterSave.assets.filter(item => item.id === mdAsset.id).length, 1,
+            'in-place save must keep the original asset id');
+
+        const noopSave = await putContent('# 修改后的正文\n\n第二行', 1);
+        const noopBody = await noopSave.json();
+        assert.strictEqual(noopSave.status, 200);
+        assert.strictEqual(noopBody.unchanged, true, 'a byte-identical save must not bump the version');
+        assert.strictEqual(noopBody.contentVersion, 1);
+
+        const staleSave = await putContent('来自过期版本的输入', 0);
+        assert.strictEqual(staleSave.status, 409, 'a stale baseVersion must return 409');
+        const staleBody = await staleSave.json();
+        assert.strictEqual(staleBody.currentVersion, 1, '409 must carry currentVersion for the client to recover');
+        assert.strictEqual((await readContent()).content, '# 修改后的正文\n\n第二行',
+            'a rejected conflict must not overwrite the server content');
+
+        // Two concurrent writers with the same baseVersion: the per-id lock must
+        // let exactly one through and reject the other with 409.
+        const [racerA, racerB] = await Promise.all([
+            putContent('并发写入 A', 1),
+            putContent('并发写入 B', 1)
+        ]);
+        assert.deepStrictEqual([racerA.status, racerB.status].sort(), [200, 409],
+            'concurrent in-place saves must not both pass the same baseVersion');
+        assert.strictEqual((await readContent()).contentVersion, 2);
+
+        const beforeBadRequests = (await readContent()).content;
+        const badVersion = await putContent('x', 'not-a-number');
+        assert.strictEqual(badVersion.status, 400, 'a non-integer baseVersion must be rejected');
+        const invalidUtf8 = await putContent(Buffer.from([0xff, 0xfe, 0x41]), 2);
+        assert.strictEqual(invalidUtf8.status, 400, 'invalid UTF-8 body must be rejected');
+        const emptyBody = await fetch(contentUrl, {
+            method: 'PUT',
+            headers: { 'content-type': 'text/plain', 'x-asset-base-version': '2' },
+            body: ''
+        });
+        assert.strictEqual(emptyBody.status, 400, 'an absent text body must be rejected');
+        assert.strictEqual((await readContent()).content, beforeBadRequests,
+            'rejected writes must leave the stored bytes untouched');
+
+        const missingContent = await fetch(`${baseUrl}/api/assets/abcdef0123456789abcdef0123456789/content`);
+        assert.strictEqual(missingContent.status, 404, 'unknown asset ids must 404 on the content endpoint');
+
+        // Only text-ish file assets are editable: images/PDFs keep their immutable bytes.
+        const pdfBytes = Buffer.from('%PDF-1.4 binary');
+        const pdfUpload = await fetch(`${baseUrl}/api/assets/files`, {
+            method: 'POST',
+            headers: {
+                'content-type': 'application/octet-stream',
+                'x-asset-name': encodeURIComponent('只读.pdf'),
+                'x-asset-type': 'application/pdf'
+            },
+            body: pdfBytes
+        });
+        const pdfAsset = await pdfUpload.json();
+        const pdfContentGet = await fetch(`${baseUrl}/api/assets/${pdfAsset.id}/content`);
+        assert.strictEqual(pdfContentGet.status, 415, 'a PDF must not expose the text editing endpoint');
+        const pdfPut = await fetch(`${baseUrl}/api/assets/${pdfAsset.id}/content`, {
+            method: 'PUT',
+            headers: { 'content-type': 'text/plain', 'x-asset-base-version': '0' },
+            body: 'overwrite'
+        });
+        assert.strictEqual(pdfPut.status, 415, 'a PDF must not be overwritable through the content endpoint');
+        const pdfOriginal = await fetch(`${baseUrl}${pdfAsset.originalUrl}`);
+        assert.match(pdfOriginal.headers.get('cache-control') || '', /immutable/i,
+            'non-editable assets must keep the original immutable cache policy');
+
         console.log('Asset route checks passed');
     } finally {
         await new Promise(resolve => server.close(resolve));

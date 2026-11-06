@@ -572,6 +572,53 @@ curl -X POST http://localhost:3000/api/assets/files \
 
 不存在或非法 id 返回 `404`；`preview`、`original`、`download` 之外的 variant 同样返回 `404`。
 
+> **可编辑文本附件**（`kind=file` 且扩展名为 `txt` / `md` / `markdown` / `csv`）：这三个 variant 返回 `Cache-Control: no-store, private` 而不是 `immutable`，因为内容可通过下面的 `/content` 端点原地改写；其余资源维持一年 immutable 缓存。
+
+### GET /api/assets/:id/content
+
+读取文本类附件的正文（UTF-8），供「方案 A 附件浮层」的预览 / 编辑使用。响应 `Cache-Control: no-store, private`。
+
+```json
+{
+  "id": "f2f621c1-5d64-462f-8e3a-5bc1dd4c16a7",
+  "name": "context-compaction.md",
+  "type": "text/markdown",
+  "size": 30100,
+  "contentVersion": 3,
+  "content": "# 标题\n\n正文"
+}
+```
+
+`contentVersion` 是乐观并发版本，新建资产为 `0`，每次真实改动 `+1`。图片、PDF、音视频等非文本资产返回 `415`；未知 id 返回 `404`。
+
+### PUT /api/assets/:id/content
+
+**原地**改写文本类附件的字节（不新建资产、不改 id，三个入口与下载链接始终指向同一份数据）。请求体是 `text/plain; charset=utf-8` 的 UTF-8 原文，版本放在请求头。
+
+| 项 | 说明 |
+|---|---|
+| `Content-Type` | `text/plain; charset=utf-8` |
+| `X-Asset-Base-Version` | 打开浮层时由 `GET /content` 拿到的 `contentVersion`；必须是非负整数 |
+| body | UTF-8 文本；空正文、非法 UTF-8、超过 `ASSET_MAX_FILE_BYTES` 均拒绝 |
+
+| 状态 | 含义 |
+|---|---|
+| `200` | `{ "success": true, "contentVersion": 4, "size": 30120, "unchanged": false }`；字节完全相同时 `unchanged: true` 且不涨版本 |
+| `400` | 缺 body / 空正文 / 非法 UTF-8 / `X-Asset-Base-Version` 不是非负整数 |
+| `404` | 资产不存在 |
+| `409` | `{ "error": "...", "currentVersion": 4 }` —— `baseVersion` 落后，服务端内容未被覆盖；前端复用 `app.js` 的三方合并与冲突 toast |
+| `413` | 正文超过大小上限 |
+| `415` | 非文本类资产（图片 / PDF / 音视频 / 压缩包）不可编辑 |
+
+同一资产 id 的读-改-写在进程内串行化，两个并发写入带同一个 `baseVersion` 时必定一个 `200`、一个 `409`。
+
+```bash
+curl -X PUT http://localhost:3000/api/assets/f2f621c1-5d64-462f-8e3a-5bc1dd4c16a7/content \
+  -H "Content-Type: text/plain; charset=utf-8" \
+  -H "X-Asset-Base-Version: 3" \
+  --data-binary @note.md
+```
+
 ### GET /api/assets
 
 列出全部图片与普通附件资源，按最新在前返回元数据，供附件管理界面做多选与清理。

@@ -1137,6 +1137,58 @@ async function run() {
         });
         assert(result.response.status === 400 && result.body.code === 'ASSET_NOT_FOUND', 'missing asset references should return a structured client error');
 
+        // 文本附件原地保存：真实 server.js 中间件栈（origin 校验 / express.raw /
+        // 全局 express.json）下的 GET + PUT /content 与 409 乐观并发。
+        const mdBytes = Buffer.from('# 端到端原始正文', 'utf8');
+        result = await request('/api/assets/files', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/octet-stream',
+                'x-asset-name': encodeURIComponent('端到端.md'),
+                'x-asset-type': 'text/markdown'
+            },
+            body: mdBytes
+        });
+        assert(result.response.ok, 'uploading a markdown asset for in-place editing should succeed');
+        const textAsset = result.body;
+        const contentRoute = `/api/assets/${textAsset.id}/content`;
+
+        result = await request(contentRoute);
+        assert(result.response.status === 200 && result.body.content === mdBytes.toString('utf8'),
+            'GET /content should return the UTF-8 body on the real server');
+        assert(result.body.contentVersion === 0, 'a fresh text asset should start at contentVersion 0');
+        assert(/no-store/i.test(result.response.headers.get('cache-control') || ''),
+            'GET /content must not be cached');
+
+        result = await request(contentRoute, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'text/plain; charset=utf-8', 'X-Asset-Base-Version': '0' },
+            body: '# 端到端已保存正文'
+        });
+        assert(result.response.status === 200 && result.body.contentVersion === 1,
+            'PUT /content should save in place and bump the version on the real server');
+
+        result = await request(contentRoute);
+        assert(result.body.content === '# 端到端已保存正文' && result.body.contentVersion === 1,
+            'reading the SAME asset id after save must return the edited bytes');
+
+        result = await request(textAsset.originalUrl);
+        assert(result.response.status === 200 && /no-store/i.test(result.response.headers.get('cache-control') || ''),
+            'editable text asset variants must drop the immutable cache header');
+
+        result = await request(contentRoute, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'text/plain; charset=utf-8', 'X-Asset-Base-Version': '0' },
+            body: '过期的并发写入'
+        });
+        assert(result.response.status === 409 && result.body.currentVersion === 1,
+            'a stale baseVersion must return 409 with currentVersion on the real server');
+        result = await request(contentRoute);
+        assert(result.body.content === '# 端到端已保存正文', 'a rejected 409 must not overwrite the bytes');
+
+        result = await request(`/api/assets/${textAsset.id}`, { method: 'DELETE' });
+        assert(result.response.ok, 'cleanup of the end-to-end text asset should succeed');
+
         result = await request('/api/thoughts', {
             method: 'POST',
             body: JSON.stringify({ text: 'API relation target', tags: ['tech'], subItems: [] })
