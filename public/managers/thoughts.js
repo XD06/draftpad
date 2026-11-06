@@ -98,8 +98,46 @@ function resetSubtaskSwipe(row) {
     swipeAction?.style.removeProperty('--subtask-swipe-opacity');
 }
 
+/**
+ * 文件类附件 → 方案 A 浮层，用 document 捕获阶段的事件委托。
+ * Thought 卡片有首屏渐进渲染、搜索跳转、reveal、编辑态回写等多条重渲染路径，
+ * 逐元素 addEventListener 在重渲染后必然丢监听器；一旦丢了，<a download> 会
+ * 静默下载一个小文件（PC 上看起来就是「点了没反应」），移动端则因为触摸路径
+ *  timing 不同偶尔还能打开。委托到 document 后所有路径、鼠标与触摸共用一条。
+ */
+let thoughtFileDelegationInstalled = false;
+export function installThoughtFileAttachmentDelegation() {
+    if (thoughtFileDelegationInstalled) return;
+    thoughtFileDelegationInstalled = true;
+    document.addEventListener('click', (event) => {
+        if (typeof event.target?.closest !== 'function') return;
+        const anchor = event.target.closest('.thought-attachment-file');
+        if (!anchor) return;
+        // 修饰键点击保留浏览器原生「另存为」，不抢用户已有的下载路径。
+        if (event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+        event.preventDefault();
+        event.stopPropagation();
+        if (typeof window.openAttachmentViewer !== 'function') {
+            // 失败必须响亮：浮层未就绪（例如 SW 拿到旧 index.html）也不能静默降级成下载。
+            window.toaster?.show?.('附件预览未就绪，请刷新页面后重试', 'error', false, 3000);
+            return;
+        }
+        const name = anchor.getAttribute('download') || anchor.getAttribute('title') || '附件';
+        const href = anchor.getAttribute('href') || '';
+        window.openAttachmentViewer({
+            id: anchor.dataset.attId || '',
+            name,
+            type: anchor.dataset.attType || '',
+            size: Number(anchor.dataset.attSize) || 0,
+            originalUrl: href,
+            downloadUrl: href,
+        }, anchor);
+    }, true);
+}
+
 export class ThoughtsManager {
     constructor(app) {
+        installThoughtFileAttachmentDelegation();
         this.app = app;
         this.apiClient = app.apiClient || new ThoughtApiClient();
         this.agentApi = app.agentApi || new AgentApiClient();
@@ -1812,18 +1850,8 @@ export class ThoughtsManager {
             });
         });
 
-        // 文件类附件：demo 的方案 A 浮层入口（图片仍走上面的 lightbox）。
-        card.querySelectorAll('.thought-attachment-file').forEach((anchor) => {
-            anchor.addEventListener('click', (event) => {
-                if (typeof window.openAttachmentViewer !== 'function') return;
-                const att = (Array.isArray(thought.attachments) ? thought.attachments : [])
-                    .find(item => String(item?.id || '') === String(anchor.dataset.attId || ''));
-                if (!att) return;
-                event.preventDefault();
-                event.stopPropagation();
-                window.openAttachmentViewer(att, anchor);
-            });
-        });
+        // 文件类附件统一走 document 事件委托（见文件顶部），此处不再逐元素绑定。
+        // 图片仍由上面的 .thought-attachment-preview 走 app 已有的图片灯箱。
 
         const aiStatusBtn = card.querySelector('.thought-ai-status');
         if (aiStatusBtn) {

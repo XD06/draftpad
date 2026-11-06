@@ -66,8 +66,12 @@
 /* ========================================================
    模态遮罩层 (MODAL BACKDROP)
    ======================================================== */
+/* demo 里 .modal-overlay 是 absolute，靠 .stage-container{position:relative} 当
+   定位舞台；DumbPad 的 .container / body / html 全是 static，absolute + inset:0
+   会落到「文档原点」而不是视口——列表一滚动浮层就被顶到视口外（实测 y=-900，
+   DOM 显示 open 但屏幕上看不见）。这里只把宿主改成 fixed，其余声明与 demo 一致。 */
 .modal-overlay {
-    position: absolute;
+    position: fixed;
     inset: 0;
     background: rgba(0, 0, 0, 0.38);
     backdrop-filter: blur(10px);
@@ -168,6 +172,27 @@
     display: flex;
     align-items: center;
     gap: 8px;
+    min-width: 0;
+}
+
+/* tag 与体积/编码同一行：文件名独占一行，长文件名走省略号不挤压分段器 */
+.file-meta-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    margin-top: 1px;
+}
+
+.file-meta-row .file-tag {
+    flex-shrink: 0;
+}
+
+.file-meta-row .file-sub-meta {
+    margin-top: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .file-name-heading {
@@ -351,23 +376,147 @@
 }
 
 .preview-content pre {
+    position: relative;
     background: #282c34;
     color: #abb2bf;
-    padding: 14px 18px;
+    padding: 36px 18px 16px; /* 顶部留出语言 / 复制条 */
     border-radius: 10px;
     font-family: var(--font-mono);
     font-size: 13px;
+    line-height: 1.65;
     overflow-x: auto;
     margin: 16px 0;
+    border: 1px solid rgba(255, 255, 255, 0.06);
 }
 
-.preview-content code.inline {
+.preview-content pre code {
+    background: transparent;
+    color: inherit;
+    padding: 0;
+    font-family: inherit;
+    font-size: inherit;
+}
+
+/* 项目 preview.js 生成的语言标签 + 复制按钮（右上角，常驻可见） */
+.preview-content pre .code-lang-copy-button {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 8px;
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.08);
+    color: #c8ccd4;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    line-height: 1.4;
+    white-space: nowrap;
+    cursor: pointer;
+    opacity: 0.85;
+    transition: opacity 0.15s ease, background 0.15s ease, color 0.15s ease;
+}
+
+.preview-content pre .code-lang-copy-button:hover,
+.preview-content pre .code-lang-copy-button:focus-visible {
+    opacity: 1;
+    background: var(--primary-color);
+    border-color: transparent;
+    color: #ffffff;
+}
+
+.preview-content pre .code-lang-copy-button:active {
+    transform: scale(0.96);
+}
+
+.preview-content pre .code-lang-copy-button .lang-text {
+    font-weight: 600;
+    letter-spacing: 0.3px;
+}
+
+.preview-content pre .code-lang-copy-button .copy-icon {
+    display: flex;
+    align-items: center;
+}
+
+.preview-content pre .code-lang-copy-button .copy-icon svg {
+    display: block;
+    width: 12px;
+    height: 12px;
+}
+
+.preview-content code.inline,
+.preview-content :not(pre) > code {
     background: #f2f2f7;
     color: #d73a49;
     padding: 2px 6px;
     border-radius: 4px;
     font-family: var(--font-mono);
     font-size: 13px;
+}
+
+/* 预览排版补齐：demo 只定义了 h1/h2/p/blockquote/ul/li/pre，
+   marked 实际还会产出 h3、有序列表、链接、表格、分隔线、图片与行内代码。 */
+.preview-content h3 {
+    font-size: 16px;
+    font-weight: 600;
+    margin-top: 18px;
+    margin-bottom: 8px;
+    color: #333;
+}
+
+.preview-content ol {
+    padding-left: 20px;
+    margin-bottom: 14px;
+}
+
+.preview-content ol li {
+    margin-bottom: 6px;
+}
+
+.preview-content a {
+    color: var(--primary-ink);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+}
+
+.preview-content hr {
+    border: 0;
+    border-top: 1px solid var(--border-color);
+    margin: 22px 0;
+}
+
+.preview-content img {
+    max-width: 100%;
+    height: auto;
+    border-radius: 8px;
+}
+
+.preview-content table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 16px 0;
+    font-size: 14px;
+}
+
+.preview-content th,
+.preview-content td {
+    border: 1px solid var(--border-color);
+    padding: 7px 10px;
+    text-align: left;
+}
+
+.preview-content th {
+    background: var(--surface-subtle);
+    font-weight: 600;
+}
+
+.preview-content input[type="checkbox"] {
+    accent-color: var(--primary-color);
+    margin-right: 6px;
 }
 
 /* 编辑模式源码区 (移动端设置 16px 防止 iOS 自动强行放大视口) */
@@ -651,14 +800,231 @@
     }
 }
 
-/* 7. 尊重系统的"减少动态效果"设置 */
 @media (prefers-reduced-motion: reduce) {
     .modal-overlay *,
     .modal-overlay *::before,
-    .modal-overlay *::after {
+    .modal-overlay *::after,
+    .asset-native-overlay *,
+    .settings-asset-preview,
+    .settings-asset-preview-mask {
         animation-duration: 0.01ms !important;
         animation-iteration-count: 1 !important;
         transition-duration: 0.01ms !important;
         scroll-behavior: auto !important;
+    }
+}
+
+/* ==================================================================
+   附件管理：缩略图 / 文件名即预览入口（原「查看 / 编辑」按钮已移除）。
+   ================================================================== */
+.settings-asset-preview {
+    position: relative;
+    display: block;
+    width: 44px;
+    height: 44px;
+    padding: 0;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    cursor: pointer;
+    overflow: hidden;
+    flex: 0 0 44px;
+}
+
+/* 只给 <img> 缩略图做块级化。文件图标容器 .settings-asset-thumb-file 必须
+   保持 display:flex + align/justify center（styles.css 已定义）：用高特异性的
+   display:block 覆盖会把里面的 <svg> 顶到左上角，甚至溢出容器顶部。 */
+.settings-asset-preview img.settings-asset-thumb {
+    display: block;
+    width: 44px;
+    height: 44px;
+    max-width: 44px;
+}
+
+.settings-asset-preview .settings-asset-thumb-file {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    max-width: 44px;
+}
+
+.settings-asset-preview-mask {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 8px;
+    background: rgba(28, 28, 30, 0.55);
+    color: #ffffff;
+    opacity: 0;
+    transition: opacity 0.15s ease;
+    pointer-events: none;
+}
+
+.settings-asset-preview:hover .settings-asset-preview-mask,
+.settings-asset-preview:focus-visible .settings-asset-preview-mask {
+    opacity: 1;
+}
+
+.settings-asset-preview:focus-visible {
+    outline: 2px solid var(--primary-color, #E5A100);
+    outline-offset: 2px;
+}
+
+.settings-asset-info .settings-asset-name {
+    cursor: pointer;
+}
+
+.settings-asset-info .settings-asset-name:hover,
+.settings-asset-info .settings-asset-name:focus-visible {
+    color: var(--primary-color, #E5A100);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+}
+
+.settings-asset-item.is-not-previewable .settings-asset-preview {
+    cursor: default;
+}
+
+.settings-asset-item.is-not-previewable .settings-asset-preview-mask {
+    background: rgba(28, 28, 30, 0.35);
+}
+
+/* ==================================================================
+   非文本附件的原生预览层：PDF 用浏览器内置 viewer，音视频用原生播放器。
+   零依赖；只作为方案 A 文本浮层之外的分流，不与它同时打开。
+   ================================================================== */
+.asset-native-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 9990;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    background: rgba(0, 0, 0, 0.55);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+}
+
+.asset-native-overlay[hidden] {
+    display: none;
+}
+
+.asset-native-panel {
+    display: flex;
+    flex-direction: column;
+    width: min(1080px, 100%);
+    height: min(86vh, 860px);
+    overflow: hidden;
+    border-radius: 16px;
+    background: #ffffff;
+    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.24);
+}
+
+.asset-native-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 14px;
+    border-bottom: 1px solid rgba(60, 60, 67, 0.12);
+    flex-shrink: 0;
+}
+
+.asset-native-name {
+    min-width: 0;
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 14px;
+    font-weight: 600;
+    color: #1c1c1e;
+}
+
+.asset-native-download {
+    flex-shrink: 0;
+    padding: 5px 12px;
+    border: 1px solid rgba(60, 60, 67, 0.18);
+    border-radius: 8px;
+    font-size: 12px;
+    font-weight: 600;
+    color: #444;
+    text-decoration: none;
+}
+
+.asset-native-download:hover {
+    border-color: #E5A100;
+    color: #96610a;
+}
+
+.asset-native-close {
+    flex-shrink: 0;
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 0;
+    border-radius: 50%;
+    background: #f2f2f7;
+    color: #48484a;
+    cursor: pointer;
+}
+
+.asset-native-close:hover {
+    background: #e5e5ea;
+}
+
+.asset-native-stage {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #1c1c1e;
+}
+
+.asset-native-frame {
+    width: 100%;
+    height: 100%;
+    border: 0;
+    background: #ffffff;
+}
+
+.asset-native-video {
+    max-width: 100%;
+    max-height: 100%;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    background: #000000;
+}
+
+.asset-native-audio-wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 28px;
+    color: #8e8e93;
+    padding: 32px;
+}
+
+.asset-native-audio {
+    width: min(520px, 80vw);
+}
+
+@media (max-width: 768px) {
+    .asset-native-overlay {
+        padding: 0;
+    }
+
+    .asset-native-panel {
+        width: 100%;
+        height: 100%;
+        border-radius: 0;
     }
 }

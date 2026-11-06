@@ -139,7 +139,7 @@ function renderAttachments(attachments) {
         }
         const sizeText = formatAttSize(att.size);
         const icon = getFileIcon(att.type);
-        return `<a class="thought-attachment thought-attachment-file" href="${escapeAttText(getAttachmentDownloadUrl(att))}" download="${name}" title="${name}" data-att-id="${escapeAttText(att.id || '')}">
+        return `<a class="thought-attachment thought-attachment-file" href="${escapeAttText(getAttachmentDownloadUrl(att))}" download="${name}" title="${name}" data-att-id="${escapeAttText(att.id || '')}" data-att-size="${Number(att.size) || 0}" data-att-type="${escapeAttText(att.type || '')}">
                     <span class="thought-attachment-icon">${icon}</span>
                     <span class="thought-attachment-info">
                         <span class="thought-attachment-name">${name}</span>
