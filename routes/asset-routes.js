@@ -425,18 +425,25 @@ function registerAssetRoutes(app, { storage, originValidationMiddleware, maxFile
             const asset = await assets.readAsset(id, requestedVariant);
             if (!asset) return res.status(404).json({ error: 'Asset not found' });
             const isMediaAsset = /^(video|audio)\//i.test(asset.contentType || '');
+            const isPdfAsset = /^application\/pdf$/i.test(String(asset.contentType || ''));
             // 'private' keeps shared caches (reverse proxies/CDNs) from
             // serving one account's authenticated asset responses to another;
             // browser caching behaviour is unaffected.
-            // 文本类附件可被 /content 原地改写，不能再声明 immutable，否则保存后
-            // 下载同一个 URL 会命中浏览器缓存里的旧字节。
-            res.setHeader('Cache-Control', isEditableTextAsset(asset.metadata)
+            // 文本类附件可被 /content 原地改写；PDF 的 Content-Disposition 从
+            // attachment 改成了 inline。两者都不能声明 immutable，否则旧响应
+            // 会在浏览器里躺一年，保存/预览一直拿到过期字节或错误 disposition。
+            res.setHeader('Cache-Control', isEditableTextAsset(asset.metadata) || isPdfAsset
                 ? 'no-store, private'
                 : 'private, max-age=31536000, immutable');
             res.type(asset.contentType);
             // 媒体文件必须 inline 供 <video>/<audio> 引用，其余文件维持
             // attachment（download 变体永远强制下载）。
-            if (req.params.variant === 'download' || (asset.metadata?.kind === 'file' && !isMediaAsset)) {
+            // PDF 例外：original/preview 走 inline 才能被浏览器内置 viewer 以
+            // <iframe> 原生渲染；配合 nosniff，避免被当成其它类型解释。
+            if (isPdfAsset && req.params.variant !== 'download') {
+                res.setHeader('Content-Disposition', 'inline');
+                res.setHeader('X-Content-Type-Options', 'nosniff');
+            } else if (req.params.variant === 'download' || (asset.metadata?.kind === 'file' && !isMediaAsset)) {
                 res.attachment(asset.filename);
             } else {
                 res.setHeader('Content-Disposition', 'inline');

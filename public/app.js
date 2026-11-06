@@ -12,7 +12,7 @@ import NoteSyncController from './managers/note-sync-controller.js';
 import SettingsDataPanel from './managers/settings-data-panel.js';
 import { AssetApiClient } from './managers/asset-api-client.js';
 import { renderAssetThumbHtml } from './managers/file-type-icons.js';
-import { installAttachmentViewerModal } from './managers/attachment-viewer-modal.js';
+import { installAttachmentViewerModal, classifyAsset, openNativeAssetPreview } from './managers/attachment-viewer-modal.js';
 import { WorkspaceRouter } from './managers/workspace-router.js';
 import { ImportTargetRegistry } from './managers/import-target-registry.js';
 import { ClipboardImportCoordinator } from './managers/clipboard-import-coordinator.js';
@@ -1340,6 +1340,37 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     }
 
+    /**
+     * 附件管理里的统一预览分流：
+     * - text  → 方案 A 浮层（原地读/写 /content）
+     * - image → app 已有的 thought-attachment-lightbox（下载 + 左右切换）
+     * - media → 原生 <video>/<audio>（服务端已支持 inline + Range）
+     * - pdf   → 浏览器内置 PDF viewer（零依赖；asset-routes 对 pdf 下发 inline）
+     * - 其它 → 明确提示 + 保留「下载」，不假装能预览
+     */
+    function openAssetPreview(asset, trigger) {
+        const kind = classifyAsset(asset);
+        if (kind === 'text') {
+            if (typeof window.openAttachmentViewer === 'function') {
+                window.openAttachmentViewer(asset, trigger);
+            } else {
+                toaster.show('附件预览未就绪，请刷新页面后重试', 'error', false, 3000);
+            }
+            return;
+        }
+        if (kind === 'image') {
+            ensureThoughtsManager().then((manager) => {
+                manager.openAttachmentLightbox({ attachments: [asset] }, asset.id, trigger);
+            }).catch(() => toaster.show('图片预览加载失败，请重试', 'error', false, 3000));
+            return;
+        }
+        if (kind === 'media' || kind === 'pdf') {
+            openNativeAssetPreview(asset, kind, trigger);
+            return;
+        }
+        toaster.show('该格式暂不支持在线预览，请点击「下载」查看', 'info', false, 3000);
+    }
+
     function renderAssetItems(items = []) {
         if (!settingsAssetsList) return;
         const count = Array.isArray(items) ? items.length : 0;
@@ -1366,18 +1397,27 @@ document.addEventListener('DOMContentLoaded', async () => {
             const thumb = renderAssetThumbHtml(item);
             const downloadUrl = escapeHtml(item.downloadUrl || item.originalUrl || '');
             const checked = selectedAssetIds.has(id) ? ' checked' : '';
+            // 只有可直接预览的类型才给「点击预览」；其余明确提示，不再假装可编辑。
+            const previewKind = classifyAsset(item);
+            const previewable = previewKind !== 'unsupported';
+            const previewHint = previewable ? '点击预览' : '该格式暂不支持在线预览，请下载后查看';
+            const mask = previewable
+                ? '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>'
+                : '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12"></path><path d="m7 10 5 5 5-5"></path><path d="M5 21h14"></path></svg>';
             return `
-                <div class="settings-asset-item" data-asset-id="${escapeHtml(id)}">
+                <div class="settings-asset-item${previewable ? '' : ' is-not-previewable'}" data-asset-id="${escapeHtml(id)}" data-preview-kind="${previewKind}">
                     <label class="settings-asset-select-wrap">
                         <input type="checkbox" class="settings-asset-select" data-asset-select aria-label="选择附件"${checked} />
                     </label>
-                    ${thumb}
+                    <button type="button" class="settings-asset-preview" data-asset-action="view" title="${previewHint}" aria-label="${previewHint}：${name}">
+                        ${thumb}
+                        <span class="settings-asset-preview-mask" aria-hidden="true">${mask}</span>
+                    </button>
                     <div class="settings-asset-info">
-                        <div class="settings-asset-name" title="${name}">${name}</div>
+                        <div class="settings-asset-name" title="${name}" data-asset-action="view" role="button" tabindex="0">${name}</div>
                         <div class="settings-asset-meta">${meta}</div>
                     </div>
                     <div class="settings-asset-actions">
-                        <button type="button" class="settings-asset-insert" data-asset-action="view">查看 / 编辑</button>
                         <button type="button" class="settings-asset-insert" data-asset-action="insert">插入</button>
                         <a class="settings-asset-download" href="${downloadUrl}" download data-asset-action="download">下载</a>
                         <button type="button" class="danger" data-asset-action="delete">删除</button>
@@ -4168,9 +4208,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 } else if (button.dataset.assetAction === 'view') {
                     event.preventDefault();
                     const asset = assetItemsById.get(item.dataset.assetId);
-                    if (asset && typeof window.openAttachmentViewer === 'function') {
-                        window.openAttachmentViewer(asset, button);
-                    }
+                    if (asset) openAssetPreview(asset, button);
                 }
             });
             settingsAssetsList.addEventListener('change', (event) => {
