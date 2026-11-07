@@ -23,6 +23,9 @@ module.exports = async function testAttachmentModalLayout(browser) {
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <link rel="stylesheet" href="/Assets/styles.css">
         <link rel="stylesheet" href="/Assets/attachment-viewer-modal.css">
+        <!-- 与 index.html 同序：全局浅色 hljs 主题在浮层样式之后加载，
+             真机必须验证浮层内的 scoped 深色主题能压过它。 -->
+        <link rel="stylesheet" href="/css/@highlightjs/github.min.css">
         <style>html,body{margin:0;overflow-x:hidden}#filler{height:3000px}</style>
         </head><body><button id="entry" type="button">入口</button>
         <div class="settings-asset-item" id="thumb-probe" data-preview-kind="pdf" data-asset-id="thumb-probe">
@@ -58,7 +61,11 @@ module.exports = async function testAttachmentModalLayout(browser) {
           window.__serverVersion = 0;
           window.__putCalls = [];
           window.__toasts = [];
+          window.__fetchDelay = 0;
           window.fetch = async (url, options = {}) => {
+            if ((options.method || 'GET') === 'GET' && window.__fetchDelay) {
+              await new Promise((r) => setTimeout(r, window.__fetchDelay));
+            }
             if (options.method === 'PUT') {
               const version = Number(options.headers['X-Asset-Base-Version']);
               window.__putCalls.push({ url, body: String(options.body), version });
@@ -89,6 +96,17 @@ module.exports = async function testAttachmentModalLayout(browser) {
           window.__openModal = async (long) => {
             if (long) window.__serverContent = LONG;
             await window.openAttachmentViewer({
+              id: ASSET_ID, name: 'context-compaction.md', type: 'text/markdown', size: 30100,
+              originalUrl: '/api/assets/' + ASSET_ID + '/original',
+              downloadUrl: '/api/assets/' + ASSET_ID + '/download'
+            }, document.getElementById('entry'));
+          };
+          /* 可控延迟的读接口：把「打开 → GET 返回」这段窗口拉长，量连续点开
+             两篇时屏幕上有没有闪过上一篇。返回 Promise，调用方可选择不 await。 */
+          window.__openWith = (content, delay) => {
+            window.__serverContent = content;
+            window.__fetchDelay = delay || 0;
+            return window.openAttachmentViewer({
               id: ASSET_ID, name: 'context-compaction.md', type: 'text/markdown', size: 30100,
               originalUrl: '/api/assets/' + ASSET_ID + '/original',
               downloadUrl: '/api/assets/' + ASSET_ID + '/download'
@@ -126,6 +144,10 @@ module.exports = async function testAttachmentModalLayout(browser) {
     app.get('/', (_req, res) => res.type('html').send(fixture));
     app.use('/Assets', express.static(path.join(ROOT, 'public', 'Assets')));
     app.use('/managers', express.static(path.join(ROOT, 'public', 'managers')));
+    // 与生产 server.js 一致：全局浅色 hljs 主题，用于验证浮层 scoped 深色主题
+    // 在「后加载 + 低特异性」的劣势下仍能覆盖它。
+    app.get('/css/@highlightjs/github.min.css', (_req, res) => res.type('text/css').send(
+        fs.readFileSync(path.join(ROOT, 'node_modules/@highlightjs/cdn-assets/styles/github.min.css'), 'utf8')));
     app.get('/js/marked/marked.esm.js', (_req, res) => res.type('application/javascript').send(markedStub));
     app.get('/js/@highlightjs/highlight.min.js', (_req, res) => res.type('application/javascript').send(
         'export default { getLanguage: () => null, highlight: (c) => ({ value: c }), highlightAuto: (c) => ({ value: c }), registerLanguage() {} };'));
@@ -352,6 +374,97 @@ module.exports = async function testAttachmentModalLayout(browser) {
             assert.ok(thumbGeometry.inside, `${item.label} 文件图标不得溢出缩略图容器`);
 
             assert.deepEqual(downloads, [], `${item.label} 点击预览不得触发原生下载`);
+
+            /* 新增问题 1：PC 头部必须有下载按钮（demo 只给了移动端底部栏），
+               且真的下载同一个资产；移动端顶部不重复、底部栏仍在。 */
+            const downloadHeader = page.locator('.btn-download-header');
+            if (item.label === 'desktop') {
+                assert.equal(await downloadHeader.count(), 1, 'PC 头部必须有下载按钮');
+                assert.ok(await downloadHeader.isVisible(), 'PC 下载按钮必须可见');
+                const captured = await page.evaluate(() => {
+                    const real = HTMLAnchorElement.prototype.click;
+                    let result = null;
+                    HTMLAnchorElement.prototype.click = function () {
+                        result = { href: this.getAttribute('href'), name: this.getAttribute('download') };
+                    };
+                    try { window.downloadActiveAttachment(); } finally {
+                        HTMLAnchorElement.prototype.click = real;
+                    }
+                    return result;
+                });
+                assert.ok(/^\/api\/assets\/[a-f0-9-]+\/download$/.test(captured?.href || ''),
+                    `PC 下载必须走真实资产下载地址：${JSON.stringify(captured)}`);
+                assert.equal(captured?.name, 'context-compaction.md', '下载文件名必须取附件名');
+            } else {
+                assert.ok(!(await downloadHeader.isVisible()), '移动端顶部不重复放下载按钮');
+                assert.equal(await page.locator('#mobile-bar-a button[title="下载"]').count(), 1,
+                    '移动端底部大拇指栏仍保留同款下载按钮');
+            }
+
+            /* 新增问题 3：代码块 token 必须是高对比深色主题。全局浅色
+               github.min.css 在浮层样式之后加载，这里量 computed color 验证
+               scoped Atom One Dark 真的压过了它，而不只是源码里写了规则。 */
+            const highlight = await page.evaluate(() => {
+                const pre = document.querySelector('.preview-content pre');
+                if (!pre) return { error: '预览区没有代码块' };
+                const code = pre.querySelector('code');
+                const probe = document.createElement('span');
+                probe.className = 'hljs-string';
+                probe.textContent = '"probe"';
+                code.appendChild(probe);
+                const channel = (value) => {
+                    const s = value / 255;
+                    return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+                };
+                const luminance = (css) => {
+                    const [r, g, b] = (String(css).match(/[\d.]+/g) || []).slice(0, 3).map(Number).map(channel);
+                    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+                };
+                const fg = luminance(getComputedStyle(probe).color);
+                const bg = luminance(getComputedStyle(pre).backgroundColor);
+                return {
+                    color: getComputedStyle(probe).color,
+                    background: getComputedStyle(pre).backgroundColor,
+                    contrast: (Math.max(fg, bg) + 0.05) / (Math.min(fg, bg) + 0.05),
+                };
+            });
+            assert.ok(!highlight.error, highlight.error);
+            assert.equal(highlight.color, 'rgb(152, 195, 121)',
+                `hljs-string 必须是 Atom One Dark #98c379；全局浅色主题是 rgb(3, 47, 98)：${highlight.color}`);
+            assert.ok(highlight.contrast >= 4.5,
+                `${item.label} 代码块 token 对比度必须 ≥ 4.5，实测 ${Number(highlight.contrast).toFixed(2)}`);
+
+            /* 新增问题 2：连续点开两篇，读接口返回前绝不能显示上一篇。
+               根因是 state.currentContent 残留，不是缓存（/content 是 no-store）。 */
+            const flash = await page.evaluate(async () => {
+                await window.__openWith('PREVIOUS-DOC 上一篇正文', 0);
+                await new Promise((r) => setTimeout(r, 300));
+                const before = document.getElementById('render-preview-a').textContent;
+                window.__pending = window.__openWith('CURRENT-DOC 当前篇正文', 500);
+                await new Promise((r) => setTimeout(r, 80));
+                return {
+                    before,
+                    immediate: document.getElementById('render-preview-a').textContent,
+                    textarea: document.getElementById('textarea-a').value,
+                };
+            });
+            assert.ok(flash.before.includes('PREVIOUS-DOC'),
+                `基线：第一篇必须真的渲染出来 (${flash.before.slice(0, 80)})`);
+            assert.ok(!flash.immediate.includes('PREVIOUS-DOC'),
+                `${item.label} 打开第二篇的瞬间不得残留上一篇 (${flash.immediate.slice(0, 80)})`);
+            assert.ok(flash.immediate.includes('正在加载附件内容'),
+                `${item.label} 打开瞬间必须显示加载占位 (${flash.immediate.slice(0, 80)})`);
+            assert.equal(flash.textarea, '', `${item.label} 打开瞬间 textarea 必须清空`);
+            await page.evaluate(() => window.__pending);
+            await page.waitForTimeout(300);
+            const settled = await page.evaluate(() => ({
+                preview: document.getElementById('render-preview-a').textContent,
+                textarea: document.getElementById('textarea-a').value,
+            }));
+            assert.ok(settled.preview.includes('CURRENT-DOC') && !settled.preview.includes('PREVIOUS-DOC'),
+                `${item.label} 读接口返回后必须只剩当前篇 (${settled.preview.slice(0, 100)})`);
+            assert.ok(settled.textarea.includes('CURRENT-DOC'), `${item.label} textarea 必须收到当前篇`);
+            await page.evaluate(() => { window.__fetchDelay = 0; });
 
             assert.deepEqual(pageErrors, [], `${item.label} 控制台零报错：${pageErrors.join(' | ')}`);
             await context.close();
