@@ -243,6 +243,7 @@ npm run seed:demo
 - 普通文本连续输入并按一次 Enter：源码模式中只出现软换行，不产生可编辑空段；标题、列表、引用和代码块仍保留各自的默认回车行为。
 - 在软换行出来的那一行**行首**输入 `# ` / `- ` / `1. ` / `> `：当场变成标题 / 列表 / 引用，且刷新后一模一样；标记打在行中间（如 `正文# `）不应触发；`---` 分隔线与 ``` 围栏仍按整块语法处理（不在实时拆块范围内）。
 - 源码/可视/阅读模式切换时的光标与视线恢复。
+- 源码模式滚到长文中下部后连续输入：视线停在原处、光标只随输入前移（不会跳回文顶）。
 - Notepad 和 Thought 的中文搜索、跳转及关键词高亮。
 - Thought 的置顶、子任务、附件、手动关联、完成筛选、分页加载和离线 outbox 重试。
 - `baseVersion` 的乐观并发、`409` 冲突、Thought 的 `light=1`、`format=page`、`sort=timeline` 和 `updatedSince` API。
@@ -276,6 +277,16 @@ npm run seed:demo
 修复边界：远端更新按卡片原位刷新（`renderSocketDelta`/`patchRenderedThought`），只有焦点在被更新卡片内时才推迟到失焦；WS 回声对既有对象原位合并；inline 子任务新增改为同一输入框链式提交（预览行 + 失焦后完整渲染），回车带 IME 组合态守卫。详细边界见 [技术总览](docs/technical-overview.md)。
 
 防回归：改动后运行 `npm run test:thought-sync-browser`（双设备浏览器回归，需本机 Chrome）与 `npm run test:thought-modules`。
+
+### 已修复：源码模式长文输入时视线飞到文顶
+
+症状：源码模式滚到文章中下部后输入任意文字，视口瞬间回到文章顶部，而光标仍停在原字符处。
+
+根因：`autosizeSourceTextarea()` 每次输入都先把 textarea 高度归零再量 `scrollHeight`；归零那一帧外层滚动容器的可滚范围塌到一屏，浏览器把 `scrollTop` 钳到 0，高度写回后不还原。`value` 与 `selectionStart` 全程没变，所以「视线跑了、光标没跑」。
+
+修复边界：量高前后在真正承载滚动的容器上保存/恢复 `scrollTop`（桌面 `.vditor-wysiwyg`、移动端整页滚动）；源码模式的光标快照与恢复统一到同一容器，切文/刷新能恢复该文上次的阅读位置；远端更新 / 409 合并时源码模式保持视线，**渲染模式不变**。改动全部隔离在源码模式分支，未改 CSS 与输入/保存链路。
+
+防回归：`npm run test:source-mode-button`、`npm run test:tiptap-caret`，以及真机 `npm run test:source-mode-browser`（需本机 Chrome 与 `playwright`，不在 `npm test` 里）。详细根因与约束见 [技术总览](docs/technical-overview.md)。
 
 ## ✅ 验证命令
 
