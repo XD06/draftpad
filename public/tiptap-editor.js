@@ -650,8 +650,10 @@ export class HybridMarkdownEditor {
         // 源码模式下焦点在 textarea、PM 未聚焦，上面这条光标快照拿不到；而远端
         // 更新 / 409 三方合并只是刷新同一篇正文，视线必须留在原处。setValue 的源码
         // 分支按「整体换正文」不保留旧滚动像素（切文章），这里把视线补回来。
+        // 只管源码模式：渲染模式的视线由下面 PM 的 setCaretAtVisibleOffset /
+        // scrollIntoView 负责，再插一次手写 scrollTop 会与它叠加（未经真机验证）。
         // 容器在 setValue 之前取：那时 textarea 高度正常，getScrollContainer() 不会误判。
-        const scroller = this.getScrollContainer();
+        const scroller = this.sourceMode ? this.getScrollContainer() : null;
         const savedScrollTop = scroller ? scroller.scrollTop : null;
         this.setValue(value, emit);
         if (scroller && savedScrollTop !== null && scroller.scrollTop !== savedScrollTop) {

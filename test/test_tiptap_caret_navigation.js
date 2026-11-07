@@ -135,6 +135,23 @@ async function main() {
     }
     editor.setSourceMode(false);
 
+    // 渲染模式不接管视线：由 PM 的 setCaretAtVisibleOffset / scrollIntoView 单独负责。
+    // 收窄前这里会无条件读一次滚动容器，两条机制叠加且没有真机验证；钉住「零接管」。
+    await sleep(50);   // 等 setSourceMode(false) 的比例恢复循环落定
+    const realGetScrollContainer = editor.getScrollContainer.bind(editor);
+    let scrollContainerReads = 0;
+    editor.getScrollContainer = () => {
+        scrollContainerReads += 1;
+        return realGetScrollContainer();
+    };
+    try {
+        editor.setValuePreservingCaret('# 标题\n\n正文\n\n远端追加二', false);
+        check('setValuePreservingCaret: 渲染模式不接管滚动容器',
+            scrollContainerReads === 0, scrollContainerReads);
+    } finally {
+        delete editor.getScrollContainer;
+    }
+
     if (failures) {
         console.error(`\n${failures} check(s) failed`);
         process.exit(1);
