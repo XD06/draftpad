@@ -497,7 +497,9 @@ export class HybridMarkdownEditor {
             const sourceTextarea = this.getSourceTextarea();
             if (sourceTextarea) {
                 sourceTextarea.value = nextValue;
-                this.autosizeSourceTextarea(sourceTextarea);
+                // 整体换正文（切文章 / 载入）：旧文档的滚动像素没有意义，别把视线
+                // 钉在上一篇文章的位置上；切文落点由上层光标快照管理。
+                this.autosizeSourceTextarea(sourceTextarea, { preserveScrollTop: false });
             }
         }
         const cached = this._parsedDocuments.get(nextValue);
@@ -1142,13 +1144,26 @@ export class HybridMarkdownEditor {
      * 源码 textarea 的高度由内容撑开（与渲染卡片一样交给外层滚动层滚动）。
      * 固定高度会让源码模式自己滚、渲染模式外层滚，两套几何：长文章下源码区
      * 停在屏幕上、内部出滚动条，切换时视线还会被重置到顶部。
+     *
+     * 「先归零再量」会让 textarea 在这一瞬塌到 CSS 的 min-height（约一屏），
+     * 外层滚动容器的 scrollHeight 跟着塌、浏览器把 scrollTop 钳到 0；高度写回后
+     * scrollTop 不会自动还原——这就是「在文章底部输入一个字，视线飞到文顶、
+     * 光标却留在原处」。量高前后保住外层滚动位置，归零才只是量高手段、不泄漏
+     * 到视线。所有调用点（input / resize / 切换 / 恢复循环）共用这一层保护。
      */
-    autosizeSourceTextarea(textarea = this.getSourceTextarea()) {
+    autosizeSourceTextarea(textarea = this.getSourceTextarea(), { preserveScrollTop = true } = {}) {
         if (!textarea) return;
+        // 容器必须在归零**之前**取：塌陷后 .vditor-wysiwyg 的
+        // scrollHeight - clientHeight 会 <= 1，getScrollContainer() 会误判成整页滚动。
+        const scroller = preserveScrollTop ? this.getScrollContainer() : null;
+        const savedScrollTop = scroller ? scroller.scrollTop : null;
         // 先归零再量：留着上一次的 height 时 scrollHeight 会被旧高度钳住。
         textarea.style.height = 'auto';
         const nextHeight = Math.max(1, textarea.scrollHeight);
         textarea.style.height = `${nextHeight}px`;
+        if (scroller && savedScrollTop !== null && scroller.scrollTop !== savedScrollTop) {
+            scroller.scrollTop = savedScrollTop;
+        }
     }
 
     /**

@@ -315,6 +315,50 @@ const wait = (port, t = 25000) => new Promise((res, rej) => {
     await p4.waitForTimeout(1600);
     const moved = await caretProbe();
     check('源码里移动光标后切回渲染会跟到第 90 段', moved.mode === 'render' && moved.blockSection === '90', moved);
+
+    // ===== I. 源码模式里输入：视线不得飞到文顶 =====
+    // 形态：长文底部放下光标 → 真实键入 → autosize 的 height:'auto' 曾把外层
+    // 滚动范围塌到一屏、scrollTop 被钳到 0（光标留原地、视线回顶部）。
+    // 断言键入前后 scrollTop 与光标偏移都不变；连续输入不累积漂移。
+    await p4.locator('#toggle-source-mode').click();
+    await p4.waitForTimeout(1500);   // 等切换后的比例/光标恢复循环落定
+    const sourceInputProbe = () => p4.evaluate(() => {
+      const s = document.querySelector('.typora-editor-shell .vditor-wysiwyg');
+      const ta = document.querySelector('.tiptap-source-textarea');
+      return {
+        scrollTop: s.scrollTop, max: s.scrollHeight - s.clientHeight,
+        selectionStart: ta.selectionStart, valueLength: ta.value.length,
+      };
+    });
+    const iBefore = await p4.evaluate(() => {
+      const s = document.querySelector('.typora-editor-shell .vditor-wysiwyg');
+      const ta = document.querySelector('.tiptap-source-textarea');
+      const max = s.scrollHeight - s.clientHeight;
+      const offset = Math.floor(ta.value.length * 0.8);
+      ta.focus({ preventScroll: true });
+      ta.setSelectionRange(offset, offset);
+      s.scrollTop = max * 0.8;
+      return {
+        scrollTop: s.scrollTop, max, selectionStart: ta.selectionStart,
+        valueLength: ta.value.length,
+      };
+    });
+    check('I 夹具成立：源码模式深滚动且光标在 80% 处',
+      iBefore.max > 1000 && iBefore.scrollTop > iBefore.max * 0.5 && iBefore.selectionStart > 0, iBefore);
+    await p4.keyboard.insertText('甲');
+    await p4.waitForTimeout(300);
+    const iAfter = await sourceInputProbe();
+    check('源码底部键入后视线不回到顶部',
+      Math.abs(iAfter.scrollTop - iBefore.scrollTop) < 2, { before: iBefore, after: iAfter });
+    check('源码底部键入后光标只随输入前移一位',
+      iAfter.selectionStart === iBefore.selectionStart + 1, { before: iBefore, after: iAfter });
+    check('源码底部键入确实写进了正文',
+      iAfter.valueLength === iBefore.valueLength + 1, { before: iBefore, after: iAfter });
+    await p4.keyboard.insertText('乙丙丁');
+    await p4.waitForTimeout(300);
+    const iMore = await sourceInputProbe();
+    check('连续输入视线不累积漂移',
+      Math.abs(iMore.scrollTop - iBefore.scrollTop) < 2, { before: iBefore, after: iMore });
     await p4.close();
 
     // ===== E. 移动端：整页滚动（ios-theme），滚动容器不是 .vditor-wysiwyg =====
@@ -593,6 +637,53 @@ const wait = (port, t = 25000) => new Promise((res, rej) => {
     check('整页滚动：光标在带内时再次归位是 no-op（视线不被拽走）',
         Math.abs(afterNoop.scrollTop - beforeNoop) < 2, { beforeNoop, afterNoop });
     await p8.close();
+
+    // ===== I2. 移动端整页滚动：同样的输入不得把视线甩回顶部 =====
+    // 桌面 I 段量的是 .vditor-wysiwyg 内滚；这里 getScrollContainer() 返回
+    // document.scrollingElement，autosize 归零同样会塌掉整页滚动范围。
+    // 移动端还叠着 vv/键盘归位链路，因此只断言「仍在深滚动区」，精确值由 I 段钉。
+    const p9 = await browser.newPage({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true });
+    await p9.goto(`http://127.0.0.1:${PORT}/`, { waitUntil: 'networkidle' });
+    await p9.waitForTimeout(2500);
+    await p9.evaluate(() => {
+      const item = [...document.querySelectorAll('#directory-tree .dir-item')]
+        .find(el => el.textContent.includes('Long Scroll'));
+      item.click();
+    });
+    await p9.waitForTimeout(2000);
+    await p9.evaluate(() => document.getElementById('toggle-source-mode').click());
+    await p9.waitForTimeout(1500);
+    const m9Before = await p9.evaluate(() => {
+      const page = document.scrollingElement;
+      const ta = document.querySelector('.tiptap-source-textarea');
+      const inner = document.querySelector('.typora-editor-shell .vditor-wysiwyg');
+      const max = page.scrollHeight - page.clientHeight;
+      const offset = Math.floor(ta.value.length * 0.8);
+      ta.focus({ preventScroll: true });
+      ta.setSelectionRange(offset, offset);
+      page.scrollTop = max * 0.8;
+      return {
+        scrollTop: page.scrollTop, max, selectionStart: ta.selectionStart,
+        innerIsScroller: inner.scrollHeight - inner.clientHeight > 1,
+      };
+    });
+    check('I2 夹具成立：移动端整页深滚动',
+      m9Before.innerIsScroller === false && m9Before.max > 1000
+      && m9Before.scrollTop > m9Before.max * 0.5, m9Before);
+    await p9.keyboard.insertText('甲');
+    await p9.waitForTimeout(300);
+    const m9After = await p9.evaluate(() => {
+      const page = document.scrollingElement;
+      const ta = document.querySelector('.tiptap-source-textarea');
+      return { scrollTop: page.scrollTop, selectionStart: ta.selectionStart };
+    });
+    check('移动端源码底部键入后视线仍在深滚动区（不回顶部）',
+      m9After.scrollTop > m9Before.max * 0.5
+      && Math.abs(m9After.scrollTop - m9Before.scrollTop) < m9Before.max * 0.2,
+      { before: m9Before, after: m9After });
+    check('移动端源码底部键入后光标只前移一位',
+      m9After.selectionStart === m9Before.selectionStart + 1, { before: m9Before, after: m9After });
+    await p9.close();
 
     report();
     process.exitCode = failed ? 1 : 0;

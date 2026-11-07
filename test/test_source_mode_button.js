@@ -258,7 +258,53 @@ async function main() {
         editor.setSourceMode(false);
         check('重复关闭源码模式是安全的', editor.getValue() === '# 新写的');
 
-        /* ---------------- 4) 光标映射（Markdown 偏移 ↔ PM 位置） ----------------
+        /* ---------------- 4) 量高不得偷走视线 ----------------
+         * 真机形态：源码 textarea 内容等高、滚动交给外层容器；autosize 的
+         * height:'auto' 会让滚动范围塌到一屏，浏览器把 scrollTop 钳到 0
+         * ——「在文章底部输入一个字，视线飞到文顶、光标却留在原处」。
+         * jsdom 没有布局，这里用「归零帧读 scrollHeight 即钳制 scrollTop」的
+         * 假滚动容器模拟浏览器，钉住量高前后必须还原滚动位置；真实几何由
+         * test/browser/source-mode.js 的 I 段量。 */
+        editor.setSourceMode(true);
+        const autosizeTa = editor.getSourceTextarea();
+        const fakeScroller = { scrollTop: 0, scrollHeight: 12000, clientHeight: 800 };
+        Object.defineProperty(document, 'scrollingElement', { value: fakeScroller, configurable: true });
+        // 等切换后的 rAF 恢复循环落定，避免它在断言窗口里改写滚动位置。
+        await new Promise(resolve => setTimeout(resolve, 120));
+        Object.defineProperty(autosizeTa, 'scrollHeight', {
+            configurable: true,
+            get() {
+                // 只有归零那一帧才塌陷：浏览器此时把外层 scrollTop 钳到 0。
+                if (autosizeTa.style.height === 'auto') fakeScroller.scrollTop = 0;
+                return 5000;
+            },
+        });
+        try {
+            fakeScroller.scrollTop = 4200;
+            editor.autosizeSourceTextarea(autosizeTa);
+            check('量高归零后视线还原到输入前位置', fakeScroller.scrollTop === 4200, fakeScroller.scrollTop);
+
+            // 端到端：真实 input 事件链路（输入 → 上报 → 量高 → 光标跟踪）。
+            fakeScroller.scrollTop = 4200;
+            autosizeTa.value += '字';
+            const caretBefore = autosizeTa.selectionStart;
+            autosizeTa.dispatchEvent(new dom.window.Event('input'));
+            check('源码输入事件后视线不回到顶部', fakeScroller.scrollTop === 4200, fakeScroller.scrollTop);
+            check('源码输入事件后光标偏移不变', autosizeTa.selectionStart === caretBefore, {
+                before: caretBefore, after: autosizeTa.selectionStart,
+            });
+
+            // 整体换正文（setValue）：不把视线钉在上一篇文档的滚动像素上。
+            fakeScroller.scrollTop = 4200;
+            editor.autosizeSourceTextarea(autosizeTa, { preserveScrollTop: false });
+            check('整体换正文时不保留旧文档的视线', fakeScroller.scrollTop === 0, fakeScroller.scrollTop);
+        } finally {
+            delete autosizeTa.scrollHeight;
+            delete document.scrollingElement;
+            editor.setSourceMode(false);
+        }
+
+        /* ---------------- 5) 光标映射（Markdown 偏移 ↔ PM 位置） ----------------
          * 源码/渲染两个编辑面的光标唯一公共坐标系就是 Markdown 偏移。
          * 映射错了不会报错，只会「切过去光标跑到别处」——所以必须钉住往返。 */
         const caretDoc = [
