@@ -14,6 +14,8 @@ import {
 } from './asset-api-client.js';
 
 const CONFLICT_MESSAGE = '内容已在其他设备更新，请刷新后再保存或复制当前内容';
+const LOADING_PLACEHOLDER = '正在加载附件内容…';
+const LOAD_ERROR_PLACEHOLDER = '附件内容读取失败，请重新打开或检查网络';
 // 只借用 NoteSyncController 的纯函数 mergeContents()（app.js:3051 的同一套
 // 三方合并）；不碰它的启动缓存，所以给它一个不会落盘的 storageManager。
 const noteSyncController = new NoteSyncController({
@@ -35,6 +37,10 @@ const state = {
     lastFocused: null,
     saving: false,
     loadToken: 0,
+    // 打开新附件到读接口返回之间的标记。渲染与保存都靠它避免把「上一篇」
+    // 的残留内容画到屏幕上、或把空内容写回服务端。
+    loading: false,
+    loadingError: '',
 };
 let markedLoader = null;
 let sanitizerLoader = null;
@@ -197,6 +203,18 @@ async function attachHighlighting(instance, md) {
 }
 
 async function renderMarkdown(md, generation) {
+    if (!state.previewPane || generation !== renderGeneration) return false;
+    // 新附件的内容还没从读接口回来：显式画占位，绝不把 state.currentContent
+    // 里上一篇的残留当成当前附件画出来。放在 import 之前，首次加载 marked /
+    // 语言模块还没缓存时也能立刻上屏。
+    if (!md && (state.loading || state.loadingError)) {
+        const note = document.createElement('p');
+        note.className = 'attachment-preview-placeholder';
+        note.textContent = state.loadingError || LOADING_PLACEHOLDER;
+        state.previewPane.innerHTML = '';
+        state.previewPane.appendChild(note);
+        return true;
+    }
     markedLoader ||= import('/js/marked/marked.esm.js');
     sanitizerLoader ||= import('./markdown-html-sanitizer.js');
     const [{ Marked }, { sanitizeHtml }] = await Promise.all([markedLoader, sanitizerLoader]);
@@ -212,7 +230,7 @@ async function renderMarkdown(md, generation) {
     return true;
 }
 
-// 每次渲染领一个代次：打开浮层会先用旧内容渲染一次、读接口回来再渲染一次，
+// 每次渲染领一个代次：打开浮层先画一次加载占位、读接口回来再渲染一次，
 // 两个 Promise 的完成顺序不保证，旧的那次必须被丢弃，否则会覆盖新内容。
 let renderGeneration = 0;
 function renderMarkdownSafely(md, restoreFraction = null) {
@@ -276,6 +294,12 @@ function handleEditorInput() {
    ------------------------------------------------------------------ */
 async function saveFileContent() {
     if (!state.attachment || state.saving) return;
+    // 内容尚未成功加载时不许保存：否则会把清空后的空正文写回服务端，
+    // 或让 409 三方合并建立在 null baseline 上（防数据丢失）。
+    if (state.loading || state.loadingError) {
+        triggerToast('附件内容尚未成功加载，保存已取消', 'error');
+        return;
+    }
     state.saving = true;
     let text = state.textarea ? state.textarea.value : state.currentContent;
     try {
@@ -364,7 +388,12 @@ async function saveFileContent() {
    下载 / 复制：复用项目现有逻辑（含失败提示）。
    ------------------------------------------------------------------ */
 function downloadActiveAttachment() {
-    const url = getAssetDownloadUrl(state.attachment || {});
+    let url = getAssetDownloadUrl(state.attachment || {});
+    // Thought 附件卡的事件委托只带 original href（downloadUrl 被设成同一个值）；
+    // 有资产 id 时改用规范的 /download 变体——它在 asset-routes.js 里走
+    // res.attachment() 强制下载并给回正确文件名，而不是依赖同源 <a download>
+    // 对 inline 文本/PDF 的隐式强制（换个浏览器就可能变成导航而不是下载）。
+    if (state.assetId) url = `/api/assets/${encodeURIComponent(state.assetId)}/download`;
     if (!url) {
         triggerToast('附件下载地址不可用', 'error');
         return;
@@ -520,15 +549,31 @@ async function openAttachmentViewer(raw, trigger) {
         return;
     }
 
+    // ⚠️ 连续点开多篇时，上一次的内容状态必须立刻清干净：
+    //    setModeA('preview') 会马上渲染一次 state.currentContent，若不清空，
+    //    读接口返回前屏幕上就是「前一篇」，返回后才跳成当前篇——用户看到的
+    //    「先闪过上一篇」不是缓存（GET /content 是 no-store、API 绕过 SW），
+    //    而是这个模块级 state 的残留。清空后改成「加载占位 → 当前篇」。
     state.attachment = base;
     state.assetId = assetId;
+    state.currentContent = '';
     state.contentVersion = 0;
+    state.loadedBaseline = null;
+    state.lastSavedContent = null;
     state.caretOffset = 0;
+    state.saving = false;
+    state.loading = true;
+    state.loadingError = '';
     state.lastFocused = trigger || document.activeElement;
     // 新附件一律从顶部开始，不继承上一个附件的视线位置
     const freshPreviewPane = document.getElementById('pane-preview-a');
     if (freshPreviewPane) freshPreviewPane.scrollTop = 0;
-    if (state.textarea) state.textarea.scrollTop = 0;
+    if (state.textarea) {
+        state.textarea.value = '';
+        state.textarea.scrollTop = 0;
+    }
+    updateContentMetrics();
+    setSaveState('idle');
 
     fillFileMeta(base);
     setModeA('preview');
@@ -540,6 +585,8 @@ async function openAttachmentViewer(raw, trigger) {
     try {
         const loaded = await readAttachmentContent(base, assetId);
         if (token !== state.loadToken || !state.overlay.classList.contains('open')) return;
+        state.loading = false;
+        state.loadingError = '';
         state.currentContent = loaded.text;
         state.contentVersion = loaded.contentVersion;
         state.loadedBaseline = loaded.text;
@@ -552,8 +599,12 @@ async function openAttachmentViewer(raw, trigger) {
         setSaveState('idle');
     } catch (error) {
         if (token !== state.loadToken) return;
+        state.loading = false;
+        state.loadingError = LOAD_ERROR_PLACEHOLDER;
         triggerToast(error?.message || '附件读取失败', 'error');
-        // 请求失败不静默、不清空 textarea
+        // 领一个新渲染代次画错误占位，同时作废仍在途的旧渲染；
+        // 请求失败不静默，也不清空用户可能已经敲进 textarea 的内容。
+        renderMarkdownSafely('');
         updateContentMetrics();
         setSaveState('idle');
     }

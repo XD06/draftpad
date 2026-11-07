@@ -557,6 +557,11 @@
                         <button class="btn-icon-soft btn-copy-header" title="复制全文" onclick="copyFullContent()">
                             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                         </button>
+                        <!-- PC 端下载：demo 只在移动端大拇指栏放了下载按钮，桌面端没有。
+                             窄屏隐藏本按钮，避免与底部栏同款按钮重复。 -->
+                        <button class="btn-icon-soft btn-download-header" title="下载原文件" aria-label="下载原文件" onclick="downloadActiveAttachment()">
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12"></path><path d="m7 10 5 5 5-5"></path><path d="M5 21h14"></path></svg>
+                        </button>
                         <button class="btn-icon-soft" title="关闭" onclick="closeModal()">
                             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
                         </button>

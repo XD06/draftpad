@@ -397,6 +397,105 @@
     font-size: inherit;
 }
 
+/* ==================================================================
+   代码块高亮主题：Atom One Dark（与 demo 的 #282c34 底色原生配套）。
+
+   根因：index.html 全局加载的是「浅色」github.min.css，而且 link 顺序在
+   本文件之后；它的 .hljs-string 是 #032f62 深蓝、.hljs-keyword 是 #d73a49
+   暗红，落在浮层深色 #282c34 上对比度不足（用户实测「看不清楚」）。
+   app.js 的 updateHighlightTheme() 还会在暗色模式换成 github-dark，于是
+   同一个浮层在明暗主题下高亮表现不一致。
+
+   这里把官方 @highlightjs/cdn-assets/styles/atom-one-dark.css 的 token 色
+   逐条照搬，用 .modal-overlay .preview-content pre 前缀把作用域
+   钉死在浮层内（特异性高于全局 .hljs-*，不受 link 顺序与主题切换影响）。
+   零新依赖、不改 styles.css / preview-styles.css / 整站文章预览。
+   ================================================================== */
+.modal-overlay .preview-content pre code.hljs {
+    color: #abb2bf;
+    background: transparent;
+}
+
+.modal-overlay .preview-content pre .hljs-comment,
+.modal-overlay .preview-content pre .hljs-quote {
+    color: #5c6370;
+    font-style: italic;
+}
+
+.modal-overlay .preview-content pre .hljs-doctag,
+.modal-overlay .preview-content pre .hljs-keyword,
+.modal-overlay .preview-content pre .hljs-formula {
+    color: #c678dd;
+}
+
+.modal-overlay .preview-content pre .hljs-section,
+.modal-overlay .preview-content pre .hljs-name,
+.modal-overlay .preview-content pre .hljs-selector-tag,
+.modal-overlay .preview-content pre .hljs-deletion,
+.modal-overlay .preview-content pre .hljs-subst {
+    color: #e06c75;
+}
+
+.modal-overlay .preview-content pre .hljs-literal {
+    color: #56b6c2;
+}
+
+.modal-overlay .preview-content pre .hljs-string,
+.modal-overlay .preview-content pre .hljs-regexp,
+.modal-overlay .preview-content pre .hljs-addition,
+.modal-overlay .preview-content pre .hljs-attribute,
+.modal-overlay .preview-content pre .hljs-meta .hljs-string {
+    color: #98c379;
+}
+
+.modal-overlay .preview-content pre .hljs-attr,
+.modal-overlay .preview-content pre .hljs-variable,
+.modal-overlay .preview-content pre .hljs-template-variable,
+.modal-overlay .preview-content pre .hljs-type,
+.modal-overlay .preview-content pre .hljs-selector-class,
+.modal-overlay .preview-content pre .hljs-selector-attr,
+.modal-overlay .preview-content pre .hljs-selector-pseudo,
+.modal-overlay .preview-content pre .hljs-number {
+    color: #d19a66;
+}
+
+.modal-overlay .preview-content pre .hljs-symbol,
+.modal-overlay .preview-content pre .hljs-bullet,
+.modal-overlay .preview-content pre .hljs-link,
+.modal-overlay .preview-content pre .hljs-meta,
+.modal-overlay .preview-content pre .hljs-selector-id,
+.modal-overlay .preview-content pre .hljs-title {
+    color: #61aeee;
+}
+
+.modal-overlay .preview-content pre .hljs-built_in,
+.modal-overlay .preview-content pre .hljs-title.class_,
+.modal-overlay .preview-content pre .hljs-class .hljs-title {
+    color: #e6c07b;
+}
+
+.modal-overlay .preview-content pre .hljs-emphasis {
+    font-style: italic;
+}
+
+.modal-overlay .preview-content pre .hljs-strong {
+    font-weight: bold;
+}
+
+.modal-overlay .preview-content pre .hljs-link {
+    text-decoration: underline;
+}
+
+/* 打开新附件 → 读接口返回之间的占位。取代「先显示前一篇再跳」的闪烁，
+   也让读取失败时屏幕上有一条明确说明，而不是一片空白。 */
+.attachment-preview-placeholder {
+    padding: 48px 12px;
+    text-align: center;
+    font-size: 13px;
+    color: var(--muted-text);
+    line-height: 1.6;
+}
+
 /* 项目 preview.js 生成的语言标签 + 复制按钮（右上角，常驻可见） */
 .preview-content pre .code-lang-copy-button {
     position: absolute;
@@ -796,6 +895,11 @@
     }
 
     .modal-header-a.is-editing .btn-copy-header {
+        display: none;
+    }
+
+    /* 移动端底部大拇指栏已有同款下载按钮，顶部不再重复占一个 36px 槽位 */
+    .modal-header-a .btn-download-header {
         display: none;
     }
 }
