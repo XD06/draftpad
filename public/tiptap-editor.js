@@ -647,7 +647,16 @@ export class HybridMarkdownEditor {
     setValuePreservingCaret(value, emit = true) {
         const focused = this.editor.isFocused;
         const snapshot = focused ? this.getInlineCaretSnapshot() : null;
+        // 源码模式下焦点在 textarea、PM 未聚焦，上面这条光标快照拿不到；而远端
+        // 更新 / 409 三方合并只是刷新同一篇正文，视线必须留在原处。setValue 的源码
+        // 分支按「整体换正文」不保留旧滚动像素（切文章），这里把视线补回来。
+        // 容器在 setValue 之前取：那时 textarea 高度正常，getScrollContainer() 不会误判。
+        const scroller = this.getScrollContainer();
+        const savedScrollTop = scroller ? scroller.scrollTop : null;
         this.setValue(value, emit);
+        if (scroller && savedScrollTop !== null && scroller.scrollTop !== savedScrollTop) {
+            scroller.scrollTop = savedScrollTop;
+        }
         if (focused && snapshot !== null) {
             requestAnimationFrame(() => {
                 try {
@@ -796,8 +805,9 @@ export class HybridMarkdownEditor {
             return {
                 mode: 'source',
                 offset: Number(textarea.selectionStart || 0),
-                // 源码 textarea 不自己滚（高度由内容撑开），视线在外层滚动层上。
-                scrollTop: Number(this.scroller?.scrollTop || 0),
+                // 源码 textarea 不自己滚（高度由内容撑开），视线在真正承载滚动的
+                // 容器上：桌面 .vditor-wysiwyg，移动端整页 document.scrollingElement。
+                scrollTop: Number(this.getScrollContainer()?.scrollTop || 0),
             };
         }
         if (this.isReadingMode) return null;
@@ -824,7 +834,12 @@ export class HybridMarkdownEditor {
             const apply = () => {
                 const max = textarea.value.length;
                 textarea.setSelectionRange(Math.min(offset, max), Math.min(offset, max));
-                textarea.scrollTop = Number(snapshot.scrollTop) || 0;
+                // 与快照同一容器。旧实现写 textarea.scrollTop（textarea 不自滚，
+                // 等于没恢复），切文/刷新后源码模式的阅读位置永远回到顶部。
+                const scroller = this.getScrollContainer();
+                if (scroller && Number.isFinite(Number(snapshot.scrollTop))) {
+                    scroller.scrollTop = Number(snapshot.scrollTop);
+                }
             };
             requestAnimationFrame(apply);
             return true;

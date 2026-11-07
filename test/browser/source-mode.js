@@ -359,6 +359,39 @@ const wait = (port, t = 25000) => new Promise((res, rej) => {
     const iMore = await sourceInputProbe();
     check('连续输入视线不累积漂移',
       Math.abs(iMore.scrollTop - iBefore.scrollTop) < 2, { before: iBefore, after: iMore });
+
+    // ===== J. 源码模式切文往返：阅读位置由光标快照恢复 =====
+    // 快照存的是 getScrollContainer().scrollTop；旧实现恢复时写 textarea.scrollTop
+    // （textarea 不自滚 = 没恢复），切回来永远停在文顶。走侧栏真实手势切走再切回。
+    const jBefore = await p4.evaluate(() => {
+      const s = document.querySelector('.typora-editor-shell .vditor-wysiwyg');
+      const ta = document.querySelector('.tiptap-source-textarea');
+      const max = s.scrollHeight - s.clientHeight;
+      ta.focus({ preventScroll: true });
+      const offset = Math.floor(ta.value.length * 0.8);
+      ta.setSelectionRange(offset, offset);
+      s.scrollTop = max * 0.8;
+      return { scrollTop: s.scrollTop, max, selectionStart: ta.selectionStart };
+    });
+    await p4.locator('#directory-tree .sidebar-item-wrapper:has-text("SrcProbe A")').first().click();
+    await p4.waitForTimeout(1500);
+    await p4.locator('#directory-tree .sidebar-item-wrapper:has-text("Long Scroll")').first().click();
+    await p4.waitForTimeout(1800);
+    const jAfter = await p4.evaluate(() => {
+      const s = document.querySelector('.typora-editor-shell .vditor-wysiwyg');
+      const ta = document.querySelector('.tiptap-source-textarea');
+      return {
+        scrollTop: s.scrollTop, max: s.scrollHeight - s.clientHeight,
+        selectionStart: ta.selectionStart,
+        sourceMode: getComputedStyle(ta).display !== 'none',
+      };
+    });
+    check('切回源码模式后视线恢复到快照位置（不回顶部）',
+      jAfter.sourceMode && jAfter.max > 1000 && jAfter.scrollTop > jAfter.max * 0.5,
+      { before: jBefore, after: jAfter });
+    check('切回源码模式后光标恢复到快照偏移',
+      Math.abs(jAfter.selectionStart - jBefore.selectionStart) < 5,
+      { before: jBefore, after: jAfter });
     await p4.close();
 
     // ===== E. 移动端：整页滚动（ios-theme），滚动容器不是 .vditor-wysiwyg =====
