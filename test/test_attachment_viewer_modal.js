@@ -73,8 +73,27 @@ async function main() {
     check('three-state machine preserved',
         modalJs.includes("'有未保存改动...'") && modalJs.includes("'已保存于 ' + new Date().toLocaleTimeString()")
         && modalJs.includes("'就绪'"));
+    // 打开新附件时清空的是「上一篇的残留」（发生在读接口之前）；失败分支
+    // 之后绝不能再碰 textarea.value，否则用户已敲的内容会被抹掉。
     check('failure keeps the textarea (no clear on error)',
-        !/textarea\.value\s*=\s*''/.test(modalJs));
+        !/textarea\.value\s*=\s*''/.test(modalJs.slice(modalJs.indexOf('LOAD_ERROR_PLACEHOLDER;'))));
+    check('PC header gets a download button; mobile still uses its bottom-bar one',
+        index.includes('btn-download-header')
+        && (index.match(/onclick="downloadActiveAttachment\(\)"/g) || []).length === 2
+        && /\.modal-header-a \.btn-download-header\s*\{\s*display:\s*none;/.test(css));
+    check('code blocks use a scoped high-contrast dark theme, not global github.css',
+        css.includes('.modal-overlay .preview-content pre code.hljs')
+        && css.includes('color: #98c379;')   // Atom One Dark 字符串（浅色主题是 #032f62 深蓝）
+        && css.includes('color: #c678dd;')
+        && css.includes('color: #abb2bf;'));
+    check('opening a new attachment clears stale state and shows a loading placeholder',
+        modalJs.includes('LOADING_PLACEHOLDER')
+        && modalJs.includes('attachment-preview-placeholder')
+        && /state\.currentContent\s*=\s*'';/.test(modalJs)
+        && /state\.loading\s*=\s*true;/.test(modalJs)
+        && css.includes('.attachment-preview-placeholder'));
+    check('saving is blocked while content is not loaded (no empty PUT)',
+        /if \(state\.loading \|\| state\.loadingError\)/.test(modalJs));
 
     check('settings entry wired to the type dispatcher', appJs.includes("data-asset-action=\"view\"")
         && appJs.includes('openAssetPreview(asset, button)'));
@@ -357,6 +376,78 @@ async function main() {
     check('a later real save is not rejected by a bogus 409',
         putCalls.length === 1 && putCalls[0].version === 0 && serverVersion === 1,
         { putCalls, serverVersion });
+
+    /* ---------------- 3. 连续点开多篇：不闪上一篇 + 加载守卫 ----------------
+       用可控延迟的 GET 把「打开 → 读接口返回」这段窗口拉长，量清空是否发生在
+       setModeA('preview') 的首次渲染之前（用户实测的「先显示前一篇再跳」）。
+       jsdom 不加载 /js/marked/*，正文渲染会降级；这里只量 textarea 与占位，
+       真机布局回归负责量 markdown 真正上屏后的内容。 */
+    const baseFetch = window.fetch;
+    let releaseRead = null;
+    let holdRead = false;
+    let failRead = false;
+    window.fetch = async (url, options = {}) => {
+        if ((options.method || 'GET') === 'GET' && url === CONTENT_URL) {
+            if (holdRead) await new Promise((resolve) => { releaseRead = resolve; });
+            if (failRead) {
+                return { ok: false, status: 500, json: async () => ({ error: 'boom' }), text: async () => '' };
+            }
+        }
+        return baseFetch(url, options);
+    };
+    const previewPane = document.getElementById('render-preview-a');
+
+    serverContent = '上一篇附件的正文 PREVIOUS-DOC';
+    serverVersion = 0;
+    await window.openAttachmentViewer(descriptor, trigger);
+    await wait(30);
+    check('baseline: first document is loaded', textarea.value === '上一篇附件的正文 PREVIOUS-DOC');
+
+    serverContent = '当前篇 NEW-DOC';
+    holdRead = true;
+    const openingSecond = window.openAttachmentViewer(descriptor, trigger);
+    await wait(20);
+    check('opening a second document clears the stale textarea immediately',
+        textarea.value === '', textarea.value);
+    check('loading placeholder replaces the previous document (no stale flash)',
+        previewPane.textContent.includes('正在加载附件内容')
+        && !previewPane.textContent.includes('PREVIOUS-DOC'), previewPane.textContent);
+    check('word count and save state reset while loading',
+        document.getElementById('word-count-a').textContent === '0 字 · UTF-8'
+        && document.getElementById('save-status-text-a').textContent === '就绪');
+
+    /* 加载中禁止保存：否则会把清空后的空正文写回服务端 */
+    putCalls.length = 0;
+    toasts.length = 0;
+    await window.saveFileContent();
+    check('save is blocked while content is loading (no empty PUT)',
+        putCalls.length === 0
+        && toasts.some((t) => t.type === 'error' && /尚未成功加载/.test(t.message)),
+        { putCalls, toasts });
+
+    releaseRead();
+    await openingSecond;
+    holdRead = false;
+    await wait(30);
+    check('the current document reaches the textarea after the read resolves',
+        textarea.value === '当前篇 NEW-DOC', textarea.value);
+
+    /* 读取失败：error toast + 明确占位 + 用户手打内容不丢 + 不许保存空内容 */
+    failRead = true;
+    toasts.length = 0;
+    await window.openAttachmentViewer(descriptor, trigger);
+    await wait(20);
+    check('read failure shows an error toast and an explicit placeholder',
+        toasts.some((t) => t.type === 'error')
+        && previewPane.textContent.includes('附件内容读取失败'),
+        { toasts, text: previewPane.textContent });
+    textarea.value = '失败后用户手打的内容';
+    putCalls.length = 0;
+    await window.saveFileContent();
+    check('read failure keeps typed textarea content and blocks saving empty content',
+        textarea.value === '失败后用户手打的内容' && putCalls.length === 0);
+    failRead = false;
+    window.fetch = baseFetch;
 
     if (failures) {
         console.error(`\n${failures} check(s) failed`);
