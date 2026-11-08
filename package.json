@@ -96,6 +96,7 @@
     "test:tiptap-underline-annotation-browser": "node test/browser/annotation-underline.js",
     "test:blockquote-style-browser": "node test/browser/blockquote-style.js",
     "test:mermaid-preview-browser": "node test/browser/mermaid-preview.js",
+    "test:mermaid-fullscreen": "node test/test_mermaid_fullscreen.js",
     "test:today-drafts-flip-browser": "node test/browser/today-drafts-flip.js",
     "test:today-drafts-paging-browser": "node test/browser/today-drafts-paging.js",
     "test:today-drafts-taps-browser": "node test/browser/today-drafts-taps.js",

@@ -255,6 +255,66 @@ html[data-initial-workspace="today"] #header-title {
     line-height: 1.5;
 }
 
+/* Mermaid 图表右上角的全屏按钮（悬停浮现 / 触屏常驻）。
+ * 按钮是 NodeView 自管的装饰节点，点击逻辑在 tiptap-code-block-view.js 里
+ * 用 stopPropagation 吞掉——不吞，`.dumbpad-mermaid-render` 的 mousedown
+ * 会把光标塞进代码块，用户点「全屏」看到的是源码。 */
+.typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] > .dumbpad-mermaid-render {
+    position: relative;
+}
+
+.dumbpad-mermaid-fullscreen {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    z-index: 1;
+    display: inline-grid;
+    width: 26px;
+    height: 26px;
+    padding: 0;
+    place-items: center;
+    border: 1px solid color-mix(in srgb, var(--border-color) 90%, transparent);
+    border-radius: 7px;
+    background: color-mix(in srgb, var(--textarea-bg) 82%, transparent);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    color: var(--muted-text);
+    cursor: pointer;
+    opacity: 0;
+    /* 隐藏时不可点：透明但可点会变成「点图空白处突然全屏」的陷阱。
+       键盘 Tab 仍能聚焦，:focus-within 会把按钮显示出来。 */
+    pointer-events: none;
+    transition: opacity 0.16s ease, color 0.16s ease, border-color 0.16s ease, background-color 0.16s ease;
+}
+
+.dumbpad-mermaid-fullscreen svg {
+    width: 14px;
+    height: 14px;
+    fill: currentColor;
+}
+
+.dumbpad-mermaid-render:hover .dumbpad-mermaid-fullscreen,
+.dumbpad-mermaid-render:focus-within .dumbpad-mermaid-fullscreen {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.dumbpad-mermaid-fullscreen:hover,
+.dumbpad-mermaid-fullscreen:focus-visible {
+    outline: none;
+    color: var(--primary-color);
+    border-color: color-mix(in srgb, var(--primary-color) 42%, transparent);
+    background: color-mix(in srgb, var(--primary-color) 10%, var(--textarea-bg));
+}
+
+/* 触屏没有 hover 这回事：常驻淡显，否则这个功能等于不存在。 */
+@media (hover: none) {
+    .dumbpad-mermaid-fullscreen {
+        opacity: 0.72;
+        pointer-events: auto;
+    }
+}
+
 .typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] .dumbpad-code-copy {
     display: inline-grid;
     width: 18px;
@@ -7749,10 +7809,50 @@ body.reading-mode-active .editor-main {
     display: none;
 }
 
+.article-image-lightbox-stage {
+    display: grid;
+    place-items: center;
+    min-width: 0;
+    min-height: 0;
+}
+
 .article-image-lightbox-image {
     max-width: min(96vw, 1800px);
     max-height: calc(100vh - 118px);
     object-fit: contain;
+}
+
+.article-image-lightbox-image[hidden],
+.article-image-lightbox-svg[hidden] {
+    display: none;
+}
+
+/* 图表灯箱：把 mermaid 的 <svg> 节点整个挂进来（它用 <foreignObject> 画节点
+ * 文字，转成 data:image/svg+xml 塞进 <img> 会让文字整片消失）。舞台给定尺寸，
+ * svg 自带 viewBox 反算出来的固有宽高（见 createLightboxSvg），这里只负责
+ * 按比例往下钳：大图铺满、小图不放大过头。
+ *
+ * 舞台必须是 **flex** 而不是 grid：grid 的单行轨道是 auto 高，item 的
+ * `max-height: 100%` 会按「不确定」处理成 none——实测宽度被钳到 1229、
+ * 高度还是 5280，宽高比直接崩掉，图上内容被拉成一条。flex 容器的 content box
+ * 高度是确定的（calc 出来的），百分比才解析得出来。 */
+.article-image-lightbox-svg {
+    width: min(96vw, 1800px);
+    height: calc(100vh - 118px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.article-image-lightbox-svg svg {
+    display: block;
+    max-width: 100%;
+    max-height: 100%;
+    /* 图表自己不带背景（mermaid 输出的是透明画布 + 深色文字），直接盖在
+       0.86 黑的蒙层上等于黑底黑字。这里补一张「纸」，用编辑器正文同一个
+       底色：浅色主题白纸、暗色主题深纸，两种主题下文字都是原本的对比度。 */
+    background: var(--textarea-bg);
+    border-radius: 10px;
 }
 
 .article-image-lightbox-bar {
@@ -7826,6 +7926,11 @@ body.article-image-lightbox-open {
     .article-image-lightbox-image {
         max-width: calc(100vw - 24px);
         max-height: calc(100dvh - 96px);
+    }
+
+    .article-image-lightbox-svg {
+        width: calc(100vw - 24px);
+        height: calc(100dvh - 96px);
     }
 
     .article-image-lightbox-bar {
@@ -7910,4 +8015,134 @@ body.article-image-lightbox-open {
     color: inherit;
     display: block;
     white-space: pre;
+}
+
+/* ─────────────────────────────────────────────────────────────
+   表格：三线表（顶线 / 表头线 / 底线 + 一层极浅表头底色）
+
+   四条硬约束，改之前先对一遍：
+
+   1) **Tiptap 的表格不产 `<thead>`**。表头就是一个 `<tr><th>` 塞在
+      `<tbody>` 里，所以表头只能靠 `tr:first-child th` 选中；任何 `thead`
+      选择器都是死的。同理，斑马线必须显式排除第一行，否则被染色的正是表头。
+   2) **`table` 必须是 `display: table`**。styles.css:5274 那条全局规则给了
+      `display: block` + `overflow-x: auto`，窄表会被拉满整宽，而横向溢出
+      变成 table 自己的隐形滚动区——手机上既没有滚动条也没有渐隐提示，
+      读起来就是「右边两列被裁掉了」。
+   3) **横向溢出交给 `.tableWrapper`**（Tiptap 自带的外壳，`overflow` 原本是
+      visible）。滚动容器只能有一个，放在外壳上才量得到宽度、才有滚动条。
+   4) **单元格里的 `<p>` 必须清掉正文段距**。`.typora-editor-shell .tiptap p`
+      的 `margin: 0 0 1em` 会命中格子里的段落，单行格子也被撑到 83px 高。
+
+   移动端策略：**默认折行**（内容永远看得全、不用手势），只有真的放不下
+   （长 URL、长代码）才退化成 `.tableWrapper` 内的横向滑动。
+   ───────────────────────────────────────────────────────────── */
+
+.typora-editor-shell .tiptap .tableWrapper {
+    margin: 1.15em 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+}
+
+.typora-editor-shell .tiptap .tableWrapper::-webkit-scrollbar {
+    height: 6px;
+}
+
+.typora-editor-shell .tiptap .tableWrapper::-webkit-scrollbar-thumb {
+    border-radius: 3px;
+    background: color-mix(in srgb, var(--muted-text) 30%, transparent);
+}
+
+.typora-editor-shell .tiptap table {
+    display: table;
+    width: 100%;
+    max-width: 100%;
+    margin: 0;
+    border-collapse: collapse;
+    border-spacing: 0;
+    overflow: visible;
+    font-size: 0.94em;
+    line-height: 1.55;
+    /* 卡片是 pre-wrap（源码观感），单元格必须回到 normal，否则空格不折叠 */
+    white-space: normal;
+    table-layout: auto;
+}
+
+/* 关掉全局 `tr:nth-child(even)`（styles.css:5290）的斑马线：
+   它把表头算成第 1 行，第一条正文行反而被染色。 */
+.typora-editor-shell .tiptap table tr {
+    background-color: transparent;
+}
+
+.typora-editor-shell .tiptap table th,
+.typora-editor-shell .tiptap table td {
+    padding: 9px 14px;
+    border: 0;
+    text-align: left;
+    vertical-align: top;
+    white-space: normal;
+    overflow-wrap: break-word;
+    word-break: normal;
+}
+
+/* 单元格里的段落不是正文，必须清掉正文段距。注意这里多带一个 `.vditor-reset`
+ * 复合类：桌面端 ios-theme.css 的
+ * `body:not(.thoughts-mode) .typora-editor-shell .vditor-reset p { margin-bottom:14px }`
+ * 是 (0,3,2)，而 `.typora-editor-shell .tiptap table td > p` 只有 (0,2,3)——三个类
+ * 赢两个类。不加这层，单行格子照样被撑到 83px 高（实测就是这条把 margin 顶回来的）。 */
+.typora-editor-shell .tiptap.vditor-reset table th > p,
+.typora-editor-shell .tiptap.vditor-reset table td > p {
+    margin: 0;
+}
+
+/* 一个格子里手打了空行（两个段落）时保留一点间距，但仍然远小于正文段距 */
+.typora-editor-shell .tiptap table th > p + p,
+.typora-editor-shell .tiptap table td > p + p {
+    margin-top: 0.42em;
+}
+
+/* 表头：顶线 + 表头线 + 极浅底色 */
+.typora-editor-shell .tiptap table tr:first-child th {
+    border-top: 1.5px solid color-mix(in srgb, var(--text-color) 52%, transparent);
+    border-bottom: 1px solid color-mix(in srgb, var(--text-color) 26%, transparent);
+    padding-top: 11px;
+    padding-bottom: 9px;
+    background-color: color-mix(in srgb, var(--text-color) 4.2%, transparent);
+    color: color-mix(in srgb, var(--text-color) 88%, var(--muted-text));
+    font-weight: 600;
+    vertical-align: bottom;
+}
+
+/* 底线 */
+.typora-editor-shell .tiptap table tr:last-child td {
+    border-bottom: 1.5px solid color-mix(in srgb, var(--text-color) 52%, transparent);
+}
+
+/* 格子里的行内代码不要撑高行距 */
+.typora-editor-shell .tiptap table th code,
+.typora-editor-shell .tiptap table td code {
+    padding: 1px 4px;
+    font-size: 0.92em;
+}
+
+/* 移动端：折行为主。列宽下限 4.6em 防止「两个字一行」的竖条式折行，
+   表头不折行（中文两字表头折成两行会把整列压扁）。真放不下时
+   .tableWrapper 会接管横向滑动。 */
+@media (max-width: 980px) {
+    .typora-editor-shell .tiptap table {
+        min-width: 100%;
+        font-size: 0.9em;
+    }
+
+    .typora-editor-shell .tiptap table th,
+    .typora-editor-shell .tiptap table td {
+        padding: 8px 10px;
+        min-width: 4.6em;
+    }
+
+    .typora-editor-shell .tiptap table tr:first-child th {
+        white-space: nowrap;
+    }
 }

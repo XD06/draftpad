@@ -21,9 +21,39 @@ const DRAG_THRESHOLD_PX = 6;
 // 拖拽结束后的 click 抑制、触屏点按后的 click 抑制（与旧编辑器同值）。
 const DRAG_CLICK_GUARD_MS = 250;
 const TAP_CLICK_GUARD_MS = 450;
+// 图表进灯箱时的固定放大倍数（相对 viewBox 尺寸）：小图不至于被吹成卡通尺寸，
+// 大图由灯箱舞台的 max-width / max-height 钳回视口。
+const LIGHTBOX_SVG_SCALE = 2.2;
+
+/**
+ * 读 `<svg viewBox="x y w h">` 里的宽高。走属性解析而不是 `viewBox.baseVal`：
+ * 后者在 jsdom 里没有实现，而这条路径必须能在纯 DOM 环境里被测到。
+ */
+export function readViewBoxSize(svg) {
+    const raw = String(svg?.getAttribute?.('viewBox') || '').trim();
+    if (!raw) return null;
+    const parts = raw.split(/[\s,]+/).map(Number);
+    if (parts.length !== 4 || !parts.every((value) => Number.isFinite(value))) return null;
+    if (!(parts[2] > 0) || !(parts[3] > 0)) return null;
+    return { width: parts[2], height: parts[3] };
+}
 
 export const articleImageDecorationKey = new PluginKey('dumbpadArticleImageDecorations');
 export const articleImageInteractionKey = new PluginKey('dumbpadArticleImageInteractions');
+
+/**
+ * 灯箱是「文章级」的单例入口：图片与 mermaid 图表共用同一套蒙层 / 工具条 /
+ * 关闭语义，不各自复制一份 UI。当前活跃的编辑器 view 在构造时登记进来，
+ * 代码块 NodeView 这类拿不到 view 的地方通过 openArticleLightbox() 调它。
+ */
+let activeArticleLightbox = null;
+
+/** 打开文章灯箱。payload 见 ArticleImageInteractionView#openMediaLightbox。 */
+export function openArticleLightbox(payload) {
+    if (!activeArticleLightbox) return false;
+    activeArticleLightbox.openMediaLightbox(payload);
+    return true;
+}
 
 /** title="dumbpad-width=N" → N（0 表示自适应，与旧 getArticleImageWidth 一致）。 */
 export function readImageWidth(title) {
@@ -264,6 +294,9 @@ class ArticleImageInteractionView {
         this.sizeMenu = this.buildSizeMenu();
         this.lightbox = this.buildLightbox();
         this.fileMenu = this.buildFileMenu();
+        this.lightboxBlobUrl = '';
+        // 图表 NodeView 拿不到 view，靠这个单例入口复用同一个灯箱。
+        activeArticleLightbox = this;
 
         this.handleClick = (event) => this.onClick(event);
         this.handlePointerDown = (event) => this.onPointerDown(event);
@@ -414,7 +447,10 @@ class ArticleImageInteractionView {
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>
                 </button>
             </div>
-            <img class="article-image-lightbox-image" alt="">
+            <div class="article-image-lightbox-stage">
+                <img class="article-image-lightbox-image" alt="">
+                <div class="article-image-lightbox-svg" hidden></div>
+            </div>
         `;
         lightbox.addEventListener('click', (event) => {
             if (event.target === lightbox) this.closeLightbox();
@@ -633,26 +669,119 @@ class ArticleImageInteractionView {
     openLightbox(image) {
         const src = image.getAttribute('src') || '';
         const assetId = articleAssetIdFromSource(src);
-        const originalUrl = assetId ? `/api/assets/${assetId}/original` : src;
-        const downloadUrl = assetId ? `/api/assets/${assetId}/download` : src;
-        const name = image.getAttribute('alt') || '图片';
+        this.openMediaLightbox({
+            name: image.getAttribute('alt') || '图片',
+            src: assetId ? `/api/assets/${assetId}/original` : src,
+            downloadUrl: assetId ? `/api/assets/${assetId}/download` : src,
+            trigger: image,
+        });
+    }
+
+    /**
+     * 灯箱的通用入口。图片走 `<img>`，图表走内联 `<svg>` 节点：
+     * mermaid 用 `<foreignObject>` 画节点文字，转成 `data:image/svg+xml` 塞进
+     * `<img>` 会让文字整片消失，所以只能把 svg 节点本身挂进来（克隆一份，
+     * 原图不动）。两条路共用同一个蒙层、同一套「名称 / 下载 / 关闭」工具条。
+     */
+    openMediaLightbox(payload) {
+        const {
+            name = '图片',
+            src = '',
+            svg = null,
+            downloadUrl = '',
+            downloadName = '',
+            trigger = null,
+        } = payload || {};
+        const imageEl = this.lightbox.querySelector('.article-image-lightbox-image');
+        const svgEl = this.lightbox.querySelector('.article-image-lightbox-svg');
+        const download = this.lightbox.querySelector('.article-image-lightbox-download');
+        this.releaseLightboxBlob();
+
         this.lightbox.hidden = false;
         document.body.classList.add('article-image-lightbox-open');
         this.lightbox.querySelector('.article-image-lightbox-name').textContent = name;
-        const fullImage = this.lightbox.querySelector('.article-image-lightbox-image');
-        fullImage.alt = name;
-        fullImage.src = originalUrl;
-        const download = this.lightbox.querySelector('.article-image-lightbox-download');
-        download.href = downloadUrl;
-        download.download = name;
-        this.lightboxTrigger = image;
+
+        if (svg) {
+            imageEl.hidden = true;
+            imageEl.removeAttribute('src');
+            imageEl.alt = '';
+            svgEl.replaceChildren(this.createLightboxSvg(svg));
+            svgEl.hidden = false;
+            const blobUrl = this.createSvgBlobUrl(svg);
+            if (blobUrl) {
+                download.href = blobUrl;
+                download.download = downloadName || `${name}.svg`;
+            } else {
+                download.href = downloadUrl || '#';
+                download.download = downloadName || `${name}.svg`;
+            }
+        } else {
+            svgEl.hidden = true;
+            svgEl.replaceChildren();
+            imageEl.hidden = false;
+            imageEl.alt = name;
+            imageEl.src = src;
+            download.href = downloadUrl || src;
+            download.download = downloadName || name;
+        }
+
+        this.lightboxTrigger = trigger;
         this.lightbox.querySelector('.article-image-lightbox-close').focus?.({ preventScroll: true });
+    }
+
+    /**
+     * 图表灯箱里的那份 svg。
+     *
+     * 不能直接把节点铺满舞台：mermaid 的 svg 只有 viewBox、没有固有尺寸，
+     * `width:100%` 会把一个 107×174 的两节点图放大 6 倍，笔画和字号一起变成
+     * 卡通尺寸。这里按 viewBox 定一个固定的放大倍数写回 width/height（= 给
+     * 它一个固有尺寸），再由 CSS 的 max-width / max-height 按比例往下钳——
+     * 大图仍然铺满屏，小图不会被吹爆。mermaid 写在行内的 max-width 必须去掉，
+     * 否则它会把固有尺寸锁死在原始像素。
+     */
+    createLightboxSvg(svg) {
+        const clone = svg.cloneNode(true);
+        const box = readViewBoxSize(clone);
+        clone.removeAttribute('style');
+        if (box) {
+            clone.setAttribute('width', String(Math.round(box.width * LIGHTBOX_SVG_SCALE)));
+            clone.setAttribute('height', String(Math.round(box.height * LIGHTBOX_SVG_SCALE)));
+        } else {
+            clone.setAttribute('width', '100%');
+            clone.removeAttribute('height');
+        }
+        return clone;
+    }
+
+    /** 图表另存为 .svg：把当前 svg 序列化成 blob，关闭时统一回收。 */
+    createSvgBlobUrl(svg) {
+        if (typeof URL?.createObjectURL !== 'function' || typeof Blob !== 'function') return '';
+        try {
+            const markup = new XMLSerializer().serializeToString(svg);
+            const blob = new Blob([markup], { type: 'image/svg+xml;charset=utf-8' });
+            this.lightboxBlobUrl = URL.createObjectURL(blob);
+            return this.lightboxBlobUrl;
+        } catch (_error) {
+            return '';
+        }
+    }
+
+    releaseLightboxBlob() {
+        if (!this.lightboxBlobUrl) return;
+        try {
+            URL.revokeObjectURL(this.lightboxBlobUrl);
+        } catch (_error) {
+            // 回收失败不影响关闭流程。
+        }
+        this.lightboxBlobUrl = '';
     }
 
     closeLightbox() {
         if (this.lightbox.hidden) return;
         this.lightbox.hidden = true;
         document.body.classList.remove('article-image-lightbox-open');
+        this.releaseLightboxBlob();
+        this.lightbox.querySelector('.article-image-lightbox-svg').replaceChildren();
         this.lightboxTrigger?.focus?.({ preventScroll: true });
         this.lightboxTrigger = null;
     }
@@ -934,6 +1063,8 @@ class ArticleImageInteractionView {
 
     destroy() {
         this.cancelDrag();
+        this.releaseLightboxBlob();
+        if (activeArticleLightbox === this) activeArticleLightbox = null;
         this.view.dom.removeEventListener('click', this.handleClick, true);
         this.view.dom.removeEventListener('dragstart', this.handleDragStart);
         this.view.dom.removeEventListener('pointerdown', this.handlePointerDown);

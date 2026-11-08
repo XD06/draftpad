@@ -6,10 +6,13 @@
  */
 import { getCodeLanguageIconPath, resolveCodeLanguage } from './code-language-catalog.js';
 import { renderMermaidSvg } from './mermaid-render.js';
+import { openArticleLightbox } from './tiptap-image-interactions.js';
 
 const MERMAID_LANGUAGE = 'mermaid';
 const MERMAID_RENDER_DEBOUNCE_MS = 220;
 const MERMAID_ERROR_HINT = 'Mermaid 图表语法有误，已保留源码，不影响其他内容编辑。';
+// 图标是纯填充路径（无描边），颜色交给 CSS 的 fill: currentColor。
+const MERMAID_FULLSCREEN_ICON_SVG = '<svg viewBox="0 0 1024 1024" aria-hidden="true"><path d="M547.4 197.4v46l200.3 0.1L546.1 444l32.4 32.6 201.9-200.7v200.9h46V197.5zM471.4 584.4l-32.6-32.6L243.6 747V547.9h-46v278.7h279v-46H275z"></path></svg>';
 
 function normalizeCodeLanguage(language) {
     const value = String(language || 'plaintext').trim().toLowerCase() || 'plaintext';
@@ -153,6 +156,7 @@ export function buildCodeBlockNodeView() {
         let mermaidTimer = 0;
         let mermaidToken = 0;
         let mermaidEditing = false;
+        let mermaidFullscreenButton = null;
 
         const paintMermaid = () => {
             wrapper.classList.toggle('is-mermaid-editing', mermaidEditing);
@@ -163,6 +167,45 @@ export function buildCodeBlockNodeView() {
             mermaidRenderEl?.remove();
             mermaidRenderEl = null;
             mermaidSource = null;
+        };
+
+        /**
+         * 全屏按钮。它挂在 NodeView 自管的 DOM 里（不是 contentDOM），点击必须
+         * **完全吞掉**，否则 `.dumbpad-mermaid-render` 的 mousedown 会把光标塞进
+         * 代码块、当场切成源码态——用户点「全屏」看到的是源码，图反而消失了。
+         * pointerdown 只 stopPropagation 不 preventDefault：取消 pointerdown 会
+         * 连带压掉兼容 mouse 事件，桌面浏览器上 click 的时序会变得不可靠。
+         */
+        const ensureFullscreenButton = () => {
+            if (mermaidFullscreenButton) return mermaidFullscreenButton;
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'dumbpad-mermaid-fullscreen';
+            button.title = '全屏查看';
+            button.setAttribute('aria-label', '全屏查看图表');
+            button.setAttribute('contenteditable', 'false');
+            button.innerHTML = MERMAID_FULLSCREEN_ICON_SVG;
+            button.addEventListener('pointerdown', (event) => {
+                event.stopPropagation();
+            });
+            button.addEventListener('mousedown', (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+            });
+            button.addEventListener('click', (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                const svg = mermaidRenderEl?.querySelector('svg');
+                if (!svg) return;
+                openArticleLightbox({
+                    name: 'Mermaid 图表',
+                    svg,
+                    downloadName: 'mermaid.svg',
+                    trigger: button,
+                });
+            });
+            mermaidFullscreenButton = button;
+            return button;
         };
 
         const setMermaidHint = (message) => {
@@ -230,6 +273,8 @@ export function buildCodeBlockNodeView() {
                 mermaidRenderEl.className = 'dumbpad-mermaid-render language-mermaid';
                 mermaidRenderEl.setAttribute('contenteditable', 'false');
                 mermaidRenderEl.addEventListener('mousedown', (event) => {
+                    // 点全屏按钮不能把光标送进代码块（否则当场切源码、图消失）。
+                    if (event.target?.closest?.('.dumbpad-mermaid-fullscreen')) return;
                     event.preventDefault();
                     event.stopPropagation();
                     const position = typeof getPos === 'function' ? getPos() : null;
@@ -240,6 +285,8 @@ export function buildCodeBlockNodeView() {
                 wrapper.appendChild(mermaidRenderEl);
             }
             mermaidRenderEl.innerHTML = svg;
+            // innerHTML 会清掉子节点，按钮每次渲染后重新挂上（同一个节点复用）。
+            mermaidRenderEl.appendChild(ensureFullscreenButton());
             mermaidSource = source;
             setMermaidHint('');
             paintMermaid();
