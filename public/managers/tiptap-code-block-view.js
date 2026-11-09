@@ -198,7 +198,9 @@ export function buildCodeBlockNodeView() {
                 const svg = mermaidRenderEl?.querySelector('svg');
                 if (!svg) return;
                 openArticleLightbox({
-                    name: 'Mermaid 图表',
+                    // 灯箱工具条在 390px 上还要塞下 −/％/＋/适应/下载/关闭，
+                    // 名字太长会被截成「Mermai…」，短标签更实用。
+                    name: '图表',
                     svg,
                     downloadName: 'mermaid.svg',
                     trigger: button,

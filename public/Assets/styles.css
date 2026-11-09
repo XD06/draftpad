@@ -7828,31 +7828,51 @@ body.reading-mode-active .editor-main {
 }
 
 /* 图表灯箱：把 mermaid 的 <svg> 节点整个挂进来（它用 <foreignObject> 画节点
- * 文字，转成 data:image/svg+xml 塞进 <img> 会让文字整片消失）。舞台给定尺寸，
- * svg 自带 viewBox 反算出来的固有宽高（见 createLightboxSvg），这里只负责
- * 按比例往下钳：大图铺满、小图不放大过头。
+ * 文字，转成 data:image/svg+xml 塞进 <img> 会让文字整片消失）。
  *
- * 舞台必须是 **flex** 而不是 grid：grid 的单行轨道是 auto 高，item 的
- * `max-height: 100%` 会按「不确定」处理成 none——实测宽度被钳到 1229、
- * 高度还是 5280，宽高比直接崩掉，图上内容被拉成一条。flex 容器的 content box
- * 高度是确定的（calc 出来的），百分比才解析得出来。 */
+ * 结构是「视口 + 画布」两层：
+ * - `.article-image-lightbox-svg` 是**视口**：overflow:hidden，尺寸固定为舞台大小，
+ *   拖拽/缩放都只改画布的 transform，视口本身不动；
+ * - `.article-image-lightbox-canvas` 是**画布**：按 svg 的 viewBox 尺寸铺开
+ *   （+16px 内边距），`transform-origin: 0 0`，由 JS 写 translate + scale。
+ *
+ * 不能靠 CSS 的 max-width / max-height 去「装下」：那是两个轴各自钳的，
+ * 宽度被钳住、高度还是原始值，宽高比会崩（实测 1229×5280）。缩放必须由
+ * transform 统一做，才能同时保证「初始整图可见」和「手动放大后仍是矢量」。 */
 .article-image-lightbox-svg {
+    position: relative;
     width: min(96vw, 1800px);
     height: calc(100vh - 118px);
-    display: flex;
-    align-items: center;
-    justify-content: center;
+    overflow: hidden;
+    /* 触屏拖拽走 Pointer Events，禁掉浏览器自己的滚动/缩放手势 */
+    touch-action: none;
+    cursor: grab;
+    user-select: none;
+    -webkit-user-select: none;
 }
 
-.article-image-lightbox-svg svg {
-    display: block;
-    max-width: 100%;
-    max-height: 100%;
+.article-image-lightbox-svg:active {
+    cursor: grabbing;
+}
+
+.article-image-lightbox-canvas {
+    position: absolute;
+    left: 0;
+    top: 0;
+    padding: 16px;
+    box-sizing: content-box;
     /* 图表自己不带背景（mermaid 输出的是透明画布 + 深色文字），直接盖在
        0.86 黑的蒙层上等于黑底黑字。这里补一张「纸」，用编辑器正文同一个
        底色：浅色主题白纸、暗色主题深纸，两种主题下文字都是原本的对比度。 */
     background: var(--textarea-bg);
     border-radius: 10px;
+    box-shadow: 0 18px 60px rgba(0, 0, 0, 0.45);
+    transform-origin: 0 0;
+    will-change: transform;
+}
+
+.article-image-lightbox-canvas svg {
+    display: block;
 }
 
 .article-image-lightbox-bar {
@@ -7873,6 +7893,63 @@ body.reading-mode-active .editor-main {
     text-overflow: ellipsis;
     white-space: nowrap;
     font-size: 14px;
+}
+
+/* 图表专用的缩放工具条（图片灯箱不显示） */
+.article-image-lightbox-zoom {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex: none;
+}
+
+.article-image-lightbox-zoom[hidden] {
+    display: none;
+}
+
+/* 图表灯箱的工具条加一层压暗：0.86 的蒙层挡不住文章顶栏那种高亮块，
+   半透明的按钮底下会透出「图表测试」这种标题，读起来很脏。只在有缩放条
+   （= 图表）时加，图片灯箱的观感一点不动。 */
+.article-image-lightbox-bar:has(.article-image-lightbox-zoom:not([hidden])) {
+    padding: 8px 10px;
+    border-radius: 12px;
+    background: linear-gradient(to bottom, rgba(0, 0, 0, 0.62), rgba(0, 0, 0, 0.28));
+}
+
+.article-image-lightbox-zoom button {
+    display: inline-grid;
+    min-width: 34px;
+    height: 34px;
+    padding: 0 9px;
+    place-items: center;
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    border-radius: 9px;
+    background: rgba(255, 255, 255, 0.08);
+    color: #fff;
+    font-size: 13px;
+    line-height: 1;
+    cursor: pointer;
+    transition: background-color 0.14s ease, border-color 0.14s ease;
+}
+
+.article-image-lightbox-zoom button:hover,
+.article-image-lightbox-zoom button:focus-visible {
+    outline: 2px solid #fff;
+    outline-offset: 2px;
+    background: rgba(255, 255, 255, 0.18);
+}
+
+.article-image-lightbox-zoom button:disabled {
+    opacity: 0.4;
+    cursor: default;
+}
+
+.article-image-lightbox-pct {
+    min-width: 46px;
+    text-align: center;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    opacity: 0.9;
 }
 
 .article-image-lightbox-download,
@@ -8127,9 +8204,9 @@ body.article-image-lightbox-open {
     font-size: 0.92em;
 }
 
-/* 移动端：折行为主。列宽下限 4.6em 防止「两个字一行」的竖条式折行，
-   表头不折行（中文两字表头折成两行会把整列压扁）。真放不下时
-   .tableWrapper 会接管横向滑动。 */
+/* 移动端：默认仍是折行的真表格；只有「自然宽放不下」的那几张会折成卡片
+ * （由 managers/tiptap-table-stack.js 按需打上 `.is-stacked`，见本段末尾）。
+ * 表头不折行——中文两字表头折成两行会把整列压扁。 */
 @media (max-width: 980px) {
     .typora-editor-shell .tiptap table {
         min-width: 100%;
@@ -8144,5 +8221,108 @@ body.article-image-lightbox-open {
 
     .typora-editor-shell .tiptap table tr:first-child th {
         white-space: nowrap;
+    }
+
+    /* 长表（数据行 > 6）不折卡，改成「首列冻结 + 横向滑动」：右滑看各列时，
+       维度/编号这一列钉在左边，横向比较不会丢参照物。折卡适合短表，
+       长表要的是「扫」，折完纵向长度会翻好几倍。 */
+    .typora-editor-shell .tiptap .tableWrapper table th:first-child,
+    .typora-editor-shell .tiptap .tableWrapper table td:first-child {
+        position: sticky;
+        left: 0;
+        z-index: 2;
+        background-color: var(--textarea-bg);
+    }
+
+    /* 表头那格还要叠一层浅底，否则和正文行分不开；底色必须不透明，
+       否则滑过去的列会从下面透出来。 */
+    .typora-editor-shell .tiptap .tableWrapper table tr:first-child th:first-child {
+        z-index: 3;
+        background-image: linear-gradient(
+            color-mix(in srgb, var(--text-color) 4.2%, transparent),
+            color-mix(in srgb, var(--text-color) 4.2%, transparent)
+        );
+    }
+
+    /* sticky 会让单元格脱离表格的 vertical-align 计算：被冻结的那格内容会贴顶，
+       其余表头仍按 bottom 对齐，看上去「维度」比产品名高一行。移动端统一贴顶。 */
+    .typora-editor-shell .tiptap .tableWrapper table tr:first-child th {
+        vertical-align: top;
+    }
+
+    /* 折卡态下首列不是「冻结列」，撤销 sticky */
+    .typora-editor-shell .tiptap table:has(td.dumbpad-stacked-cell) td:first-child {
+        position: static;
+    }
+
+    /* ── 折卡态 ─────────────────────────────────────────────────────
+     * 4 列塞进 321px 时每列只剩 80px，一格 10–30 字会折成 3–5 行、整行 85px
+     * 高，读起来是一根竖条。折卡牺牲「列对齐横比」，换来 100% 可读：
+     * 表头行藏起来，每个数据行变成一张卡，首格当行标题、其余格前面挂字段名。
+     *
+     * 为什么用 `:has()` 反查：Tiptap 的表格是 NodeView，PM 的 node decoration
+     * 落不到它的 <table> 上（实测挂 class 完全没效果），只有单元格这类普通
+     * 节点吃 decoration。所以标记 `dumbpad-stacked-cell` 挂在数据格上，
+     * 表格靠 :has() 认领；`data-label` 同样由 Decoration 从同列表头写入。
+     * 3 列短表量得下就保持原样，不折。 */
+    .typora-editor-shell .tiptap table:has(td.dumbpad-stacked-cell) {
+        display: block;
+        width: 100%;
+        min-width: 0;
+        font-size: 0.94em;
+    }
+
+    .typora-editor-shell .tiptap table:has(td.dumbpad-stacked-cell) colgroup,
+    .typora-editor-shell .tiptap table:has(td.dumbpad-stacked-cell) tr:first-child {
+        display: none;
+    }
+
+    .typora-editor-shell .tiptap table:has(td.dumbpad-stacked-cell) tbody {
+        display: block;
+    }
+
+    .typora-editor-shell .tiptap table:has(td.dumbpad-stacked-cell) tbody tr {
+        display: block;
+        margin: 0 0 10px;
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        background: var(--textarea-bg);
+        overflow: hidden;
+    }
+
+    .typora-editor-shell .tiptap table:has(td.dumbpad-stacked-cell) tbody tr:last-child {
+        margin-bottom: 0;
+    }
+
+    .typora-editor-shell .tiptap table:has(td.dumbpad-stacked-cell) tbody td {
+        display: block;
+        min-width: 0;
+        padding: 6px 12px 7px;
+        border: 0;
+        border-top: 1px solid color-mix(in srgb, var(--border-color) 72%, transparent);
+        white-space: normal;
+    }
+
+    /* 首格 = 行标题：浅底 + 稍重，和下面的字段行拉开层次 */
+    .typora-editor-shell .tiptap table:has(td.dumbpad-stacked-cell) tbody td:first-child {
+        border-top: 0;
+        padding: 8px 12px;
+        background: var(--surface-subtle);
+        font-weight: 600;
+    }
+
+    .typora-editor-shell .tiptap table:has(td.dumbpad-stacked-cell) tbody td[data-label]::before {
+        content: attr(data-label);
+        display: block;
+        margin-bottom: 1px;
+        color: var(--muted-text);
+        font-size: 11px;
+        font-weight: 400;
+        line-height: 1.4;
+        letter-spacing: 0.04em;
+    }
+
+    .typora-editor-shell .tiptap table:has(td.dumbpad-stacked-cell) tbody td:first-child::before {
+        display: none;
     }
 }

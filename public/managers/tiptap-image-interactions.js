@@ -21,9 +21,13 @@ const DRAG_THRESHOLD_PX = 6;
 // 拖拽结束后的 click 抑制、触屏点按后的 click 抑制（与旧编辑器同值）。
 const DRAG_CLICK_GUARD_MS = 250;
 const TAP_CLICK_GUARD_MS = 450;
-// 图表进灯箱时的固定放大倍数（相对 viewBox 尺寸）：小图不至于被吹成卡通尺寸，
-// 大图由灯箱舞台的 max-width / max-height 钳回视口。
-const LIGHTBOX_SVG_SCALE = 2.2;
+// 图表灯箱的缩放参数。
+// 打开时永远是「适应屏幕」= 整图可见（用户明确要的默认态），再靠工具条手动
+// 放大；所以下限就是 fit，不会出现「比整图还小」的无意义缩放。
+const LIGHTBOX_ZOOM_STEP = 1.3;
+const LIGHTBOX_MAX_ZOOM = 4;
+// 两节点小图按 fit 会被吹到 6 倍，封顶 2.2×。
+const LIGHTBOX_FIT_ZOOM_MAX = 2.2;
 
 /**
  * 读 `<svg viewBox="x y w h">` 里的宽高。走属性解析而不是 `viewBox.baseVal`：
@@ -295,6 +299,19 @@ class ArticleImageInteractionView {
         this.lightbox = this.buildLightbox();
         this.fileMenu = this.buildFileMenu();
         this.lightboxBlobUrl = '';
+        this.lightboxSvgBox = null;
+        this.lightboxZoom = 1;
+        this.lightboxOffset = { x: 0, y: 0 };
+        // 转屏/改窗口后「适应屏幕」的倍数会变：把当前缩放重新夹进新区间，
+        // 否则横屏打开、竖屏看会停在旧倍数上（图要么出框要么缩成一条）。
+        this.handleLightboxResize = () => {
+            if (this.lightbox.hidden || !this.lightboxSvgBox) return;
+            const { min, max } = this.lightboxZoomRange();
+            this.lightboxZoom = Math.min(max, Math.max(min, this.lightboxZoom || 1));
+            this.applyLightboxTransform();
+        };
+        window.addEventListener('resize', this.handleLightboxResize);
+        window.addEventListener('orientationchange', this.handleLightboxResize);
         // 图表 NodeView 拿不到 view，靠这个单例入口复用同一个灯箱。
         activeArticleLightbox = this;
 
@@ -440,6 +457,12 @@ class ArticleImageInteractionView {
         lightbox.innerHTML = `
             <div class="article-image-lightbox-bar">
                 <span class="article-image-lightbox-name"></span>
+                <div class="article-image-lightbox-zoom" hidden role="group" aria-label="图表缩放">
+                    <button type="button" data-zoom="out" title="缩小" aria-label="缩小">−</button>
+                    <span class="article-image-lightbox-pct" aria-live="polite">100%</span>
+                    <button type="button" data-zoom="in" title="放大" aria-label="放大">＋</button>
+                    <button type="button" data-zoom="fit" title="适应屏幕" aria-label="适应屏幕">适应</button>
+                </div>
                 <a class="article-image-lightbox-download" download title="下载原图" aria-label="下载原图">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"></path><path d="m7 10 5 5 5-5"></path><path d="M5 21h14"></path></svg>
                 </a>
@@ -449,13 +472,24 @@ class ArticleImageInteractionView {
             </div>
             <div class="article-image-lightbox-stage">
                 <img class="article-image-lightbox-image" alt="">
-                <div class="article-image-lightbox-svg" hidden></div>
+                <div class="article-image-lightbox-svg" hidden>
+                    <div class="article-image-lightbox-canvas"></div>
+                </div>
             </div>
         `;
         lightbox.addEventListener('click', (event) => {
             if (event.target === lightbox) this.closeLightbox();
         });
         lightbox.querySelector('.article-image-lightbox-close').addEventListener('click', () => this.closeLightbox());
+        lightbox.querySelector('.article-image-lightbox-zoom').addEventListener('click', (event) => {
+            const button = event.target.closest('[data-zoom]');
+            if (!button) return;
+            const action = button.dataset.zoom;
+            if (action === 'fit') this.resetLightboxZoom();
+            else if (action === 'in') this.zoomLightboxBy(LIGHTBOX_ZOOM_STEP);
+            else if (action === 'out') this.zoomLightboxBy(1 / LIGHTBOX_ZOOM_STEP);
+        });
+        this.bindLightboxGestures(lightbox);
         document.body.appendChild(lightbox);
         return lightbox;
     }
@@ -705,8 +739,11 @@ class ArticleImageInteractionView {
             imageEl.hidden = true;
             imageEl.removeAttribute('src');
             imageEl.alt = '';
-            svgEl.replaceChildren(this.createLightboxSvg(svg));
+            this.mountLightboxCanvas(svg);
             svgEl.hidden = false;
+            this.lightbox.querySelector('.article-image-lightbox-zoom').hidden = false;
+            // 视口尺寸要等元素上屏才量得到，所以「适应屏幕」放在挂载之后跑。
+            this.resetLightboxZoom();
             const blobUrl = this.createSvgBlobUrl(svg);
             if (blobUrl) {
                 download.href = blobUrl;
@@ -717,7 +754,11 @@ class ArticleImageInteractionView {
             }
         } else {
             svgEl.hidden = true;
-            svgEl.replaceChildren();
+            // 只清画布内容：整块 replaceChildren 会把画布元素本身也删掉，
+            // 之后切回图表 / 关闭时就找不到挂载点了。
+            this.lightbox.querySelector('.article-image-lightbox-canvas').replaceChildren();
+            this.lightbox.querySelector('.article-image-lightbox-zoom').hidden = true;
+            this.lightboxSvgBox = null;
             imageEl.hidden = false;
             imageEl.alt = name;
             imageEl.src = src;
@@ -729,28 +770,166 @@ class ArticleImageInteractionView {
         this.lightbox.querySelector('.article-image-lightbox-close').focus?.({ preventScroll: true });
     }
 
+    /* ---------------- 图表灯箱：适应屏幕 + 手动缩放 + 拖动 ---------------- */
+
     /**
-     * 图表灯箱里的那份 svg。
+     * 把 svg 挂进灯箱画布。
      *
-     * 不能直接把节点铺满舞台：mermaid 的 svg 只有 viewBox、没有固有尺寸，
-     * `width:100%` 会把一个 107×174 的两节点图放大 6 倍，笔画和字号一起变成
-     * 卡通尺寸。这里按 viewBox 定一个固定的放大倍数写回 width/height（= 给
-     * 它一个固有尺寸），再由 CSS 的 max-width / max-height 按比例往下钳——
-     * 大图仍然铺满屏，小图不会被吹爆。mermaid 写在行内的 max-width 必须去掉，
-     * 否则它会把固有尺寸锁死在原始像素。
+     * 画布按 svg 的 viewBox 尺寸铺开（+ 内边距），缩放/平移全部由画布上的
+     * transform 完成——这样「初始整图可见」和「放大后仍是矢量」可以同时成立。
+     * mermaid 写在行内的 max-width 必须去掉，否则它会把画布内容锁在原始像素。
      */
-    createLightboxSvg(svg) {
+    mountLightboxCanvas(svg) {
+        const canvas = this.lightbox.querySelector('.article-image-lightbox-canvas');
         const clone = svg.cloneNode(true);
-        const box = readViewBoxSize(clone);
         clone.removeAttribute('style');
-        if (box) {
-            clone.setAttribute('width', String(Math.round(box.width * LIGHTBOX_SVG_SCALE)));
-            clone.setAttribute('height', String(Math.round(box.height * LIGHTBOX_SVG_SCALE)));
+        const box = readViewBoxSize(clone) || { width: 0, height: 0 };
+        this.lightboxSvgBox = box.width > 0 && box.height > 0 ? box : null;
+
+        if (this.lightboxSvgBox) {
+            clone.setAttribute('width', String(Math.round(box.width)));
+            clone.setAttribute('height', String(Math.round(box.height)));
+            canvas.style.width = `${Math.round(box.width)}px`;
+            canvas.style.height = `${Math.round(box.height)}px`;
         } else {
             clone.setAttribute('width', '100%');
             clone.removeAttribute('height');
+            canvas.style.width = '';
+            canvas.style.height = '';
         }
-        return clone;
+        canvas.replaceChildren(clone);
+        this.lightboxZoom = 1;
+        this.lightboxOffset = { x: 0, y: 0 };
+    }
+
+    lightboxViewport() {
+        const viewport = this.lightbox.querySelector('.article-image-lightbox-svg');
+        return {
+            element: viewport,
+            width: Number(viewport.clientWidth) || 0,
+            height: Number(viewport.clientHeight) || 0,
+        };
+    }
+
+    /** 画布在 zoom=1 时的外框尺寸（含内边距）。 */
+    lightboxCanvasSize() {
+        const canvas = this.lightbox.querySelector('.article-image-lightbox-canvas');
+        return {
+            width: Number(canvas.offsetWidth) || 0,
+            height: Number(canvas.offsetHeight) || 0,
+        };
+    }
+
+    /** 让整张图刚好放进视口的缩放倍数；小图封顶 2.2×，别把两节点图吹成卡通。 */
+    computeLightboxFitZoom() {
+        const view = this.lightboxViewport();
+        const canvas = this.lightboxCanvasSize();
+        if (!view.width || !view.height || !canvas.width || !canvas.height) return 1;
+        return Math.min(
+            view.width / canvas.width,
+            view.height / canvas.height,
+            LIGHTBOX_FIT_ZOOM_MAX,
+        );
+    }
+
+    /**
+     * 把当前缩放/平移写回画布。平移做了夹取：
+     * 画布比视口小的那个轴一律居中，比视口大的轴限制在 [视口-画布, 0]，
+     * 图不会被拖到完全看不见。
+     */
+    applyLightboxTransform() {
+        const canvas = this.lightbox.querySelector('.article-image-lightbox-canvas');
+        const view = this.lightboxViewport();
+        const size = this.lightboxCanvasSize();
+        const zoom = this.lightboxZoom || 1;
+        const scaledWidth = size.width * zoom;
+        const scaledHeight = size.height * zoom;
+
+        let { x, y } = this.lightboxOffset;
+        x = scaledWidth <= view.width
+            ? (view.width - scaledWidth) / 2
+            : Math.min(0, Math.max(view.width - scaledWidth, x));
+        y = scaledHeight <= view.height
+            ? (view.height - scaledHeight) / 2
+            : Math.min(0, Math.max(view.height - scaledHeight, y));
+        this.lightboxOffset = { x, y };
+
+        canvas.style.transform = `translate(${x}px, ${y}px) scale(${zoom})`;
+        const pct = this.lightbox.querySelector('.article-image-lightbox-pct');
+        if (pct) pct.textContent = `${Math.round(zoom * 100)}%`;
+    }
+
+    /** 缩放上下限：不能比「适应屏幕」更小（再小没意义），最大 4×（且至少是 fit 的 3 倍）。 */
+    lightboxZoomRange() {
+        const fit = this.computeLightboxFitZoom();
+        return { min: fit, max: Math.max(LIGHTBOX_MAX_ZOOM, fit * 3) };
+    }
+
+    setLightboxZoom(zoom) {
+        const { min, max } = this.lightboxZoomRange();
+        this.lightboxZoom = Math.min(max, Math.max(min, zoom));
+        this.applyLightboxTransform();
+    }
+
+    zoomLightboxBy(factor) {
+        this.setLightboxZoom((this.lightboxZoom || 1) * factor);
+    }
+
+    /** 「适应」：回到整图可见并居中。 */
+    resetLightboxZoom() {
+        if (!this.lightboxSvgBox) return;
+        this.lightboxZoom = this.computeLightboxFitZoom();
+        this.lightboxOffset = { x: 0, y: 0 };
+        this.applyLightboxTransform();
+    }
+
+    /**
+     * 拖动平移 + 滚轮缩放。
+     * pointerdown 用 setPointerCapture 抓住指针，手指滑出视口也不会丢；
+     * 触屏的浏览器缩放手势由 CSS 的 touch-action: none 关掉。
+     */
+    bindLightboxGestures(lightbox) {
+        const viewport = lightbox.querySelector('.article-image-lightbox-svg');
+        this.lightboxDrag = null;
+
+        this.handleLightboxPointerDown = (event) => {
+            if (lightbox.hidden || !this.lightboxSvgBox) return;
+            if (event.button !== undefined && event.button !== 0) return;
+            this.lightboxDrag = {
+                pointerId: event.pointerId,
+                startX: event.clientX,
+                startY: event.clientY,
+                origin: { ...this.lightboxOffset },
+            };
+            viewport.setPointerCapture?.(event.pointerId);
+        };
+        this.handleLightboxPointerMove = (event) => {
+            const drag = this.lightboxDrag;
+            if (!drag || drag.pointerId !== event.pointerId) return;
+            event.preventDefault();
+            this.lightboxOffset = {
+                x: drag.origin.x + (event.clientX - drag.startX),
+                y: drag.origin.y + (event.clientY - drag.startY),
+            };
+            this.applyLightboxTransform();
+        };
+        this.handleLightboxPointerUp = (event) => {
+            const drag = this.lightboxDrag;
+            if (!drag || drag.pointerId !== event.pointerId) return;
+            this.lightboxDrag = null;
+            viewport.releasePointerCapture?.(event.pointerId);
+        };
+        this.handleLightboxWheel = (event) => {
+            if (lightbox.hidden || !this.lightboxSvgBox) return;
+            event.preventDefault();
+            this.zoomLightboxBy(event.deltaY < 0 ? LIGHTBOX_ZOOM_STEP : 1 / LIGHTBOX_ZOOM_STEP);
+        };
+
+        viewport.addEventListener('pointerdown', this.handleLightboxPointerDown);
+        viewport.addEventListener('pointermove', this.handleLightboxPointerMove);
+        viewport.addEventListener('pointerup', this.handleLightboxPointerUp);
+        viewport.addEventListener('pointercancel', this.handleLightboxPointerUp);
+        viewport.addEventListener('wheel', this.handleLightboxWheel, { passive: false });
     }
 
     /** 图表另存为 .svg：把当前 svg 序列化成 blob，关闭时统一回收。 */
@@ -781,7 +960,9 @@ class ArticleImageInteractionView {
         this.lightbox.hidden = true;
         document.body.classList.remove('article-image-lightbox-open');
         this.releaseLightboxBlob();
-        this.lightbox.querySelector('.article-image-lightbox-svg').replaceChildren();
+        this.lightboxSvgBox = null;
+        this.lightboxDrag = null;
+        this.lightbox.querySelector('.article-image-lightbox-canvas').replaceChildren();
         this.lightboxTrigger?.focus?.({ preventScroll: true });
         this.lightboxTrigger = null;
     }
@@ -1064,6 +1245,8 @@ class ArticleImageInteractionView {
     destroy() {
         this.cancelDrag();
         this.releaseLightboxBlob();
+        window.removeEventListener('resize', this.handleLightboxResize);
+        window.removeEventListener('orientationchange', this.handleLightboxResize);
         if (activeArticleLightbox === this) activeArticleLightbox = null;
         this.view.dom.removeEventListener('click', this.handleClick, true);
         this.view.dom.removeEventListener('dragstart', this.handleDragStart);

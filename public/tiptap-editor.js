@@ -55,6 +55,7 @@ import {
     TiptapImageInteractions,
 } from './managers/tiptap-image-interactions.js';
 import { TiptapImagePaste } from './managers/tiptap-image-paste.js';
+import { DumbPadTableStack } from './managers/tiptap-table-stack.js';
 import { TiptapPointerFocusGuard } from './managers/tiptap-pointer-focus.js';
 import { DumbPadMedia } from './managers/tiptap-media.js';
 import { buildMarkdownHeadingIndex } from './managers/heading-index.js';
@@ -323,6 +324,9 @@ export class HybridMarkdownEditor {
                 }),
                 TiptapSelectionMenu,
                 TiptapImageInteractions,
+                // 窄屏表格折卡：自然宽放不下时把每行折成一张卡（Decoration，
+                // 不改 DOM），见 managers/tiptap-table-stack.js
+                DumbPadTableStack,
                 // 粘贴/拖入图片一律走资产上传（否则内核把 Base64 直接写进正文，
                 // 且没有 dumbpad-width，渲染按原宽铺满纸面）。见 tiptap-image-paste.js
                 TiptapImagePaste.configure({ getAdapter: () => this }),
