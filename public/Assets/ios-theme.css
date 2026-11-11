@@ -2157,7 +2157,9 @@ main {
      321px 的卡片；横向溢出又被 styles.css 的 `table { overflow-x:auto }`
      吞成一个没有滚动条、没有提示的隐形滚动区——读起来就是「右边两列被裁了」。
    - `th::before/::after { content:none }` 是给 vditor/index.css 的空占位
-     擦屁股的，那份样式表早已不在 index.html 里，规则是死代码。
+     擦屁股的。注意 index.css 仍由 app.js 动态加载（并非死代码）：它的
+     `th:first-child::after` 24px 占位正是「表头第一格贴顶 / 无视
+     vertical-align」的根因，现由 styles.css 表格段显式收掉。
 
    唯一保留的是深色主题那一档：`--surface-subtle` 在暗色卡片上会和背景
    糊成一片，行底色必须显式透明。

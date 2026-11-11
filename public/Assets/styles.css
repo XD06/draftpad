@@ -8119,7 +8119,8 @@ body.article-image-lightbox-open {
     margin: 1.15em 0;
     overflow-x: auto;
     overflow-y: hidden;
-    -webkit-overflow-scrolling: touch;
+    /* 不写 -webkit-overflow-scrolling: touch：iOS 13+ 默认惯性滚动，
+       这个 legacy 属性反而和 sticky 首列在惯性滚动时打架。 */
     scrollbar-width: thin;
 }
 
@@ -8137,7 +8138,9 @@ body.article-image-lightbox-open {
     width: 100%;
     max-width: 100%;
     margin: 0;
-    border-collapse: collapse;
+    /* collapse 下 Chrome 滚动时不重绘 sticky 格的边框（首列表头线闪断）；
+       separate + 0 间距让边框由各格自己画，仍是连续三线表。 */
+    border-collapse: separate;
     border-spacing: 0;
     overflow: visible;
     font-size: 0.94em;
@@ -8164,6 +8167,21 @@ body.article-image-lightbox-open {
     word-break: normal;
 }
 
+/* vditor/index.css 由 app.js 动态加载（不是死代码），其中给首列留了一个 24px
+ * 的 inline-block 空占位：`.vditor-reset table th:first-child::after,
+ * td:first-child::after { content:""; display:inline-block; min-height:24px }`。
+ * 它把第一格的内容盒撑到与行内容区等高（表头行被撑到 68px），于是
+ * `vertical-align: middle` 对第一格没有任何可分配的空间、<p> 永远贴在 padding
+ * 边，其余四格却居中——这就是「第一格无视 vertical-align」的真根因，和 sticky
+ * 无关（桌面视口同样复现，给第一格单独设 middle/bottom/top 乃至 !important
+ * 都无效，因为问题在内容盒高度而不是层叠优先级）。收掉占位后 middle 才生效。
+ * 特异性 (0,3,2) 压过 index.css 的 (0,2,2)，且命中范围与它完全一致。 */
+.typora-editor-shell .vditor-reset table th:first-child::after,
+.typora-editor-shell .vditor-reset table td:first-child::after {
+    content: none;
+    display: none;
+}
+
 /* 单元格里的段落不是正文，必须清掉正文段距。注意这里多带一个 `.vditor-reset`
  * 复合类：桌面端 ios-theme.css 的
  * `body:not(.thoughts-mode) .typora-editor-shell .vditor-reset p { margin-bottom:14px }`
@@ -8180,7 +8198,10 @@ body.article-image-lightbox-open {
     margin-top: 0.42em;
 }
 
-/* 表头：顶线 + 表头线 + 极浅底色 */
+/* 表头：顶线 + 表头线 + 极浅底色；标题水平靠左、垂直居中。
+ * 之前误判成「Chrome 里第一格无视 vertical-align」而统一贴顶，那只是把五格
+ * 一起摁在 padding 边，并没有垂直居中。真根因是上面收掉的 vditor 首列
+ * ::after 占位；收掉后 middle 对五格同样生效。 */
 .typora-editor-shell .tiptap table tr:first-child th {
     border-top: 1.5px solid color-mix(in srgb, var(--text-color) 52%, transparent);
     border-bottom: 1px solid color-mix(in srgb, var(--text-color) 26%, transparent);
@@ -8189,7 +8210,8 @@ body.article-image-lightbox-open {
     background-color: color-mix(in srgb, var(--text-color) 4.2%, transparent);
     color: color-mix(in srgb, var(--text-color) 88%, var(--muted-text));
     font-weight: 600;
-    vertical-align: bottom;
+    text-align: left;
+    vertical-align: middle;
 }
 
 /* 底线 */
@@ -8223,9 +8245,11 @@ body.article-image-lightbox-open {
         white-space: nowrap;
     }
 
-    /* 长表（数据行 > 6）不折卡，改成「首列冻结 + 横向滑动」：右滑看各列时，
-       维度/编号这一列钉在左边，横向比较不会丢参照物。折卡适合短表，
-       长表要的是「扫」，折完纵向长度会翻好几倍。 */
+    /* 长表（数据行 > 3）不折卡，保持真表格 + 「首列冻结 + 横向滑动」：
+       右滑看各列时维度/编号这一列钉在左边，横向比较不丢参照物。
+       旧注释声称 sticky 会让单元格脱离 vertical-align 计算，实测不成立
+       （静态与 scrollLeft=200 下五格都居中）；表头错位的真凶是上面收掉的
+       vditor ::after 占位。这里不再写 vertical-align: top 规避。 */
     .typora-editor-shell .tiptap .tableWrapper table th:first-child,
     .typora-editor-shell .tiptap .tableWrapper table td:first-child {
         position: sticky;
@@ -8242,12 +8266,6 @@ body.article-image-lightbox-open {
             color-mix(in srgb, var(--text-color) 4.2%, transparent),
             color-mix(in srgb, var(--text-color) 4.2%, transparent)
         );
-    }
-
-    /* sticky 会让单元格脱离表格的 vertical-align 计算：被冻结的那格内容会贴顶，
-       其余表头仍按 bottom 对齐，看上去「维度」比产品名高一行。移动端统一贴顶。 */
-    .typora-editor-shell .tiptap .tableWrapper table tr:first-child th {
-        vertical-align: top;
     }
 
     /* 折卡态下首列不是「冻结列」，撤销 sticky */

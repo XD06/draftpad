@@ -6,6 +6,10 @@
 
 ## [Unreleased]
 
+### 修复
+
+- **表格表头垂直居中（水平靠左）/ 折卡阈值收到 3 行**：真根因不是 `position: sticky`，而是 app.js 动态加载的 `vditor/index.css` 给 `th:first-child::after` / `td:first-child::after` 留的 24px `inline-block` 空占位——它把第一格内容盒撑满行内容区（表头行 68px），`vertical-align: middle` 无空间可分配，于是第一格贴顶、其余四格居中；单独给第一格设 `middle`/`bottom`/`top` 乃至 `!important` 都无效。styles.css 显式收掉占位，表头改 `text-align:left; vertical-align:middle`。隔离实验证明 sticky 单元格在静态与横滑（scrollLeft=200）下都不破坏 vertical-align，故**保留移动端首列冻结**，只删掉过去那条 `vertical-align: top` 规避规则；`STACK_MAX_BODY_ROWS` 6 → 3，只有 ≤3 数据行的短表折卡。另：真机反馈冻结首列滑动时抖动，几何实测首列自身零位移（横滑 / 纵滑 / 亚像素采样 0 跳变），视觉闪动来自相邻列的 1/3 px 量化与 Chrome 不重绘 sticky 格边框；表格改 `border-collapse: separate; border-spacing: 0`（各格自绘边框，行高 +1px），并移除 `.tableWrapper` 的 `-webkit-overflow-scrolling: touch`。
+
 ### 新增
 
 - **移动端表格折卡 + 图表全屏改为「适应屏幕 + 手动缩放」**：上一版把表格做成「列宽下限 + 横向滑动」、图表做成「按 2.2× 写死再 contain」，手机上都不可用，这一版换方案。

@@ -33,8 +33,8 @@ const STACK_OVERFLOW_SLOP_PX = 2;
 // 数据行超过这个数就不折卡。
 // 折卡把「一行」变成「一张卡（N 个字段）」，纵向长度大约翻 N 倍：16 行 5 列的
 // 对比表折完是 8000px 高，而原表只有 900px。长表要的是「扫」，不是「读」，
-// 所以长表保留网格 + 首列冻结（见 styles.css），短表才折卡。
-const STACK_MAX_BODY_ROWS = 6;
+// 所以只有 3 行以内的短表才折卡，长表保留真表格 + 首列冻结横滑（见 styles.css）。
+const STACK_MAX_BODY_ROWS = 3;
 
 /** 单元格的列跨度。 */
 function colspanOf(cell) {

@@ -82,6 +82,25 @@ function checkSourceContracts() {
         'touching the live table would be recorded by DOMObserver');
     check('table stacking is bounded to narrow containers',
         /STACK_MAX_CONTAINER_PX\s*=\s*480/.test(stack));
+    check('only short tables (<= 3 body rows) stack',
+        /STACK_MAX_BODY_ROWS\s*=\s*3/.test(stack),
+        'long tables keep the grid so the page does not grow several times over');
+    check('the vditor first-column ::after spacer is neutralised',
+        /\.typora-editor-shell \.vditor-reset table th:first-child::after,\s*\.typora-editor-shell \.vditor-reset table td:first-child::after \{\s*content:\s*none/.test(css),
+        'a 24px inline-block spacer fills the first cell, so middle has no room to align');
+    check('the table header is left aligned and vertically centred',
+        /tr:first-child th\s*\{[^}]*text-align:\s*left[^}]*vertical-align:\s*middle/s.test(css),
+        'header text stays left aligned; only vertical alignment is centred');
+    check('the first column stays frozen while long tables scroll horizontally',
+        /table th:first-child,[\s\S]{0,160}?table td:first-child\s*\{[^}]*position:\s*sticky/s.test(css),
+        'freezing the first column keeps a reference while scrolling');
+    check('the mobile header is not forced back to vertical-align: top',
+        !/tr:first-child th\s*\{[^}]*vertical-align:\s*top/s.test(css),
+        'top was a workaround for the 24px ::after spacer, not a fix');
+    check('sticky cells keep their borders while the table scrolls',
+        /\.tiptap table\s*\{[^}]*border-collapse:\s*separate[^}]*border-spacing:\s*0/s.test(css)
+        && !/^\s*-webkit-overflow-scrolling\s*:/m.test((css.match(/\.tiptap \.tableWrapper\s*\{[^}]*\}/s) || [''])[0]),
+        'collapse drops sticky cell borders on scroll; the legacy iOS flag fights sticky');
     check('the stacked layout is styled via :has() on the cell marker',
         /table:has\(td\.dumbpad-stacked-cell\)\s*\{[^}]*display:\s*block/s.test(css)
         && /td\[data-label\]::before\s*\{[^}]*content:\s*attr\(data-label\)/s.test(css),
