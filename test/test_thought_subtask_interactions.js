@@ -134,6 +134,15 @@ function run() {
         'row swipe JS should write and clear only the row-scoped custom properties'
     );
 
+    const swipeBody = thoughtsSource.slice(
+        thoughtsSource.indexOf('bindSubtaskSwipeDelete(row, thought) {'),
+        thoughtsSource.indexOf('async deleteSubtaskBySwipe(row, thought, subId) {')
+    );
+    assert(
+        swipeBody.includes("if (event.pointerType === 'mouse') return;"),
+        'subtask row swipe must bail out for mouse pointers so dblclick editing keeps its target'
+    );
+
     // The row gesture reuses the shared swipe state helper.
     assert(
         swipeHelperSource.includes('export function getThoughtSwipeState') &&

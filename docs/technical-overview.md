@@ -178,13 +178,13 @@ Thought 页面使用 `GET /api/thoughts?format=page&light=1&limit=30&sort=timeli
 
 ### 多端 Thought 同步的渲染边界
 
-服务端对 Thought 的 create/update/delete 都会广播 `thoughts_update`；客户端 `handleSocketUpdate()` 先更新内存模型，再交给 `renderSocketDelta()` 决定渲染路径：没有 timeline 输入持有焦点时走常规 `scheduleRender()`；有焦点且焦点在被更新卡片之外时，用 `patchRenderedThought()` 只重建受影响卡片（新建/删除则原位补入或移除），远端变化立即可见；焦点在被更新卡片内部时保持焦点优先，推迟到失焦 flush（此时用户正在该卡上输入，模型已是最新）。`scheduleRender()` 的焦点保持逻辑只应影响“正在编辑的那张卡”，不允许吞掉其他卡的实时更新。
+服务端对 Thought 的 create/update/delete 都会广播 `thoughts_update`；客户端 `handleSocketUpdate()` 先更新内存模型（对仍在 `_inFlightCreates` 队列中的本地乐观创建通过 `_matchInFlightCreate` / `_finalizeCreatedThought` 原位替换认领，消除 create 竞态重卡），再交给 `renderSocketDelta()` 决定渲染路径：当时间线已渲染（`Number.isInteger(this._renderedCount)`）且焦点不在受影响卡片内时，一律走 `patchRenderedThought()` 只重建/补入/移除受影响卡片（不再因无焦点而整表 `scheduleRender()`，也不会在 `ai_status` 更新时触发全表重建，而是走 `updateThoughtCardAIUI()` 局部刷新状态、标签与关联计数）；焦点在被更新卡片内部时保持焦点优先，推迟到 `scheduleCardPatch()` 失焦后单卡增量刷新（此时用户正在该卡上输入，模型已是最新）。单卡局部变更、`render()` 重建与 `setThoughtCardExpanded(..., { collapseOthers: true })` 均通过 `_captureViewportAnchor()` / `_restoreViewportAnchor()` 在真实滚动容器（兼容 `ios-theme.css` 下的 `document.body` 与 `.thoughts-scroll-area`）上补偿高度差，避免视线跳跃。
 
 WS 回声应用时对 `this.thoughts` 中的对象做原位 `Object.assign` 合并而不是替换数组槽位：`mutateThought()` 的排队闭包持有同一对象并在轮到时读取 `version`，整体替换会让后续排队请求带旧 `baseVersion` 而撞上自己的回声 409。
 
-inline 子任务新增走“同一输入框链式”流：回车提交后清空输入值、原位插入一条不可交互的预览行（服务端会在落库时重新分配子任务 id，预览行不绑事件避免操作到过期本地 id），输入框保持聚焦，移动端键盘在连续添加期间不收起；失焦或 Escape 后 cleanup 并调度一次完整 render，用服务端 id 的完整绑定行替换预览行。回车带 `isComposing` 守卫，中文输入法确认拼音的回车不会误提交。
+inline 子任务新增走“同一输入框链式”流：回车提交后清空输入值、原位插入一条不可交互的预览行（服务端会在落库时重新分配子任务 id，预览行不绑事件避免操作到过期本地 id），输入框保持聚焦，移动端键盘在连续添加期间不收起；失焦或 Escape 后 cleanup 并触发单卡 `patchRenderedThought()`，用服务端 id 的完整绑定行替换预览行而不重建整条时间线。回车带 `isComposing` 守卫与防重入锁。行级手势 `bindSubtaskSwipeDelete` 仅响应触摸/手写笔，鼠标事件直接放行且仅在横向滑动成立后才调用 `setPointerCapture`，保证 Chrome 下双击 `.subtask-text` 进入行内编辑。
 
-多设备同步的浏览器回归：`npm run test:thought-sync-browser`（不在 `npm test` 中，需要本机 Chrome 与可导入的 playwright，环境要求同 `test:editor-input-browser`），覆盖双端互加子任务的实时与刷新可见性、新建 Thought 实时同步、焦点输入期间跨卡片远端更新立即渲染，以及服务端数据与双端 outbox 清空断言。
+多设备同步与渲染稳定性回归：`npm run test:thought-sync-browser` 与 `npm run test:thought-render-stability-browser`（均不在 `npm test` 中，需本机 Chrome 与 `playwright`，环境要求同 `test:editor-input-browser`），分别覆盖双端实时同步、焦点跨卡更新、滚动锚定、`bindSubtaskSwipeDelete` 与零整表重建约束（外加 `npm run test:thought-render-stability` jsdom 单测）。
 
 ### 手动关联搜索
 

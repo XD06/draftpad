@@ -274,9 +274,9 @@ npm run seed:demo
 
 根因：远端更新到达时若本机 timeline 内有输入框持有焦点，`scheduleRender` 的焦点保持逻辑把渲染推迟到失焦（模型已更新、界面不动）；WS 回声整体替换数组槽位让排队提交拿到旧版本号撞上自己的回声 409。键盘闪断则来自回车提交先全量重建时间线、等服务器返回后再新开输入框。
 
-修复边界：远端更新按卡片原位刷新（`renderSocketDelta`/`patchRenderedThought`），只有焦点在被更新卡片内时才推迟到失焦；WS 回声对既有对象原位合并；inline 子任务新增改为同一输入框链式提交（预览行 + 失焦后完整渲染），回车带 IME 组合态守卫。详细边界见 [技术总览](docs/technical-overview.md)。
+修复边界：远端更新、`ai_status` 回落、单卡变更与 inline 子任务收尾均按卡片原位刷新（`renderSocketDelta`/`patchRenderedThought`/`updateThoughtCardAIUI`），焦点在被更新卡片内时走 `scheduleCardPatch()` 推迟到失焦；本地新建通过 `_inFlightCreates` 与 WS 回声去重；操作前后按真实滚动容器（`document.body` / `.thoughts-scroll-area`）保持视口锚定；`bindSubtaskSwipeDelete` 对鼠标直接放行并延后 `setPointerCapture` 以保住 `.subtask-text` 双击编辑。详细边界见 [技术总览](docs/technical-overview.md)。
 
-防回归：改动后运行 `npm run test:thought-sync-browser`（双设备浏览器回归，需本机 Chrome）与 `npm run test:thought-modules`。
+防回归：改动后运行 `npm run test:thought-render-stability`、`npm run test:thought-modules`，以及真机 Chrome 回归 `npm run test:thought-sync-browser`、`npm run test:thought-render-stability-browser`。
 
 ### 已修复：源码模式长文输入时视线飞到文顶
 

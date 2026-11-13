@@ -8,6 +8,12 @@
 
 ### 修复
 
+- **Thought 操作不再整表重绘或视线漂移，修复子任务鼠标双击编辑被行级 Pointer Capture 拦截**：
+  - 子任务回车新增/行内保存/勾选/滑删、正文字段/标签/样式/时间/附件/AI 重试、WS 推送与 1.2s AI 状态回落等单卡操作全部改为原地增量更新（`patchRenderedThought` / `scheduleCardPatch` / `updateThoughtCardAIUI`），保留既有卡片 DOM 节点、`targetCount` 展开展开数与底部分页控件；`submitQuickAdd`、`createInstantDraftThought`、`persistInstantDraftThought` 与 WS `create` 引入 `_inFlightCreates` 去重（`replaceId` 原地替换），消除重影与双重滚动跳动。
+  - 新增真实滚动容器检测（兼容 `ios-theme.css` 下由 `document.body` 承载滚动及 `.thoughts-scroll-area` 容器）与视口锚定补偿（`_captureViewportAnchor` / `_restoreViewportAnchor` / `scrollCardIntoViewIfNeeded`），在卡片 patch、`setThoughtCardExpanded(..., { collapseOthers: true })`、重排与 `render()` 重建时保持用户视线不漂移。
+  - `bindSubtaskSwipeDelete` 在 `pointerType === 'mouse'` 时直接早退且将 `setPointerCapture` 延后至实际横向拖拽启动后，避免浏览器把鼠标 `dblclick` 的目标从 `.subtask-text` 重定向到父行而无法进入行内编辑。
+  - 回归：新增 `npm run test:thought-render-stability`（jsdom）与 `npm run test:thought-render-stability-browser`（Chrome `390x844` / `1280x800`）。
+- **PWA 预缓存补齐 `tiptap-table-stack.js` 与表格插件销毁安全守卫**：将 `/managers/tiptap-table-stack.js` 加入 `service-worker.js` 的 `CORE_ASSETS`，避免离线冷启动缺模块；`tiptap-table-stack.js` 的 `destroy()` 守卫 `cancelAnimationFrame` 并清理延迟重试定时器，修复无 `cancelAnimationFrame` 的测试环境中报 `ReferenceError` 的问题。
 - **表格表头垂直居中（水平靠左）/ 折卡阈值收到 3 行**：真根因不是 `position: sticky`，而是 app.js 动态加载的 `vditor/index.css` 给 `th:first-child::after` / `td:first-child::after` 留的 24px `inline-block` 空占位——它把第一格内容盒撑满行内容区（表头行 68px），`vertical-align: middle` 无空间可分配，于是第一格贴顶、其余四格居中；单独给第一格设 `middle`/`bottom`/`top` 乃至 `!important` 都无效。styles.css 显式收掉占位，表头改 `text-align:left; vertical-align:middle`。隔离实验证明 sticky 单元格在静态与横滑（scrollLeft=200）下都不破坏 vertical-align，故**保留移动端首列冻结**，只删掉过去那条 `vertical-align: top` 规避规则；`STACK_MAX_BODY_ROWS` 6 → 3，只有 ≤3 数据行的短表折卡。另：真机反馈冻结首列滑动时抖动，几何实测首列自身零位移（横滑 / 纵滑 / 亚像素采样 0 跳变），视觉闪动来自相邻列的 1/3 px 量化与 Chrome 不重绘 sticky 格边框；表格改 `border-collapse: separate; border-spacing: 0`（各格自绘边框，行高 +1px），并移除 `.tableWrapper` 的 `-webkit-overflow-scrolling: touch`。
 
 ### 新增
