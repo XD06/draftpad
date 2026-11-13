@@ -157,9 +157,19 @@ export const DumbPadTableStack = Extension.create({
                 view: (editorView) => {
                     let frame = 0;
                     let retries = 0;
+                    let destroyed = false;
+                    const timers = new Set();
+                    const defer = (fn, ms) => {
+                        const id = setTimeout(() => {
+                            timers.delete(id);
+                            if (!destroyed) fn();
+                        }, ms);
+                        timers.add(id);
+                    };
 
                     const measure = () => {
                         frame = 0;
+                        if (destroyed) return;
                         const shell = editorView.dom.closest('.typora-editor-shell');
                         if (!shell || !editorView.dom.isConnected) return;
                         const next = new Set();
@@ -191,7 +201,7 @@ export const DumbPadTableStack = Extension.create({
                         if (sameSet(next, tableStackKey.getState(editorView.state))) {
                             if (unmeasurable && retries < 20) {
                                 retries += 1;
-                                setTimeout(schedule, 80);
+                                defer(schedule, 80);
                             }
                             return;
                         }
@@ -205,7 +215,7 @@ export const DumbPadTableStack = Extension.create({
                     };
 
                     const schedule = () => {
-                        if (frame) return;
+                        if (frame || destroyed || typeof requestAnimationFrame !== 'function') return;
                         frame = requestAnimationFrame(measure);
                     };
 
@@ -234,14 +244,21 @@ export const DumbPadTableStack = Extension.create({
                     schedule();
                     // 应用是「先建编辑器、再 setValue、最后把文章区显示出来」的顺序，
                     // 头几拍容器宽可能还是 0。补几个延迟兜底，成本只有一次布局读取。
-                    [120, 400, 1200].forEach((ms) => setTimeout(schedule, ms));
+                    [120, 400, 1200].forEach((ms) => defer(schedule, ms));
 
                     return {
                         update: () => schedule(),
                         destroy() {
+                            destroyed = true;
                             window.removeEventListener('resize', onResize);
                             observer?.disconnect();
-                            if (frame) cancelAnimationFrame(frame);
+                            for (const id of timers) clearTimeout(id);
+                            timers.clear();
+                            if (frame) {
+                                if (typeof cancelAnimationFrame === 'function') cancelAnimationFrame(frame);
+                                else if (typeof clearTimeout === 'function') clearTimeout(frame);
+                                frame = 0;
+                            }
                         },
                     };
                 },
