@@ -6,6 +6,14 @@
 
 ## [Unreleased]
 
+### 优化 / 修复
+
+- **公开分享页（`/s/:id`）重构为 B+C 混合布局并彻底隔离样式泄漏**：
+  - 将模板与渲染逻辑拆分到独立模块 `scripts/share-renderer.js`，`routes/share-routes.js` 不再引入主站 `/Assets/styles.css` 与 `/Assets/preview-styles.css`，消除全局样式重置与 `overflow: hidden` 对分享页造成的排版崩坏、暗色模式对比度断裂及引用块误斜体问题。
+  - 采用用户选定的 **B 风格（iOS 质感圆角主卡片与磨砂交互层）+ C 风格（桌面左侧 sticky 元信息卡、快捷操作条与标题目录栏）**：桌面有目录时操作入口（DumbPad 徽标、复制、浅色/暗色）直接融入左侧 sticky 栏（无标题文章内嵌至页头），消除悬浮顶栏遮挡正文与顶部夹缝；`< 1060px` 自动切换为贴顶无缝磨砂窄栏、顶部元信息胶囊与右上角目录弹窗。
+  - 修复各类内容与边界异常：按需加载同源 `/vendor/tiptap/tiptap-mermaid.bundle.js` 渲染 Mermaid 流程图为内联 SVG（支持源码/图表切换、`viewBox` 等比矢量灯箱放大、Light/Dark 动态重绘与语法错误降级源码）、保留并约束 `dumbpad-width=N` 图片尺寸（含灯箱放大）、三态待办 `[ ]` / `[~]` / `[x]` 安全渲染（不再因 `sanitizeHtml` 剥离 `<input>` 丢失复选框或裸露 `[~]`）、代码块保护免受自定义标记正则误伤、`span[data-note]` / `<mark note>` / `==text=={...}` 批注合并与视口安全边距夹取弹窗、`[data-draw]` / `[[time:...]]` / `dumbpad-file=1` / 音视频卡片美化及与文章标题重复的首个 `<h1>` 自动去重。
+  - 回归：新增 `npm run test:share-page`（jsdom + HTTP 路由与 XSS 消毒检查）及 `npm run test:share-page-browser`（真实 Chrome Desktop `1440x900` & Mobile `390x844` 零横向溢出、sticky 栏与无缝移动顶栏、Mermaid 渲染与灯箱、Dark 模式重绘检查）。
+
 ### 修复
 
 - **Thought 操作不再整表重绘或视线漂移，修复子任务鼠标双击编辑被行级 Pointer Capture 拦截**：
