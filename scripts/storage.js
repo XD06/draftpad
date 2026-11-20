@@ -22,6 +22,7 @@ const DATA_DIR = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : pat
 const NOTEPADS_FILE = path.join(DATA_DIR, 'notepads.json');
 const THOUGHTS_FILE = path.join(DATA_DIR, 'thoughts.json');
 const INSTANT_DRAFTS_FILE = path.join(DATA_DIR, 'today-drafts.json');
+const INSTANT_DRAFT_ARCHIVE_FILE = path.join(DATA_DIR, 'instant-drafts-archive.json');
 const THOUGHTS_DIR = path.join(DATA_DIR, 'thoughts');
 const META_DIR = path.join(DATA_DIR, 'thoughts.meta');
 const RELATIONS_DIR = path.join(DATA_DIR, 'relations');
@@ -943,6 +944,31 @@ async function saveInstantDrafts(drafts) {
     await writeJSON(INSTANT_DRAFTS_FILE, next);
 }
 
+// 即时草稿归档：滑出 3 天窗口的记录不再删除，而是搬到这里长期保留。
+// 界面上不展示（即时草稿视图只读窗口内数据），通过
+// GET /api/instant-drafts/archive 读取；local/S3 差异与 today-drafts.json 一样
+// 收敛在本文件，调用方不需要知道后端。
+// ponytail: 单文件全量数组（一行草稿约 200 字节，万条仍是 MB 级）；真到十万条再按月分片。
+async function readInstantDraftArchive() {
+    await init();
+    if (isS3Backend()) {
+        const drafts = await s3ReadJSON('instant-drafts-archive.json', []);
+        return Array.isArray(drafts) ? drafts : [];
+    }
+    const drafts = await readJSON(INSTANT_DRAFT_ARCHIVE_FILE, []);
+    return Array.isArray(drafts) ? drafts : [];
+}
+
+async function saveInstantDraftArchive(drafts) {
+    await init();
+    const next = Array.isArray(drafts) ? drafts : [];
+    if (isS3Backend()) {
+        await s3WriteJSON('instant-drafts-archive.json', next);
+        return;
+    }
+    await writeJSON(INSTANT_DRAFT_ARCHIVE_FILE, next);
+}
+
 async function readAgentRunUnsafe(id) {
     if (isS3Backend()) return s3ReadJSON(agentRunKey(id), null);
     return readJSON(agentRunPath(id), null);
@@ -1766,6 +1792,8 @@ module.exports = {
     saveThoughts,
     readInstantDrafts,
     saveInstantDrafts,
+    readInstantDraftArchive,
+    saveInstantDraftArchive,
     readThought,
     readThoughtsByIds,
     listThoughtsPage,
@@ -1818,6 +1846,7 @@ module.exports = {
         NOTEPADS_FILE,
         THOUGHTS_FILE,
         INSTANT_DRAFTS_FILE,
+        INSTANT_DRAFT_ARCHIVE_FILE,
         THOUGHTS_DIR,
         META_DIR,
         RELATIONS_DIR,

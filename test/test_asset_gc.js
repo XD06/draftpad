@@ -21,6 +21,7 @@ const ASSET_YOUNG = 'eeeeeeee-5555-4555-8555-555555555555';
 const ASSET_TRASHED_ARTICLE = 'ffffffff-6666-4666-8666-666666666666';
 const ASSET_TEXT_REF = '11111111-7777-4777-8777-777777777777';
 const ASSET_DRAFT_REF = '22222222-8888-4888-8888-888888888888';
+const ASSET_ARCHIVE_DRAFT_REF = '44444444-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const ASSET_UNKNOWN_AGE = '33333333-9999-4999-8999-999999999999';
 
 function prepareDataDir({ withRoots = true } = {}) {
@@ -30,6 +31,13 @@ function prepareDataDir({ withRoots = true } = {}) {
         id: 'd1',
         day: '2026-11-03',
         text: `草稿里粘了旧链接 /api/assets/${ASSET_DRAFT_REF}/original`
+    }] : []));
+    // 归档草稿（滑出 3 天窗口）同样是持久引用根：界面不展示，但正文仍然可读。
+    fs.writeFileSync(path.join(dataDir, 'instant-drafts-archive.json'), JSON.stringify(withRoots ? [{
+        id: 'd-archived',
+        day: '2026-10-01',
+        text: `归档草稿里粘了旧链接 /api/assets/${ASSET_ARCHIVE_DRAFT_REF}/original`,
+        archivedAt: 1700000000000
     }] : []));
     fs.writeFileSync(path.join(dataDir, 'default.txt'), withRoots
         ? `文章正文 ![图](/api/assets/${ASSET_ARTICLE}/original)`
@@ -90,6 +98,7 @@ async function run() {
     await writeAsset(assets, ASSET_TRASHED_ARTICLE, { createdAt: old });
     await writeAsset(assets, ASSET_TEXT_REF, { createdAt: old });
     await writeAsset(assets, ASSET_DRAFT_REF, { createdAt: old });
+    await writeAsset(assets, ASSET_ARCHIVE_DRAFT_REF, { createdAt: old });
     await writeAsset(assets, ASSET_ORPHAN, { size: 128, createdAt: old });
     await writeAsset(assets, ASSET_YOUNG, { createdAt: Date.now() });
     await writeAsset(assets, ASSET_UNKNOWN_AGE, { createdAt: null });
@@ -135,8 +144,8 @@ async function run() {
     {
         const report = await gcOrphanAssets({ apply: false, graceDays: 1 });
         assert.strictEqual(report.apply, false);
-        assert.strictEqual(report.assets, 9, 'all assets are scanned');
-        assert.strictEqual(report.referenced, 6, 'every persistent root kind is counted (thought/attachment URL/trash/article/trashed article/draft)');
+        assert.strictEqual(report.assets, 10, 'all assets are scanned');
+        assert.strictEqual(report.referenced, 7, 'every persistent root kind is counted (thought/attachment URL/trash/article/trashed article/draft/archived draft)');
         assert.strictEqual(report.orphans, 1, 'only the old unreferenced asset is an orphan');
         assert.strictEqual(report.skippedYoung, 1, 'the fresh asset is protected by the grace period');
         assert.strictEqual(report.skippedUnknownAge, 1, 'an asset without createdAt is never treated as ancient');
@@ -167,7 +176,7 @@ async function run() {
         assert.deepStrictEqual(report.deleted, [ASSET_ORPHAN], 'exactly the orphan is deleted');
         assert.strictEqual(report.failed.length, 0);
         assert.strictEqual(exists(ASSET_ORPHAN), false, 'the orphan is gone');
-        for (const id of [ASSET_THOUGHT, ASSET_TRASH, ASSET_ARTICLE, ASSET_TRASHED_ARTICLE, ASSET_TEXT_REF, ASSET_DRAFT_REF]) {
+        for (const id of [ASSET_THOUGHT, ASSET_TRASH, ASSET_ARTICLE, ASSET_TRASHED_ARTICLE, ASSET_TEXT_REF, ASSET_DRAFT_REF, ASSET_ARCHIVE_DRAFT_REF]) {
             assert(exists(id), `${id} is still referenced and must be kept`);
         }
         assert(exists(ASSET_YOUNG), 'the fresh asset is kept');

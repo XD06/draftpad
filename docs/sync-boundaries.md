@@ -21,7 +21,8 @@
 | Thought 本体 | `thoughts.json` 或 `thoughts/*.json` | 用户数据 | 是 | 否 | 包含 text、subItems、tags、completed、version、createdAt、updatedAt。 |
 | Thought 用户标签 | `thought.tags` | 用户数据 | 是 | 否 | 标签由用户最终确认，AI 只能建议。 |
 | Thought 子任务 | `thought.subItems` | 用户数据 | 是 | 否 | 子任务文本和完成状态属于 Thought 本体。 |
-| 即时草稿 | `today-drafts.json` | 用户数据 | 是 | 否 | 保存服务端 3 天窗口（今天 + 前 2 天）内的单行事项；读写会清除滑出窗口的项。 |
+| 即时草稿 | `today-drafts.json` | 用户数据 | 是 | 否 | 保存服务端 3 天窗口（今天 + 前 2 天）内的单行事项；读写时滑出窗口的项移入归档，不再删除。 |
+| 即时草稿归档 | `instant-drafts-archive.json` | 用户数据 | 是 | 否 | 滑出 3 天窗口的草稿，只读长期保留（`archivedAt` 记录归档时间）；`GET /api/instant-drafts/archive` 读取，界面不展示，不进垃圾桶/AI/搜索。 |
 | 手动 relation | `relations/*.json` 中 `source=manual` | 用户数据 | 是 | 否 | 双向写入，AI rebuild 不得删除。 |
 | suppressed relation | `relations.suppressed/*.json` | 用户数据 | 是 | 否 | 用户删除关系后的“不要再推荐”记忆。 |
 | 垃圾桶 | `trash/index.json`、`trash/notepads/*.json`、`trash/thoughts/*.json` | 用户数据 | 是 | 否 | 保存已删除文章和 Thought 的恢复 payload；永久删除后才移除。 |
@@ -97,14 +98,15 @@ Thought 创建和修改不能等待 AI extract、embedding、rerank 或 S3 之�
 
 ### 即时草稿
 
-- `GET /api/instant-drafts`、`GET /api/instant-drafts/:id` 读取服务端 3 天窗口（今天 + 前 2 天）内的记录，并在访问时清理滑出窗口的日期。改名前的 `/api/today-drafts` 由同一组 handler 长期挂载为 alias。
+- `GET /api/instant-drafts`、`GET /api/instant-drafts/:id` 读取服务端 3 天窗口（今天 + 前 2 天）内的记录，并在访问时把滑出窗口的日期移入归档（不再直接删除）。改名前的 `/api/today-drafts` 由同一组 handler 长期挂载为 alias。
+- 归档是只读的：`GET /api/instant-drafts/archive`（alias `/api/today-drafts/archive`）按 `day` / `from` / `to` / `limit` 翻查，条目多一个 `archivedAt`。归档不广播事件、不参与窗口清理，也不能再 PUT/DELETE；用户主动删除的草稿不会进归档。
 - 新记录用客户端生成的 id 调用 `PUT /api/instant-drafts/:id`，不带 `baseVersion`；更新与删除必须带当前 `baseVersion`，版本过期返回 `409`。创建可以携带窗口内的 `day`（离线草稿跨过午夜后才重放时落回原日，窗口外由服务端盖章今天）；更新永远保留记录原有的 `day`。
 - 成功创建、更新、删除后广播 `instant_drafts_update`，其 payload 只包含受影响的一条草稿；改名前的 `today_drafts_update` 与之一并双发。
 - 前端将 3 天窗口缓存和待同步 outbox 分开保存（outbox 克隆携带 `day`）；本机存在待同步项时，不以 WebSocket 的远端版本覆盖它。
 - outbox 冲刷是链式的：同步进行中再次触发的冲刷会在当前请求结束后立即重跑；网络失败以 3 秒退避自动重试；离开即时草稿视图前会先冲刷待同步项，而不是丢弃定时器。
 - WebSocket 重连（`ws_connected`）时，除重试 outbox 外还会重新拉取窗口列表，补齐断线期间其他设备的更新。
 - 即时草稿管理器在应用启动的空闲时段即创建（编辑器/Thought 工作区也会），保证后台也能接收 `instant_drafts_update` 推送并冲刷 outbox，而不是等用户首次打开今日视图。
-- 草稿不写入垃圾桶、Thought AI、relation 或搜索索引；需要长期保留时，先显式创建 Thought 或文章，再删除草稿。
+- 草稿不写入垃圾桶、Thought AI、relation 或搜索索引；滑出窗口后只进归档（不进垃圾桶，也不参与搜索）。需要长期、可检索地保留时，仍应先显式创建 Thought 或文章。
 
 ## 5. Relation 边界
 

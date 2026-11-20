@@ -4,9 +4,11 @@
 //
 // Instant drafts are a short-lived, small dataset (3-day rolling window, one
 // JSON file), so this provider reads them per query via storage — no cache
-// of its own. Drafts outside the retention window are pending deletion and
-// are excluded from search. The result carries the `day` key so the UI can
-// badge which day a hit belongs to and jump to it in the pager.
+// of its own. Drafts outside the retention window are moved to the read-only
+// archive by the route layer and stay out of search (the Instant Drafts view
+// only shows the window; the archive is read through its own endpoint). The
+// result carries the `day` key so the UI can badge which day a hit belongs to
+// and jump to it in the pager.
 //
 // Wire values: results carry `type: 'instant_draft'` and the provider is
 // selected by `scope: 'instant_drafts'`. The pre-rename values

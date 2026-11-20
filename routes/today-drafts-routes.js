@@ -1,4 +1,6 @@
 const RETENTION_DAYS = 3;
+const ARCHIVE_LIMIT_DEFAULT = 200;
+const ARCHIVE_LIMIT_MAX = 1000;
 
 // 即时草稿（Instant Draft）对外挂载的两条路径：改名后的规范路径在前，
 // 旧名 `/api/today-drafts` 作为长期 alias 保留，避免已接入的脚本断掉。
@@ -63,6 +65,25 @@ function normalizeInstantDraft(value, fallbackDay) {
     };
 }
 
+function normalizeAndSort(items, today) {
+    return items
+        .map(item => normalizeInstantDraft(item, today))
+        .filter(Boolean)
+        .sort((left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id));
+}
+
+// 归档条目比窗口内条目多一个 `archivedAt`；其余字段与即时草稿完全一致。
+function normalizeArchivedDraft(value) {
+    if (!isDayKey(value?.day)) return null;
+    const draft = normalizeInstantDraft(value, String(value.day));
+    if (!draft) return null;
+    const archivedAt = Number(value?.archivedAt);
+    return {
+        ...draft,
+        archivedAt: Number.isSafeInteger(archivedAt) && archivedAt > 0 ? archivedAt : draft.updatedAt
+    };
+}
+
 function registerInstantDraftRoutes(app, { storage, broadcastWebSocketMessage }) {
     // 宽容窗口：考虑全球时区差异（UTC-12 到 UTC+14，时差范围最多跨 ±1 天）。
     // 客户端若处于比服务端快的时区（如东八区相较于 UTC），其本地「今天」在服务端视角为「明天」。
@@ -80,23 +101,64 @@ function registerInstantDraftRoutes(app, { storage, broadcastWebSocketMessage })
         return Boolean(item) && isDayKey(item.day) && item.day >= oldest && item.day <= latest;
     }
 
-    // 锁内读取 + 窗口过滤。GET 侧把淘汰与非法项落盘；PUT/DELETE 在各自的
-    // 写回里顺带收窄——两者都不在这里落盘，落盘节奏归调用方。
+    // 过期条目缺 `day`（改名前的旧数据）时按创建时间归日，实在推不出来才记今天，
+    // 这样归档里的「哪一天」仍然可信，而不是统一盖成清理当天。
+    function archiveDay(item, today) {
+        if (isDayKey(item?.day)) return String(item.day);
+        const createdAt = Number(item?.createdAt);
+        return Number.isSafeInteger(createdAt) && createdAt > 0 ? localDayKey(new Date(createdAt)) : today;
+    }
+
+    // 滑出窗口的记录不再删除，而是搬进归档长期保留（界面不展示，只读归档端点可取）。
+    // 归档先写、窗口文件后写：归档失败时抛给调用方，窗口文件保持原样，过期记录
+    // 不会凭空消失（写操作返回 500，客户端 outbox 会重试；读操作只记日志并跳过
+    // 本轮清理，下一次读写再试）。同一 id 重复归档时以后来的副本为准。
+    async function archiveExpired(expired, today) {
+        const normalized = expired
+            .map(item => normalizeInstantDraft(item, archiveDay(item, today)))
+            .filter(Boolean)
+            .sort((left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id));
+        if (!normalized.length) return;
+        const archive = await storage.readInstantDraftArchive();
+        const byId = new Map();
+        for (const item of Array.isArray(archive) ? archive : []) {
+            if (item?.id) byId.set(String(item.id), item);
+        }
+        const archivedAt = Date.now();
+        for (const item of normalized) byId.set(item.id, { ...item, archivedAt });
+        const next = [...byId.values()]
+            .sort((left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id));
+        await storage.saveInstantDraftArchive(next);
+    }
+
+    // 锁内读取 + 窗口切分。GET 侧把过期项归档、非法项丢弃；PUT/DELETE 在各自
+    // 写回前调用 archiveExpired——切分本身不落盘，落盘节奏归调用方。
     async function readActiveItems() {
         const bounds = windowBounds();
         const all = await storage.readInstantDrafts();
-        return { bounds, all, items: all.filter(item => withinWindow(item, bounds)) };
+        const active = [];
+        const expired = [];
+        for (const item of Array.isArray(all) ? all : []) {
+            (withinWindow(item, bounds) ? active : expired).push(item);
+        }
+        return { bounds, active, expired };
     }
 
     async function readWindowDrafts() {
         return storage.withInstantDraftWriteLock(async () => {
-            const { bounds: { today }, all, items } = await readActiveItems();
-            const active = items
-                .map(item => normalizeInstantDraft(item, today))
-                .filter(Boolean)
-                .sort((left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id));
-            if (active.length !== all.length) await storage.saveInstantDrafts(active);
-            return { day: today, items: active };
+            const { bounds: { today }, active, expired } = await readActiveItems();
+            const items = normalizeAndSort(active, today);
+            if (expired.length || items.length !== active.length) {
+                try {
+                    await archiveExpired(expired, today);
+                    await storage.saveInstantDrafts(items);
+                } catch (error) {
+                    // 归档或落盘失败都不能让读请求失败，更不能丢掉过期记录：
+                    // 本轮不清理，下一次读写会重新尝试。
+                    console.error('Error archiving expired instant drafts:', error);
+                }
+            }
+            return { day: today, items };
         });
     }
 
@@ -150,7 +212,7 @@ function registerInstantDraftRoutes(app, { storage, broadcastWebSocketMessage })
 
         try {
             const result = await storage.withInstantDraftWriteLock(async () => {
-                const { bounds: { today, oldest, latest }, items: active } = await readActiveItems();
+                const { bounds: { today, oldest, latest }, active, expired } = await readActiveItems();
                 const index = active.findIndex(item => item.id === id);
                 const existing = index >= 0 ? normalizeInstantDraft(active[index], today) : null;
                 const requestedVersion = Number(req.body?.baseVersion);
@@ -183,6 +245,7 @@ function registerInstantDraftRoutes(app, { storage, broadcastWebSocketMessage })
                 const next = active.filter(item => item.id !== id);
                 next.push(draft);
                 next.sort((left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id));
+                await archiveExpired(expired, today);
                 await storage.saveInstantDrafts(next);
                 return { draft, created: !existing };
             });
@@ -203,7 +266,7 @@ function registerInstantDraftRoutes(app, { storage, broadcastWebSocketMessage })
         }
         try {
             const result = await storage.withInstantDraftWriteLock(async () => {
-                const { bounds: { today }, items: active } = await readActiveItems();
+                const { bounds: { today }, active, expired } = await readActiveItems();
                 const existing = active.find(item => item.id === id);
                 if (!existing) return { error: 'Instant draft not found', status: 404 };
                 const requestedVersion = Number(req.body?.baseVersion);
@@ -213,6 +276,7 @@ function registerInstantDraftRoutes(app, { storage, broadcastWebSocketMessage })
                 if (requestedVersion !== existing.version) {
                     return { error: 'Instant draft has been updated', status: 409, currentVersion: existing.version };
                 }
+                await archiveExpired(expired, today);
                 await storage.saveInstantDrafts(active.filter(item => item.id !== id));
                 return { draft: normalizeInstantDraft(existing, today) };
             });
@@ -226,8 +290,44 @@ function registerInstantDraftRoutes(app, { storage, broadcastWebSocketMessage })
         }
     }
 
+    // 归档只读：滑出 3 天窗口的历史草稿。界面不展示，供以后按日期/范围翻查。
+    // 这是唯一的读取入口，不参与窗口清理，也不广播任何事件。
+    async function listArchivedDrafts(req, res) {
+        const day = String(req.query?.day || '');
+        const from = String(req.query?.from || '');
+        const to = String(req.query?.to || '');
+        for (const value of [day, from, to]) {
+            if (value && !isDayKey(value)) {
+                return res.status(400).json({
+                    error: 'day, from and to must be YYYY-MM-DD',
+                    code: 'INVALID_ARCHIVE_FILTER'
+                });
+            }
+        }
+        const requestedLimit = Number.parseInt(req.query?.limit, 10);
+        const limit = Number.isSafeInteger(requestedLimit) && requestedLimit > 0
+            ? Math.min(requestedLimit, ARCHIVE_LIMIT_MAX)
+            : ARCHIVE_LIMIT_DEFAULT;
+        try {
+            const archive = await storage.readInstantDraftArchive();
+            const items = (Array.isArray(archive) ? archive : [])
+                .map(normalizeArchivedDraft)
+                .filter(Boolean)
+                .filter(item => !day || item.day === day)
+                .filter(item => !from || item.day >= from)
+                .filter(item => !to || item.day <= to)
+                .sort((left, right) => right.createdAt - left.createdAt || left.id.localeCompare(right.id));
+            res.json({ total: items.length, items: items.slice(0, limit) });
+        } catch (error) {
+            console.error('Error listing archived instant drafts:', error);
+            res.status(500).json({ error: 'Error listing archived instant drafts' });
+        }
+    }
+
     for (const base of API_PATHS) {
         app.get(base, listDrafts);
+        // 归档路径必须注册在 `/:id` 之前：`archive` 本身也是合法草稿 id。
+        app.get(`${base}/archive`, listArchivedDrafts);
         app.get(`${base}/:id`, readDraft);
         app.put(`${base}/:id`, upsertDraft);
         app.delete(`${base}/:id`, deleteDraft);

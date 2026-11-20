@@ -106,7 +106,7 @@ async function watchCorruptReads(task) {
 
 async function collectReferences() {
     const referenced = new Set();
-    const stats = { thoughts: 0, trashItems: 0, notepads: 0, drafts: 0, notepadBytes: 0 };
+    const stats = { thoughts: 0, trashItems: 0, notepads: 0, drafts: 0, archivedDrafts: 0, notepadBytes: 0 };
 
     const thoughts = await storage.readThoughts();
     stats.thoughts = thoughts.length;
@@ -140,6 +140,13 @@ async function collectReferences() {
     const draftList = Array.isArray(drafts) ? drafts : [];
     stats.drafts = draftList.length;
     for (const draft of draftList) collectAssetIds(draft?.text, referenced);
+
+    // 滑出窗口的草稿会进归档长期保留，归档正文里的资产链接同样是持久引用，
+    // 否则归档里会留下一堆指向已删除资产的死链。
+    const archivedDrafts = await storage.readInstantDraftArchive();
+    const archivedList = Array.isArray(archivedDrafts) ? archivedDrafts : [];
+    stats.archivedDrafts = archivedList.length;
+    for (const draft of archivedList) collectAssetIds(draft?.text, referenced);
 
     return { referenced, stats };
 }

@@ -13,7 +13,7 @@ Use the authenticated HTTP API only. It preserves versions, live updates, search
 | --- | --- | --- |
 | Article (Notepad) | Detailed records, context, source material, structured Markdown, or anything that needs to remain discoverable. | Write the full record here. Length is not constrained. |
 | Thought | A persistent, concise idea, reminder, or task that may be retained and organized later. | Prefer one clear sentence, normally no more than 50 Chinese characters. If it needs explanation, create an Article instead. |
-| Instant Draft | An immediate, disposable action. The server keeps a rolling 3-day window (today plus the two previous days) and permanently drops rows that slide out of it. | Keep it to one short sentence, usually a few to a few dozen characters. Do not use it as a permanent inbox. |
+| Instant Draft | An immediate, disposable action. The app shows a rolling 3-day window (today plus the two previous days); rows that slide out of it move to a read-only server archive and are no longer displayed. | Keep it to one short sentence, usually a few to a few dozen characters. Do not use it as a permanent inbox. |
 
 Ask the user when the correct area is unclear. Do not silently shorten content; move detailed material to an Article.
 
@@ -147,11 +147,11 @@ curl -fsS -X PATCH "$DUMBPAD_BASE_URL/api/thoughts/<thought-id>" \
 
 ### Instant Drafts
 
-Instant Drafts are single, date-scoped rows. `GET /api/instant-drafts` returns `{ day, items }` covering a 3-day window (today plus the two previous days); every row carries its own `day`. Do not attempt to retain rows older than the window. A caller supplies the row ID so offline clients can retry safely; a create may carry a `day` inside the window (offline drafts replayed after midnight land on their original day), while updates always keep the stored `day`.
+Instant Drafts are single, date-scoped rows. `GET /api/instant-drafts` returns `{ day, items }` covering a 3-day window (today plus the two previous days); every row carries its own `day`. Rows older than the window are archived read-only instead of deleted: read them with `GET /api/instant-drafts/archive` (`day`, `from`, `to`, `limit`) and never try to update them. A caller supplies the row ID so offline clients can retry safely; a create may carry a `day` inside the window (offline drafts replayed after midnight land on their original day), while updates always keep the stored `day`.
 
 The pre-rename path `/api/today-drafts` is still mounted as an alias with byte-identical responses, and the `today_drafts` search scope is still accepted. Use `/api/instant-drafts` and `scope=instant_drafts` in new work.
 
-Add `?day=today` to the list call when only the current day matters — the server filters after the window purge, so you do not have to filter client-side.
+Add `?day=today` to the list call when only the current day matters — the server filters after moving expired rows to the archive, so you do not have to filter client-side.
 
 ```bash
 # List today's rows.
@@ -169,9 +169,13 @@ curl -fsS -X PUT "$DUMBPAD_BASE_URL/api/instant-drafts/today-standup-01" \
   -H "Authorization: Bearer $DUMBPAD_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"text":"回复团队消息","completed":true,"baseVersion":1}'
+
+# Read rows that already slid out of the 3-day window (read-only archive).
+curl -fsS "$DUMBPAD_BASE_URL/api/instant-drafts/archive?from=2026-08-01&to=2026-08-31" \
+  -H "Authorization: Bearer $DUMBPAD_TOKEN"
 ```
 
-To discard an individual Instant Draft, first obtain explicit user confirmation, then call `DELETE /api/instant-drafts/:id` with its current `baseVersion`. To retain a draft beyond today, create a concise Thought or detailed Article first, confirm it succeeded, then delete the draft.
+To discard an individual Instant Draft, first obtain explicit user confirmation, then call `DELETE /api/instant-drafts/:id` with its current `baseVersion`; a deleted row never enters the archive. Drafts are archived automatically when they slide out of the window. If the user needs a draft to stay searchable inside the app, create a concise Thought or detailed Article first, confirm it succeeded, then delete the draft.
 
 ### Search
 
@@ -188,5 +192,5 @@ Every failure body is JSON with an `error` string; some also carry a stable `cod
 
 - `400`: validate the request against `/openapi.json`; do not guess fields. `code: "BASE_VERSION_REQUIRED"` means an update omitted `baseVersion`; `INVALID_INSTANT_DRAFT_ID` / `INVALID_INSTANT_DRAFT_TEXT` mean the ID or text failed validation.
 - `401` or `403`: stop and ask for a valid credential or the required scope.
-- `404`: confirm the ID and, for Instant Drafts, that it still belongs to the current retention window.
+- `404`: confirm the ID and, for Instant Drafts, that it is still inside the current retention window (archived rows are read-only and return `404` here).
 - `409`: follow the merge rule above and retry once only after a safe merge. The body carries `currentVersion`; re-read, merge, then resend with the fresh version.

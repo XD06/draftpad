@@ -127,8 +127,8 @@ async function run() {
         assert(result.body.day === today && Array.isArray(result.body.items), 'instant draft list should be date-scoped and object-shaped');
         assert.deepStrictEqual(result.body.items.map(item => item.id).sort(), canonicalIds,
             'the pre-rename alias should return the same records as the canonical path');
-        assert(!result.body.items.some(item => item.id === 'expired-draft'), 'a list request should purge expired drafts');
-        assert(!result.body.items.some(item => item.id === 'out-of-window-draft'), 'drafts older than the 3-day window should be purged');
+        assert(!result.body.items.some(item => item.id === 'expired-draft'), 'a list request should move expired drafts out of the live window');
+        assert(!result.body.items.some(item => item.id === 'out-of-window-draft'), 'drafts older than the 3-day window should leave the live window');
         assert(!result.body.items.some(item => item.id === 'bad id'), 'a list request should purge invalid persisted draft identifiers');
         const keptIds = result.body.items.map(item => item.id);
         assert(keptIds.includes('yesterday-draft') && keptIds.includes('day-before-draft'),
@@ -136,6 +136,45 @@ async function run() {
         const yesterday = dayOffset(-1);
         assert(result.body.items.find(item => item.id === 'yesterday-draft')?.day === yesterday,
             'a kept draft should retain its own historical day');
+
+        // 滑出窗口的记录不再删除，而是进归档长期保留；界面不展示，但必须可读。
+        const archived = await request('/api/instant-drafts/archive');
+        assert(archived.response.ok, 'archived instant drafts should be readable');
+        const archivedIds = archived.body.items.map(item => item.id);
+        assert(archivedIds.includes('expired-draft') && archivedIds.includes('out-of-window-draft'),
+            'drafts sliding out of the 3-day window must be archived instead of deleted');
+        assert(!archivedIds.includes('bad id'), 'invalid persisted rows must not be archived');
+        assert(archived.body.items.every(item => Number.isSafeInteger(item.archivedAt) && item.archivedAt > 0),
+            'every archived row should carry archivedAt');
+        assert.strictEqual(archived.body.total, archivedIds.length, 'total counts rows before the limit');
+        assert.deepStrictEqual(archived.body, (await request('/api/today-drafts/archive')).body,
+            'the pre-rename alias should expose the same archive');
+
+        const archivedRead = await request(`/api/instant-drafts/${archivedIds[0]}`);
+        assert(archivedRead.response.status === 404,
+            'archived drafts must not leak into the live window endpoints');
+
+        const archiveDay = archived.body.items.find(item => item.id === 'out-of-window-draft').day;
+        const archiveByDay = await request(`/api/instant-drafts/archive?day=${archiveDay}`);
+        assert(archiveByDay.response.ok && archiveByDay.body.items.every(item => item.day === archiveDay),
+            'the archive day filter should match exactly');
+
+        const archiveLimited = await request('/api/instant-drafts/archive?limit=1');
+        assert.strictEqual(archiveLimited.body.items.length, 1, 'limit should cap the returned rows');
+        assert(archiveLimited.body.total >= 2, 'total should still report every archived row');
+
+        const badArchiveFilter = await request('/api/instant-drafts/archive?day=nope');
+        assert(badArchiveFilter.response.status === 400 && badArchiveFilter.body.code === 'INVALID_ARCHIVE_FILTER',
+            'a malformed archive filter should be rejected');
+
+        const archiveFile = JSON.parse(fs.readFileSync(path.join(dataDir, 'instant-drafts-archive.json'), 'utf8'));
+        assert(archiveFile.some(item => item.id === 'expired-draft'),
+            'the archive should be persisted to its own data file');
+
+        await request('/api/instant-drafts');
+        const archiveAgain = await request('/api/instant-drafts/archive');
+        assert.strictEqual(archiveAgain.body.total, archived.body.total,
+            're-reading the window must not duplicate archive rows');
 
         result = await request('/api/today-drafts/yesterday-draft');
         assert(result.response.ok && result.body.day === yesterday, 'a historical draft inside the window should be readable');
@@ -184,6 +223,29 @@ async function run() {
         const badDay = await request('/api/instant-drafts?day=week');
         assert(badDay.response.status === 400 && badDay.body.code === 'INVALID_DAY_FILTER',
             'an unknown day filter should be rejected instead of silently ignored');
+
+        // 写操作同样要归档「期间过期」的记录：直接往数据文件里塞一条过期行，
+        // 再走一次 PUT，验证它没有被写回时静默丢掉。
+        const liveFile = path.join(dataDir, 'today-drafts.json');
+        const liveDrafts = JSON.parse(fs.readFileSync(liveFile, 'utf8'));
+        liveDrafts.push({
+            id: 'put-expired-draft',
+            text: 'expired before a write',
+            completed: false,
+            day: '2000-01-02',
+            version: 1,
+            createdAt: Date.now(),
+            updatedAt: Date.now()
+        });
+        fs.writeFileSync(liveFile, JSON.stringify(liveDrafts));
+        result = await request('/api/today-drafts/put-trigger-1', {
+            method: 'PUT',
+            body: JSON.stringify({ text: 'a write should archive rows that expired meanwhile' })
+        });
+        assert(result.response.status === 201, 'the write that triggers archiving should still succeed');
+        const archiveAfterPut = await request('/api/instant-drafts/archive');
+        assert(archiveAfterPut.body.items.some(item => item.id === 'put-expired-draft'),
+            'a write should archive rows that expired since the last read');
 
         result = await request('/api/today-drafts/offline-create-1', {
             method: 'PUT',
@@ -252,6 +314,9 @@ async function run() {
         });
         assert(result.response.ok && result.body.draft.day === yesterday,
             'DELETE should remove a historical draft inside the window');
+        const archiveAfterDelete = await request('/api/instant-drafts/archive');
+        assert(!archiveAfterDelete.body.items.some(item => item.id === created.id || item.id === 'yesterday-draft'),
+            'user-deleted drafts are gone for good; only window expiry goes to the archive');
         ws.close();
         console.log('Instant drafts API checks passed');
     } finally {

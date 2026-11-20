@@ -143,7 +143,15 @@
       "get": { "summary": "Read an image preview, original, or ordinary-file download", "responses": { "200": { "description": "Binary asset response" }, "404": { "$ref": "#/components/responses/Error" } } }
     },
     "/api/instant-drafts": {
-      "get": { "summary": "List Instant Drafts inside the 3-day retention window (today plus the two previous days)", "parameters": [{ "name": "day", "in": "query", "schema": { "type": "string", "enum": ["all", "today"], "default": "all" }, "description": "`all` returns the whole retention window; `today` returns only rows stamped with the server's current day. Filtering runs after the window purge, so it never changes what gets deleted. Anything else returns 400 INVALID_DAY_FILTER." }], "responses": { "200": { "description": "Today's day key and every disposable single-line draft inside the window", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/InstantDraftList" } } } }, "400": { "$ref": "#/components/responses/Error" }, "500": { "$ref": "#/components/responses/Error" } } }
+      "get": { "summary": "List Instant Drafts inside the 3-day retention window (today plus the two previous days)", "parameters": [{ "name": "day", "in": "query", "schema": { "type": "string", "enum": ["all", "today"], "default": "all" }, "description": "`all` returns the whole retention window; `today` returns only rows stamped with the server's current day. Filtering runs after expired rows move to the archive, so it never changes what gets archived. Anything else returns 400 INVALID_DAY_FILTER." }], "responses": { "200": { "description": "Today's day key and every disposable single-line draft inside the window", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/InstantDraftList" } } } }, "400": { "$ref": "#/components/responses/Error" }, "500": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/instant-drafts/archive": {
+      "get": { "summary": "List archived Instant Drafts that slid out of the 3-day retention window (newest first). They are no longer shown in the Instant Drafts view, but they are kept on the server/S3 instead of being deleted.", "parameters": [
+        { "name": "day", "in": "query", "schema": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$" }, "description": "Exact calendar day to read. Malformed values return 400 INVALID_ARCHIVE_FILTER." },
+        { "name": "from", "in": "query", "schema": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$" }, "description": "Inclusive lower bound on the draft day." },
+        { "name": "to", "in": "query", "schema": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$" }, "description": "Inclusive upper bound on the draft day." },
+        { "name": "limit", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 1000, "default": 200 }, "description": "Rows returned after sorting newest first; total still reports every matching row." }
+      ], "responses": { "200": { "description": "Archived rows with their archivedAt stamp", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/InstantDraftArchiveList" } } } }, "400": { "$ref": "#/components/responses/Error" }, "500": { "$ref": "#/components/responses/Error" } } }
     },
     "/api/instant-drafts/{id}": {
       "parameters": [{ "$ref": "#/components/parameters/InstantDraftId" }],
@@ -154,6 +162,15 @@
     "/api/today-drafts": {
       "deprecated": true,
       "get": { "summary": "[Alias] List Instant Drafts — pre-rename path, permanently kept for compatibility", "deprecated": true, "parameters": [{ "name": "day", "in": "query", "schema": { "type": "string", "enum": ["all", "today"], "default": "all" }, "description": "Same filter as GET /api/instant-drafts." }], "responses": { "200": { "description": "Same body as GET /api/instant-drafts", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/InstantDraftList" } } } }, "400": { "$ref": "#/components/responses/Error" }, "500": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/today-drafts/archive": {
+      "deprecated": true,
+      "get": { "summary": "[Alias] List archived Instant Drafts — pre-rename path, permanently kept for compatibility", "deprecated": true, "parameters": [
+        { "name": "day", "in": "query", "schema": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$" } },
+        { "name": "from", "in": "query", "schema": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$" } },
+        { "name": "to", "in": "query", "schema": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$" } },
+        { "name": "limit", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 1000, "default": 200 } }
+      ], "responses": { "200": { "description": "Same body as GET /api/instant-drafts/archive", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/InstantDraftArchiveList" } } } }, "400": { "$ref": "#/components/responses/Error" }, "500": { "$ref": "#/components/responses/Error" } } }
     },
     "/api/today-drafts/{id}": {
       "deprecated": true,
@@ -301,6 +318,8 @@
       "NotepadRename": { "type": "object", "required": ["name"], "properties": { "name": { "type": "string" }, "baseVersion": { "type": "integer" } } },
       "InstantDraft": { "type": "object", "required": ["id", "text", "completed", "day", "version", "createdAt", "updatedAt"], "properties": { "id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{2,95}$" }, "text": { "type": "string", "minLength": 1 }, "completed": { "type": "boolean" }, "day": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$" }, "version": { "type": "integer", "minimum": 1 }, "createdAt": { "type": "integer", "format": "int64" }, "updatedAt": { "type": "integer", "format": "int64" } } },
       "InstantDraftList": { "type": "object", "required": ["day", "items"], "properties": { "day": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$" }, "items": { "type": "array", "items": { "$ref": "#/components/schemas/InstantDraft" } } } },
+      "InstantDraftArchiveItem": { "allOf": [{ "$ref": "#/components/schemas/InstantDraft" }, { "type": "object", "required": ["archivedAt"], "properties": { "archivedAt": { "type": "integer", "format": "int64", "description": "When the row left the 3-day window and moved into the archive." } } }] },
+      "InstantDraftArchiveList": { "type": "object", "required": ["total", "items"], "properties": { "total": { "type": "integer", "minimum": 0, "description": "Every archived row matching the filters, before limit is applied." }, "items": { "type": "array", "items": { "$ref": "#/components/schemas/InstantDraftArchiveItem" } } } },
       "InstantDraftUpsert": { "type": "object", "required": ["text"], "properties": { "text": { "type": "string", "minLength": 1 }, "completed": { "type": "boolean" }, "day": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$", "description": "Only honored on create: the calendar day an offline draft was written on. Out-of-window values fall back to the server's today. Always ignored on update." }, "baseVersion": { "type": "integer", "minimum": 1, "description": "Required when the id already exists; omit only for a new id." } } },
       "InstantDraftDelete": { "type": "object", "required": ["baseVersion"], "properties": { "baseVersion": { "type": "integer", "minimum": 1 } } },
       "InstantDraftMutationResult": { "type": "object", "required": ["success", "created", "draft"], "properties": { "success": { "const": true }, "created": { "type": "boolean" }, "draft": { "$ref": "#/components/schemas/InstantDraft" } } },

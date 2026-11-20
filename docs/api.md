@@ -682,7 +682,7 @@ curl -X PUT http://localhost:3000/api/assets/f2f621c1-5d64-462f-8e3a-5bc1dd4c16a
 
 ## 即时草稿 API
 
-即时草稿（Instant Draft）是“用完即走”的单行记录，不是永久笔记或待办历史。服务端按自己的本地日历分区，保留 **3 天窗口**（今天 + 前 2 天）内的记录；读取或写入时会永久清除滑出窗口的记录，因此客户端不得依赖 3 天前的草稿还存在。窗口内的历史日仅供查看，编辑器只开放给今天。需要长期保留的内容应先转成 Thought 或文章。
+即时草稿（Instant Draft）是“用完即走”的单行记录，不是永久笔记或待办历史。服务端按自己的本地日历分区，把 **3 天窗口**（今天 + 前 2 天）内的记录放进即时草稿视图；滑出窗口的记录不会被删除，而是移入**归档**（本地后端 `instant-drafts-archive.json`，S3 后端同名 key），界面上不再展示，可通过 `GET /api/instant-drafts/archive` 按日期翻查。窗口内的历史日仅供查看，编辑器只开放给今天。需要长期、可检索的内容仍建议转成 Thought 或文章。
 
 > **路径兼容**：本节所有端点都以 `/api/instant-drafts` 为规范路径；改名前的 `/api/today-drafts` 由同一组 handler 长期挂载为 alias，两者响应逐字节一致。新代码请只用规范路径。
 
@@ -710,7 +710,7 @@ curl -X PUT http://localhost:3000/api/assets/f2f621c1-5d64-462f-8e3a-5bc1dd4c16a
 
 | 参数 | 类型 | 说明 |
 |---|---|---|
-| `day` | `all` / `today` | 默认 `all` 返回整个窗口；`today` 只返回 `day` 等于服务端今天的行。过滤发生在窗口清理之后，因此不会改变被删除的内容。其他取值返回 `400` 与 `code: "INVALID_DAY_FILTER"` |
+| `day` | `all` / `today` | 默认 `all` 返回整个窗口；`today` 只返回 `day` 等于服务端今天的行。过滤发生在窗口清理之后，因此不会改变被归档的内容。其他取值返回 `400` 与 `code: "INVALID_DAY_FILTER"` |
 
 **响应：**
 
@@ -725,7 +725,34 @@ curl -X PUT http://localhost:3000/api/assets/f2f621c1-5d64-462f-8e3a-5bc1dd4c16a
 
 ### GET /api/instant-drafts/:id
 
-读取窗口内的一条草稿。不存在、已滑出窗口或已删除时返回 `404`；非法 id 返回 `400` 与 `code: "INVALID_INSTANT_DRAFT_ID"`。
+读取窗口内的一条草稿。不存在、已滑出窗口（已归档）或已删除时返回 `404`；非法 id 返回 `400` 与 `code: "INVALID_INSTANT_DRAFT_ID"`。
+
+### GET /api/instant-drafts/archive
+
+读取归档：滑出 3 天窗口后不再展示、但长期保留在服务端（S3 后端则在对象存储）的草稿，按 `createdAt` 从新到旧返回。
+
+**Query 参数：**
+
+| 参数 | 类型 | 说明 |
+|---|---|---|
+| `day` | `YYYY-MM-DD` | 只返回该日（草稿自己的 `day`，不是归档时间）的记录 |
+| `from` / `to` | `YYYY-MM-DD` | 闭区间的日期范围 |
+| `limit` | 整数 | 返回条数，默认 200、上限 1000；`total` 始终是过滤后的总条数 |
+
+日期格式非法返回 `400` 与 `code: "INVALID_ARCHIVE_FILTER"`。
+
+**响应：**
+
+```json
+{
+  "total": 42,
+  "items": [
+    { "id": "today-standup-01", "text": "回复团队消息", "completed": false, "day": "2026-08-01", "version": 1, "createdAt": 1785888000000, "updatedAt": 1785888000000, "archivedAt": 1786406400000 }
+  ]
+}
+```
+
+归档是只读的：归档条目不能再 `PUT` / `DELETE`，`GET /api/instant-drafts/:id` 也不会返回它们（`404`）。只有滑出窗口的记录会进归档；用户主动 `DELETE` 的草稿是明确的丢弃意图，不会归档。
 
 ### PUT /api/instant-drafts/:id
 
@@ -747,7 +774,7 @@ curl -X PUT http://localhost:3000/api/assets/f2f621c1-5d64-462f-8e3a-5bc1dd4c16a
 
 ### DELETE /api/instant-drafts/:id
 
-删除窗口内的一条草稿。请求体必须包含当前 `baseVersion`；成功返回 `{ "success": true, "deleted": true, "draft": { ... } }`。这是破坏性操作，自动化执行前应获得用户确认。
+删除窗口内的一条草稿。请求体必须包含当前 `baseVersion`；成功返回 `{ "success": true, "deleted": true, "draft": { ... } }`。这是破坏性操作，自动化执行前应获得用户确认。删除不会进入归档。
 
 实时客户端还会收到 WebSocket `instant_drafts_update` 事件，`action` 为 `create`、`update` 或 `delete`，`payload` 是受影响的草稿对象。改名前的 `today_drafts_update` 仍会与之一并双发，供缓存了旧 bundle 的客户端使用；新代码只监听新名。
 

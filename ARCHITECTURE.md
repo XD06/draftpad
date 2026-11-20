@@ -49,7 +49,7 @@ graph TD
 
 ### 三个"用完即走/短生命周期"域互不串线
 
-- **Instant Drafts**（`routes/today-drafts-routes.js` + `public/managers/today-drafts/`）：按服务端日期滚动清理的单行清单（保留今天 + 前 2 天的窗口，历史日只读翻页；单日超出纸面时按 44px 纸纹切成同一天里的多页，日与页拉平成一条页序列，翻页手势不分叉；行操作走**长按唤出的图标菜单**（复制 / 转为 Thought / 转为文章 / 删除），横向手势只归翻页——纸边约 22% 宽的热区起笔即翻页，行中段正文本区不认领翻页以保住点按编辑），独立写锁 + 独立 `instant_drafts_update` 事件（改名前的 `today_drafts_update` 仍双发）。对外路径以 `/api/instant-drafts` 为准，`/api/today-drafts` 作为 alias 长期挂载；存储文件仍是 `today-drafts.json`。
+- **Instant Drafts**（`routes/today-drafts-routes.js` + `public/managers/today-drafts/`）：按服务端日期滚动清理的单行清单（保留今天 + 前 2 天的窗口，历史日只读翻页；单日超出纸面时按 44px 纸纹切成同一天里的多页，日与页拉平成一条页序列，翻页手势不分叉；行操作走**长按唤出的图标菜单**（复制 / 转为 Thought / 转为文章 / 删除），横向手势只归翻页——纸边约 22% 宽的热区起笔即翻页，行中段正文本区不认领翻页以保住点按编辑），独立写锁 + 独立 `instant_drafts_update` 事件（改名前的 `today_drafts_update` 仍双发）。对外路径以 `/api/instant-drafts` 为准，`/api/today-drafts` 作为 alias 长期挂载；存储文件仍是 `today-drafts.json`。滑出 3 天窗口的草稿不再删除，而是移入 `instant-drafts-archive.json`（S3 同名 key）只读归档——界面不展示，`GET /api/instant-drafts/archive` 可随时按日期翻查，删除意图（用户主动 DELETE）不归档。
 - **Trash**（`routes/trash-routes.js`）：回收站只经 storage 边界。
 - **AgentRun**（`scripts/agent/agent-run-service.js`）：运行记录，不参与搜索与关系。
 
