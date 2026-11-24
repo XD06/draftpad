@@ -18,6 +18,9 @@ export class ToastManager {
     this.container = containerElement;
     this.isError = 'error';
     this.isSuccess = 'success';
+    this.maxTransientToasts = 3;
+    this._timers = new WeakMap();
+    this._clickHandlers = new WeakMap();
   }
 
   /** 类型 → 'success' | 'error' | 'info'（未知类型按 info 处理，与旧行为一致）。 */
@@ -44,53 +47,130 @@ export class ToastManager {
     return toast;
   }
 
+  _clearToastTimers(toast) {
+    const entry = this._timers.get(toast);
+    if (!entry) return;
+    if (entry.showTimer) clearTimeout(entry.showTimer);
+    if (entry.fadeTimer) clearTimeout(entry.fadeTimer);
+    if (entry.removeTimer) clearTimeout(entry.removeTimer);
+    this._timers.delete(toast);
+  }
+
+  _scheduleTransientDismiss(toast, timeoutMs) {
+    this._clearToastTimers(toast);
+    const entry = {
+      fadeTimer: setTimeout(() => {
+        this.hide(toast);
+      }, timeoutMs),
+    };
+    this._timers.set(toast, entry);
+  }
+
+  _findMatchingToast(message, normalizedType) {
+    if (!this.container?.children) return null;
+    const text = String(message ?? '');
+    for (const child of Array.from(this.container.children)) {
+      if (!child?.classList?.contains('toast')) continue;
+      if (!child.classList.contains(normalizedType)) continue;
+      if (child.dataset.toastDismissing === 'true') continue;
+      if ((child.querySelector('.toast-text')?.textContent ?? child.textContent) === text) {
+        return child;
+      }
+    }
+    return null;
+  }
+
   show(message, type = 'success', isStatic = false, timeoutMs = 1000, onClick = null) {
     // isStatic toasts persist until clicked (e.g. the PWA "new version
     // available" notice) and must bypass the timeoutMs guard — otherwise
     // timeoutMs=0 (intended as "no auto-dismiss") is rejected here and the
     // toast never appears, so users never get the update notification.
     if (!isStatic && (!timeoutMs || timeoutMs < 1)) return;
+    if (!this.container) return;
 
-    const toast = this.buildToast(message, this.normalizeType(type));
+    const normalizedType = this.normalizeType(type);
+    const existing = this._findMatchingToast(message, normalizedType);
+    if (existing) {
+      this._clickHandlers.set(existing, typeof onClick === 'function' ? onClick : null);
+      existing.style.cursor = typeof onClick === 'function' ? 'pointer' : 'default';
+      if (isStatic) {
+        this._clearToastTimers(existing);
+        existing.dataset.toastStatic = 'true';
+      } else if (existing.dataset.toastStatic !== 'true') {
+        this._scheduleTransientDismiss(existing, timeoutMs);
+      }
+      if (!existing.classList.contains('show')) {
+        const current = this._timers.get(existing) || {};
+        current.showTimer = setTimeout(() => {
+          if (existing.dataset.toastDismissing !== 'true') existing.classList.add('show');
+        }, 10);
+        this._timers.set(existing, current);
+      }
+      return existing;
+    }
+
+    if (!isStatic) {
+      const transient = Array.from(this.container.children).filter(
+        el => el?.classList?.contains('toast') && el.dataset.toastStatic !== 'true' && el.dataset.toastDismissing !== 'true'
+      );
+      while (transient.length >= this.maxTransientToasts) {
+        const oldest = transient.shift();
+        this._clearToastTimers(oldest);
+        if (oldest.parentNode === this.container) this.container.removeChild(oldest);
+      }
+    }
+
+    const toast = this.buildToast(message, normalizedType);
+    if (isStatic) toast.dataset.toastStatic = 'true';
+    this._clickHandlers.set(toast, typeof onClick === 'function' ? onClick : null);
 
     this.container.appendChild(toast);
 
-    setTimeout(() => {
-      if (onClick) {
-        toast.style.cursor = 'pointer';
+    const entry = {
+      showTimer: setTimeout(() => {
+        const handler = this._clickHandlers.get(toast);
+        if (handler) {
+          toast.style.cursor = 'pointer';
+        }
         toast.addEventListener('click', () => {
+          const currentHandler = this._clickHandlers.get(toast);
           this.hide(toast);
-          onClick();
-        });
-      } else {
-        toast.addEventListener('click', () => this.hide(toast));
-      }
-      toast.classList.add('show');
-    }, 10);
+          if (currentHandler) currentHandler();
+        }, { once: true });
+        if (toast.dataset.toastDismissing !== 'true') {
+          toast.classList.add('show');
+        }
+      }, 10),
+    };
 
     if (!isStatic) {
-      setTimeout(() => {
-        toast.classList.remove('show');
-        setTimeout(() => {
-          this.hide(toast);
-        }, 300);
+      entry.fadeTimer = setTimeout(() => {
+        this.hide(toast);
       }, timeoutMs);
     }
+    this._timers.set(toast, entry);
     return toast;
   }
 
   hide(toast) {
+    if (!toast) return;
+    toast.dataset.toastDismissing = 'true';
+    this._clearToastTimers(toast);
     toast.classList.remove('show');
-    setTimeout(() => {
+    const removeTimer = setTimeout(() => {
       if (toast.parentNode === this.container) {
         this.container.removeChild(toast);
       }
     }, 300);
+    this._timers.set(toast, { removeTimer });
   }
 
   clear() {
     // use to clear static toast messages
     if (!this.container) return;
+    for (const child of Array.from(this.container.children)) {
+      this._clearToastTimers(child);
+    }
     while (this.container.firstChild) {
       this.container.removeChild(this.container.firstChild);
     }

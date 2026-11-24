@@ -101,6 +101,25 @@ async function main() {
     toaster.clear();
     check('clear removes every toast', container.children.length === 0, container.children.length);
 
+    /* ---- 7b. 同类同文案去重 + 短暂提示上限 3 条（静态常驻豁免） ---- */
+    const dupA = toaster.show('已保存副本', 'info', false, 5000);
+    const dupB = toaster.show('已保存副本', 'info', false, 5000);
+    check('identical active toast is deduplicated instead of stacked',
+        dupA === dupB && container.querySelectorAll('.toast').length === 1,
+        container.children.length);
+    toaster.show('提示二', 'info', false, 5000);
+    toaster.show('提示三', 'info', false, 5000);
+    toaster.show('提示四', 'info', false, 5000);
+    check('transient toast stack is capped at maxTransientToasts (3)',
+        container.querySelectorAll('.toast').length === 3
+        && !Array.from(container.children).some(el => el.textContent === '已保存副本'),
+        container.children.length);
+    toaster.show('更新通知', 'info', true, 0);
+    check('static toast bypasses transient cap',
+        container.querySelectorAll('.toast').length === 4,
+        container.children.length);
+    toaster.clear();
+
     /* ---- 8. 样式契约：容器不吃指针、卡片可点、图标走类型色 ---- */
     const styles = fs.readFileSync(path.join(ROOT, 'public', 'Assets', 'styles.css'), 'utf8');
     const containerBlock = styles.match(/\.toast-container\s*\{([^}]*)\}/);

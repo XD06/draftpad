@@ -60,19 +60,43 @@ import { registerResultType } from './managers/command-search/result-type-regist
     };
 })();
 
-// Track the visual viewport so the mobile app shell can shrink with the
-// on-screen keyboard. Without this, the fixed 100dvh containers keep their
-// full height while the visible area shrinks and scrolling exposes the page
-// background as white blocks under the editor.
+// Track the visual viewport so the mobile app shell can detect the virtual
+// keyboard reliably on both iOS (where only visualViewport shrinks) and Android
+// (via interactive-widget=resizes-visual, plus per-orientation baseline fallback).
 (function () {
     const vv = window.visualViewport;
     if (!vv) return;
+    let baselineWidth = Math.round(vv.width || window.innerWidth || 0);
+    let baselineHeight = Math.round(Math.max(window.innerHeight || 0, vv.height || 0));
+    const isEditableFocused = () => {
+        const el = document.activeElement;
+        return Boolean(el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable));
+    };
     const applyViewportHeight = () => {
-        document.documentElement.style.setProperty('--dumbpad-vvh', `${Math.round(vv.height)}px`);
-        document.documentElement.classList.toggle('keyboard-open', window.innerHeight - vv.height > 120);
+        const curWidth = Math.round(vv.width || window.innerWidth || 0);
+        const curVvh = Math.round(vv.height || 0);
+        const curInnerHeight = Math.round(window.innerHeight || 0);
+        if (Math.abs(curWidth - baselineWidth) > 24) {
+            baselineWidth = curWidth;
+            baselineHeight = Math.max(curInnerHeight, curVvh);
+        } else if (!isEditableFocused() || Math.max(curInnerHeight, curVvh) > baselineHeight) {
+            baselineHeight = Math.max(baselineHeight, curInnerHeight, curVvh);
+        }
+        const rawDelta = Math.max(
+            curInnerHeight - curVvh,
+            isEditableFocused() ? baselineHeight - curVvh : 0
+        );
+        const keyboardOpen = rawDelta > 120;
+        const keyboardHeight = keyboardOpen ? Math.max(0, Math.round(rawDelta)) : 0;
+        document.documentElement.style.setProperty('--dumbpad-vvh', `${curVvh}px`);
+        document.documentElement.style.setProperty('--dumbpad-keyboard-height', `${keyboardHeight}px`);
+        document.documentElement.classList.toggle('keyboard-open', keyboardOpen);
     };
     vv.addEventListener('resize', applyViewportHeight);
     vv.addEventListener('scroll', applyViewportHeight);
+    window.addEventListener('resize', applyViewportHeight);
+    document.addEventListener('focusin', () => setTimeout(applyViewportHeight, 60), true);
+    document.addEventListener('focusout', () => setTimeout(applyViewportHeight, 80), true);
     applyViewportHeight();
 })();
 

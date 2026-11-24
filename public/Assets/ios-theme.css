@@ -787,7 +787,8 @@ main {
        of page background below the content ("white block" while scrolling). */
     @media (max-width: 980px) {
         .three-column-layout {
-            height: calc(var(--dumbpad-vvh, 100dvh) - 56px) !important;
+            height: auto !important;
+            min-height: calc(var(--dumbpad-vvh, 100dvh) - 56px);
         }
 
         .editor-main,
@@ -807,15 +808,14 @@ main {
             height: calc(var(--dumbpad-vvh, 100dvh) - 100px) !important;
             max-height: calc(var(--dumbpad-vvh, 100dvh) - 100px) !important;
         }
-    }
 
-    @media (max-width: 640px) {
         .view-container {
-            height: calc(var(--dumbpad-vvh, 100dvh) - 100px) !important;
+            height: auto !important;
+            min-height: calc(var(--dumbpad-vvh, 100dvh) - 100px);
         }
 
         html.keyboard-open .container {
-            height: var(--dumbpad-vvh, 100dvh);
+            min-height: var(--dumbpad-vvh, 100dvh);
         }
     }
 }
@@ -1106,7 +1106,10 @@ main {
     body.quick-add-open #fab-add-thought,
     body.quick-add-open .floating-actions,
     body.mobile-sidebar-open #fab-add-thought,
-    body.mobile-sidebar-open .floating-actions {
+    body.mobile-sidebar-open .floating-actions,
+    html.keyboard-open #fab-add-thought,
+    html.keyboard-open .floating-actions,
+    html.keyboard-open .typora-source-toggle {
         opacity: 0 !important;
         pointer-events: none !important;
         transform: translateY(12px) scale(0.94) !important;
@@ -1233,6 +1236,29 @@ main {
     body.quick-add-open .toast-container,
     body.mobile-sidebar-open .toast-container {
         bottom: calc(env(safe-area-inset-bottom, 0px) + 24px);
+    }
+
+    /* 虚拟键盘弹起时（interactive-widget=resizes-visual），底部区域会被系统键盘
+       占去，fixed bottom 的提示要么落到键盘背后（iOS）、要么挡住当前输入行：
+       直接挪到固定顶栏下方安全区，既不遮输入，也不与已隐藏的 FAB 碰撞。 */
+    html.keyboard-open .toast-container,
+    html.keyboard-open body.fab-expanded .toast-container {
+        top: calc(env(safe-area-inset-top, 0px) + 64px);
+        bottom: auto;
+    }
+
+    html.keyboard-open .toast {
+        transform: translateY(-6px) scale(0.97);
+    }
+
+    html.keyboard-open .toast.show {
+        transform: none;
+    }
+
+    html.keyboard-open .typora-editor-shell .vditor-wysiwyg,
+    html.keyboard-open .typora-editor-shell.is-source-mode .typora-source-editor,
+    html.keyboard-open body.thoughts-mode .thoughts-scroll-area {
+        padding-bottom: calc(env(safe-area-inset-bottom, 0px) + var(--dumbpad-keyboard-height, 0px) + 32px) !important;
     }
 
     #settings-modal {
