@@ -11,15 +11,25 @@
  */
 import { Node } from './tiptap-runtime.js';
 import {
+    ARTICLE_AUDIO_TITLE_PREFIX,
+    ARTICLE_VIDEO_TITLE_PREFIX,
     parseMediaTitle,
     formatFileSize,
 } from './article-file-command.js';
+import { AssetApiClient } from './asset-api-client.js';
+import { openAttachmentRenamePopover } from './attachment-rename-dialog.js';
 import { getFileCategory, getFileIconSvg } from './file-type-icons.js';
+
+/** 节点 src（/api/assets/<id>/original|preview）→ 资产 id；非资产 src 返回空。 */
+function mediaAssetIdFromSource(source) {
+    const match = String(source || '').match(/\/api\/assets\/([a-f0-9-]{16,64})\/(?:preview|original)(?:$|[?#])/i);
+    return match ? match[1] : '';
+}
 
 /** 节点 src（/api/assets/<id>/original|preview）→ 下载变体 URL；非资产 src 返回空。 */
 function mediaDownloadUrlFromSource(source) {
-    const match = String(source || '').match(/\/api\/assets\/([a-f0-9-]{16,64})\/(?:preview|original)(?:$|[?#])/i);
-    return match ? `/api/assets/${match[1]}/download` : '';
+    const id = mediaAssetIdFromSource(source);
+    return id ? `/api/assets/${id}/download` : '';
 }
 
 /** marked 把媒体 markdown 渲染成 <img>，这里在 schema 解析前改名成媒体元素。 */
@@ -86,6 +96,75 @@ function buildMediaNodeView({ node, editor, view, getPos }) {
         name.textContent = `${displayName} · ${formatFileSize(info.size)}`;
 
         meta.append(icon, name);
+
+        const renameButton = document.createElement('button');
+        renameButton.type = 'button';
+        renameButton.className = 'dumbpad-article-media-rename';
+        renameButton.title = '重命名媒体';
+        renameButton.setAttribute('aria-label', '重命名媒体');
+        renameButton.innerHTML = actionIconSvg('<path d="M12 20h9"></path><path d="M16.376 3.622a1 1 0 0 1 3.002 3.002L7.368 18.635a2 2 0 0 1-.855.506l-2.872.838a.5.5 0 0 1-.62-.62l.838-2.872a2 2 0 0 1 .506-.854z"></path>');
+        renameButton.addEventListener('click', async (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            if (!editor.isEditable) return;
+            const pos = typeof getPos === 'function' ? getPos() : null;
+            if (pos === null || typeof pos !== 'number') return;
+            const latestInfo = mediaInfo();
+            const currentSrc = String(currentNode.attrs.src || '');
+            const assetId = mediaAssetIdFromSource(currentSrc);
+            const currentName = latestInfo.name || (latestInfo.kind === 'audio' ? '音频' : '视频');
+            let finalName = currentName;
+            let finalType = latestInfo.type || (latestInfo.kind === 'audio' ? 'audio/mpeg' : 'video/mp4');
+
+            const anchorRect = name.getBoundingClientRect();
+            const result = await openAttachmentRenamePopover({
+                anchorEl: name,
+                anchorRect,
+                align: 'start',
+                currentName,
+                kind: 'file',
+                mimeType: finalType,
+                title: '重命名媒体',
+                showSyncOption: Boolean(assetId),
+                defaultSync: Boolean(assetId),
+                trigger: renameButton,
+                onConfirm: async ({ name: nextName, syncReferences }) => {
+                    if (assetId && syncReferences) {
+                        const serverResult = typeof window.dumbpadRenameAsset === 'function'
+                            ? await window.dumbpadRenameAsset({
+                                assetId,
+                                currentName,
+                                kind: 'file',
+                                mimeType: finalType,
+                                nextName,
+                                syncReferences: true,
+                            })
+                            : await new AssetApiClient().renameAsset(assetId, nextName, { syncReferences: true });
+                        finalName = serverResult?.asset?.name || nextName;
+                        finalType = serverResult?.asset?.type || finalType;
+                        return serverResult;
+                    }
+                    finalName = nextName;
+                    return { name: nextName };
+                },
+            });
+            if (!result) return;
+
+            const latestPos = typeof getPos === 'function' ? getPos() : null;
+            if (typeof latestPos !== 'number') return;
+            const liveNode = view.state.doc.nodeAt(latestPos);
+            if (!liveNode || liveNode.type.name !== 'articleMedia') return;
+            const prefix = latestInfo.kind === 'audio' ? ARTICLE_AUDIO_TITLE_PREFIX : ARTICLE_VIDEO_TITLE_PREFIX;
+            const nextTitle = `${prefix};size=${Math.max(0, Number(latestInfo.size) || 0)};type=${encodeURIComponent(String(finalType).trim().slice(0, 120))};name=${encodeURIComponent(String(finalName).trim().slice(0, 120))}`;
+            if (liveNode.attrs.title !== nextTitle) {
+                view.dispatch(view.state.tr.setNodeMarkup(latestPos, undefined, {
+                    ...liveNode.attrs,
+                    title: nextTitle,
+                }));
+            }
+            view.focus();
+        });
+        meta.append(renameButton);
 
         const downloadHref = mediaDownloadUrlFromSource(currentNode.attrs.src);
         if (downloadHref) {
@@ -154,8 +233,12 @@ function buildMediaNodeView({ node, editor, view, getPos }) {
         },
         update(updatedNode) {
             if (updatedNode.type.name !== 'articleMedia') return false;
+            const changed = updatedNode.attrs.src !== currentNode.attrs.src
+                || updatedNode.attrs.title !== currentNode.attrs.title;
             currentNode = updatedNode;
-            render();
+            if (changed) {
+                render();
+            }
             return true;
         },
         destroy() {},

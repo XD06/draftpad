@@ -11,6 +11,10 @@ import ConfirmationManager from './managers/confirmation.js';
 import NoteSyncController from './managers/note-sync-controller.js';
 import SettingsDataPanel from './managers/settings-data-panel.js';
 import { AssetApiClient } from './managers/asset-api-client.js';
+import {
+    openAttachmentRenamePopover,
+    closeActiveAttachmentRename
+} from './managers/attachment-rename-dialog.js';
 import { renderAssetThumbHtml } from './managers/file-type-icons.js';
 import { installAttachmentViewerModal, classifyAsset, openNativeAssetPreview } from './managers/attachment-viewer-modal.js';
 import { WorkspaceRouter } from './managers/workspace-router.js';
@@ -1437,7 +1441,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                         <span class="settings-asset-preview-mask" aria-hidden="true">${mask}</span>
                     </button>
                     <div class="settings-asset-info">
-                        <div class="settings-asset-name" title="${name}" data-asset-action="view" role="button" tabindex="0">${name}</div>
+                        <div class="settings-asset-name" title="点击重命名：${name}" data-asset-action="rename" role="button" tabindex="0">${name}</div>
                         <div class="settings-asset-meta">${meta}</div>
                     </div>
                     <div class="settings-asset-actions">
@@ -1452,6 +1456,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     async function refreshAssetsList(showToast = false) {
+        closeActiveAttachmentRename();
         if (!settingsAssetsList) return;
         settingsAssetsList.innerHTML = '<div class="settings-assets-empty">正在读取附件...</div>';
         try {
@@ -1490,6 +1495,116 @@ document.addEventListener('DOMContentLoaded', async () => {
         hideModal(settingsModal);
         toaster.show('已插入到当前文章', 'success', false, 1600);
     }
+
+    async function renameAssetById({
+        assetId,
+        currentName = '',
+        kind = 'file',
+        mimeType = '',
+        nextName = '',
+        syncReferences = true
+    }) {
+        const id = String(assetId || '').trim();
+        if (!id) throw new Error('附件缺少服务端 ID，无法重命名');
+
+        if (syncReferences && hasUnsavedChanges && currentNotepadId && editorInstance) {
+            editorInstance.flushPendingInput?.();
+            if (saveTimeout) {
+                clearTimeout(saveTimeout);
+                saveTimeout = null;
+            }
+            const pendingContent = editor.value;
+            if (pendingContent != null) {
+                await saveNotes(pendingContent, true, false, 0, currentNotepadId, editorRevision).catch(() => {});
+            }
+        }
+
+        const result = await settingsAssetApi.renameAsset(id, nextName, { syncReferences });
+        if (result?.asset?.id) {
+            assetItemsById.set(result.asset.id, result.asset);
+        }
+
+        if (settingsAssetsList && settingsModal?.classList.contains('visible')) {
+            await refreshAssetsList(false);
+        }
+
+        if (syncReferences && Array.isArray(result?.updatedNoteIds)) {
+            const noteVersionById = new Map(
+                (Array.isArray(result.updatedNotes) ? result.updatedNotes : [])
+                    .map(entry => [String(entry?.id || ''), Number(entry?.version)])
+            );
+            for (const noteId of result.updatedNoteIds) {
+                const nextVersion = noteVersionById.get(String(noteId || ''));
+                if (Number.isFinite(nextVersion) && nextVersion >= 1) {
+                    confirmRemoteNoteVersion(noteId, nextVersion);
+                }
+                if (noteId === currentNotepadId) {
+                    await loadNotes(currentNotepadId, { forceRemote: true, silent: true }).catch(() => {});
+                }
+            }
+        }
+
+        if (syncReferences && Array.isArray(result?.updatedThoughtIds) && result.updatedThoughtIds.length > 0 && thoughtsManager) {
+            thoughtsManager.applyExternalAssetRename?.(result.asset, result.updatedThoughtIds);
+        }
+
+        if (result?.asset) {
+            window.dispatchEvent(new CustomEvent('dumbpad:asset-renamed', {
+                detail: {
+                    asset: result.asset,
+                    unchanged: Boolean(result.unchanged),
+                    syncReferences,
+                    updatedNoteIds: result.updatedNoteIds || [],
+                    updatedThoughtIds: result.updatedThoughtIds || []
+                }
+            }));
+        }
+
+        return result;
+    }
+
+    async function promptRenameAsset(assetId, trigger = null) {
+        const id = String(assetId || '');
+        const asset = assetItemsById.get(id);
+        if (!asset) {
+            toaster.show('未找到附件，请刷新后重试', 'error', false, 2200);
+            return null;
+        }
+        const escapedId = typeof CSS !== 'undefined' && typeof CSS.escape === 'function' ? CSS.escape(id) : id.replace(/"/g, '\\"');
+        const itemEl = settingsAssetsList?.querySelector?.(`.settings-asset-item[data-asset-id="${escapedId}"]`);
+        const anchorEl = itemEl?.querySelector?.('.settings-asset-name') || trigger || itemEl;
+
+        let outcome = null;
+        await openAttachmentRenamePopover({
+            anchorEl,
+            align: 'start',
+            currentName: asset.name || '未命名附件',
+            kind: asset.kind || 'image',
+            mimeType: asset.type || '',
+            title: '重命名附件',
+            hint: 'Enter 保存 · 同步全部引用',
+            showSyncOption: false,
+            defaultSync: true,
+            trigger: anchorEl,
+            onConfirm: async ({ name }) => {
+                outcome = await renameAssetById({
+                    assetId: asset.id,
+                    currentName: asset.name,
+                    kind: asset.kind || 'image',
+                    mimeType: asset.type || '',
+                    nextName: name,
+                    syncReferences: true
+                });
+                return outcome;
+            }
+        });
+        if (outcome && !outcome.unchanged) {
+            toaster.show('附件已重命名', 'success', false, 1800);
+        }
+        return outcome;
+    }
+
+    window.dumbpadRenameAsset = (options) => renameAssetById(options);
 
     async function deleteAssetPermanently(assetId) {
         const confirmed = await confirmationManager.show({
@@ -3973,6 +4088,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     function hideModal(modal, msg) {
         if (modal === settingsModal) {
             hideHeatmapPopover();
+            closeActiveAttachmentRename();
         }
         modal.classList.remove('visible');
         if (msg) toaster.show(msg);
@@ -4273,6 +4389,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                 } else if (button.dataset.assetAction === 'insert') {
                     event.preventDefault();
                     insertAssetIntoArticle(item.dataset.assetId);
+                } else if (button.dataset.assetAction === 'rename') {
+                    event.preventDefault();
+                    promptRenameAsset(item.dataset.assetId, button);
                 } else if (button.dataset.assetAction === 'view') {
                     event.preventDefault();
                     const asset = assetItemsById.get(item.dataset.assetId);

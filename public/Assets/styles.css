@@ -424,6 +424,28 @@ html[data-initial-workspace="today"] #header-title {
     background: color-mix(in srgb, var(--primary-color) 12%, transparent);
 }
 
+@media (max-width: 720px) {
+    .dumbpad-code-language-popover {
+        min-width: 156px;
+        padding: 6px;
+        border-radius: 10px;
+    }
+
+    .dumbpad-code-language-input {
+        height: 36px;
+        padding: 0 8px;
+        font-size: 16px;
+        line-height: 34px;
+    }
+
+    .dumbpad-code-language-option {
+        min-height: 38px;
+        padding: 8px 10px;
+        font-size: 13px;
+        line-height: 20px;
+    }
+}
+
 .typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] >
     .vditor-wysiwyg__pre:not([style*="display: none"]):not([style*="display:none"]) + .vditor-wysiwyg__preview {
     display: none !important;
@@ -4853,6 +4875,210 @@ html:not([data-app-ready]) .empty-state-container::before {
     border-color: color-mix(in srgb, var(--primary-color) 35%, var(--border-color));
 }
 
+.dumbpad-inline-rename-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    min-width: 0;
+    padding: 3px 5px 3px 8px;
+    border: 1px solid color-mix(in srgb, var(--primary-color) 62%, var(--border-color));
+    border-radius: 9px;
+    background: var(--textarea-bg);
+    box-shadow: 0 0 0 2.5px color-mix(in srgb, var(--primary-color) 14%, transparent);
+    transition: border-color 0.14s ease, box-shadow 0.14s ease;
+}
+
+.dumbpad-inline-rename-row.is-error {
+    border-color: var(--danger-color, #dc2626);
+    box-shadow: 0 0 0 2.5px color-mix(in srgb, var(--danger-color, #dc2626) 15%, transparent);
+}
+
+.dumbpad-inline-rename-input {
+    flex: 1 1 60px;
+    min-width: 0;
+    border: 0;
+    outline: none;
+    background: transparent;
+    color: var(--text-color);
+    font: 600 13px/1.35 var(--font-ui, inherit);
+    padding: 2px 0;
+}
+
+.dumbpad-inline-rename-input::placeholder {
+    color: var(--muted-text);
+    font-weight: 450;
+}
+
+.dumbpad-inline-ext-chip {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 6px;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    background: color-mix(in srgb, var(--text-color) 4%, transparent);
+    color: var(--muted-text);
+    font: 600 11px/1.2 var(--font-code, monospace);
+    cursor: pointer;
+    user-select: none;
+    transition: border-color 0.14s ease, color 0.14s ease, background-color 0.14s ease;
+}
+
+.dumbpad-inline-ext-chip.is-switchable:hover,
+.dumbpad-inline-ext-chip.is-switchable:focus-visible {
+    outline: none;
+    border-color: color-mix(in srgb, var(--primary-color) 48%, var(--border-color));
+    color: var(--primary-color);
+    background: color-mix(in srgb, var(--primary-color) 10%, transparent);
+}
+
+.dumbpad-inline-sync-chip {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    border: 1px solid var(--border-color);
+    border-radius: 999px;
+    background: transparent;
+    color: var(--muted-text);
+    font-size: 11px;
+    font-weight: 560;
+    line-height: 1.3;
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+    transition: border-color 0.14s ease, color 0.14s ease, background-color 0.14s ease;
+}
+
+.dumbpad-inline-sync-chip.is-on {
+    border-color: color-mix(in srgb, var(--primary-color) 38%, transparent);
+    background: color-mix(in srgb, var(--primary-color) 11%, transparent);
+    color: color-mix(in srgb, var(--primary-color) 88%, var(--text-color));
+}
+
+.dumbpad-inline-rename-msg {
+    font-size: 11.5px;
+    line-height: 1.35;
+    padding-left: 3px;
+    color: var(--danger-color, #dc2626);
+    font-weight: 520;
+}
+
+.dumbpad-inline-rename-msg.is-tip {
+    color: var(--muted-text);
+    font-weight: 450;
+}
+
+.dumbpad-inline-rename-msg[hidden] {
+    display: none;
+}
+
+/* 无遮罩锚点重命名微气泡：贴靠锚点浮出，原卡片与顶栏零位移 */
+.dumbpad-rename-popover {
+    position: fixed;
+    z-index: 10040;
+    width: min(304px, calc(100vw - 20px));
+    box-sizing: border-box;
+    padding: 10px 11px;
+    border: 1px solid var(--border-color);
+    border-radius: 13px;
+    background: var(--modal-bg);
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.16), 0 2px 6px rgba(0, 0, 0, 0.06);
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+}
+
+.dumbpad-rename-popover[hidden] {
+    display: none;
+}
+
+.dumbpad-rename-popover-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.dumbpad-rename-popover-title {
+    font-size: 12px;
+    font-weight: 650;
+    color: var(--muted-text);
+}
+
+.dumbpad-rename-popover-foot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-top: 1px;
+}
+
+.dumbpad-rename-popover-hint {
+    font-size: 11px;
+    color: var(--muted-text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.dumbpad-rename-popover-actions {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 6px;
+}
+
+.dumbpad-rename-popover-btn {
+    padding: 4px 10px;
+    border-radius: 7px;
+    border: 1px solid var(--border-color);
+    background: color-mix(in srgb, var(--text-color) 4%, var(--textarea-bg));
+    color: var(--text-color);
+    font-size: 12px;
+    font-weight: 580;
+    cursor: pointer;
+}
+
+.dumbpad-rename-popover-btn:disabled {
+    opacity: 0.6;
+    cursor: wait;
+}
+
+.dumbpad-rename-popover-btn.is-primary {
+    border-color: transparent;
+    background: var(--primary-color);
+    color: #fff;
+}
+
+[data-theme="dark"] .dumbpad-rename-popover-btn.is-primary {
+    color: #1c1c1e;
+}
+
+@media (pointer: coarse), (max-width: 640px) {
+    .dumbpad-rename-popover .dumbpad-inline-rename-input {
+        font-size: 16px;
+    }
+}
+
+@media (max-width: 480px) {
+    .settings-asset-item {
+        gap: 7px;
+        padding: 6px 8px;
+    }
+
+    .settings-asset-actions {
+        gap: 4px;
+    }
+
+    .settings-asset-actions .settings-asset-download,
+    .settings-asset-actions button {
+        padding: 4px 7px;
+        font-size: 11px;
+    }
+}
+
 .settings-cloud-status {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -5520,53 +5746,43 @@ blockquote {
 }
 
 .md-time-marker {
-    --time-marker-accent: #14785c;
-    --time-marker-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 5v14M5 12h14'/%3E%3C/svg%3E");
-    --time-marker-fill-a: 7%;
-    --time-marker-fill-b: 3%;
+    --time-marker-accent: var(--primary-color);
+    --time-marker-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.1' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='9'/%3E%3Cpath d='M12 7v5l3 2'/%3E%3C/svg%3E");
+    --time-marker-fill: 10%;
     --time-marker-border-strength: 24%;
-    --time-marker-label-color: #116f55;
-    --time-marker-stamp-color: color-mix(in srgb, var(--time-marker-accent) 62%, var(--text-color));
-    --time-marker-rail-strength: 76%;
-    --time-marker-hover-fill-a: 11%;
-    --time-marker-hover-fill-b: 5%;
-    --time-marker-hover-border-strength: 34%;
+    --time-marker-label-color: color-mix(in srgb, var(--time-marker-accent) 88%, var(--text-color));
+    --time-marker-stamp-color: color-mix(in srgb, var(--text-color) 82%, var(--time-marker-accent));
+    --time-marker-hover-fill: 16%;
+    --time-marker-hover-border-strength: 38%;
     position: relative;
     display: inline-flex;
-    align-items: baseline;
-    gap: 3px;
+    align-items: center;
+    gap: 4px;
     max-width: 100%;
-    padding: 0 4px 0 4px;
-    margin: 0 1px;
-    border: 1px solid color-mix(in srgb, var(--time-marker-accent) var(--time-marker-border-strength), var(--border-color));
-    border-left-color: color-mix(in srgb, var(--time-marker-accent) var(--time-marker-rail-strength), transparent);
-    border-left-width: 2px;
-    border-radius: 5px;
-    background: linear-gradient(135deg,
-        color-mix(in srgb, var(--time-marker-accent) var(--time-marker-fill-a), transparent),
-        color-mix(in srgb, var(--time-marker-accent) var(--time-marker-fill-b), transparent));
+    padding: 1px 7px 1px 6px;
+    margin: 0 2px;
+    border: 1px solid color-mix(in srgb, var(--time-marker-accent) var(--time-marker-border-strength), transparent);
+    border-radius: 6px;
+    background: color-mix(in srgb, var(--time-marker-accent) var(--time-marker-fill), transparent);
     color: var(--time-marker-stamp-color);
-    font-family: var(--font-code);
-    font-size: 0.72em;
-    line-height: 1.28;
+    font-family: var(--font-system, var(--font-reading, inherit));
+    font-size: 0.78em;
+    font-weight: 560;
+    line-height: 1.35;
+    letter-spacing: -0.01em;
     white-space: nowrap;
     cursor: pointer;
     overflow: hidden;
     text-indent: -999px;
     box-decoration-break: clone;
     -webkit-box-decoration-break: clone;
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.24);
-    vertical-align: 0.08em;
-    transition: background 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
+    vertical-align: 0.06em;
+    transition: background-color 0.16s ease, border-color 0.16s ease;
 }
 
 .md-time-marker:hover {
-    border-color: color-mix(in srgb, var(--time-marker-accent) var(--time-marker-hover-border-strength), var(--border-color));
-    border-left-color: color-mix(in srgb, var(--time-marker-accent) 88%, transparent);
-    background: linear-gradient(135deg,
-        color-mix(in srgb, var(--time-marker-accent) var(--time-marker-hover-fill-a), transparent),
-        color-mix(in srgb, var(--time-marker-accent) var(--time-marker-hover-fill-b), transparent));
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3), 0 2px 8px color-mix(in srgb, var(--time-marker-accent) 7%, transparent);
+    border-color: color-mix(in srgb, var(--time-marker-accent) var(--time-marker-hover-border-strength), transparent);
+    background: color-mix(in srgb, var(--time-marker-accent) var(--time-marker-hover-fill), transparent);
 }
 
 .md-time-marker[data-time-draggable="true"] {
@@ -5608,9 +5824,9 @@ blockquote {
 
 .md-time-marker::before {
     content: "";
-    width: 12px;
-    height: 12px;
-    flex: 0 0 12px;
+    width: 11px;
+    height: 11px;
+    flex: 0 0 11px;
     display: inline-block;
     align-self: center;
     background: currentColor;
@@ -5621,61 +5837,65 @@ blockquote {
 }
 
 .md-time-marker.is-update::before {
-    --time-marker-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='black' d='M17.65 6.35A7.95 7.95 0 0 0 12 4a8 8 0 1 0 7.73 10h-2.08A6 6 0 1 1 12 6c1.66 0 3.14.69 4.22 1.78L13 11h8V3z'/%3E%3C/svg%3E");
+    --time-marker-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8'/%3E%3Cpath d='M3 3v5h5'/%3E%3Cpath d='M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16'/%3E%3Cpath d='M16 16h5v5'/%3E%3C/svg%3E");
 }
 
 .md-time-marker::after {
     content: attr(data-time-stamp);
     color: var(--time-marker-stamp-color);
     font-family: inherit;
-    font-style: italic;
-    font-weight: 640;
+    font-style: normal;
+    font-weight: inherit;
     font-variant-numeric: tabular-nums;
     text-indent: 0;
-    opacity: 0.96;
 }
 
 .md-time-marker.is-update {
-    --time-marker-accent: #2f6fbb;
-    --time-marker-fill-a: 7%;
-    --time-marker-fill-b: 3%;
+    --time-marker-accent: #d97706;
+    --time-marker-fill: 11%;
     --time-marker-border-strength: 26%;
-    --time-marker-label-color: #2860a8;
-    --time-marker-stamp-color: color-mix(in srgb, #b73f3d 72%, var(--text-color));
-    --time-marker-rail-strength: 78%;
-    --time-marker-hover-fill-a: 12%;
-    --time-marker-hover-fill-b: 5%;
-    --time-marker-hover-border-strength: 38%;
+    --time-marker-hover-fill: 17%;
+    --time-marker-hover-border-strength: 40%;
 }
 
 .md-time-marker.is-update.is-level-2 {
-    --time-marker-accent: #c38a00;
-    --time-marker-fill-a: 8%;
-    --time-marker-fill-b: 4%;
+    --time-marker-accent: #ea580c;
+    --time-marker-fill: 12%;
     --time-marker-border-strength: 30%;
-    --time-marker-label-color: #a36a00;
-    --time-marker-stamp-color: color-mix(in srgb, #c73532 78%, var(--text-color));
-    --time-marker-rail-strength: 82%;
+    --time-marker-hover-fill: 18%;
+    --time-marker-hover-border-strength: 44%;
 }
 
 .md-time-marker.is-update.is-level-3 {
-    --time-marker-accent: #d65f1f;
-    --time-marker-fill-a: 9%;
-    --time-marker-fill-b: 4%;
+    --time-marker-accent: #e14b32;
+    --time-marker-fill: 13%;
     --time-marker-border-strength: 34%;
-    --time-marker-label-color: #c64e18;
-    --time-marker-stamp-color: color-mix(in srgb, #d02030 84%, var(--text-color));
-    --time-marker-rail-strength: 88%;
+    --time-marker-hover-fill: 19%;
+    --time-marker-hover-border-strength: 48%;
 }
 
 .md-time-marker.is-update.is-level-4 {
-    --time-marker-accent: #d12f42;
-    --time-marker-fill-a: 10%;
-    --time-marker-fill-b: 5%;
-    --time-marker-border-strength: 38%;
-    --time-marker-label-color: #c41735;
-    --time-marker-stamp-color: color-mix(in srgb, #c60035 90%, var(--text-color));
-    --time-marker-rail-strength: 92%;
+    --time-marker-accent: #dc2626;
+    --time-marker-fill: 15%;
+    --time-marker-border-strength: 40%;
+    --time-marker-hover-fill: 21%;
+    --time-marker-hover-border-strength: 54%;
+}
+
+[data-theme="dark"] .md-time-marker.is-update {
+    --time-marker-accent: #fbbf24;
+}
+
+[data-theme="dark"] .md-time-marker.is-update.is-level-2 {
+    --time-marker-accent: #fb923c;
+}
+
+[data-theme="dark"] .md-time-marker.is-update.is-level-3 {
+    --time-marker-accent: #f87171;
+}
+
+[data-theme="dark"] .md-time-marker.is-update.is-level-4 {
+    --time-marker-accent: #ff5c5c;
 }
 
 .time-marker-icon {
@@ -7529,6 +7749,7 @@ body.reading-mode-active .editor-main {
     white-space: nowrap;
 }
 
+.vditor-reset .dumbpad-article-media-rename,
 .vditor-reset .dumbpad-article-media-download,
 .vditor-reset .dumbpad-article-media-delete {
     display: inline-flex;
@@ -7546,19 +7767,22 @@ body.reading-mode-active .editor-main {
     transition: background 0.18s ease, color 0.18s ease;
 }
 
+.vditor-reset .dumbpad-article-media-rename:hover,
 .vditor-reset .dumbpad-article-media-download:hover,
 .vditor-reset .dumbpad-article-media-delete:hover {
     color: var(--media-theme, var(--primary-color));
     background: color-mix(in srgb, var(--media-theme, var(--primary-color)) 12%, transparent);
 }
 
+.vditor-reset .dumbpad-article-media-rename:focus-visible,
 .vditor-reset .dumbpad-article-media-delete:focus-visible,
 .vditor-reset .dumbpad-article-media-download:focus-visible {
     outline: 2px solid color-mix(in srgb, var(--primary-color) 45%, transparent);
     outline-offset: 1px;
 }
 
-/* 阅读模式不提供删除入口（下载保留）。 */
+/* 阅读模式不提供重命名与删除入口（下载保留）。 */
+.typora-editor-shell.is-reading-mode .dumbpad-article-media-rename,
 .typora-editor-shell.is-reading-mode .dumbpad-article-media-delete {
     display: none;
 }
@@ -7685,6 +7909,7 @@ body.reading-mode-active .editor-main {
     display: none;
 }
 
+.article-file-menu .article-file-rename,
 .article-file-menu .article-file-download,
 .article-file-menu .article-file-delete {
     display: inline-grid;
@@ -7701,6 +7926,8 @@ body.reading-mode-active .editor-main {
     text-decoration: none;
 }
 
+.article-file-menu .article-file-rename:hover,
+.article-file-menu .article-file-rename:focus-visible,
 .article-file-menu .article-file-download:hover,
 .article-file-menu .article-file-download:focus-visible {
     outline: none;
@@ -7765,6 +7992,7 @@ body.reading-mode-active .editor-main {
     text-decoration: none;
 }
 
+.article-image-size-menu .article-image-rename,
 .article-image-size-menu .article-image-fullscreen {
     display: inline-grid;
     width: 28px;
@@ -7779,6 +8007,8 @@ body.reading-mode-active .editor-main {
     cursor: pointer;
 }
 
+.article-image-size-menu .article-image-rename:hover,
+.article-image-size-menu .article-image-rename:focus-visible,
 .article-image-size-menu .article-image-download:hover,
 .article-image-size-menu .article-image-download:focus-visible,
 .article-image-size-menu .article-image-fullscreen:hover,

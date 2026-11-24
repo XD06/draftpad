@@ -168,11 +168,26 @@
     min-width: 0;
 }
 
-.file-title-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    min-width: 0;
+.file-name-heading {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text-color);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 260px;
+}
+
+.file-name-heading.is-renameable {
+    cursor: pointer;
+}
+
+.file-name-heading.is-renameable:hover,
+.file-name-heading.is-renameable:focus-visible {
+    color: var(--primary-color);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    outline: none;
 }
 
 /* tag 与体积/编码同一行：文件名独占一行，长文件名走省略号不挤压分段器 */
@@ -193,16 +208,6 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-}
-
-.file-name-heading {
-    font-size: 15px;
-    font-weight: 600;
-    color: var(--text-color);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    max-width: 260px;
 }
 
 .file-tag {
@@ -1047,6 +1052,18 @@
     font-size: 14px;
     font-weight: 600;
     color: #1c1c1e;
+}
+
+.asset-native-name.is-renameable {
+    cursor: pointer;
+}
+
+.asset-native-name.is-renameable:hover,
+.asset-native-name.is-renameable:focus-visible {
+    color: #b47800;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    outline: none;
 }
 
 .asset-native-download {

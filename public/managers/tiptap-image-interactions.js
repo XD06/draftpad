@@ -6,7 +6,12 @@
  * 走 view.dom 的 DOM 监听；禁止回到 Markdown 源码做字符串手术 + setValue 全量重刷。
  */
 import { Extension, Image, PM, getMarkRange } from './tiptap-runtime.js';
-import { ARTICLE_FILE_TITLE_PREFIX } from './article-file-command.js';
+import {
+    ARTICLE_FILE_TITLE_PREFIX,
+    formatFileSize,
+} from './article-file-command.js';
+import { AssetApiClient } from './asset-api-client.js';
+import { openAttachmentRenamePopover } from './attachment-rename-dialog.js';
 import { getFileCategory, FILE_CATEGORIES } from './file-type-icons.js';
 
 const { Plugin, PluginKey } = PM.state;
@@ -420,6 +425,9 @@ class ArticleImageInteractionView {
             <button type="button" class="article-image-fullscreen" data-image-fullscreen title="查看大图" aria-label="查看大图">
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3H3v5"></path><path d="M16 3h5v5"></path><path d="M21 16v5h-5"></path><path d="M3 16v5h5"></path></svg>
             </button>
+            <button type="button" class="article-image-rename" data-image-rename title="重命名图片 / Alt" aria-label="重命名图片 / Alt">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z"></path></svg>
+            </button>
             <button type="button" class="article-image-delete" data-image-delete title="删除图片" aria-label="删除图片">
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"></path><path d="M8 6V4h8v2"></path><path d="M19 6l-1 14H6L5 6"></path><path d="M10 11v5"></path><path d="M14 11v5"></path></svg>
             </button>
@@ -432,6 +440,10 @@ class ArticleImageInteractionView {
                 if (!image) return;
                 this.hideSizeMenu();
                 this.openLightbox(image);
+                return;
+            }
+            if (event.target.closest('[data-image-rename]')) {
+                this.renameImage();
                 return;
             }
             if (event.target.closest('[data-image-delete]')) {
@@ -504,6 +516,9 @@ class ArticleImageInteractionView {
             <button type="button" class="article-file-download" data-file-view title="浏览 / 编辑附件" aria-label="浏览 / 编辑附件">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
             </button>
+            <button type="button" class="article-file-rename" data-file-rename title="重命名附件" aria-label="重命名附件">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z"></path></svg>
+            </button>
             <a class="article-file-download" data-file-download download title="下载附件" aria-label="下载附件">
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"></path><path d="m7 10 5 5 5-5"></path><path d="M5 21h14"></path></svg>
             </a>
@@ -518,6 +533,10 @@ class ArticleImageInteractionView {
                 if (link && typeof window.openAttachmentViewer === 'function') {
                     window.openAttachmentViewer(describeArticleFileLink(link), link);
                 }
+                return;
+            }
+            if (event.target.closest('[data-file-rename]')) {
+                this.renameFileLink();
                 return;
             }
             if (!event.target.closest('[data-file-delete]')) return;
@@ -695,6 +714,71 @@ class ArticleImageInteractionView {
         const node = this.view.state.doc.nodeAt(pos);
         if (!node) return;
         this.view.dispatch(this.view.state.tr.delete(pos, pos + node.nodeSize));
+        this.view.focus();
+    }
+
+    async renameImage() {
+        const image = this.activeImage;
+        const pos = image ? this.imagePos(image) : null;
+        const anchorRect = image?.getBoundingClientRect?.() || null;
+        this.hideSizeMenu();
+        if (pos === null) return;
+        const node = this.view.state.doc.nodeAt(pos);
+        if (!node || node.type.name !== 'image') return;
+        const src = String(node.attrs.src || '');
+        const assetId = articleAssetIdFromSource(src);
+        const currentName = String(node.attrs.alt || '图片');
+
+        let nextName = currentName;
+        const dialogResult = await openAttachmentRenamePopover({
+            anchorEl: image,
+            anchorRect,
+            align: 'center',
+            currentName,
+            kind: 'image',
+            mimeType: 'image/*',
+            title: assetId ? '重命名图片' : '编辑图片名称',
+            showSyncOption: Boolean(assetId),
+            defaultSync: Boolean(assetId),
+            trigger: image,
+            onConfirm: async ({ name, syncReferences }) => {
+                if (assetId && syncReferences) {
+                    const serverResult = typeof window.dumbpadRenameAsset === 'function'
+                        ? await window.dumbpadRenameAsset({
+                            assetId,
+                            currentName,
+                            kind: 'image',
+                            mimeType: 'image/*',
+                            nextName: name,
+                            syncReferences: true,
+                        })
+                        : await new AssetApiClient().renameAsset(assetId, name, { syncReferences: true });
+                    nextName = serverResult?.asset?.name || name;
+                    return serverResult;
+                }
+                nextName = name;
+                return { name };
+            },
+        });
+
+        if (!dialogResult) return;
+        // 服务端同步如果已把当前文章重新加载到位，文档中该节点 alt 已是新值，跳过重复写入。
+        const currentDoc = this.view.state.doc;
+        let targetPos = null;
+        let targetNode = null;
+        if (pos >= 0 && pos < currentDoc.content.size) {
+            const atOld = currentDoc.nodeAt(pos);
+            if (atOld?.type.name === 'image' && atOld.attrs.src === src) {
+                targetPos = pos;
+                targetNode = atOld;
+            }
+        }
+        if (targetNode && targetNode.attrs.alt !== nextName) {
+            this.view.dispatch(this.view.state.tr.setNodeMarkup(targetPos, undefined, {
+                ...targetNode.attrs,
+                alt: nextName,
+            }));
+        }
         this.view.focus();
     }
 
@@ -992,6 +1076,105 @@ class ArticleImageInteractionView {
         this.hideFileMenu();
         if (!range) return;
         this.view.dispatch(this.view.state.tr.delete(range.from, range.to));
+        this.view.focus();
+    }
+
+    async renameFileLink() {
+        const link = this.activeFileLink;
+        const range = link?.isConnected ? this.linkRange(link) : null;
+        const desc = link ? describeArticleFileLink(link) : null;
+        const rawHref = String(link?.getAttribute?.('href') || '');
+        const rawTitle = String(link?.getAttribute?.('title') || '');
+        const hadSizeSuffix = / · \d+(?:\.\d+)? (?:B|KB|MB)$/.test(String(link?.textContent || '').trim());
+        const anchorRect = link?.getBoundingClientRect?.() || null;
+        this.hideFileMenu();
+        if (!range || !desc) return;
+
+        let finalName = desc.name;
+        let finalType = desc.type || 'application/octet-stream';
+        const assetId = desc.id;
+
+        const dialogResult = await openAttachmentRenamePopover({
+            anchorEl: link,
+            anchorRect,
+            currentName: desc.name,
+            kind: 'file',
+            mimeType: desc.type || '',
+            title: '重命名附件',
+            showSyncOption: Boolean(assetId),
+            defaultSync: Boolean(assetId),
+            trigger: link,
+            onConfirm: async ({ name, syncReferences }) => {
+                if (assetId && syncReferences) {
+                    const serverResult = typeof window.dumbpadRenameAsset === 'function'
+                        ? await window.dumbpadRenameAsset({
+                            assetId,
+                            currentName: desc.name,
+                            kind: 'file',
+                            mimeType: desc.type || '',
+                            nextName: name,
+                            syncReferences: true,
+                        })
+                        : await new AssetApiClient().renameAsset(assetId, name, { syncReferences: true });
+                    finalName = serverResult?.asset?.name || name;
+                    finalType = serverResult?.asset?.type || finalType;
+                    return serverResult;
+                }
+                finalName = name;
+                return { name };
+            },
+        });
+
+        if (!dialogResult) return;
+
+        const state = this.view.state;
+        const linkType = state.schema.marks.link;
+        if (!linkType) return;
+
+        // 定位仍带有同一链接 mark 的文本区间（若服务端同步已刷新整文且文案已更新则跳过）。
+        let targetRange = null;
+        let existingMark = null;
+        state.doc.nodesBetween(0, state.doc.content.size, (node, pos) => {
+            if (targetRange || !node.isText) return;
+            const mark = node.marks.find(m => m.type === linkType && String(m.attrs.href || '') === rawHref);
+            if (!mark) return;
+            if (pos <= range.from && pos + node.nodeSize >= range.to) {
+                targetRange = { from: pos, to: pos + node.nodeSize };
+                existingMark = mark;
+                return;
+            }
+            if (String(mark.attrs.title || '') === rawTitle) {
+                targetRange = { from: pos, to: pos + node.nodeSize };
+                existingMark = mark;
+            }
+        });
+
+        if (targetRange && existingMark) {
+            const size = Math.max(0, Number(desc.size) || 0);
+            const nextLabel = (size > 0 || hadSizeSuffix)
+                ? `${finalName} · ${formatFileSize(size)}`
+                : finalName;
+            const safeType = encodeURIComponent(String(finalType).trim().slice(0, 120));
+            const safeName = encodeURIComponent(String(finalName).trim().slice(0, 120));
+            const nextTitle = (rawTitle.startsWith(ARTICLE_FILE_TITLE_PREFIX) || !rawTitle)
+                ? `${ARTICLE_FILE_TITLE_PREFIX};size=${size};type=${safeType};name=${safeName}`
+                : rawTitle;
+            const cat = getFileCategory(finalName, finalType);
+            const nextMark = linkType.create({
+                ...existingMark.attrs,
+                title: nextTitle,
+                articleFileClass: cat.id,
+            });
+            const currentText = state.doc.textBetween(targetRange.from, targetRange.to);
+            if (currentText !== nextLabel || existingMark.attrs.title !== nextTitle) {
+                const tr = state.tr.replaceWith(
+                    targetRange.from,
+                    targetRange.to,
+                    state.schema.text(nextLabel, [nextMark])
+                );
+                this.view.dispatch(tr);
+            }
+        }
         this.view.focus();
     }
 

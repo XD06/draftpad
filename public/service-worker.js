@@ -61,6 +61,7 @@ const CORE_ASSETS = [
   "/managers/thought-ai-status.js",
   "/managers/thought-api-client.js",
   "/managers/asset-api-client.js",
+  "/managers/attachment-rename-dialog.js",
   "/managers/attachment-viewer-modal.js",
   "/managers/file-type-icons.js",
   "/managers/article-file-command.js",

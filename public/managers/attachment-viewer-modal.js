@@ -8,10 +8,15 @@ import { getFileCategory, getFileIconSvg } from './file-type-icons.js';
 import { formatFileSize } from './article-file-command.js';
 import NoteSyncController from './note-sync-controller.js';
 import {
+    AssetApiClient,
     getAssetPreviewUrl,
     getAssetOriginalUrl,
     getAssetDownloadUrl,
 } from './asset-api-client.js';
+import {
+    openAttachmentRenamePopover,
+    closeActiveAttachmentRename,
+} from './attachment-rename-dialog.js';
 
 const CONFLICT_MESSAGE = '内容已在其他设备更新，请刷新后再保存或复制当前内容';
 const LOADING_PLACEHOLDER = '正在加载附件内容…';
@@ -122,7 +127,20 @@ function fillFileMeta(att) {
     const sub = document.getElementById('file-sub-meta-a');
     const badge = document.querySelector('.modal-header-a .file-icon-badge');
     const category = getFileCategory(att.name, att.type);
-    if (title) title.textContent = att.name || '未命名附件';
+    if (title) {
+        title.textContent = att.name || '未命名附件';
+        const canRename = Boolean(state.assetId);
+        title.classList.toggle('is-renameable', canRename);
+        if (canRename) {
+            title.setAttribute('role', 'button');
+            title.setAttribute('tabindex', '0');
+            title.title = '点击标题重命名';
+        } else {
+            title.removeAttribute('role');
+            title.removeAttribute('tabindex');
+            title.removeAttribute('title');
+        }
+    }
     if (tag) tag.textContent = category.badge || 'FILE';
     if (sub) sub.textContent = `${formatFileSize(att.size)} · ${detectEncoding(att)}`;
     // 复用项目自己的文件类型图标（badge 的琥珀底色/圆角仍按 demo 保持不变）
@@ -384,6 +402,56 @@ async function saveFileContent() {
     }
 }
 
+async function performServerRename({ assetId, currentName, kind, mimeType, nextName, syncReferences = true }) {
+    if (typeof window.dumbpadRenameAsset === 'function') {
+        return window.dumbpadRenameAsset({ assetId, currentName, kind, mimeType, nextName, syncReferences });
+    }
+    return new AssetApiClient().renameAsset(assetId, nextName, { syncReferences });
+}
+
+async function renameActiveAttachment() {
+    if (!state.attachment || !state.assetId) {
+        triggerToast('仅已上传的服务端附件支持重命名', 'info');
+        return null;
+    }
+    const trigger = document.getElementById('file-title-a') || document.activeElement;
+
+    let outcome = null;
+    await openAttachmentRenamePopover({
+        anchorEl: trigger,
+        align: 'start',
+        currentName: state.attachment.name || '未命名附件',
+        kind: 'file',
+        mimeType: state.attachment.type || '',
+        title: '重命名附件',
+        hint: 'Enter 保存 · 同步全部引用',
+        showSyncOption: false,
+        defaultSync: true,
+        trigger,
+        onConfirm: async ({ name }) => {
+            outcome = await performServerRename({
+                assetId: state.assetId,
+                currentName: state.attachment.name,
+                kind: 'file',
+                mimeType: state.attachment.type || '',
+                nextName: name,
+                syncReferences: true,
+            });
+            return outcome;
+        },
+    });
+    if (outcome?.asset) {
+        state.attachment = {
+            ...state.attachment,
+            name: outcome.asset.name || state.attachment.name,
+            type: outcome.asset.type || state.attachment.type,
+        };
+        fillFileMeta(state.attachment);
+        if (!outcome.unchanged) triggerToast('附件已重命名', 'success');
+    }
+    return outcome;
+}
+
 /* ------------------------------------------------------------------
    下载 / 复制：复用项目现有逻辑（含失败提示）。
    ------------------------------------------------------------------ */
@@ -460,6 +528,7 @@ function openActiveModal() {
 }
 
 function closeModal() {
+    closeActiveAttachmentRename();
     const overlay = state.overlay;
     const modal = state.modal;
     if (!overlay || !overlay.classList.contains('open')) return;
@@ -640,7 +709,7 @@ function installKeyHandlers() {
         // 对话框打开时 Tab 在内部循环，不跑到遮罩后面的页面上
         if (e.key === 'Tab' && isOpen) {
             const modal = state.modal;
-            const focusables = [...modal.querySelectorAll('button, textarea, [href], [tabindex]:not([tabindex="-1"])')]
+            const focusables = [...modal.querySelectorAll('button, input, textarea, [href], [tabindex]:not([tabindex="-1"])')]
                 .filter((el) => el.offsetParent !== null && getComputedStyle(el).visibility !== 'hidden');
             if (!focusables.length) return;
 
@@ -687,11 +756,14 @@ function safeAssetUrl(value, fallback = '') {
 
 let nativeOverlay = null;
 let nativeTrigger = null;
+let nativeAsset = null;
 
 function closeNativePreview() {
+    closeActiveAttachmentRename();
     if (!nativeOverlay || nativeOverlay.hidden) return;
     nativeOverlay.hidden = true;
     nativeOverlay.querySelector('.asset-native-stage').innerHTML = '';
+    nativeAsset = null;
     if (nativeTrigger && document.contains(nativeTrigger)) {
         nativeTrigger.focus({ preventScroll: true });
     }
@@ -720,6 +792,43 @@ function ensureNativePreviewOverlay() {
     overlay.addEventListener('click', (event) => {
         if (event.target === overlay) closeNativePreview();
     });
+    const nativeNameEl = overlay.querySelector('.asset-native-name');
+    nativeNameEl.addEventListener('click', async () => {
+        if (!nativeAsset) return;
+        const assetId = resolveAssetId(nativeAsset);
+        if (!assetId) return;
+        let outcome = null;
+        await openAttachmentRenamePopover({
+            anchorEl: nativeNameEl,
+            align: 'start',
+            currentName: nativeAsset.name || '未命名附件',
+            kind: nativeAsset.kind || 'file',
+            mimeType: nativeAsset.type || '',
+            title: '重命名附件',
+            hint: 'Enter 保存 · 同步全部引用',
+            showSyncOption: false,
+            defaultSync: true,
+            trigger: nativeNameEl,
+            onConfirm: async ({ name }) => {
+                outcome = await performServerRename({
+                    assetId,
+                    currentName: nativeAsset.name || '',
+                    kind: nativeAsset.kind || 'file',
+                    mimeType: nativeAsset.type || '',
+                    nextName: name,
+                    syncReferences: true,
+                });
+                return outcome;
+            },
+        });
+        if (outcome?.asset) {
+            nativeAsset = { ...nativeAsset, ...outcome.asset };
+            nativeNameEl.textContent = String(nativeAsset.name || '附件预览');
+            const download = overlay.querySelector('.asset-native-download');
+            download.download = String(nativeAsset.name || 'attachment');
+            if (!outcome.unchanged) triggerToast('附件已重命名', 'success');
+        }
+    });
     overlay.querySelector('.asset-native-close').addEventListener('click', closeNativePreview);
     window.addEventListener('keydown', (event) => {
         if (event.key === 'Escape') closeNativePreview();
@@ -736,6 +845,8 @@ export function openNativeAssetPreview(asset = {}, kind = 'media', trigger = nul
         triggerToast('附件地址不可用，无法预览', 'error');
         return false;
     }
+    nativeAsset = { ...asset };
+    const assetId = resolveAssetId(nativeAsset);
     const stage = overlay.querySelector('.asset-native-stage');
     const eye = `<svg width="42" height="42" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>`;
     if (kind === 'pdf') {
@@ -748,7 +859,18 @@ export function openNativeAssetPreview(asset = {}, kind = 'media', trigger = nul
     } else {
         stage.innerHTML = `<video class="asset-native-video" src="${src}" controls playsinline></video>`;
     }
-    overlay.querySelector('.asset-native-name').textContent = String(asset.name || '附件预览');
+    const nativeNameEl = overlay.querySelector('.asset-native-name');
+    nativeNameEl.textContent = String(asset.name || '附件预览');
+    nativeNameEl.classList.toggle('is-renameable', Boolean(assetId));
+    if (assetId) {
+        nativeNameEl.setAttribute('role', 'button');
+        nativeNameEl.setAttribute('tabindex', '0');
+        nativeNameEl.title = '点击标题重命名';
+    } else {
+        nativeNameEl.removeAttribute('role');
+        nativeNameEl.removeAttribute('tabindex');
+        nativeNameEl.removeAttribute('title');
+    }
     const download = overlay.querySelector('.asset-native-download');
     download.href = safeAssetUrl(getAssetDownloadUrl(asset), '#');
     download.download = String(asset.name || 'attachment');
@@ -778,12 +900,31 @@ export function installAttachmentViewerModal() {
         handleEditorInput,
         saveFileContent,
         copyFullContent,
+        renameActiveAttachment,
         triggerToast,
         downloadActiveAttachment,
         syncContent,
         updateContentMetrics,
         setSaveState,
         renderMarkdown: renderMarkdownSafely,
+    });
+
+    window.addEventListener('dumbpad:asset-renamed', (event) => {
+        const renamed = event?.detail?.asset;
+        if (!renamed?.id) return;
+        if (state.assetId === renamed.id && state.attachment) {
+            state.attachment = {
+                ...state.attachment,
+                name: renamed.name || state.attachment.name,
+                type: renamed.type || state.attachment.type,
+            };
+            fillFileMeta(state.attachment);
+        }
+        if (nativeAsset && resolveAssetId(nativeAsset) === renamed.id && nativeOverlay && !nativeOverlay.hidden) {
+            nativeAsset = { ...nativeAsset, ...renamed };
+            nativeOverlay.querySelector('.asset-native-name').textContent = String(nativeAsset.name || '附件预览');
+            nativeOverlay.querySelector('.asset-native-download').download = String(nativeAsset.name || 'attachment');
+        }
     });
 
     installKeyHandlers();

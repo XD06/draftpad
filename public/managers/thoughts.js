@@ -48,6 +48,7 @@ import { ThoughtAgentController } from './thought-agent-controller.js';
 import { renderThoughtAgentPanel } from './thought-agent-panel.js';
 import { buildAttachmentsFromFiles, getImageAttachments } from './thought-attachments.js';
 import { AssetApiClient, getAssetDownloadUrl, getAssetOriginalUrl, getAssetPreviewUrl, isImageFile } from './asset-api-client.js';
+import { openAttachmentRenamePopover, closeActiveAttachmentRename } from './attachment-rename-dialog.js';
 import { getThoughtSwipeState } from './thought-swipe.js';
 import { ensureSelectionMenuSprite } from './selection-menu-icons.js';
 import { applyThoughtTextStyle, escapeHtml as escapeThoughtHtml, formatThoughtText } from './thought-text-formatting.js';
@@ -2800,6 +2801,33 @@ export class ThoughtsManager {
         input.click();
     }
 
+    applyExternalAssetRename(asset, updatedThoughtIds = null) {
+        if (!asset?.id) return;
+        const targetIds = Array.isArray(updatedThoughtIds) && updatedThoughtIds.length
+            ? new Set(updatedThoughtIds.map(String))
+            : null;
+        let anyUpdated = false;
+        this.thoughts.forEach((thought) => {
+            if (targetIds && !targetIds.has(String(thought.id))) return;
+            const list = Array.isArray(thought.attachments) ? thought.attachments : [];
+            let touched = false;
+            const nextList = list.map((att) => {
+                if (String(att?.assetId || '') !== String(asset.id)) return att;
+                touched = true;
+                return {
+                    ...att,
+                    name: asset.name,
+                    ...(asset.type ? { type: asset.type } : {})
+                };
+            });
+            if (!touched) return;
+            thought.attachments = nextList;
+            anyUpdated = true;
+            this.patchRenderedThought(thought.id);
+        });
+        if (anyUpdated) this.saveThoughtsCache?.();
+    }
+
     async appendThoughtAttachments(thought, additions) {
         if (!thought?.id || !Array.isArray(additions) || additions.length === 0) return;
         thought.attachments = [
@@ -4337,9 +4365,59 @@ export class ThoughtsManager {
                 const name = this.escapeHtml(att.name || '文件');
                 item.className = `thought-edit-att-item ${isImage ? 'is-image' : 'is-file'}`;
                 if (isImage) {
-                    item.innerHTML = `<img src="${this.escapeHtml(getAssetPreviewUrl(att))}" alt="${name}" loading="lazy"><span class="thought-edit-att-name" title="${name}">${name}</span><button type="button" class="thought-edit-att-remove" title="移除附件" aria-label="移除附件：${name}">×</button>`;
+                    item.innerHTML = `<img src="${this.escapeHtml(getAssetPreviewUrl(att))}" alt="${name}" loading="lazy"><span class="thought-edit-att-name" title="点击重命名：${name}" role="button" tabindex="0">${name}</span><button type="button" class="thought-edit-att-remove" title="移除附件" aria-label="移除附件：${name}">×</button>`;
                 } else {
-                    item.innerHTML = `<span class="thought-edit-att-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><path d="M14 2v6h6"></path></svg></span><span class="thought-edit-att-name" title="${name}">${name}</span><button type="button" class="thought-edit-att-remove" title="移除附件" aria-label="移除附件：${name}">×</button>`;
+                    item.innerHTML = `<span class="thought-edit-att-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><path d="M14 2v6h6"></path></svg></span><span class="thought-edit-att-name" title="点击重命名：${name}" role="button" tabindex="0">${name}</span><button type="button" class="thought-edit-att-remove" title="移除附件" aria-label="移除附件：${name}">×</button>`;
+                }
+                const nameTrigger = item.querySelector('.thought-edit-att-name');
+                if (nameTrigger) {
+                    nameTrigger.onclick = async (event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        const current = editAttachments[i];
+                        if (!current) return;
+                        const assetId = String(current.assetId || '').trim();
+                        const kind = isImage ? 'image' : 'file';
+                        let finalName = String(current.name || '文件');
+                        let finalType = String(current.type || '');
+                        const dialogResult = await openAttachmentRenamePopover({
+                            anchorEl: nameTrigger,
+                            align: 'start',
+                            currentName: finalName,
+                            kind,
+                            mimeType: finalType,
+                            title: '重命名附件',
+                            showSyncOption: Boolean(assetId),
+                            defaultSync: Boolean(assetId),
+                            trigger: nameTrigger,
+                            onConfirm: async ({ name: nextName, syncReferences }) => {
+                                if (assetId && syncReferences) {
+                                    const serverResult = typeof window.dumbpadRenameAsset === 'function'
+                                        ? await window.dumbpadRenameAsset({
+                                            assetId,
+                                            currentName: finalName,
+                                            kind,
+                                            mimeType: finalType,
+                                            nextName,
+                                            syncReferences: true,
+                                        })
+                                        : await this.assetApi.renameAsset(assetId, nextName, { syncReferences: true });
+                                    finalName = serverResult?.asset?.name || nextName;
+                                    finalType = serverResult?.asset?.type || finalType;
+                                    return serverResult;
+                                }
+                                finalName = nextName;
+                                return { name: nextName };
+                            },
+                        });
+                        if (!dialogResult || !editAttachments[i]) return;
+                        editAttachments[i] = {
+                            ...editAttachments[i],
+                            name: finalName,
+                            ...(finalType ? { type: finalType } : {}),
+                        };
+                        renderAttachmentsEditor();
+                    };
                 }
                 item.querySelector('.thought-edit-att-remove').onclick = () => {
                     editAttachments.splice(i, 1);
@@ -4442,6 +4520,10 @@ export class ThoughtsManager {
                 return;
             }
             if (!e.target.isConnected) return;
+            const popEl = document.getElementById('attachment-rename-popover');
+            if (e.target.closest?.('.dumbpad-rename-popover') || (popEl && !popEl.hidden)) {
+                return;
+            }
             if (!card.contains(e.target)) {
                 saveAndExit();
             }
@@ -4453,6 +4535,7 @@ export class ThoughtsManager {
     }
 
     exitEditMode(card) {
+        closeActiveAttachmentRename();
         card.classList.remove('editing');
         const textarea = card.querySelector('.edit-textarea');
         const panel = card.querySelector('.subtask-editor-panel');

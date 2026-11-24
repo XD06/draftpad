@@ -18,6 +18,7 @@
     "test:thought-outbox": "node test/test_thought_outbox.js",
     "test:thought-attachments": "node test/test_thought_attachments.js",
     "test:assets": "node test/test_asset_routes.js",
+    "test:asset-rename": "node test/test_asset_rename.js",
     "test:attachment-viewer-modal": "node test/test_attachment_viewer_modal.js",
     "test:attachment-viewer-modal-browser": "node test/browser/attachment-modal-layout.js",
     "test:asset-upload-progress": "node test/test_asset_upload_progress.js",
