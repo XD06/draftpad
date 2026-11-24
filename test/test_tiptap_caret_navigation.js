@@ -152,6 +152,53 @@ async function main() {
         delete editor.getScrollContainer;
     }
 
+    // 7. 增量远端合并：前段新增内容时不偏移光标/非空选区；IME 组合输入期间延迟应用
+    editor.setValue('# 开头段落\n\n目标段落甲乙丙', false);
+    {
+        const { state, view } = editor.editor;
+        let targetPos = null;
+        state.doc.descendants((node, pos) => {
+            if (targetPos === null && node.isText && node.text.includes('目标段落甲乙丙')) {
+                targetPos = pos + '目标段落'.length;
+            }
+            return targetPos === null;
+        });
+        view.dispatch(state.tr.setSelection(TextSelection.create(state.doc, targetPos, targetPos + 2)));
+        editor.setValuePreservingCaret('# 开头段落\n\n远端插入一段\n\n目标段落甲乙丙', false);
+        const sel = editor.editor.state.selection;
+        const selected = editor.editor.state.doc.textBetween(sel.from, sel.to);
+        check('setValuePreservingCaret: 远端在前面插段时非空选区仍锁在原文字上',
+            selected === '甲乙', { selected, from: sel.from, to: sel.to });
+    }
+
+    // IME 组合保护：composing 期间不立刻打断，compositionend 后自动落盘
+    editor.setValue('原段文字', false);
+    {
+        const { view } = editor.editor;
+        view.input.composing = true;
+        editor.isComposing = true;
+        editor.setValuePreservingCaret('原段文字\n\n远端补充段落', false);
+        check('setValuePreservingCaret: 组合输入期间延后替换文档（不打断 IME）',
+            !editor.getValue().includes('远端补充段落'), editor.getValue());
+        view.input.composing = false;
+        editor.isComposing = false;
+        view.dom.dispatchEvent(new dom.window.Event('compositionend', { bubbles: true }));
+        await sleep(30);
+        check('setValuePreservingCaret: compositionend 后自动应用被延后的远端更新',
+            editor.getValue().includes('远端补充段落'), editor.getValue());
+    }
+
+    // 8. setSelectionRange(start, end) 真实定位 Markdown 偏移（bootEditor 交接场景）
+    editor.setValue('# 一级标题\n\n第二段目标词在这里', false);
+    const md = editor.getValue();
+    const targetOffset = md.indexOf('目标词');
+    editor.setSelectionRange(targetOffset, targetOffset);
+    const selAfterBoot = editor.editor.state.selection;
+    const endProbe = Math.min(editor.editor.state.doc.content.size, selAfterBoot.from + 3);
+    const textAround = editor.editor.state.doc.textBetween(selAfterBoot.from, endProbe);
+    check('setSelectionRange(offset) 按 Markdown 偏移精确定位（不再忽略参数跳回开头）',
+        textAround === '目标词', { textAround, targetOffset, from: selAfterBoot.from });
+
     if (failures) {
         console.error(`\n${failures} check(s) failed`);
         process.exit(1);

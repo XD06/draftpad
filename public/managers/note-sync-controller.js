@@ -7,6 +7,8 @@ const DEFAULT_STARTUP_CACHE_KEY = 'dumbpad_startup_cache_v1';
 const EDIT_SESSION_IDLE_MS = 60000;
 const CACHE_RETRY_INTERVAL_MS = 30000;
 const CACHE_WRITE_DEBOUNCE_MS = 250;
+const CACHE_TYPING_DEBOUNCE_MS = 450;
+const CACHE_TYPING_MAX_WAIT_MS = 1500;
 // 缓存格式版本：2。升版一次性作废 v1 缓存（含编辑器内核切换期间
 // 写入的假脏笔记），loadStartupCache 对旧版本返回 null 即完成迁移。
 const STARTUP_CACHE_VERSION = 2;
@@ -19,6 +21,7 @@ export default class NoteSyncController {
         this.cache = undefined;
         this.cacheRetryAt = 0;
         this.cacheWriteTimer = null;
+        this.cacheFirstDeferredAt = 0;
         this.cacheNeedsPersist = false;
     }
 
@@ -36,7 +39,7 @@ export default class NoteSyncController {
         return this.cache;
     }
 
-    saveStartupCache(patch = {}, { defer = false, immediate = true } = {}) {
+    saveStartupCache(patch = {}, { defer = false, immediate = true, debounceMs = CACHE_WRITE_DEBOUNCE_MS } = {}) {
         if (!defer) this.flushPendingCacheWrite();
         const previous = this.loadStartupCache() || { version: STARTUP_CACHE_VERSION, notes: {}, notepads: [] };
         const next = {
@@ -52,14 +55,28 @@ export default class NoteSyncController {
         this.cache = next;
         if (defer) {
             this.cacheNeedsPersist = true;
-            if (!this.cacheWriteTimer) {
-                if (immediate) this.persistCachedState();
-                if (typeof globalThis.setTimeout !== 'function') return this.cache;
-                this.cacheWriteTimer = globalThis.setTimeout(() => {
-                    this.cacheWriteTimer = null;
-                    if (this.cacheNeedsPersist) this.persistCachedState();
-                }, CACHE_WRITE_DEBOUNCE_MS);
+            const now = Date.now();
+            if (!this.cacheFirstDeferredAt) this.cacheFirstDeferredAt = now;
+            if (!this.cacheWriteTimer && immediate) {
+                this.persistCachedState();
+                this.cacheFirstDeferredAt = 0;
             }
+            if (typeof globalThis.setTimeout !== 'function') return this.cache;
+            if (this.cacheWriteTimer) {
+                if (typeof globalThis.clearTimeout === 'function') {
+                    globalThis.clearTimeout(this.cacheWriteTimer);
+                }
+                this.cacheWriteTimer = null;
+            }
+            const elapsed = now - this.cacheFirstDeferredAt;
+            const delay = elapsed >= CACHE_TYPING_MAX_WAIT_MS
+                ? 0
+                : Math.min(debounceMs, Math.max(0, CACHE_TYPING_MAX_WAIT_MS - elapsed));
+            this.cacheWriteTimer = globalThis.setTimeout(() => {
+                this.cacheWriteTimer = null;
+                this.cacheFirstDeferredAt = 0;
+                if (this.cacheNeedsPersist) this.persistCachedState();
+            }, delay);
             return this.cache;
         }
         this.persistCachedState();
@@ -73,6 +90,7 @@ export default class NoteSyncController {
             }
             this.cacheWriteTimer = null;
         }
+        this.cacheFirstDeferredAt = 0;
         if (this.cacheNeedsPersist) this.persistCachedState();
     }
 
@@ -171,7 +189,13 @@ export default class NoteSyncController {
                 ...(previous.notes || {}),
                 [notepadId]: nextNote
             }
-        }, { defer: options.deferPersist === true });
+        }, {
+            defer: options.deferPersist === true,
+            // 输入期 recordActivity 走纯异步尾随防抖（不阻塞打字主线程做整库 JSON.stringify）；
+            // pagehide / visibilitychange / save 前会通过 flushPendingCacheWrite 立刻落盘。
+            immediate: !options.deferPersist,
+            debounceMs: options.recordActivity ? CACHE_TYPING_DEBOUNCE_MS : CACHE_WRITE_DEBOUNCE_MS
+        });
     }
 
     cacheDirtyNote(notepadId, content, { version, baseContent, recordActivity = false, notepads = [] } = {}) {

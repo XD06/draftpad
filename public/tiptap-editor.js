@@ -386,6 +386,25 @@ export class HybridMarkdownEditor {
             this._exemptDecorationMarksFromCode();
             // 若在 create 宏任务到来前已有内容载入，兜底收敛一次
             this.normalizeDecorationMarks();
+            const dom = this.editor?.view?.dom;
+            if (dom && !this._compositionListenersBound) {
+                this._compositionListenersBound = true;
+                dom.addEventListener('compositionstart', () => {
+                    this.isComposing = true;
+                });
+                dom.addEventListener('compositionend', () => {
+                    this.isComposing = false;
+                    // composition 期间推迟了 Markdown 全量序列化，提交上屏后再安排一次合并上报。
+                    if (this._pendingInputAfterComposition) {
+                        this._pendingInputAfterComposition = false;
+                        this.scheduleInputNotify();
+                    }
+                    // Step 4 hook: 若输入法组合期间有远端更新被延后，上屏后顺势应用。
+                    if (typeof this._flushDeferredRemoteUpdate === 'function') {
+                        setTimeout(() => this._flushDeferredRemoteUpdate(), 0);
+                    }
+                });
+            }
         });
 
         this.editor.on('update', ({ transaction }) => {
@@ -394,7 +413,7 @@ export class HybridMarkdownEditor {
             // 触发脏笔记保存与 409 冲突（"内容已在其他设备更新"）。
             // dumbpadNormalize 是装饰 mark（批注/画线/高亮）的拆段连接事务：修复内容
             // 本身就是加载进来的内容，不能被当作用户编辑触发保存。
-            if (!transaction || !transaction.docChanged || transaction.getMeta('dumbpadNormalize')) return;
+            if (!transaction || !transaction.docChanged || transaction.getMeta('dumbpadNormalize') || transaction.getMeta('dumbpadRemotePatch')) return;
             this.scheduleInputNotify();
         });
 
@@ -404,7 +423,11 @@ export class HybridMarkdownEditor {
         });
 
         this.editor.on('transaction', ({ transaction }) => {
-            this.isComposing = transaction.meta?.isComposing || this.isComposing;
+            if (typeof transaction?.meta?.isComposing === 'boolean') {
+                this.isComposing = transaction.meta.isComposing;
+            } else if (this.editor?.view) {
+                this.isComposing = Boolean(this.editor.view.composing);
+            }
             // /file 挂起位置的随事务重映射（上传期间用户继续编辑）。
             if (transaction?.docChanged) this.fileCommand?.handleTransaction(transaction);
         });
@@ -488,6 +511,7 @@ export class HybridMarkdownEditor {
         const nextValue = String(value ?? '');
         const previousValue = this._lastValue;
         this._lastValue = nextValue;
+        this._deferredRemoteUpdate = null;
         // 载入会整篇替换文档，窗口里挂起的输入变更已经没有意义：它的值既被
         // 新文档取代，上报出去还会让上层把旧文章标脏。丢弃而不是 flush。
         // emit=true 时下面会主动上报一次（远端更新 = 恰好一次变更通知）。
@@ -651,31 +675,253 @@ export class HybridMarkdownEditor {
         this.editor.view.dispatch(tr);
     }
 
-    /** 远端更新（WS notes_update）时保持用户光标位置（issue #5）。 */
+    _flushDeferredRemoteUpdate() {
+        if (!this._deferredRemoteUpdate) return;
+        if (this.isComposing || this.editor?.view?.composing) return;
+        const pending = this._deferredRemoteUpdate;
+        this._deferredRemoteUpdate = null;
+        this.setValuePreservingCaret(pending.value, pending.emit);
+    }
+
+    /**
+     * 计算单次连续文本替换区间，供源码模式与单一纯文本段落的局部更新复用。
+     * @returns {{start: number, oldEnd: number, newEnd: number, replacement: string}}
+     */
+    _findSingleTextDiff(previous, next) {
+        const a = String(previous ?? '');
+        const b = String(next ?? '');
+        let start = 0;
+        while (start < a.length && start < b.length && a[start] === b[start]) {
+            start += 1;
+        }
+        let oldEnd = a.length;
+        let newEnd = b.length;
+        while (oldEnd > start && newEnd > start && a[oldEnd - 1] === b[newEnd - 1]) {
+            oldEnd -= 1;
+            newEnd -= 1;
+        }
+        return { start, oldEnd, newEnd, replacement: b.slice(start, newEnd) };
+    }
+
+    _mapOffsetAcrossTextDiff(offset, { start, oldEnd, newEnd }) {
+        if (offset <= start) return offset;
+        if (offset >= oldEnd) return Math.max(start, offset + (newEnd - oldEnd));
+        return Math.min(start + (offset - start), newEnd);
+    }
+
+    /**
+     * 把 Markdown 解析成独立的 ProseMirror 文档节点，供无感增量对比复用（不触碰实时视图 DOM）。
+     */
+    _parseMarkdownDoc(markdown) {
+        const nextValue = String(markdown ?? '');
+        const cached = this._parsedDocuments.get(nextValue);
+        if (cached?.doc) return cached.doc;
+        const parser = this.editor?.storage?.markdown?.parser;
+        const DOMParserCtor = globalThis.DumbPadTiptap?.PM?.model?.DOMParser;
+        if (!parser || !DOMParserCtor) return null;
+        const html = parser.parse(this.frontmatterToFence(nextValue));
+        const host = document.createElement('div');
+        host.innerHTML = html;
+        return DOMParserCtor.fromSchema(this.editor.schema).parse(host);
+    }
+
+    /**
+     * 远端更新（WS notes_update / 重连同步 / 自动合并）时保持用户焦点、选区、IME 组合与视线。
+     *
+     * 相比整篇 setContent()：
+     * 1) 正在中文/IME 组合输入时延后到 compositionend 落盘，绝不打断候选词；
+     * 2) 正文与现值一致时直接 no-op，不动 DOM 与选区；
+     * 3) 仅对比并替换首尾公共块之外的最小变更区间，光标所在段落未被远端改动时 DOM 完全不重建，
+     *    ProseMirror 的 tr.mapping 自动把单点光标与非空选区映射到正确新位置；
+     * 4) 若远端改动在光标上方插删了块导致光标纵坐标漂移，按视口锚点补偿 scrollTop，视线零跳动。
+     */
     setValuePreservingCaret(value, emit = true) {
-        const focused = this.editor.isFocused;
-        const snapshot = focused ? this.getInlineCaretSnapshot() : null;
-        // 源码模式下焦点在 textarea、PM 未聚焦，上面这条光标快照拿不到；而远端
-        // 更新 / 409 三方合并只是刷新同一篇正文，视线必须留在原处。setValue 的源码
-        // 分支按「整体换正文」不保留旧滚动像素（切文章），这里把视线补回来。
-        // 只管源码模式：渲染模式的视线由下面 PM 的 setCaretAtVisibleOffset /
-        // scrollIntoView 负责，再插一次手写 scrollTop 会与它叠加（未经真机验证）。
-        // 容器在 setValue 之前取：那时 textarea 高度正常，getScrollContainer() 不会误判。
-        const scroller = this.sourceMode ? this.getScrollContainer() : null;
-        const savedScrollTop = scroller ? scroller.scrollTop : null;
-        this.setValue(value, emit);
-        if (scroller && savedScrollTop !== null && scroller.scrollTop !== savedScrollTop) {
-            scroller.scrollTop = savedScrollTop;
+        const nextValue = String(value ?? '');
+        if (!this.sourceMode && (this.isComposing || this.editor?.view?.composing)) {
+            this._deferredRemoteUpdate = { value: nextValue, emit };
+            return;
         }
-        if (focused && snapshot !== null) {
-            requestAnimationFrame(() => {
-                try {
-                    this.setCaretAtVisibleOffset(snapshot);
-                } catch (_error) {
-                    // 光标恢复是尽力而为，绝不打断编辑。
+        this._deferredRemoteUpdate = null;
+
+        if (this.sourceMode) {
+            const textarea = this.getSourceTextarea();
+            if (!textarea) {
+                this.setValue(nextValue, emit);
+                return;
+            }
+            const currentText = textarea.value;
+            if (currentText === nextValue) {
+                this._lastValue = nextValue;
+                if (emit) this.notifyEditorValueChanged(nextValue);
+                return;
+            }
+            const focused = document.activeElement === textarea;
+            const selStart = Number(textarea.selectionStart || 0);
+            const selEnd = Number(textarea.selectionEnd || 0);
+            const diff = this._findSingleTextDiff(currentText, nextValue);
+            const scroller = this.getScrollContainer();
+            const savedScrollTop = scroller ? scroller.scrollTop : null;
+            this._lastValue = nextValue;
+            this.discardPendingInput();
+            textarea.value = nextValue;
+            this.autosizeSourceTextarea(textarea, { preserveScrollTop: true });
+            if (focused) {
+                const max = nextValue.length;
+                const mappedStart = Math.max(0, Math.min(this._mapOffsetAcrossTextDiff(selStart, diff), max));
+                const mappedEnd = Math.max(0, Math.min(this._mapOffsetAcrossTextDiff(selEnd, diff), max));
+                textarea.setSelectionRange(mappedStart, mappedEnd);
+                if (mappedStart === mappedEnd) {
+                    this._trackedCaret = { mode: 'source', offset: mappedStart };
                 }
-            });
+            }
+            const cached = this._parsedDocuments.get(nextValue);
+            this.editor.chain().setMeta('addToHistory', false)
+                .setContent(cached?.doc || this.frontmatterToFence(nextValue), { emitUpdate: false }).run();
+            if (scroller && savedScrollTop !== null && scroller.scrollTop !== savedScrollTop) {
+                scroller.scrollTop = savedScrollTop;
+            }
+            if (emit) this.notifyEditorValueChanged(nextValue);
+            return;
         }
+
+        const currentValue = this.getValue();
+        if (currentValue === nextValue) {
+            this._lastValue = nextValue;
+            if (emit) this.notifyEditorValueChanged(nextValue);
+            return;
+        }
+
+        const view = this.editor?.view;
+        const TextSelection = globalThis.DumbPadTiptap?.PM?.state?.TextSelection;
+        let nextDoc = null;
+        try {
+            nextDoc = this._parseMarkdownDoc(nextValue);
+        } catch (_err) {
+            nextDoc = null;
+        }
+        if (!view || !TextSelection || !nextDoc) {
+            const focused = this.editor.isFocused;
+            const snapshot = focused ? this.getInlineCaretSnapshot() : null;
+            this.setValue(nextValue, emit);
+            if (focused && snapshot !== null) {
+                requestAnimationFrame(() => {
+                    try { this.setCaretAtVisibleOffset(snapshot); } catch (_error) {}
+                });
+            }
+            return;
+        }
+
+        const oldDoc = view.state.doc;
+        if (oldDoc.eq(nextDoc)) {
+            this._lastValue = nextValue;
+            if (emit) this.notifyEditorValueChanged(nextValue);
+            return;
+        }
+
+        this._exemptDecorationMarksFromCode();
+        this.discardPendingInput();
+        this._lastValue = nextValue;
+
+        const oldCount = oldDoc.childCount;
+        const newCount = nextDoc.childCount;
+        let prefixCount = 0;
+        while (prefixCount < oldCount && prefixCount < newCount
+            && oldDoc.child(prefixCount).eq(nextDoc.child(prefixCount))) {
+            prefixCount += 1;
+        }
+        let suffixCount = 0;
+        while (suffixCount < (oldCount - prefixCount) && suffixCount < (newCount - prefixCount)
+            && oldDoc.child(oldCount - 1 - suffixCount).eq(nextDoc.child(newCount - 1 - suffixCount))) {
+            suffixCount += 1;
+        }
+
+        let oldFrom = 0;
+        for (let i = 0; i < prefixCount; i += 1) oldFrom += oldDoc.child(i).nodeSize;
+        let oldTo = oldDoc.content.size;
+        for (let i = 0; i < suffixCount; i += 1) oldTo -= oldDoc.child(oldCount - 1 - i).nodeSize;
+
+        let newFrom = 0;
+        for (let i = 0; i < prefixCount; i += 1) newFrom += nextDoc.child(i).nodeSize;
+        let newTo = nextDoc.content.size;
+        for (let i = 0; i < suffixCount; i += 1) newTo -= nextDoc.child(newCount - 1 - i).nodeSize;
+
+        const focused = this.editor.isFocused;
+        const oldSel = view.state.selection;
+        const hasLayout = typeof view.coordsAtPos === 'function' && typeof document.createRange().getClientRects === 'function';
+        let caretTopBefore = null;
+        if (hasLayout && focused && oldTo <= oldSel.from) {
+            try { caretTopBefore = view.coordsAtPos(oldSel.from).top; } catch (_err) {}
+        }
+
+        const tr = view.state.tr;
+        tr.setMeta('addToHistory', false);
+        tr.setMeta('dumbpadRemotePatch', true);
+
+        const oldMidCount = oldCount - prefixCount - suffixCount;
+        const newMidCount = newCount - prefixCount - suffixCount;
+        const singleMatchingTextblock = oldMidCount === 1 && newMidCount === 1
+            && oldDoc.child(prefixCount).isTextblock
+            && nextDoc.child(prefixCount).isTextblock
+            && oldDoc.child(prefixCount).hasMarkup(nextDoc.child(prefixCount).type, nextDoc.child(prefixCount).attrs);
+
+        if (singleMatchingTextblock) {
+            const oldBlock = oldDoc.child(prefixCount);
+            const newBlock = nextDoc.child(prefixCount);
+            const oldInlineOnlyText = oldBlock.content.childCount <= 1 && newBlock.content.childCount <= 1
+                && (!oldBlock.firstChild || (oldBlock.firstChild.isText && oldBlock.firstChild.marks.length === 0))
+                && (!newBlock.firstChild || (newBlock.firstChild.isText && newBlock.firstChild.marks.length === 0));
+            if (oldInlineOnlyText) {
+                const diff = this._findSingleTextDiff(oldBlock.textContent, newBlock.textContent);
+                const contentBase = oldFrom + 1;
+                tr.replaceWith(
+                    contentBase + diff.start,
+                    contentBase + diff.oldEnd,
+                    diff.replacement ? this.editor.schema.text(diff.replacement) : []
+                );
+            } else {
+                tr.replaceWith(oldFrom + 1, oldTo - 1, newBlock.content);
+            }
+        } else {
+            tr.replaceWith(oldFrom, oldTo, nextDoc.slice(newFrom, newTo).content);
+        }
+
+        const mappedFrom = Math.max(0, Math.min(tr.mapping.map(oldSel.from, 1), tr.doc.content.size));
+        const mappedTo = Math.max(0, Math.min(tr.mapping.map(oldSel.to, -1), tr.doc.content.size));
+        try {
+            if (mappedFrom === mappedTo) {
+                tr.setSelection(TextSelection.near(tr.doc.resolve(mappedFrom), -1));
+            } else {
+                const $anchor = tr.doc.resolve(mappedFrom);
+                const $head = tr.doc.resolve(mappedTo);
+                if ($anchor.parent.inlineContent && $head.parent.inlineContent) {
+                    tr.setSelection(TextSelection.create(tr.doc, mappedFrom, mappedTo));
+                } else {
+                    tr.setSelection(TextSelection.near($anchor, -1));
+                }
+            }
+        } catch (_err) {
+            tr.setSelection(TextSelection.near(tr.doc.resolve(mappedFrom), -1));
+        }
+
+        // 不调 scrollIntoView()：防止未聚焦或正在阅读上下文时视口突然跳转到光标处。
+        view.dispatch(tr);
+        this.normalizeDecorationMarks();
+
+        if (caretTopBefore !== null) {
+            try {
+                const caretTopAfter = view.coordsAtPos(view.state.selection.from).top;
+                const drift = caretTopAfter - caretTopBefore;
+                if (Math.abs(drift) > 1) {
+                    const scroller = this.getScrollContainer();
+                    if (scroller) scroller.scrollTop += drift;
+                }
+            } catch (_err) {}
+        }
+
+        if (focused && view.state.selection.empty) {
+            this._trackedCaret = { mode: 'wysiwyg', pos: view.state.selection.from };
+        }
+        if (emit) this.notifyEditorValueChanged(this.getValue());
     }
 
     /* ---------------- 模式与焦点 ---------------- */
@@ -688,9 +934,20 @@ export class HybridMarkdownEditor {
         this.notifyMermaidModeChange();
     }
 
-    focus() {
+    focus({ preventScroll = true } = {}) {
         if (this.isReadingMode) return;
-        this.editor.commands.focus();
+        if (this.sourceMode) {
+            this.getSourceTextarea()?.focus({ preventScroll });
+            return;
+        }
+        // 不走 Tiptap commands.focus()：它在移动端会调无 preventScroll 的原生 focus()
+        // 并叠加 scrollIntoView()，把页面顶缘/光标怼飞（见 setCaretAtMarkdownOffset 注释）。
+        const dom = this.editor?.view?.dom;
+        if (dom && typeof dom.focus === 'function') {
+            dom.focus({ preventScroll });
+        } else {
+            this.editor?.commands?.focus?.();
+        }
     }
 
     editorHasFocus() {
@@ -717,12 +974,21 @@ export class HybridMarkdownEditor {
      * 按键的 update 回调里。`flushPendingInput()` 立刻结清并同步上报。
      */
     scheduleInputNotify() {
+        if (this.isComposing || this.editor?.view?.composing) {
+            this._pendingInputAfterComposition = true;
+            return;
+        }
+        this._pendingInputAfterComposition = false;
         clearTimeout(this._inputNotifyTimer);
         this._inputNotifyTimer = setTimeout(() => {
             this._inputNotifyTimer = null;
             // 编辑器已被销毁（页面关闭、实例重建）：此时 storage.markdown 与
             // doc 都已不可读，再序列化只会抛错。挂起的变更随实例一起作废。
             if (!this.editor || this.editor.isDestroyed) return;
+            if (this.isComposing || this.editor?.view?.composing) {
+                this._pendingInputAfterComposition = true;
+                return;
+            }
             this.notifyEditorValueChanged(this.getValue());
         }, INPUT_NOTIFY_DELAY_MS);
     }
@@ -733,19 +999,23 @@ export class HybridMarkdownEditor {
      * 返回是否有挂起的变更被结清。
      */
     flushPendingInput() {
-        if (this._inputNotifyTimer === null) return false;
-        clearTimeout(this._inputNotifyTimer);
+        if (this._inputNotifyTimer === null && !this._pendingInputAfterComposition) return false;
+        if (this._inputNotifyTimer !== null) clearTimeout(this._inputNotifyTimer);
         this._inputNotifyTimer = null;
+        this._pendingInputAfterComposition = false;
         this.notifyEditorValueChanged(this.getValue());
         return true;
     }
 
     /** 丢弃挂起的输入变更（载入新文档前用：新文档的真值由调用方持有）。 */
     discardPendingInput() {
-        if (this._inputNotifyTimer === null) return false;
-        clearTimeout(this._inputNotifyTimer);
-        this._inputNotifyTimer = null;
-        return true;
+        const hadPending = this._inputNotifyTimer !== null || Boolean(this._pendingInputAfterComposition);
+        if (this._inputNotifyTimer !== null) {
+            clearTimeout(this._inputNotifyTimer);
+            this._inputNotifyTimer = null;
+        }
+        this._pendingInputAfterComposition = false;
+        return hadPending;
     }
 
     /* ---------------- 光标偏移映射（可见文本偏移 ↔ ProseMirror 位置） ---------------- */
@@ -1007,14 +1277,32 @@ export class HybridMarkdownEditor {
         // 回 pos 78）。块级二分安全：边界是完整块，后一边界一定包含更多内容。
         // ponytail: 表格内部目标 = O(单元格数) 次整篇序列化，百格长文切换可达
         //   秒级；需要提速时给「表内目标」单独走块首回退，或做增量前缀。
-        const candidates = [];
+        const textNodes = [];
         doc.nodesBetween(blockStart, blockEnd, (node, pos) => {
-            if (node.isText) candidates.push(pos, pos + node.nodeSize);
+            if (node.isText) textNodes.push({ from: pos, to: pos + node.nodeSize, size: node.nodeSize });
         });
-        if (candidates.length === 0) return blockStart + 1;
-        for (const candidate of candidates) {
-            const length = this.serializePrefixLength(candidate);
-            if (length !== null && length >= wanted) return candidate;
+        if (textNodes.length === 0) return blockStart + 1;
+        for (const entry of textNodes) {
+            const startLen = this.serializePrefixLength(entry.from);
+            if (startLen !== null && startLen >= wanted) return entry.from;
+            const endLen = this.serializePrefixLength(entry.to);
+            if (endLen !== null && endLen >= wanted) {
+                if (wanted < endLen && entry.size > 0) {
+                    const firstCharEnd = this.serializePrefixLength(entry.from + 1);
+                    const realStart = firstCharEnd !== null ? (firstCharEnd - 1) : startLen;
+                    if (realStart !== null) {
+                        if (wanted <= realStart) return entry.from;
+                        const span = endLen - realStart;
+                        if (span > 0) {
+                            const innerOffset = span === entry.size
+                                ? (wanted - realStart)
+                                : Math.round(((wanted - realStart) * entry.size) / span);
+                            return entry.from + Math.max(0, Math.min(entry.size, innerOffset));
+                        }
+                    }
+                }
+                return entry.to;
+            }
         }
         return blockEnd;
     }
@@ -1178,6 +1466,20 @@ export class HybridMarkdownEditor {
      */
     autosizeSourceTextarea(textarea = this.getSourceTextarea(), { preserveScrollTop = true } = {}) {
         if (!textarea) return;
+        const length = textarea.value.length;
+        const width = textarea.clientWidth;
+        const prevLength = textarea._lastAutosizeLength ?? -1;
+        const prevWidth = textarea._lastAutosizeWidth ?? -1;
+        textarea._lastAutosizeLength = length;
+        textarea._lastAutosizeWidth = width;
+        // 增字直出快路径：文本没变短且容器宽度没变时不需要先 height:auto 塌陷重排，
+        // 只有在确实溢出当前盒高时直接拉高到 scrollHeight，零闪烁、少一次同步回流。
+        if (preserveScrollTop && length >= prevLength && width === prevWidth && textarea.style.height) {
+            if (textarea.scrollHeight > textarea.clientHeight) {
+                textarea.style.height = `${Math.max(1, textarea.scrollHeight)}px`;
+            }
+            return;
+        }
         // 容器必须在归零**之前**取：塌陷后 .vditor-wysiwyg 的
         // scrollHeight - clientHeight 会 <= 1，getScrollContainer() 会误判成整页滚动。
         const scroller = preserveScrollTop ? this.getScrollContainer() : null;
@@ -1380,8 +1682,48 @@ export class HybridMarkdownEditor {
         return 0;
     }
 
-    setSelectionRange() {
-        this.focus();
+    setSelectionRange(start, end = start) {
+        if (start == null || !Number.isFinite(Number(start))) {
+            this.focus();
+            return;
+        }
+        const fromOffset = Math.max(0, Number(start));
+        const toOffset = Number.isFinite(Number(end)) ? Math.max(0, Number(end)) : fromOffset;
+        if (this.sourceMode) {
+            const textarea = this.getSourceTextarea();
+            if (!textarea) return;
+            const max = textarea.value.length;
+            textarea.focus({ preventScroll: true });
+            textarea.setSelectionRange(Math.min(fromOffset, max), Math.min(toOffset, max));
+            this.trackSourceCaret(textarea);
+            return;
+        }
+        if (!this.ready) {
+            this.whenReady().then(() => this.setSelectionRange(fromOffset, toOffset)).catch(() => {});
+            return;
+        }
+        if (!this.editor || this.editor.isDestroyed) return;
+        if (fromOffset === toOffset) {
+            this.setCaretAtMarkdownOffset(fromOffset, { scrollIntoView: true, focus: true });
+            return;
+        }
+        const TextSelection = globalThis.DumbPadTiptap?.PM?.state?.TextSelection;
+        if (!TextSelection) {
+            this.focus();
+            return;
+        }
+        const maxPos = this.editor.state.doc.content.size;
+        const fromPos = Math.max(0, Math.min(this.mapMarkdownOffsetToPos(fromOffset), maxPos));
+        const toPos = Math.max(0, Math.min(this.mapMarkdownOffsetToPos(toOffset), maxPos));
+        try {
+            const tr = this.editor.state.tr.setSelection(
+                TextSelection.create(this.editor.state.doc, fromPos, toPos)
+            );
+            this.editor.view.dispatch(tr);
+            this.focus({ preventScroll: true });
+        } catch (_err) {
+            this.setCaretAtMarkdownOffset(fromOffset, { scrollIntoView: true, focus: true });
+        }
     }
 
     /* ---------------- 大纲与导航 ---------------- */

@@ -891,7 +891,6 @@ document.addEventListener('DOMContentLoaded', async () => {
                     baseContent: remoteContent
                 });
                 setStartupSyncStatus('syncing', '已自动合并，正在同步');
-                toaster.show('已自动合并远端修改', 'success', false, 2200);
                 debouncedUpdateToC();
                 setTimeout(() => {
                     saveNotes(merge.content, true, false, 0, mergedNotepadId, mergedRevision);
@@ -2058,7 +2057,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         const refreshFromServer = async () => {
             try {
-                await ensureEditor();
                 if (!navigator.onLine) {
                     setStartupSyncStatus('error', '服务器不可用，本地可读');
                     return false;
@@ -2082,10 +2080,14 @@ document.addEventListener('DOMContentLoaded', async () => {
                     && Number.isFinite(listedVersion) && Number.isFinite(freshCachedVersion)
                     && !(Number.isFinite(knownRemoteVersion) && knownRemoteVersion > freshCachedVersion)
                     && listedVersion === freshCachedVersion) {
+                    await ensureEditor();
                     setStartupSyncStatus('synced', '已同步');
                     return true;
                 }
-                const data = await fetchNoteData(notepadId, { silent });
+                const [data] = await Promise.all([
+                    fetchNoteData(notepadId, { silent }),
+                    ensureEditor(),
+                ]);
                 if (currentNotepadId !== notepadId) return false;
                 applyNoteEditStats(notepadId, data);
 
@@ -2119,11 +2121,18 @@ document.addEventListener('DOMContentLoaded', async () => {
                 }
 
                 const nextContent = data.content || '';
-                const alreadyRendered = renderedEditorNotepadId === notepadId
+                const sameRenderedNote = renderedEditorNotepadId === notepadId;
+                const alreadyRendered = sameRenderedNote
                     && renderedEditorContent === nextContent
                     && pendingEditorValue === nextContent;
                 if (!alreadyRendered) {
-                    editor.value = nextContent;
+                    if (sameRenderedNote && typeof editor.applyRemoteValue === 'function') {
+                        isApplyingRemoteUpdate = true;
+                        editor.applyRemoteValue(nextContent);
+                        isApplyingRemoteUpdate = false;
+                    } else {
+                        editor.value = nextContent;
+                    }
                     renderedEditorNotepadId = notepadId;
                     renderedEditorContent = nextContent;
                     // 远端内容真正写入编辑器：若有未完成的搜索跳转（或刚
@@ -2136,7 +2145,14 @@ document.addEventListener('DOMContentLoaded', async () => {
                     debouncedUpdateToC();
                 }
                 if (currentNotepadId !== notepadId) return false;
-                restoreEditorCaretForNotepad(notepadId);
+                const editorHasLiveFocus = Boolean(
+                    editorInstance?.editorHasFocus?.()
+                    || (editorInstance?.sourceMode && document.activeElement === editorInstance?.getSourceTextarea?.())
+                    || (bootEditorActive && typeof bootEditor !== 'undefined' && bootEditor && document.activeElement === bootEditor)
+                );
+                if (!editorHasLiveFocus && !(sameRenderedNote && forceRemote)) {
+                    restoreEditorCaretForNotepad(notepadId);
+                }
                 markEditorPerformanceContent(editorPerformanceSwitchToken);
                 hasUnsavedChanges = false;
                 dirtyConflictNotepadIds.delete(notepadId);
@@ -2173,9 +2189,23 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     let tocUpdateTimeout;
+    let tocDirtyWhileHidden = false;
+    function isArticleTocVisible() {
+        const side = document.getElementById('sidebar-right');
+        if (!side) return false;
+        const isMobile = window.matchMedia?.('(max-width: 980px)')?.matches;
+        if (isMobile) return side.classList.contains('visible');
+        return side.style.display !== 'none';
+    }
     function debouncedUpdateToC() {
         clearTimeout(tocUpdateTimeout);
-        tocUpdateTimeout = setTimeout(() => updateToC(), 500);
+        tocUpdateTimeout = setTimeout(() => {
+            if (!isArticleTocVisible()) {
+                tocDirtyWhileHidden = true;
+                return;
+            }
+            updateToC();
+        }, 500);
     }
 
     // 每个标题区段默认列出的子条目预算：片段（划线/高亮/批注）3 条、顶层列表
@@ -2236,6 +2266,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     // desktop and into the same element when it slides in as a mobile drawer.
     // Works in both edit and reading mode; the active heading follows scroll.
     function updateToC() {
+        tocDirtyWhileHidden = false;
         const tocList = document.getElementById('article-toc-list');
         if (!tocList) return;
         setupTocScrollSync();
@@ -3149,7 +3180,6 @@ document.addEventListener('DOMContentLoaded', async () => {
                             baseContent: remoteNote.content || ''
                         });
                         setStartupSyncStatus('syncing', '已自动合并，正在同步');
-                        toaster.show('已自动合并远端修改', 'success', false, 2200);
                         setTimeout(() => {
                             saveNotes(merge.content, true, false, 0, targetNotepadId, mergedRevision);
                         }, 0);
@@ -3182,7 +3212,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                 }, 1200 * (retryCount + 1));
             }
             setStartupSyncStatus('error', '保存失败，本地已保留');
-            toaster.show('Error saving', 'error', false, 3000);
+            if (!isAutoSave || retryCount >= 3) {
+                toaster.show('Error saving', 'error', false, 3000);
+            }
             return false;
         }
     }
@@ -3937,16 +3969,28 @@ document.addEventListener('DOMContentLoaded', async () => {
         return nextId;
     }
 
+    let editorFocusedBeforeModal = false;
     function hideModal(modal, msg) {
         if (modal === settingsModal) {
             hideHeatmapPopover();
         }
         modal.classList.remove('visible');
         if (msg) toaster.show(msg);
-        editor.focus();
+        const shouldRestoreFocus = editorFocusedBeforeModal
+            && !window.matchMedia?.('(max-width: 980px)')?.matches
+            && !window.matchMedia?.('(pointer: coarse)')?.matches;
+        editorFocusedBeforeModal = false;
+        if (shouldRestoreFocus) editor.focus();
     }
 
     function showModal(modal, focusEl) {
+        if (!document.querySelector('.modal.visible')) {
+            editorFocusedBeforeModal = Boolean(
+                editorInstance?.editorHasFocus?.()
+                || (editorInstance?.sourceMode && document.activeElement === editorInstance?.getSourceTextarea?.())
+                || (bootEditorActive && bootEditor && document.activeElement === bootEditor)
+            );
+        }
         closeAllModals();
         modal.classList.add('visible');
         if (focusEl) focusEl.focus();
@@ -4401,6 +4445,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         document.getElementById('toggle-sidebar-right')?.addEventListener('click', () => {
             const side = document.getElementById('sidebar-right');
             side.style.display = side.style.display === 'none' ? 'flex' : 'none';
+            if (side.style.display !== 'none' && tocDirtyWhileHidden) {
+                updateToC();
+            }
         });
         
         const overlay = document.getElementById('sidebar-overlay');

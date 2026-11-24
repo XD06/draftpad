@@ -192,7 +192,7 @@ export default class SettingsManager {
   
   defaultSettings() {
     return { // Add additional default settings in here:
-      saveStatusMessageInterval: 500,
+      saveStatusMessageInterval: 0,
       disablePrintExpand: false,
     }
   }
