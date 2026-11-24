@@ -6,6 +6,19 @@
 
 ## [Unreleased]
 
+### 新增 / 优化
+
+- **附件全链路重命名与引用同步 + `insertArticleAssetReference` 修复**：
+  - 后端新增 `PATCH /api/assets/:id`（`routes/asset-routes.js` + `scripts/asset-rename-service.js`），在 `withAssetContentLock` 下安全规范化扩展名（省略自动保留、图片禁止跨格式、兼容文本互改同步 MIME）、校验同类 `409 DUPLICATE_ASSET_NAME`，并把 `/download` 变体改为 `Cache-Control: no-store, private` 使新 `Content-Disposition` 立即生效；默认同步改写文章 Markdown（图片 `alt`、媒体、`dumbpad-file=1` 与裸 `/download` 链接，透传 `updatedNotes` 版本并广播 WS 与重建搜索索引）与 Thought `attachments[]`，也支持 `syncReferences: false` 仅更新资产名或局部显示名。同步补充 `public/openapi.json` 与 `docs/api.md`。
+  - 前端全场景统一采用零遮罩、零元素位移的锚点微气泡 `openAttachmentRenamePopover`（[attachment-rename-dialog.js](public/managers/attachment-rename-dialog.js)，已加入 `service-worker.js` `CORE_ASSETS`）：设置附件列表、方案 A / 原生 PDF 预览顶栏与 Thought 编辑态均保持原有紧凑无图标样式（点击文件名触发重命名，设置缩略图保留预览入口），微气泡与标题左端对齐浮出（`align: 'start'`，支持扩展名锁/兼容后缀切换、可选 `同步全站原名` 开关、捕获阶段 Esc 隔离与行内报错），各处联动 `dumbpad:asset-renamed`；同时修复 `HybridMarkdownEditor.insertArticleAssetReference` 读取 `previewUrl`/`originalUrl`/`downloadUrl` 缺失 `.url` 的既有缺陷。
+  - 回归：新增 `npm run test:asset-rename`（后端规范化/400/409/同步/`no-store` + 前端多类型插入与对话框交互）。
+- **斜杠命令菜单扩容与代码块语言快速切换**：
+  - `public/managers/tiptap-slash-menu.js` 新增 `/code`、`/mermaid`、`/todo`、`/doing`、`/h1`、`/h2`、`/h3`、`/quote`、`/hr`、`/table`、`/frontmatter` 共 11 项快捷模板与块指令（保持有 `/time`、不引入 `/date`），引入前缀优先相关性排序、软换行后仅拆分末尾行的 `runBlockSlashCommand`、`runTaskSlashCommand`（保留嵌套待办缩进）以及移动端 `visualViewport` 智能上下翻转。
+  - `public/managers/tiptap-code-block-view.js` 将代码块语言徽标升级为交互按钮 `button.dumbpad-code-language-badge`，复用既有 `.dumbpad-code-language-popover`（含 `code-language-catalog.js` 联想、IME 兼容、`visualViewport` 定位、键盘导航与移动端 ≥36px 触控尺寸优化）及 `dumbpad-mermaid-refresh` 阅读模式同步。
+  - 回归：扩展 `npm run test:tiptap-slash-menu` 与真机 `npm run test:slash-menu-browser`。
+- **方案 1 暖琥珀微胶囊 `/time` 时间标记视觉重塑**：
+  - 按选定 **方案 1** 更新 `public/Assets/styles.css`（`.md-time-marker`）与 `public/Assets/thoughts.css`（`.thought-time-marker`），采用主色调微胶囊容器、`tabular-nums` 等宽数字、时钟/更新矢量双图标与渐进式 `.is-level-2`~`4` 更新高亮（含 `[data-theme="dark"]` 独立配色），保留原有拖拽与文本节点布局不变式。
+
 ### 优化 / 修复
 
 - **移动端 PWA 虚拟键盘、Toast 碰撞、无感多端同步与嵌套列表输入优化**：

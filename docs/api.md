@@ -572,7 +572,28 @@ curl -X POST http://localhost:3000/api/assets/files \
 
 不存在或非法 id 返回 `404`；`preview`、`original`、`download` 之外的 variant 同样返回 `404`。
 
-> **可编辑文本附件**（`kind=file` 且扩展名为 `txt` / `md` / `markdown` / `csv`）与 **PDF**：这些 variant 返回 `Cache-Control: no-store, private` 而不是 `immutable`。文本附件可通过下面的 `/content` 端点原地改写；PDF 的 `Content-Disposition` 由 `attachment` 改成了 `inline`，旧响应不能继续躺在浏览器缓存里。其余资源维持一年 immutable 缓存。
+> **可编辑文本附件**（`kind=file` 且扩展名为 `txt` / `md` / `markdown` / `csv`）、**PDF** 与 **`download` 变体**：这些响应返回 `Cache-Control: no-store, private` 而不是 `immutable`。文本附件可通过下面的 `/content` 端点原地改写；PDF 的 `Content-Disposition` 为 `inline`；`/download` 在附件通过 `PATCH /api/assets/:id` 重命名后必须立即下发最新的 `Content-Disposition` 文件名，避免旧响应继续躺在浏览器缓存里。图片等资源的 `/preview` 与 `/original` 仍维持一年 `immutable` 缓存。
+
+### PATCH /api/assets/:id
+
+重命名既有附件（支持修改显示名与安全兼容扩展名，如 `.txt` ↔ `.md`），默认同步更新所有引用该资产的文章 Markdown（图片 alt、媒体卡、`dumbpad-file=1` 胶囊与裸 `/download` 链接）及 Thought `attachments[]`，并触发 WebSocket 与搜索重建；资产 `id` 与不可变 URL 保持不变。
+
+**请求体（JSON）：**
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `name` | string | 必填，新附件名称；省略扩展名时自动保留当前扩展名 |
+| `syncReferences` | boolean | 可选，默认 `true`；设为 `false` 时仅更新资产元数据，不改写文章/Thought 引用 |
+| `userId` | string | 可选，操作端标识，透传为 WebSocket 广播发送方 |
+
+**状态与约束：**
+
+| 状态 | 含义 |
+|---|---|
+| `200` | `{ "success": true, "unchanged": false, "asset": {...}, "updatedNotes": [{ "id": "...", "version": 2 }], "updatedNoteIds": [...], "updatedThoughtIds": [...] }` |
+| `400` | 名称为空、主干无效、图片试图更换为不兼容格式，或普通文件扩展名不在白名单 / 与原类型不兼容 |
+| `404` | 资产不存在或 id 非法 |
+| `409` | `{ "error": "...", "code": "DUPLICATE_ASSET_NAME" }` —— 同类型（`image` / `file`）下已存在同名附件 |
 
 ### GET /api/assets/:id/content
 
