@@ -68,23 +68,27 @@ async function main() {
         })).catch(() => null);
         const itemCount = () => page.$$eval('.slash-command-item', els => els.length);
 
-        // ---- 1. 输入 / 菜单出现，两条命令都在 ----
+        // ---- 1. 输入 / 菜单出现，13 条内置命令都在 ----
         await page.keyboard.type('/');
         await page.waitForTimeout(150);
         const opened = await menuBox();
         check('typing / shows the menu', opened?.visible === true, opened);
-        check('menu lists both built-in commands', await itemCount() === 2);
+        check('menu lists all 13 built-in commands', await itemCount() === 13);
 
         // ---- 2. 过滤 + ↑↓ + Enter 执行 /time ----
         await page.keyboard.type('t');
         await page.waitForTimeout(120);
-        check('query filters to /time', await itemCount() === 1);
+        const firstTId = await page.$eval('.slash-command-item .slash-command-hint', el => el.textContent).catch(() => '');
+        check('t ranks /time first', firstTId === '/time', { firstTId });
+        await page.keyboard.type('im');
+        await page.waitForTimeout(120);
+        check('query tim filters to /time', await itemCount() === 1);
         await page.keyboard.press('Enter');
         await page.waitForTimeout(120);
         const valueAfterTime = await page.evaluate(() => editor.getValue());
         check('enter executes /time into a marker',
             /\[\[time:create:\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\]\]/.test(valueAfterTime)
-            && !valueAfterTime.includes('/t'),
+            && !valueAfterTime.includes('/tim'),
             { value: valueAfterTime });
         check('menu closes after execution', (await menuBox())?.visible !== true);
 
@@ -157,6 +161,62 @@ async function main() {
         check('tapping the selected item executes /time on mobile',
             /\[\[time:create:\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\]\]/.test(valueAfterMobileTime),
             { value: valueAfterMobileTime });
+
+        // ---- 7. /code + 点击语言徽标弹窗切换语言 + /table + /mermaid ----
+        await page.setViewportSize({ width: 1024, height: 768 });
+        await page.evaluate(() => {
+            editor.setValue('', false);
+        });
+        await page.click('#editor .tiptap');
+        await page.keyboard.type('/code');
+        await page.waitForTimeout(150);
+        await page.keyboard.press('Enter');
+        await page.waitForTimeout(150);
+        const badgeCount = await page.$$eval('button.dumbpad-code-language-badge', els => els.length);
+        check('/code renders a clickable language badge button', badgeCount === 1, { badgeCount });
+        if (badgeCount === 1) {
+            await page.click('button.dumbpad-code-language-badge');
+            await page.waitForTimeout(120);
+            const popoverVisible = await page.$eval('.dumbpad-code-language-popover', el => !el.hidden).catch(() => false);
+            check('clicking language badge opens language picker popover', popoverVisible);
+            await page.fill('.dumbpad-code-language-input', 'py');
+            await page.keyboard.press('Enter');
+            await page.waitForTimeout(150);
+            const codeMd = await page.evaluate(() => editor.getValue());
+            const badgeLabel = await page.$eval('.dumbpad-code-language-token', el => el.dataset.languageLabel).catch(() => '');
+            check('selecting python from language popover updates badge and markdown',
+                badgeLabel === 'python' && codeMd.includes('```python'),
+                { badgeLabel, codeMd });
+        }
+
+        await page.evaluate(() => {
+            editor.setValue('', false);
+        });
+        await page.click('#editor .tiptap');
+        await page.keyboard.type('/table');
+        await page.waitForTimeout(150);
+        await page.keyboard.press('Enter');
+        await page.waitForTimeout(150);
+        const tableCount = await page.$$eval('#editor table', els => els.length);
+        const tableMd = await page.evaluate(() => editor.getValue());
+        check('/table inserts a markdown table', tableCount === 1 && tableMd.includes('|'), { tableCount, tableMd });
+
+        await page.evaluate(() => {
+            editor.setValue('', false);
+        });
+        await page.click('#editor .tiptap');
+        await page.keyboard.type('/mermaid');
+        await page.waitForTimeout(150);
+        await page.keyboard.press('Enter');
+        await page.waitForTimeout(150);
+        const mermaidMd = await page.evaluate(() => editor.getValue());
+        const mermaidCodeText = await page.$eval('[data-type="code-block"] code', el => el.textContent || '').catch(() => '');
+        const outsideText = await page.$$eval('#editor .tiptap > p', els => els.map(el => el.textContent || '').join('\n')).catch(() => '');
+        check('/mermaid keeps entire template inside mermaid fenced block',
+            /^```mermaid\nflowchart LR\n    A\[开始\] --> B\[完成\]\n```/.test(mermaidMd.trim())
+            && mermaidCodeText.includes('A[开始] --> B[完成]')
+            && !outsideText.includes('A[开始]'),
+            { mermaidMd, mermaidCodeText, outsideText });
 
         check('no page errors', errors.length === 0, errors);
     } finally {

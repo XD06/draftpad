@@ -28,6 +28,14 @@ global.requestAnimationFrame = dom.window.requestAnimationFrame;
 if (!dom.window.Element.prototype.scrollIntoView) {
     dom.window.Element.prototype.scrollIntoView = () => {};
 }
+if (!dom.window.Range.prototype.getClientRects) {
+    dom.window.Range.prototype.getClientRects = () => ({ length: 0, item: () => null, [Symbol.iterator]: function* () {} });
+}
+if (!dom.window.Range.prototype.getBoundingClientRect) {
+    dom.window.Range.prototype.getBoundingClientRect = () => ({
+        top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0, x: 0, y: 0, toJSON: () => ({}),
+    });
+}
 dom.window.matchMedia = dom.window.matchMedia || (() => ({ matches: false, addListener() {}, removeListener() {} }));
 vm.runInThisContext(fs.readFileSync(path.join(ROOT, 'public/vendor/tiptap/tiptap.bundle.js'), 'utf8'));
 
@@ -50,11 +58,16 @@ async function main() {
         filterSlashCommands,
     } = await import('../public/managers/tiptap-slash-menu.js');
 
-    check('registry auto-registers the two built-in commands', slashCommandRegistry.length === 2
-        && slashCommandRegistry.map(entry => entry.id).sort().join(',') === 'file,time');
-    check('filter by prefix', filterSlashCommands('t').map(entry => entry.id).join(',') === 'time');
+    const expectedIds = 'code,doing,file,frontmatter,h1,h2,h3,hr,mermaid,quote,table,time,todo';
+    check('registry auto-registers all 13 built-in commands without /date',
+        slashCommandRegistry.length === 13
+        && slashCommandRegistry.map(entry => entry.id).sort().join(',') === expectedIds
+        && !slashCommandRegistry.some(entry => entry.id === 'date'));
+    check('filter ranks prefix match /time first for t', filterSlashCommands('t')[0]?.id === 'time');
+    check('filter by prefix tim narrows to time', filterSlashCommands('tim').map(entry => entry.id).join(',') === 'time');
+    check('filter ranks /file first for f', filterSlashCommands('f')[0]?.id === 'file');
     check('filter by keyword', filterSlashCommands('附件').map(entry => entry.id).join(',') === 'file');
-    check('empty query lists everything', filterSlashCommands('').length === 2);
+    check('empty query lists everything', filterSlashCommands('').length === 13);
 
     const container = document.createElement('div');
     document.body.appendChild(container);
@@ -82,18 +95,21 @@ async function main() {
         return event.defaultPrevented;
     };
 
-    // 1. 空段落里输入 /：菜单打开，两条命令都在
+    // 1. 空段落里输入 /：菜单打开，全部 13 条命令都在
     editor.setValue('', false);
     caretEnd();
     type('/');
     check('typing / opens the menu', menuVisible());
-    check('typing / lists both commands', itemEls().length === 2,
+    check('typing / lists all 13 commands', itemEls().length === 13,
         { count: itemEls().length });
     check('first item is selected by default', itemEls()[0]?.classList.contains('is-selected'));
 
-    // 2. 继续输入过滤
+    // 2. 继续输入过滤（t 优先 /time，tim 唯一命中 /time）
     type('t');
-    check('query filters to /time only', itemEls().length === 1
+    check('query t puts /time first', itemEls()[0]?.querySelector('.slash-command-hint')?.textContent === '/time',
+        { first: itemEls()[0]?.textContent });
+    type('im');
+    check('query tim filters to /time only', itemEls().length === 1
         && itemEls()[0].textContent.includes('插入时间标记'),
         { items: itemEls().map(el => el.textContent) });
     check('hint shows the command id', itemEls()[0].querySelector('.slash-command-hint')?.textContent === '/time');
@@ -104,7 +120,7 @@ async function main() {
     const valueAfterTime = editor.getValue();
     check('enter on /time replaces the query with a marker', TIME_TOKEN_RE.test(valueAfterTime),
         { value: valueAfterTime });
-    check('query text is gone', !valueAfterTime.includes('/t'));
+    check('query text is gone', !valueAfterTime.includes('/tim'));
 
     // 4. Escape 抑制同一形状；换字符立刻回来
     editor.setValue('', false);
@@ -132,11 +148,15 @@ async function main() {
     editor.setValue('', false);
     caretEnd();
     type('/f');
-    check('/f filters to /file', itemEls().length === 1
+    check('/f puts /file first ahead of /frontmatter',
+        itemEls()[0]?.querySelector('.slash-command-hint')?.textContent === '/file',
+        { items: itemEls().map(el => el.textContent) });
+    type('i');
+    check('/fi filters to /file', itemEls().length === 1
         && itemEls()[0].textContent.includes('插入文件或图片'),
         { items: itemEls().map(el => el.textContent) });
     itemEls()[0].dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, cancelable: true }));
-    check('clicking /file removes the query text', !editor.getValue().includes('/f'));
+    check('clicking /file removes the query text', !editor.getValue().includes('/fi'));
     check('clicking /file opens the hidden file picker', Boolean(container.querySelector('.article-file-command-input')));
 
     // 7. 代码块内不触发
@@ -209,6 +229,66 @@ async function main() {
     check('menu-inserted marker roundtrips byte-identical', editor.getValue() === roundtripValue,
         { before: roundtripValue, after: editor.getValue() });
 
+    // 14. 软换行后的 /code 必须仅拆出末尾块，不吞并前面同一段里的文字
+    editor.setValue('前文', false);
+    caretEnd();
+    editor.editor.commands.setHardBreak();
+    type('/code');
+    press('Enter');
+    const softCodeVal = editor.getValue();
+    check('/code after soft break keeps preceding prose out of codeBlock',
+        softCodeVal.includes('前文') && softCodeVal.includes('```') && !/```[^\n]*\n[^\n]*前文/.test(softCodeVal),
+        { value: softCodeVal });
+
+    // 15. 点击代码块右上语言徽标按钮可打开语言选择浮层并改语言，阅读模式自动禁用
+    const badgeBtn = container.querySelector('button.dumbpad-code-language-badge');
+    check('code block renders an interactive language badge button', Boolean(badgeBtn));
+    if (badgeBtn) {
+        badgeBtn.click();
+        const langPopover = document.body.querySelector('.dumbpad-code-language-popover');
+        const langInput = document.body.querySelector('.dumbpad-code-language-input');
+        check('clicking badge opens code language popover', Boolean(langPopover && !langPopover.hidden && langInput));
+        if (langInput) {
+            langInput.value = 'py';
+            langInput.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+            const optionTexts = Array.from(document.body.querySelectorAll('.dumbpad-code-language-option'))
+                .map(el => el.dataset.languageId);
+            check('popover filters suggestions for py', optionTexts.includes('python'), { optionTexts });
+            langInput.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+            check('pressing Enter in language popover updates codeBlock language to python',
+                editor.getValue().includes('```python'),
+                { value: editor.getValue() });
+        }
+        editor.setReadingMode(true);
+        check('reading mode marks language badge readonly', badgeBtn.disabled === true && badgeBtn.classList.contains('is-readonly'));
+        editor.setReadingMode(false);
+        check('exiting reading mode restores interactive language badge', badgeBtn.disabled === false && !badgeBtn.classList.contains('is-readonly'));
+    }
+
+    // 16. 其余新增快捷斜杠命令执行与往返检验
+    const expectCommandResult = (cmd, assertFn, label) => {
+        editor.setValue('', false);
+        caretEnd();
+        type(`/${cmd}`);
+        press('Enter');
+        const value = editor.getValue();
+        check(`${label} executes /${cmd}`, assertFn(value), { value });
+    };
+    expectCommandResult('mermaid',
+        val => /^```mermaid\nflowchart LR\n    A\[开始\] --> B\[完成\]\n```/.test(val.trim()),
+        '/mermaid keeps entire template inside code block');
+    expectCommandResult('todo', val => val.includes('- [ ] '), '/todo');
+    expectCommandResult('doing', val => val.includes('- [~] '), '/doing');
+    expectCommandResult('h1', val => val.startsWith('# '), '/h1');
+    expectCommandResult('h2', val => val.startsWith('## '), '/h2');
+    expectCommandResult('h3', val => val.startsWith('### '), '/h3');
+    expectCommandResult('quote', val => val.startsWith('> '), '/quote');
+    expectCommandResult('hr', val => val.includes('---'), '/hr');
+    expectCommandResult('table', val => val.includes('|') && val.includes('---'), '/table');
+    expectCommandResult('frontmatter', val => /^---\s*\n[\s\S]*---/.test(val), '/frontmatter');
+
+    await new Promise(resolve => setTimeout(resolve, 25));
+    editor.editor?.destroy?.();
     console.log(failures === 0 ? '\nALL PASS' : `\n${failures} FAILURES`);
     process.exitCode = failures === 0 ? 0 : 1;
 }

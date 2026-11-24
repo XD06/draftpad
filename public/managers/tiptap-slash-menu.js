@@ -44,12 +44,21 @@ export function registerSlashCommand(definition) {
 export function filterSlashCommands(query) {
     const needle = String(query || '').trim().toLowerCase();
     if (!needle) return [...slashCommandRegistry];
-    const prefix = `/${needle}`;
-    return slashCommandRegistry.filter(entry => (
-        `/${String(entry.id).toLowerCase()}`.startsWith(prefix)
-        || String(entry.title || '').toLowerCase().includes(needle)
-        || (entry.keywords || []).some(keyword => String(keyword).toLowerCase().includes(needle))
-    ));
+    const scored = [];
+    slashCommandRegistry.forEach((entry, index) => {
+        const id = String(entry.id || '').toLowerCase();
+        const title = String(entry.title || '').toLowerCase();
+        const keywords = (entry.keywords || []).map(k => String(k || '').toLowerCase());
+        let rank = Number.POSITIVE_INFINITY;
+        if (id === needle) rank = 0;
+        else if (id.startsWith(needle)) rank = 1;
+        else if (title.startsWith(needle)) rank = 2;
+        else if (keywords.some(k => k.startsWith(needle))) rank = 3;
+        else if (id.includes(needle) || title.includes(needle) || keywords.some(k => k.includes(needle))) rank = 4;
+        if (Number.isFinite(rank)) scored.push({ entry, rank, index });
+    });
+    scored.sort((a, b) => a.rank - b.rank || a.index - b.index);
+    return scored.map(item => item.entry);
 }
 
 /** 光标与「/命令文本」的位置关系：命中返回 { query, from, to }，否则 null。 */
@@ -79,6 +88,15 @@ export function findSlashQueryBeforeCaret(state) {
 
 const CLOCK_ICON_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg>';
 const FILE_ICON_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></svg>';
+const CODE_ICON_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="16 18 22 12 16 6"></polyline><polyline points="8 6 2 12 8 18"></polyline></svg>';
+const MERMAID_ICON_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="6" rx="1.5"></rect><rect x="14" y="15" width="7" height="6" rx="1.5"></rect><path d="M6.5 9v4a2 2 0 0 0 2 2H14"></path><path d="M17.5 15V9a2 2 0 0 0-2-2H10"></path></svg>';
+const TODO_ICON_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3"></rect><path d="m8 12 2.8 2.8L16.5 9"></path></svg>';
+const DOING_ICON_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3"></rect><path d="M8.5 12h7"></path></svg>';
+const HEADING_ICON_SVG = (level) => `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12h8"></path><path d="M4 18V6"></path><path d="M12 18V6"></path><text x="15" y="18" font-size="9" font-weight="700" fill="currentColor" stroke="none">${level}</text></svg>`;
+const QUOTE_ICON_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 21c3 0 7-1 7-8V5c0-1.25-.756-2.017-2-2H4c-1.25 0-2 .75-2 1.972V11c0 1.25.75 2 2 2 1 0 1 0 1 1v1c0 1-1 2-2 2s-1 .008-1 1.031V20c0 1 0 1 1 1z"></path><path d="M15 21c3 0 7-1 7-8V5c0-1.25-.757-2.017-2-2h-4c-1.25 0-2 .75-2 1.972V11c0 1.25.75 2 2 2h.75c0 2.25.25 4-2.75 4v3c0 1 0 1 1 1z"></path></svg>';
+const HR_ICON_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><line x1="3" y1="12" x2="21" y2="12"></line></svg>';
+const TABLE_ICON_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"></rect><line x1="3" y1="10" x2="21" y2="10"></line><line x1="3" y1="15" x2="21" y2="15"></line><line x1="9" y1="10" x2="9" y2="20"></line><line x1="15" y1="10" x2="15" y2="20"></line></svg>';
+const FRONTMATTER_ICON_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h16"></path><path d="M4 10h10"></path><path d="M4 14h16"></path><path d="M4 18h8"></path></svg>';
 
 function insertTimeMarkerAt(editor, pos) {
     const marker = buildTimeMarker(new Date(), 'create', 1);
@@ -100,10 +118,94 @@ function insertTimeMarkerAt(editor, pos) {
     }).run();
 }
 
+/**
+ * 清理斜杠命令并隔离出干净块起点：
+ * - 若命令前只有硬换行/段首空白，吞掉相邻 `<br>`，避免把同一段落的前文卷入目标块；
+ * - 若命令前有实文本，自动拆块使目标块独占一行。
+ */
+function runBlockSlashCommand(editor, range, applyChain) {
+    const state = editor.state;
+    const $from = state.doc.resolve(range.from);
+    const paraStart = $from.start();
+    const beforeText = state.doc.textBetween(paraStart, range.from, '\n');
+
+    let cutFrom = range.from;
+    if (/^\s*$/.test(beforeText.replace(/\n/g, ''))) {
+        cutFrom = paraStart;
+    } else {
+        while (cutFrom > paraStart) {
+            const nodeBefore = state.doc.nodeAt(cutFrom - 1);
+            if (nodeBefore?.type.name === 'hardBreak') {
+                cutFrom -= 1;
+                continue;
+            }
+            if (nodeBefore?.isText) {
+                const text = nodeBefore.text || '';
+                if (/^[ \t\u00A0]+$/.test(text)) {
+                    cutFrom -= nodeBefore.nodeSize;
+                    continue;
+                }
+            }
+            break;
+        }
+    }
+
+    const needSplit = cutFrom > paraStart;
+    let chain = editor.chain().focus().deleteRange({ from: cutFrom, to: range.to });
+    if (needSplit) chain = chain.splitBlock();
+    applyChain(chain).scrollIntoView().run();
+}
+
+function runTaskSlashCommand(editor, range, { doing = false } = {}) {
+    const state = editor.state;
+    const $from = state.doc.resolve(range.from);
+    let liDepth = -1;
+    for (let d = $from.depth - 1; d >= 1; d -= 1) {
+        if (['listItem', 'taskItem'].includes($from.node(d).type.name)) {
+            liDepth = d;
+            break;
+        }
+    }
+
+    // 巢状单条目无序/有序列表项就地转待办，保持嵌套层级不被内核抬回根层。
+    if (liDepth >= 1 && $from.depth === liDepth + 1 && $from.index(liDepth) === 0) {
+        const listDepth = liDepth - 1;
+        const list = $from.node(listDepth);
+        const taskListType = state.schema.nodes.taskList;
+        const taskItemType = state.schema.nodes.taskItem;
+        if (['bulletList', 'orderedList'].includes(list.type.name) && list.childCount === 1 && taskListType && taskItemType) {
+            const tr = state.tr;
+            tr.delete(range.from, range.to);
+            const $caret = tr.doc.resolve(Math.min(range.from, tr.doc.content.size));
+            const listItem = $caret.node(liDepth);
+            const listNode = $caret.node(listDepth);
+            const children = [];
+            listItem.forEach(child => children.push(child));
+            const taskItemNode = taskItemType.create({ checked: false, doing }, children);
+            const taskListNode = taskListType.create({ tight: listNode.attrs.tight ?? true }, [taskItemNode]);
+            const listFrom = $caret.before(listDepth);
+            tr.replaceWith(listFrom, $caret.after(listDepth), taskListNode);
+            tr.setSelection(TextSelection.create(tr.doc, listFrom + 3));
+            tr.scrollIntoView();
+            editor.view.dispatch(tr);
+            editor.view.focus();
+            return;
+        }
+    }
+
+    runBlockSlashCommand(editor, range, (chain) => {
+        let next = chain.toggleTaskList();
+        if (doing) {
+            next = next.updateAttributes('taskItem', { checked: false, doing: true });
+        }
+        return next;
+    });
+}
+
 registerSlashCommand({
     id: 'time',
     title: '插入时间标记',
-    keywords: ['时间', 'timestamp'],
+    keywords: ['时间', 'timestamp', 'now'],
     icon: CLOCK_ICON_SVG,
     run: ({ editor, range }) => {
         editor.chain().command(({ tr }) => {
@@ -117,7 +219,7 @@ registerSlashCommand({
 registerSlashCommand({
     id: 'file',
     title: '插入文件或图片',
-    keywords: ['附件', '图片', 'upload'],
+    keywords: ['附件', '图片', '文件', 'upload'],
     icon: FILE_ICON_SVG,
     run: ({ editor, adapter, range }) => {
         editor.chain().command(({ tr }) => {
@@ -127,6 +229,147 @@ registerSlashCommand({
         // pendingPos 传给 file-command：上传期间用户继续编辑由既有的
         // transaction 重映射兜住；取消上传时焦点由 restoreEditorFocus 归还。
         adapter?.fileCommand?.openPickerAt(range.from);
+    },
+});
+
+registerSlashCommand({
+    id: 'code',
+    title: '代码块',
+    keywords: ['代码', 'codeblock', 'pre', '```'],
+    icon: CODE_ICON_SVG,
+    run: ({ editor, range }) => {
+        runBlockSlashCommand(editor, range, chain => chain.setCodeBlock());
+    },
+});
+
+registerSlashCommand({
+    id: 'mermaid',
+    title: 'Mermaid 图表',
+    keywords: ['mermaid', '图表', '流程图', 'diagram', 'chart'],
+    icon: MERMAID_ICON_SVG,
+    run: ({ editor, range }) => {
+        const template = 'flowchart LR\n    A[开始] --> B[完成]';
+        runBlockSlashCommand(editor, range, chain => (
+            chain.setCodeBlock({ language: 'mermaid' }).command(({ tr }) => {
+                // tr.insertText 直接写入 codeBlock 文本节点；不能用 insertContent(template)，
+                // 否则 HTML 解析会把换行后的 "A[开始] --> B[完成]" 拆到代码块外成新段落。
+                tr.insertText(template);
+                return true;
+            })
+        ));
+    },
+});
+
+registerSlashCommand({
+    id: 'todo',
+    title: '待办事项',
+    keywords: ['待办', '任务', 'todo', 'task', 'checkbox', '[]'],
+    icon: TODO_ICON_SVG,
+    run: ({ editor, range }) => {
+        runTaskSlashCommand(editor, range, { doing: false });
+    },
+});
+
+registerSlashCommand({
+    id: 'doing',
+    title: '进行中待办',
+    keywords: ['进行中', '任务', 'doing', '[~]'],
+    icon: DOING_ICON_SVG,
+    run: ({ editor, range }) => {
+        runTaskSlashCommand(editor, range, { doing: true });
+    },
+});
+
+registerSlashCommand({
+    id: 'h1',
+    title: '一级标题',
+    keywords: ['标题', '一级标题', 'heading', 'title', '#'],
+    icon: HEADING_ICON_SVG(1),
+    run: ({ editor, range }) => {
+        runBlockSlashCommand(editor, range, chain => chain.setHeading({ level: 1 }));
+    },
+});
+
+registerSlashCommand({
+    id: 'h2',
+    title: '二级标题',
+    keywords: ['标题', '二级标题', 'heading', '##'],
+    icon: HEADING_ICON_SVG(2),
+    run: ({ editor, range }) => {
+        runBlockSlashCommand(editor, range, chain => chain.setHeading({ level: 2 }));
+    },
+});
+
+registerSlashCommand({
+    id: 'h3',
+    title: '三级标题',
+    keywords: ['标题', '三级标题', 'heading', '###'],
+    icon: HEADING_ICON_SVG(3),
+    run: ({ editor, range }) => {
+        runBlockSlashCommand(editor, range, chain => chain.setHeading({ level: 3 }));
+    },
+});
+
+registerSlashCommand({
+    id: 'quote',
+    title: '引用块',
+    keywords: ['引用', 'blockquote', '>'],
+    icon: QUOTE_ICON_SVG,
+    run: ({ editor, range }) => {
+        runBlockSlashCommand(editor, range, chain => chain.setBlockquote());
+    },
+});
+
+registerSlashCommand({
+    id: 'hr',
+    title: '分隔线',
+    keywords: ['分隔线', '分割线', 'divider', '---'],
+    icon: HR_ICON_SVG,
+    run: ({ editor, range }) => {
+        runBlockSlashCommand(editor, range, chain => chain.setHorizontalRule());
+    },
+});
+
+registerSlashCommand({
+    id: 'table',
+    title: '表格 (3×3)',
+    keywords: ['表格', 'table', 'grid'],
+    icon: TABLE_ICON_SVG,
+    run: ({ editor, range }) => {
+        runBlockSlashCommand(editor, range, chain => (
+            chain.insertTable({ rows: 3, cols: 3, withHeaderRow: true })
+        ));
+    },
+});
+
+registerSlashCommand({
+    id: 'frontmatter',
+    title: 'YAML 文档属性',
+    keywords: ['frontmatter', 'yaml', '属性', 'meta', '---'],
+    icon: FRONTMATTER_ICON_SVG,
+    run: ({ editor, range }) => {
+        const { state } = editor;
+        const codeBlock = state.schema.nodes.codeBlock;
+        if (!codeBlock) return;
+        const tr = state.tr.delete(range.from, range.to);
+        const firstChild = tr.doc.firstChild;
+        if (firstChild?.type === codeBlock && firstChild.attrs?.language === 'dumbpad-frontmatter') {
+            tr.setSelection(TextSelection.create(tr.doc, 1));
+        } else {
+            const now = new Date();
+            const pad = n => String(n).padStart(2, '0');
+            const today = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+            const seed = `title: \ndate: ${today}`;
+            const fmNode = codeBlock.create(
+                { language: 'dumbpad-frontmatter' },
+                state.schema.text(seed)
+            );
+            tr.insert(0, fmNode);
+            tr.setSelection(TextSelection.create(tr.doc, 1 + 'title: '.length));
+        }
+        tr.scrollIntoView();
+        editor.view.dispatch(tr);
+        editor.view.focus();
     },
 });
 
@@ -395,24 +638,34 @@ class SlashMenuView {
                 return;
             }
             const menuRect = this.root.getBoundingClientRect();
-            const isMobile = window.matchMedia?.('(max-width: 720px)').matches;
-            const viewportHeight = window.visualViewport?.height || window.innerHeight;
+            const vv = window.visualViewport;
+            const viewportHeight = Number(vv?.height || window.innerHeight || 0);
+            const viewportOffsetTop = Number(vv?.offsetTop || 0);
             const scrollX = window.scrollX || 0;
             const scrollY = window.scrollY || 0;
-            // 移动端固定在光标下方（上方空间常被系统工具栏挤压）；桌面优先
-            // 下方，放不下翻上方。两端都以可视视口为界（软键盘弹出时
-            // visualViewport.height 缩小，菜单不被键盘盖住）。
-            let top = caret.bottom + scrollY + 8;
-            if (!isMobile && top + menuRect.height > scrollY + viewportHeight - 8) {
-                top = caret.top + scrollY - menuRect.height - 8;
+            const visibleTopDoc = scrollY + viewportOffsetTop;
+            const visibleBottomDoc = visibleTopDoc + viewportHeight;
+            const spaceBelow = visibleBottomDoc - (caret.bottom + scrollY) - 10;
+            const spaceAbove = (caret.top + scrollY) - visibleTopDoc - 10;
+            const menuHeight = menuRect.height || 240;
+
+            let top;
+            let maxHeight;
+            if (spaceBelow >= Math.min(menuHeight, 180) || spaceBelow >= spaceAbove) {
+                top = caret.bottom + scrollY + 8;
+                maxHeight = Math.max(140, Math.min(320, spaceBelow));
+            } else {
+                maxHeight = Math.max(140, Math.min(320, spaceAbove));
+                top = caret.top + scrollY - Math.min(menuHeight, maxHeight) - 8;
             }
-            top = Math.max(scrollY + 8, top);
+            top = Math.max(visibleTopDoc + 8, top);
+
             const width = Math.min(menuRect.width || 280, window.innerWidth - 16);
             let left = caret.left + scrollX - width / 2;
             left = Math.min(Math.max(left, scrollX + 8), scrollX + window.innerWidth - width - 8);
             this.root.style.left = `${Math.round(left)}px`;
             this.root.style.top = `${Math.round(top)}px`;
-            this.root.style.maxHeight = `${Math.max(160, viewportHeight - 48)}px`;
+            this.root.style.maxHeight = `${Math.round(maxHeight)}px`;
         });
     }
 

@@ -4,7 +4,7 @@
  * 对齐（header 绝对定位于 pre 内、gutter 走 data-line-numbers），零新增样式。
  * 徽章图标复用 managers/code-language-catalog.js。
  */
-import { getCodeLanguageIconPath, resolveCodeLanguage } from './code-language-catalog.js';
+import { findCodeLanguageSuggestions, getCodeLanguageIconPath, resolveCodeLanguage } from './code-language-catalog.js';
 import { renderMermaidSvg } from './mermaid-render.js';
 import { openArticleLightbox } from './tiptap-image-interactions.js';
 
@@ -61,6 +61,268 @@ function renderBadge(badge, language) {
     badge.replaceChildren(...parts);
 }
 
+const POPOVER_VIEWPORT_MARGIN = 8;
+let sharedLanguagePicker = null;
+
+function createCodeLanguagePickerController() {
+    if (sharedLanguagePicker) return sharedLanguagePicker;
+
+    const popover = document.createElement('div');
+    popover.className = 'dumbpad-code-language-popover';
+    popover.hidden = true;
+    popover.setAttribute('role', 'dialog');
+    popover.setAttribute('aria-label', '选择代码块语言');
+
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'dumbpad-code-language-input';
+    input.setAttribute('autocomplete', 'off');
+    input.setAttribute('autocapitalize', 'off');
+    input.setAttribute('spellcheck', 'false');
+    input.setAttribute('aria-label', '输入代码块语言');
+
+    const list = document.createElement('div');
+    list.className = 'dumbpad-code-language-list';
+    list.setAttribute('role', 'listbox');
+    list.hidden = true;
+
+    popover.appendChild(input);
+    popover.appendChild(list);
+
+    let activeState = null;
+    let suggestions = [];
+    let activeIndex = -1;
+    let isComposing = false;
+
+    const getViewportBounds = () => {
+        const vv = window.visualViewport;
+        if (vv) {
+            return {
+                left: vv.offsetLeft || 0,
+                top: vv.offsetTop || 0,
+                right: (vv.offsetLeft || 0) + vv.width,
+                bottom: (vv.offsetTop || 0) + vv.height,
+            };
+        }
+        return {
+            left: 0,
+            top: 0,
+            right: window.innerWidth || document.documentElement.clientWidth || 1024,
+            bottom: window.innerHeight || document.documentElement.clientHeight || 768,
+        };
+    };
+
+    const position = () => {
+        if (popover.hidden || !activeState?.badge) return;
+        if (!activeState.badge.isConnected) {
+            close({ restoreFocus: false });
+            return;
+        }
+        const badgeRect = activeState.badge.getBoundingClientRect();
+        const bounds = getViewportBounds();
+        const popoverWidth = popover.offsetWidth || 156;
+        const popoverHeight = popover.offsetHeight || 136;
+
+        let left = badgeRect.left;
+        if (left + popoverWidth > bounds.right - POPOVER_VIEWPORT_MARGIN) {
+            left = bounds.right - popoverWidth - POPOVER_VIEWPORT_MARGIN;
+        }
+        left = Math.max(bounds.left + POPOVER_VIEWPORT_MARGIN, left);
+
+        let top = badgeRect.bottom + 4;
+        if (top + popoverHeight > bounds.bottom - POPOVER_VIEWPORT_MARGIN) {
+            const aboveTop = badgeRect.top - popoverHeight - 4;
+            if (aboveTop >= bounds.top + POPOVER_VIEWPORT_MARGIN || (badgeRect.top - bounds.top) > (bounds.bottom - badgeRect.bottom)) {
+                top = Math.max(bounds.top + POPOVER_VIEWPORT_MARGIN, aboveTop);
+            }
+        }
+        popover.style.left = `${Math.round(left)}px`;
+        popover.style.top = `${Math.round(top)}px`;
+    };
+
+    const updateSizeVar = () => {
+        const longestLabel = suggestions.reduce((maxLen, item) => (
+            Math.max(maxLen, String(item.label || item.id || '').length)
+        ), 0);
+        const charCount = Math.max(11, Math.min(22, input.value.length + 2, longestLabel + 2));
+        popover.style.setProperty('--code-language-popover-size', String(charCount));
+    };
+
+    const highlightOption = () => {
+        const options = list.querySelectorAll('.dumbpad-code-language-option');
+        options.forEach((opt, idx) => {
+            opt.setAttribute('aria-selected', idx === activeIndex ? 'true' : 'false');
+        });
+    };
+
+    const commitLanguage = (rawValue) => {
+        const resolved = resolveCodeLanguage(rawValue);
+        if (!resolved) {
+            popover.classList.add('is-invalid');
+            input.focus();
+            return;
+        }
+        const state = activeState;
+        close({ restoreFocus: false });
+        state?.onSelect?.(resolved);
+    };
+
+    const renderSuggestions = () => {
+        suggestions = findCodeLanguageSuggestions(input.value, 3);
+        if (activeIndex >= suggestions.length) activeIndex = suggestions.length - 1;
+        list.replaceChildren();
+        suggestions.forEach((item, index) => {
+            const option = document.createElement('button');
+            option.type = 'button';
+            option.className = 'dumbpad-code-language-option';
+            option.setAttribute('role', 'option');
+            option.dataset.languageId = item.id;
+            option.setAttribute('aria-selected', index === activeIndex ? 'true' : 'false');
+            option.textContent = item.label || item.id;
+            option.addEventListener('mousedown', (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+            });
+            option.addEventListener('click', (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                commitLanguage(item.id);
+            });
+            list.appendChild(option);
+        });
+        list.hidden = suggestions.length === 0;
+        updateSizeVar();
+        position();
+    };
+
+    const handleOutsidePointer = (event) => {
+        if (popover.hidden) return;
+        const target = event.target;
+        if (popover.contains(target) || activeState?.badge?.contains(target)) return;
+        close({ restoreFocus: false });
+    };
+
+    const handleReposition = () => {
+        if (popover.hidden) return;
+        position();
+    };
+
+    function close({ restoreFocus = false } = {}) {
+        const badgeToFocus = restoreFocus ? activeState?.badge : null;
+        if (activeState?.badge) {
+            activeState.badge.setAttribute('aria-expanded', 'false');
+        }
+        activeState = null;
+        suggestions = [];
+        activeIndex = -1;
+        isComposing = false;
+        popover.classList.remove('is-invalid');
+        popover.hidden = true;
+        document.removeEventListener('mousedown', handleOutsidePointer, true);
+        window.removeEventListener('resize', handleReposition);
+        window.removeEventListener('scroll', handleReposition, true);
+        window.visualViewport?.removeEventListener('resize', handleReposition);
+        window.visualViewport?.removeEventListener('scroll', handleReposition);
+        if (badgeToFocus?.isConnected && typeof badgeToFocus.focus === 'function') {
+            badgeToFocus.focus();
+        }
+    }
+
+    input.addEventListener('compositionstart', () => {
+        isComposing = true;
+    });
+    input.addEventListener('compositionend', () => {
+        isComposing = false;
+        popover.classList.remove('is-invalid');
+        activeIndex = -1;
+        renderSuggestions();
+    });
+    input.addEventListener('input', () => {
+        popover.classList.remove('is-invalid');
+        if (isComposing) return;
+        activeIndex = -1;
+        renderSuggestions();
+    });
+    input.addEventListener('keydown', (event) => {
+        if (isComposing || event.isComposing || event.keyCode === 229) return;
+        if (event.key === 'ArrowDown') {
+            if (!suggestions.length) return;
+            event.preventDefault();
+            activeIndex = (activeIndex + 1 + suggestions.length) % suggestions.length;
+            highlightOption();
+            return;
+        }
+        if (event.key === 'ArrowUp') {
+            if (!suggestions.length) return;
+            event.preventDefault();
+            activeIndex = activeIndex <= 0 ? suggestions.length - 1 : activeIndex - 1;
+            highlightOption();
+            return;
+        }
+        if (event.key === 'Enter') {
+            event.preventDefault();
+            if (activeIndex >= 0 && suggestions[activeIndex]) {
+                commitLanguage(suggestions[activeIndex].id);
+                return;
+            }
+            commitLanguage(input.value);
+            return;
+        }
+        if (event.key === 'Escape') {
+            event.preventDefault();
+            event.stopPropagation();
+            close({ restoreFocus: true });
+        }
+    });
+
+    sharedLanguagePicker = {
+        open({ badge, language, onSelect }) {
+            if (!badge) return;
+            if (!popover.isConnected) {
+                document.body.appendChild(popover);
+            }
+            if (activeState?.badge === badge && !popover.hidden) {
+                close({ restoreFocus: false });
+                return;
+            }
+            if (activeState?.badge) {
+                activeState.badge.setAttribute('aria-expanded', 'false');
+            }
+            activeState = { badge, onSelect };
+            badge.setAttribute('aria-expanded', 'true');
+            const initialLang = normalizeCodeLanguage(language);
+            input.value = initialLang === 'plaintext' ? '' : initialLang;
+            activeIndex = -1;
+            isComposing = false;
+            popover.classList.remove('is-invalid');
+            popover.hidden = false;
+            renderSuggestions();
+            document.addEventListener('mousedown', handleOutsidePointer, true);
+            window.addEventListener('resize', handleReposition);
+            window.addEventListener('scroll', handleReposition, true);
+            window.visualViewport?.addEventListener('resize', handleReposition);
+            window.visualViewport?.addEventListener('scroll', handleReposition);
+            position();
+            if (typeof requestAnimationFrame === 'function') {
+                requestAnimationFrame(() => {
+                    if (popover.hidden) return;
+                    input.focus();
+                    input.select();
+                });
+            } else {
+                input.focus();
+                input.select();
+            }
+        },
+        closeForBadge(badge) {
+            if (activeState?.badge === badge && !popover.hidden) {
+                close({ restoreFocus: false });
+            }
+        },
+    };
+    return sharedLanguagePicker;
+}
+
 export function buildCodeBlockNodeView() {
     return ({ node, view, editor, getPos }) => {
         const wrapper = document.createElement('div');
@@ -75,10 +337,13 @@ export function buildCodeBlockNodeView() {
         header.setAttribute('contenteditable', 'false');
         header.setAttribute('aria-label', '代码块工具栏');
 
-        const badge = document.createElement('span');
+        const badge = document.createElement('button');
+        badge.type = 'button';
         badge.className = 'dumbpad-code-language-badge is-readonly';
         badge.setAttribute('contenteditable', 'false');
-        badge.setAttribute('aria-label', '代码块语言');
+        badge.setAttribute('aria-label', '切换代码块语言');
+        badge.setAttribute('aria-haspopup', 'listbox');
+        badge.setAttribute('aria-expanded', 'false');
         header.appendChild(badge);
 
         const copyButton = document.createElement('button');
@@ -126,8 +391,72 @@ export function buildCodeBlockNodeView() {
 
         let currentLanguage = null;
         let currentCodeNode = node;
+        const languagePicker = createCodeLanguagePickerController();
+
+        const isLanguagePickerEditable = () => {
+            const editable = editor ? Boolean(editor.isEditable) : Boolean(view?.editable);
+            const lang = normalizeCodeLanguage(currentCodeNode?.attrs?.language);
+            return editable && lang !== 'frontmatter';
+        };
+
+        const syncBadgeEditable = () => {
+            const readonly = !isLanguagePickerEditable();
+            header.classList.toggle('is-readonly', readonly);
+            badge.classList.toggle('is-readonly', readonly);
+            badge.disabled = readonly;
+            badge.setAttribute('aria-disabled', readonly ? 'true' : 'false');
+            if (readonly) languagePicker.closeForBadge(badge);
+        };
+
+        badge.addEventListener('mousedown', (event) => {
+            if (!isLanguagePickerEditable()) return;
+            event.preventDefault();
+            event.stopPropagation();
+        });
+
+        badge.addEventListener('click', (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            if (!isLanguagePickerEditable()) return;
+            languagePicker.open({
+                badge,
+                language: currentCodeNode?.attrs?.language,
+                onSelect(nextLanguage) {
+                    if (typeof getPos !== 'function' || !view) return;
+                    const pos = getPos();
+                    if (typeof pos !== 'number' || pos < 0) return;
+                    const liveNode = view.state.doc.nodeAt(pos);
+                    if (!liveNode || liveNode.type !== node.type) return;
+                    const nextAttr = nextLanguage === 'plaintext' ? null : nextLanguage;
+                    const selection = view.state.selection;
+                    const blockEnd = pos + liveNode.nodeSize - 1;
+                    const wasInside = selection.from > pos && selection.to < pos + liveNode.nodeSize;
+                    const savedOffset = wasInside ? Math.max(1, selection.from - pos) : null;
+
+                    view.dispatch(view.state.tr.setNodeMarkup(pos, undefined, {
+                        ...liveNode.attrs,
+                        language: nextAttr,
+                    }));
+
+                    if (wasInside || !liveNode.textContent) {
+                        const updatedNode = view.state.doc.nodeAt(pos);
+                        const maxPos = updatedNode ? pos + updatedNode.nodeSize - 1 : blockEnd;
+                        const targetPos = Math.min(pos + (savedOffset || 1), Math.max(pos + 1, maxPos));
+                        if (typeof editor?.commands?.setTextSelection === 'function') {
+                            editor.commands.setTextSelection(targetPos);
+                        }
+                        editor?.commands?.focus?.();
+                    }
+                },
+            });
+        });
+
+        const onEditableRefresh = () => syncBadgeEditable();
+        document.addEventListener('dumbpad-mermaid-refresh', onEditableRefresh);
 
         const renderChrome = (updatedNode) => {
+            currentCodeNode = updatedNode;
+            syncBadgeEditable();
             const language = normalizeCodeLanguage(updatedNode.attrs.language);
             if (currentLanguage !== language) {
                 currentLanguage = language;
@@ -394,6 +723,8 @@ export function buildCodeBlockNodeView() {
                 mermaidToken += 1;
                 clearTimeout(mermaidTimer);
                 detachMermaidWatchers();
+                document.removeEventListener('dumbpad-mermaid-refresh', onEditableRefresh);
+                languagePicker.closeForBadge(badge);
             },
         };
     };
