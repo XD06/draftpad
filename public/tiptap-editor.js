@@ -43,6 +43,7 @@ import {
     TimeCommandShortcut,
     TimeMarkerNode,
     DumbPadListBlankLineBackspace,
+    DumbPadMobileInputRuleSettler,
     DumbPadTaskItemInPlaceShortcut,
 } from './managers/tiptap-extensions.js';
 import { TiptapSelectionMenu } from './managers/tiptap-selection-menu.js';
@@ -348,6 +349,9 @@ export class HybridMarkdownEditor {
                 // 必须排在 TiptapSlashMenu 之后（handleKeyDown 逆序咨询），
                 // 抢在 Tiptap listKeymap 的空项 lift 之前，见 tiptap-extensions.js。
                 DumbPadListBlankLineBackspace,
+                // 移动端 IME compositionend 与 DOM readDOMChange 后补跑一次内核输入规则，
+                // 保证退格留缩进后打 `- ` / `1. ` / `[ ] ` 在 Android/iOS 上稳定转嵌套列表。
+                DumbPadMobileInputRuleSettler,
                 // 列表项首段落上的 [ ] 就地转待办（内核规则此时会抬升到根，
                 // 嵌套待办「渲染到最前面」的根因）。priority 101 先于内核
                 // TaskItem 规则咨询，与 SoftBreakBlockRules 同套路，

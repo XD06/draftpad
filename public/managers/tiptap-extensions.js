@@ -1093,25 +1093,25 @@ export const SoftBreakBlockRules = Extension.create({
 
         return [
             blockRule(
-                /\n[ \t]*(#{1,6})[ \t]$/,
+                /\n[ \t\u00a0]*(#{1,6})[ \t\u00a0]$/,
                 (chain, match) => chain.setNode('heading', { level: match[1].length }),
                 (match, can) => levels.includes(match[1].length)
                     && can.setNode('heading', { level: match[1].length }),
             ),
             blockRule(
-                /\n[ \t]*([-+*])[ \t]$/,
+                /\n[ \t\u00a0]*([-+*])[ \t\u00a0]$/,
                 chain => chain.toggleBulletList(),
                 (match, can) => can.toggleBulletList(),
             ),
             blockRule(
-                /\n[ \t]*(\d+)\.[ \t]$/,
+                /\n[ \t\u00a0]*(\d+)\.[ \t\u00a0]$/,
                 (chain, match) => chain
                     .toggleOrderedList()
                     .updateAttributes('orderedList', { start: Number(match[1]) }),
                 (match, can) => can.toggleOrderedList(),
             ),
             blockRule(
-                /\n[ \t]*>[ \t]$/,
+                /\n[ \t\u00a0]*>[ \t\u00a0]$/,
                 chain => chain.toggleBlockquote(),
                 (match, can) => can.toggleBlockquote(),
             ),
@@ -1994,118 +1994,270 @@ export const DumbPadListBlankLineBackspace = Extension.create({
 
     addProseMirrorPlugins() {
         const LI_TYPES = ['listItem', 'taskItem'];
+        let dedupeKeydownState = null;
+
+        const domBlockHasVisibleText = (view) => {
+            try {
+                const { selection } = view.state;
+                const pos = selection.$from.pos;
+                const { node } = view.domAtPos(pos);
+                const container = node?.nodeType === 3 ? node.parentElement : node;
+                const block = container?.closest?.('p');
+                if (!block) return false;
+                return (block.textContent || '').replace(/[\u200B\uFEFF]/g, '').length > 0;
+            } catch (_err) {
+                return false;
+            }
+        };
+
+        const runListBlankLineBackspace = (view) => {
+            const { state } = view;
+            const { selection } = state;
+            if (!selection.empty) return false;
+            const { $from } = selection;
+            const parent = $from.parent;
+            // 两种目标形态（空条目本体 / 条目尾部空行）都是「空段落的行首」
+            if (parent.type.name !== 'paragraph') return false;
+            if (parent.content.size !== 0 || $from.parentOffset !== 0) return false;
+
+            // 阶梯终点之后：顶层空行紧跟列表时，退格 = 删除空行并把光标并入
+            // 列表最后一个文字块末尾。不接管的话 PM 的 joinBackward 会把空行
+            // 重新吸回列表条目（列表 + 空段边界的连接点选在 li 层），与上方
+            // 的退出步首尾相接：退格在「条目内空行 ↔ 顶层空行」之间原地循环，
+            // 按键等于失灵（真机逐步复现）。显式并入让删除流单调终止。
+            if ($from.depth === 1 && $from.index(0) > 0) {
+                const prev = $from.node(0).child($from.index(0) - 1);
+                if (['bulletList', 'orderedList', 'taskList'].includes(prev.type.name)) {
+                    const tr = state.tr;
+                    tr.delete($from.before(1), $from.after(1));
+                    tr.setSelection(TextSelection.near(tr.doc.resolve($from.before(1)), -1));
+                    tr.scrollIntoView();
+                    view.dispatch(tr);
+                    return true;
+                }
+            }
+
+            let liDepth = -1;
+            for (let d = $from.depth - 1; d >= 1; d--) {
+                if (LI_TYPES.includes($from.node(d).type.name)) { liDepth = d; break; }
+            }
+            if (liDepth < 0) return false;
+            // 空段落必须是列表项的直接孩子（li > blockquote > p 这类嵌套不接管）
+            if ($from.depth !== liDepth + 1) return false;
+
+            const listItem = $from.node(liDepth);
+            const listDepth = liDepth - 1;
+            const list = $from.node(listDepth);
+            if (!['bulletList', 'orderedList', 'taskList'].includes(list.type.name)) return false;
+            const itemIndex = $from.index(listDepth);
+            const paragraph = state.schema.nodes.paragraph;
+            const tr = state.tr;
+
+            const isEmptyItem = listItem.childCount === 1
+                && listItem.firstChild.type.name === 'paragraph'
+                && listItem.firstChild.content.size === 0;
+
+            if (isEmptyItem) {
+                if (itemIndex > 0) {
+                    // 并入前一个条目，成为它的尾部空行：删掉整个空 li，在前一个
+                    // li 内容末尾（liFrom-1，位于删除区间之前、位置不受影响）
+                    // 插入空段落。光标落在新空行里 = 原地停留。
+                    const liFrom = $from.before(liDepth);
+                    tr.delete(liFrom, $from.after(liDepth));
+                    tr.insert(liFrom - 1, paragraph.create());
+                    tr.setSelection(TextSelection.create(tr.doc, liFrom));
+                } else if (LI_TYPES.includes($from.node(listDepth - 1).type.name)) {
+                    // 嵌套列表里的首个空条目：连同内层列表一起消费掉（列表
+                    // 只有它）或只删它（还有兄弟），光标落在消费点之前最近
+                    // 的块内内容端（通常是文字尾或紧邻的空行行首）。不把空行
+                    // 挪进父条目——那会与「退出列表 → PM 默认并入」首尾相接
+                    // 成环（见扩展头注释）。near 兜底覆盖「消费点前是另一个
+                    // 列表」这类非文字块边界。
+                    const joinAfter = (pos) => {
+                        const $join = tr.doc.resolve(pos);
+                        if ($join.parent.inlineContent) {
+                            tr.setSelection(TextSelection.create(tr.doc, pos));
+                        } else {
+                            tr.setSelection(TextSelection.near($join, -1));
+                        }
+                    };
+                    if (list.childCount > 1) {
+                        tr.delete($from.before(liDepth), $from.after(liDepth));
+                        joinAfter($from.before(liDepth) - 1);
+                    } else {
+                        tr.delete($from.before(listDepth), $from.after(listDepth));
+                        joinAfter($from.before(listDepth) - 1);
+                    }
+                } else {
+                    // 顶层首个空条目：Tiptap lift = 退出列表成段落，阶梯终点。
+                    return false;
+                }
+            } else {
+                const isTrailingBlank = listItem.childCount >= 2
+                    && $from.index(liDepth) === listItem.childCount - 1;
+                if (!isTrailingBlank) return false;
+                const pSpan = $from.after($from.depth) - $from.before($from.depth);
+                if (LI_TYPES.includes($from.node(listDepth - 1).type.name)) {
+                    // 尾部空行降一级：从条目里挪到外层条目（内层列表保留）
+                    const insertAt = $from.after(listDepth) - pSpan;
+                    tr.delete($from.before($from.depth), $from.after($from.depth));
+                    tr.insert(insertAt, paragraph.create());
+                    tr.setSelection(TextSelection.create(tr.doc, insertAt + 1));
+                } else {
+                    // 尾部空行退出列表成顶层段落（「回到最开头」）。只在末位
+                    // 条目接管——非末位拎出会拆断列表、重排有序编号。
+                    if (itemIndex !== list.childCount - 1) return false;
+                    const insertAt = $from.after(listDepth) - pSpan;
+                    tr.delete($from.before($from.depth), $from.after($from.depth));
+                    tr.insert(insertAt, paragraph.create());
+                    tr.setSelection(TextSelection.create(tr.doc, insertAt + 1));
+                }
+            }
+            tr.scrollIntoView();
+            view.dispatch(tr);
+            return true;
+        };
+
         return [
             new Plugin({
                 key: new PluginKey('dumbpadListBlankLineBackspace'),
                 props: {
                     handleKeyDown: (view, event) => {
-                        if (event.key !== 'Backspace' || view.composing) return false;
-                        const { state } = view;
-                        const { selection } = state;
-                        if (!selection.empty) return false;
-                        const { $from } = selection;
-                        const parent = $from.parent;
-                        // 两种目标形态（空条目本体 / 条目尾部空行）都是「空段落的行首」
-                        if (parent.type.name !== 'paragraph') return false;
-                        if (parent.content.size !== 0 || $from.parentOffset !== 0) return false;
-
-                        // 阶梯终点之后：顶层空行紧跟列表时，退格 = 删除空行并把光标并入
-                        // 列表最后一个文字块末尾。不接管的话 PM 的 joinBackward 会把空行
-                        // 重新吸回列表条目（列表 + 空段边界的连接点选在 li 层），与上方
-                        // 的退出步首尾相接：退格在「条目内空行 ↔ 顶层空行」之间原地循环，
-                        // 按键等于失灵（真机逐步复现）。显式并入让删除流单调终止。
-                        if ($from.depth === 1 && $from.index(0) > 0) {
-                            const prev = $from.node(0).child($from.index(0) - 1);
-                            if (['bulletList', 'orderedList', 'taskList'].includes(prev.type.name)) {
-                                const tr = state.tr;
-                                tr.delete($from.before(1), $from.after(1));
-                                tr.setSelection(TextSelection.near(tr.doc.resolve($from.before(1)), -1));
-                                tr.scrollIntoView();
-                                view.dispatch(tr);
-                                return true;
-                            }
-                        }
-
-                        let liDepth = -1;
-                        for (let d = $from.depth - 1; d >= 1; d--) {
-                            if (LI_TYPES.includes($from.node(d).type.name)) { liDepth = d; break; }
-                        }
-                        if (liDepth < 0) return false;
-                        // 空段落必须是列表项的直接孩子（li > blockquote > p 这类嵌套不接管）
-                        if ($from.depth !== liDepth + 1) return false;
-
-                        const listItem = $from.node(liDepth);
-                        const listDepth = liDepth - 1;
-                        const list = $from.node(listDepth);
-                        if (!['bulletList', 'orderedList', 'taskList'].includes(list.type.name)) return false;
-                        const itemIndex = $from.index(listDepth);
-                        const paragraph = state.schema.nodes.paragraph;
-                        const tr = state.tr;
-
-                        const isEmptyItem = listItem.childCount === 1
-                            && listItem.firstChild.type.name === 'paragraph'
-                            && listItem.firstChild.content.size === 0;
-
-                        if (isEmptyItem) {
-                            if (itemIndex > 0) {
-                                // 并入前一个条目，成为它的尾部空行：删掉整个空 li，在前一个
-                                // li 内容末尾（liFrom-1，位于删除区间之前、位置不受影响）
-                                // 插入空段落。光标落在新空行里 = 原地停留。
-                                const liFrom = $from.before(liDepth);
-                                tr.delete(liFrom, $from.after(liDepth));
-                                tr.insert(liFrom - 1, paragraph.create());
-                                tr.setSelection(TextSelection.create(tr.doc, liFrom));
-                            } else if (LI_TYPES.includes($from.node(listDepth - 1).type.name)) {
-                                // 嵌套列表里的首个空条目：连同内层列表一起消费掉（列表
-                                // 只有它）或只删它（还有兄弟），光标落在消费点之前最近
-                                // 的块内内容端（通常是文字尾或紧邻的空行行首）。不把空行
-                                // 挪进父条目——那会与「退出列表 → PM 默认并入」首尾相接
-                                // 成环（见扩展头注释）。near 兜底覆盖「消费点前是另一个
-                                // 列表」这类非文字块边界。
-                                const joinAfter = (pos) => {
-                                    const $join = tr.doc.resolve(pos);
-                                    if ($join.parent.inlineContent) {
-                                        tr.setSelection(TextSelection.create(tr.doc, pos));
-                                    } else {
-                                        tr.setSelection(TextSelection.near($join, -1));
-                                    }
-                                };
-                                if (list.childCount > 1) {
-                                    tr.delete($from.before(liDepth), $from.after(liDepth));
-                                    joinAfter($from.before(liDepth) - 1);
-                                } else {
-                                    tr.delete($from.before(listDepth), $from.after(listDepth));
-                                    joinAfter($from.before(listDepth) - 1);
-                                }
-                            } else {
-                                // 顶层首个空条目：Tiptap lift = 退出列表成段落，阶梯终点。
-                                return false;
-                            }
-                        } else {
-                            const isTrailingBlank = listItem.childCount >= 2
-                                && $from.index(liDepth) === listItem.childCount - 1;
-                            if (!isTrailingBlank) return false;
-                            const pSpan = $from.after($from.depth) - $from.before($from.depth);
-                            if (LI_TYPES.includes($from.node(listDepth - 1).type.name)) {
-                                // 尾部空行降一级：从条目里挪到外层条目（内层列表保留）
-                                const insertAt = $from.after(listDepth) - pSpan;
-                                tr.delete($from.before($from.depth), $from.after($from.depth));
-                                tr.insert(insertAt, paragraph.create());
-                                tr.setSelection(TextSelection.create(tr.doc, insertAt + 1));
-                            } else {
-                                // 尾部空行退出列表成顶层段落（「回到最开头」）。只在末位
-                                // 条目接管——非末位拎出会拆断列表、重排有序编号。
-                                if (itemIndex !== list.childCount - 1) return false;
-                                const insertAt = $from.after(listDepth) - pSpan;
-                                tr.delete($from.before($from.depth), $from.after($from.depth));
-                                tr.insert(insertAt, paragraph.create());
-                                tr.setSelection(TextSelection.create(tr.doc, insertAt + 1));
-                            }
-                        }
-                        tr.scrollIntoView();
-                        view.dispatch(tr);
+                        const isBackspace = event.key === 'Backspace' || event.keyCode === 8;
+                        if (!isBackspace) return false;
+                        // 移动端 Gboard / 中文输入法在空段落有时仍带着残留 composing 状态，
+                        // 但 DOM 段落里其实没有任何待选拼音；只要当前段在 DOM 侧也是空的，
+                        // 就允许退格阶梯推进；真正有未上屏候选字时不夺取退格。
+                        if (view.composing && domBlockHasVisibleText(view)) return false;
+                        if (!runListBlankLineBackspace(view)) return false;
+                        const handledState = view.state;
+                        dedupeKeydownState = handledState;
+                        queueMicrotask(() => {
+                            if (dedupeKeydownState === handledState) dedupeKeydownState = null;
+                        });
                         return true;
                     },
+                    handleDOMEvents: {
+                        // Android Chrome 软键盘退格常以 keyCode 229 / Unidentified 绕过 handleKeyDown，
+                        // 若放进 PM 的 beforeinput 会让原生 contenteditable 先把空 <li> 拆到行首并
+                        // 触发 50ms blur/focus 闪跳。赶在原生改动之前截住 deleteContentBackward。
+                        beforeinput: (view, event) => {
+                            if (event?.inputType !== 'deleteContentBackward') return false;
+                            if (dedupeKeydownState && dedupeKeydownState === view.state) {
+                                dedupeKeydownState = null;
+                                event.preventDefault?.();
+                                return true;
+                            }
+                            dedupeKeydownState = null;
+                            if (domBlockHasVisibleText(view)) return false;
+                            if (!runListBlankLineBackspace(view)) return false;
+                            event.preventDefault?.();
+                            return true;
+                        },
+                    },
+                },
+            }),
+        ];
+    },
+});
+
+const MOBILE_LIST_OR_BLOCK_RULE_RE = /(?:^|\n)[ \t\u00a0\u3000]*(?:[-+*]|\d+\.|\[[ xX~]?\]|#{1,6}|>)[ \t\u00a0\u3000]$/;
+
+/**
+ * 移动端输入法与 DOM 变更路径下的输入规则补丁：
+ * 1) prosemirror-view 在 compositionend 后还会延迟 20ms 才清 view.composing，而 Tiptap
+ *    自带 InputRule 的 setTimeout(..., 0) 赶在这 20ms 内运行，被 `if (view.composing)` 拦掉；
+ * 2) Android Chrome 对空行（<p><br></p>）直接键入 `- ` 时有时走 readDOMChange 整块提交，
+ *    绕开了 handleTextInput，导致回车→退格后打 `- ` 不成嵌套列表、只剩字面文本。
+ * 这里只在「当前仍是普通段落且光标前刚落入明确前缀触发串（排除 undo/paste/载入）」时，
+ * 复调内核自己的 inputRulesPlugin.props.handleTextInput，完全复用现有规则优先级与撤销元数据。
+ */
+export const DumbPadMobileInputRuleSettler = Extension.create({
+    name: 'dumbpadMobileInputRuleSettler',
+
+    addProseMirrorPlugins() {
+        const pluginKey = new PluginKey('dumbpadMobileInputRuleSettler');
+        let composeFlushTimer = null;
+
+        const runInputRulesAtCursor = (view) => {
+            if (!view || view.isDestroyed || view.composing) return false;
+            const { selection } = view.state;
+            if (!selection.empty) return false;
+            const { $from } = selection;
+            if ($from.parent.type.name !== 'paragraph') return false;
+            const textBefore = $from.parent.textBetween(0, $from.parentOffset, undefined, '\n');
+            if (!MOBILE_LIST_OR_BLOCK_RULE_RE.test(textBefore)) return false;
+            for (const plugin of view.state.plugins) {
+                if (!plugin?.spec?.isInputRules && !plugin?.isInputRules) continue;
+                const handleTextInput = plugin?.props?.handleTextInput;
+                if (typeof handleTextInput !== 'function') continue;
+                if (handleTextInput(view, $from.pos, $from.pos, '')) return true;
+            }
+            return false;
+        };
+
+        return [
+            new Plugin({
+                key: pluginKey,
+                state: {
+                    init: () => ({ allowFallback: false }),
+                    apply(tr) {
+                        if (!tr.docChanged) return { allowFallback: false };
+                        if (tr.getMeta('history$')
+                            || tr.getMeta('paste')
+                            || tr.getMeta('dumbpadRemotePatch')
+                            || tr.getMeta('dumbpadNormalize')
+                            || tr.getMeta('addToHistory') === false) {
+                            return { allowFallback: false };
+                        }
+                        return { allowFallback: true };
+                    },
+                },
+                props: {
+                    handleDOMEvents: {
+                        compositionstart: () => {
+                            if (composeFlushTimer) {
+                                clearTimeout(composeFlushTimer);
+                                composeFlushTimer = null;
+                            }
+                            return false;
+                        },
+                        compositionend: (view) => {
+                            if (composeFlushTimer) clearTimeout(composeFlushTimer);
+                            // 28ms 恰好跨过 prosemirror-view 的 scheduleComposeEnd(view, 20)
+                            composeFlushTimer = setTimeout(() => {
+                                composeFlushTimer = null;
+                                runInputRulesAtCursor(view);
+                            }, 28);
+                            return false;
+                        },
+                    },
+                },
+                view() {
+                    return {
+                        update(view, prevState) {
+                            if (view.composing || view.state.doc === prevState.doc) return;
+                            if (!pluginKey.getState(view.state)?.allowFallback) return;
+                            const { selection } = view.state;
+                            if (!selection.empty || selection.$from.parent.type.name !== 'paragraph') return;
+                            const curBefore = selection.$from.parent.textBetween(0, selection.$from.parentOffset, undefined, '\n');
+                            if (!MOBILE_LIST_OR_BLOCK_RULE_RE.test(curBefore)) return;
+                            const prevSel = prevState.selection;
+                            const prevBefore = prevSel.empty && prevSel.$from.parent.type.name === 'paragraph'
+                                ? prevSel.$from.parent.textBetween(0, prevSel.$from.parentOffset, undefined, '\n')
+                                : '';
+                            if (curBefore === prevBefore || curBefore.length <= prevBefore.length) return;
+                            queueMicrotask(() => {
+                                runInputRulesAtCursor(view);
+                            });
+                        },
+                        destroy() {
+                            if (composeFlushTimer) {
+                                clearTimeout(composeFlushTimer);
+                                composeFlushTimer = null;
+                            }
+                        },
+                    };
                 },
             }),
         ];

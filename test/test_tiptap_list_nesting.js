@@ -28,6 +28,7 @@ global.Element = dom.window.Element;
 global.HTMLElement = dom.window.HTMLElement;
 global.Range = dom.window.Range;
 global.KeyboardEvent = dom.window.KeyboardEvent;
+global.getComputedStyle = dom.window.getComputedStyle;
 global.getSelection = dom.window.getSelection.bind(dom.window);
 Object.defineProperty(global, 'navigator', { value: dom.window.navigator, configurable: true });
 if (!dom.window.requestAnimationFrame) dom.window.requestAnimationFrame = (cb) => setTimeout(cb, 0);
@@ -495,6 +496,87 @@ async function main() {
     check('skips frontmatter', normalizeAmbiguousEmptyListMarkers('---\ntags:\n  - \n---\n正文') === '---\ntags:\n  - \n---\n正文');
     check('skips math blocks', normalizeAmbiguousEmptyListMarkers('$$\n- 甲\n  - \n$$') === '$$\n- 甲\n  - \n$$');
     check('continues after a fence closes', normalizeAmbiguousEmptyListMarkers('```\n```\n- 甲\n  - ') === '```\n```\n- 甲\n\n  - ');
+
+    /* ---- 7. 移动端软键盘退格 (229/beforeinput) 与 IME 组合后 `- ` 转嵌套 ---- */
+    {
+        const beforeInput = (inputType = 'deleteContentBackward') => {
+            const EventCtor = dom.window.InputEvent || dom.window.Event;
+            const event = new EventCtor('beforeinput', { bubbles: true, cancelable: true });
+            if (!('inputType' in event)) {
+                Object.defineProperty(event, 'inputType', { value: inputType });
+            } else {
+                Object.defineProperty(event, 'inputType', { value: inputType });
+            }
+            view.dom.dispatchEvent(event);
+            return event.defaultPrevented;
+        };
+
+        // 7a: Android 绕过 handleKeyDown (keyCode 229 / Unidentified) 直接触发 beforeinput(deleteContentBackward)
+        editor.setValue('1. 移动端父项', false);
+        caretEndOfText('移动端父项');
+        press('Enter');
+        const key229 = new dom.window.KeyboardEvent('keydown', { key: 'Unidentified', keyCode: 229, bubbles: true, cancelable: true });
+        view.dom.dispatchEvent(key229);
+        const prevented = beforeInput('deleteContentBackward');
+        check('mobile beforeinput deleteContentBackward is handled and prevented', prevented === true);
+        check('mobile backspace keeps caret indented inside parent ordered item (not column 0)',
+            caretAncestry() === 'paragraph < listItem < orderedList',
+            { ancestry: caretAncestry() });
+
+        // 再走 compositionend（模拟 prosemirror-view 的 20ms composing 滞留窗口）+ `- ` + NBSP
+        view.input.composing = true;
+        view.dom.dispatchEvent(new dom.window.Event('compositionstart', { bubbles: true }));
+        const { from, to } = view.state.selection;
+        view.dispatch(view.state.tr.insertText('-\u00a0', from, to));
+        view.dom.dispatchEvent(new dom.window.Event('compositionend', { bubbles: true }));
+        // 模拟 prosemirror-view 在 compositionend 后仍短暂保持 composing=true
+        view.input.composing = true;
+        setTimeout(() => { view.input.composing = false; }, 12);
+        await new Promise(resolve => setTimeout(resolve, 60));
+        check('mobile compositionend settles "-\\u00a0" into a nested bulletList inside parent item',
+            caretAncestry() === 'paragraph < listItem < bulletList < listItem < orderedList',
+            { ancestry: caretAncestry(), shape: shape() });
+        type('子条目');
+        check('mobile nested list roundtrips cleanly',
+            editor.getValue() === '1. 移动端父项\n   - 子条目',
+            { value: editor.getValue() });
+
+        // 7a-2: 非 composing 的 DOM 直写路径（如 Android readDOMChange 跳过 handleTextInput）
+        view.input.compositionEndedAt = -2e8;
+        editor.setValue('- 父项', false);
+        caretEndOfText('父项');
+        press('Enter');
+        beforeInput('deleteContentBackward');
+        view.dispatch(view.state.tr.insertText('- ', view.state.selection.from, view.state.selection.to));
+        await new Promise(resolve => setTimeout(resolve, 10));
+        check('mobile non-composing DOM insert of "- " settles into a nested bulletList',
+            caretAncestry() === 'paragraph < listItem < bulletList < listItem < bulletList',
+            { ancestry: caretAncestry(), shape: shape() });
+
+        // 7b: keydown Backspace 已处理时，同拍配对的 beforeinput 只 intercept，不连退两步
+        view.input.compositionEndedAt = -2e8;
+        editor.setValue('- 甲\n  - 乙', false);
+        caretEndOfText('乙');
+        press('Enter');
+        press('Backspace'); // 应落进嵌套同级父级（乙的尾部空行: paragraph < listItem < bulletList < listItem < bulletList）
+        const ancestryAfterKey = caretAncestry();
+        const deduped = beforeInput('deleteContentBackward');
+        check('paired beforeinput after handled keydown prevents native without double-stepping',
+            deduped === true && caretAncestry() === ancestryAfterKey,
+            { deduped, before: ancestryAfterKey, after: caretAncestry() });
+
+        // 7c: 当前空段若在 DOM 侧已有未上屏拼音文本，绝不劫持退格
+        editor.setValue('- 甲', false);
+        caretEndOfText('甲');
+        press('Enter');
+        const pNodes = container.querySelectorAll('li p');
+        const emptyP = pNodes[pNodes.length - 1];
+        emptyP.appendChild(document.createTextNode('ni'));
+        const hijacked = beforeInput('deleteContentBackward');
+        check('beforeinput does not hijack backspace when DOM paragraph holds uncommitted IME text',
+            hijacked === false,
+            { hijacked });
+    }
 
     console.log(failures === 0 ? '\nALL PASS' : `\n${failures} FAILURES`);
     process.exitCode = failures === 0 ? 0 : 1;
