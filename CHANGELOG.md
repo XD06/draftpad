@@ -8,6 +8,13 @@
 
 ### 优化 / 修复
 
+- **移动端 PWA 虚拟键盘、Toast 碰撞、无感多端同步与嵌套列表输入优化**：
+  - **虚拟键盘视口与 Toast/FAB 避让**：`public/index.html` 将 viewport 从 `interactive-widget=resizes-content` 调整为 `interactive-widget=resizes-visual`，消除 Android Chrome 弹出软键盘时压缩布局视口的问题；`public/app.js` 增加按方向宽度的基线高度兜底并输出 `--dumbpad-keyboard-height`，确保 Android/iOS 双端稳定切换 `html.keyboard-open`；`public/Assets/ios-theme.css` 在 `≤980px` 下保持 `.three-column-layout` 与 `.view-container` `height: auto`（不再压扁正文/草稿），键盘弹起时隐藏底部 `.floating-actions` / `.typora-source-toggle` / `#fab-add-thought`、补足键盘高度底部滚动留白，并将 `.toast-container` 移至固定顶栏下方安全区；`public/managers/toaster.js` 新增同类同文案活跃 Toast 去重、定时器清理及短暂提示 3 条上限（静态常驻提示豁免）。
+  - **PWA 输入与冷启动性能**：`public/managers/note-sync-controller.js` 将输入期 `recordActivity` 的本地缓存落盘改为纯异步尾随防抖（450ms / 最大等待 1500ms，页面隐藏与切换仍同步 flush），消除打字主线程同步 `localStorage` 整库序列化卡顿；`public/tiptap-editor.js` 修复 `isComposing` 粘连并延后组合输入期间的 Markdown 全量序列化，源码模式 `autosizeSourceTextarea` 增字时走无回流快路径；`public/app.js` 在目录抽屉/右栏隐藏时跳过 `debouncedUpdateToC` 的 DOM 遍历并在打开时刷新，同时让冷启动 `fetchNoteData` 与 `ensureEditor` 并行。
+  - **无感多端同步与焦点/光标保护**：`HybridMarkdownEditor.setValuePreservingCaret` 改为基于前后公共块与单段文本 diff 的 ProseMirror 增量事务替换（不再整篇 `setContent` 重建 DOM），保留非空选区与相对光标位置、支持 `view.composing` 组合输入期间延后至 `compositionend` 落盘、远端在前段插删时按视口坐标补偿滚动；修好 `setSelectionRange(start, end)` 与 `mapMarkdownOffsetToPos` 文本节点内字符级精确定位及 `focus({ preventScroll: true })`；`app.js` 的后台 `loadNotes` 改走 `applyRemoteValue` 且聚焦时不回放旧快照，`hideModal` 在移动端/原本未聚焦时不再强制聚焦弹键盘；默认关闭自动保存频繁弹窗（`SettingsManager` 默认 `saveStatusMessageInterval: 0`，与设置页默认值对齐），移除自动合并弹窗与瞬时重试报错弹窗，改由顶部同步云状态静默指示。
+  - **移动端嵌套列表输入（回车 → 退格 → `- `）**：`DumbPadListBlankLineBackspace` 补齐 `handleDOMEvents.beforeinput`（`deleteContentBackward`）拦截与 `domBlockHasVisibleText` 守卫（兼容 Android `keyCode 229 / Unidentified` 与残留 `view.composing` 态，在原生 `contenteditable` 将空 `<li>` 拆到行首及触发 ProseMirror 50ms `blur/focus` 兜底前保持父项缩进空行，同时对已处理的 `keydown` 精确去重）；新增 `DumbPadMobileInputRuleSettler`（跨过 `prosemirror-view` 20ms `scheduleComposeEnd` 窗口补跑全部 `isInputRules` 插件并兜底非 composing DOM 直写路径），`SoftBreakBlockRules` 放宽对移动端 NBSP（`\u00a0`）的兼容。
+  - **回归**：扩展 `test:tiptap-list-nesting`、`test:toaster`、`test:tiptap-caret`，并新增真实 Chrome 移动端回归 `npm run test:mobile-editor-browser`（`test/browser/mobile-editor-experience.js`）。
+
 - **公开分享页（`/s/:id`）重构为 B+C 混合布局并彻底隔离样式泄漏**：
   - 将模板与渲染逻辑拆分到独立模块 `scripts/share-renderer.js`，`routes/share-routes.js` 不再引入主站 `/Assets/styles.css` 与 `/Assets/preview-styles.css`，消除全局样式重置与 `overflow: hidden` 对分享页造成的排版崩坏、暗色模式对比度断裂及引用块误斜体问题。
   - 采用用户选定的 **B 风格（iOS 质感圆角主卡片与磨砂交互层）+ C 风格（桌面左侧 sticky 元信息卡、快捷操作条与标题目录栏）**：桌面有目录时操作入口（DumbPad 徽标、复制、浅色/暗色）直接融入左侧 sticky 栏（无标题文章内嵌至页头），消除悬浮顶栏遮挡正文与顶部夹缝；`< 1060px` 自动切换为贴顶无缝磨砂窄栏、顶部元信息胶囊与右上角目录弹窗。
