@@ -3,6 +3,7 @@ const express = require('express');
 const sharp = require('sharp');
 const { createAssetStorage, safeAssetId } = require('../scripts/asset-storage');
 const { getMaxFileBytes, validateFileAssetUpload, FILE_TYPES } = require('../scripts/file-asset-policy');
+const { normalizeRenamedFilename, syncRenamedAssetReferences } = require('../scripts/asset-rename-service');
 
 const MAX_IMAGE_BYTES = 50 * 1024 * 1024;
 const MAX_IMAGE_PIXELS = 100 * 1000 * 1000;
@@ -130,7 +131,14 @@ function decodeAssetCursor(value) {
     }
 }
 
-function registerAssetRoutes(app, { storage, originValidationMiddleware, maxFileBytes }) {
+function registerAssetRoutes(app, {
+    storage,
+    originValidationMiddleware,
+    maxFileBytes,
+    broadcastUpdate = () => {},
+    broadcastWebSocketMessage = () => {},
+    scheduleIndexNotepads = () => {}
+}) {
     const assets = createAssetStorage(storage);
     const fileByteLimit = getMaxFileBytes(maxFileBytes);
 
@@ -315,6 +323,97 @@ function registerAssetRoutes(app, { storage, originValidationMiddleware, maxFile
         }
     });
 
+    app.patch('/api/assets/:id', originValidationMiddleware, express.json({ limit: '64kb' }), async (req, res) => {
+        const id = safeAssetId(req.params.id);
+        if (!id) return res.status(404).json({ error: 'Asset not found' });
+        if (typeof req.body?.name !== 'string') {
+            return res.status(400).json({ error: '附件名称不能为空' });
+        }
+
+        const syncReferences = req.body?.syncReferences !== false;
+        const actorId = typeof req.body?.userId === 'string' && req.body.userId.trim()
+            ? req.body.userId.trim()
+            : 'asset-rename';
+
+        try {
+            const result = await withAssetContentLock(id, async () => {
+                const metadata = await assets.readMetadata(id);
+                if (!metadata) return { status: 404, body: { error: 'Asset not found' } };
+
+                const normalized = normalizeRenamedFilename({
+                    requestedName: req.body.name,
+                    currentName: metadata.name,
+                    kind: metadata.kind || 'image',
+                    mimeType: metadata.type
+                });
+                if (!normalized.ok) {
+                    return { status: normalized.status || 400, body: { error: normalized.error } };
+                }
+
+                const nextType = normalized.type || metadata.type;
+                if (normalized.name === metadata.name && nextType === metadata.type) {
+                    return {
+                        status: 200,
+                        metadata,
+                        unchanged: true
+                    };
+                }
+
+                const conflict = await assets.hasDisplayName(normalized.name, metadata.kind || 'image', id);
+                if (conflict) {
+                    return {
+                        status: 409,
+                        body: { error: '已存在同名附件，请使用其他名称', code: 'DUPLICATE_ASSET_NAME' }
+                    };
+                }
+
+                const nextMetadata = {
+                    ...metadata,
+                    name: normalized.name,
+                    type: nextType,
+                    updatedAt: Date.now()
+                };
+                await assets.writeMetadata(id, nextMetadata);
+                return {
+                    status: 200,
+                    metadata: nextMetadata,
+                    unchanged: false
+                };
+            });
+
+            if (result.body) {
+                return res.status(result.status).json(result.body);
+            }
+
+            const synced = (!result.unchanged && syncReferences)
+                ? await syncRenamedAssetReferences({
+                    storage,
+                    asset: responseAsset(result.metadata),
+                    actorId,
+                    broadcastUpdate,
+                    broadcastThoughtsUpdate: (action, payload) => broadcastWebSocketMessage({
+                        type: 'thoughts_update',
+                        action,
+                        payload
+                    }),
+                    scheduleIndexNotepads
+                })
+                : { updatedNotes: [], updatedNoteIds: [], updatedThoughtIds: [] };
+
+            return res.status(200).json({
+                success: true,
+                unchanged: Boolean(result.unchanged),
+                asset: responseAsset(result.metadata),
+                updatedNotes: synced.updatedNotes || [],
+                updatedNoteIds: synced.updatedNoteIds,
+                updatedThoughtIds: synced.updatedThoughtIds
+            });
+        } catch (error) {
+            console.error('Failed to rename asset:', error);
+            return res.status(500).json({ error: 'Unable to rename asset' });
+        }
+    });
+
     // 文本类附件的「读接口」：把字节解成 UTF-8 文本并带出乐观并发版本。
     // 必须 no-store —— 通用变体路由给的是 immutable 一年缓存，原地改写后
     // 复用同一个 URL 会读到浏览器缓存里的旧字节。
@@ -432,7 +531,9 @@ function registerAssetRoutes(app, { storage, originValidationMiddleware, maxFile
             // 文本类附件可被 /content 原地改写；PDF 的 Content-Disposition 从
             // attachment 改成了 inline。两者都不能声明 immutable，否则旧响应
             // 会在浏览器里躺一年，保存/预览一直拿到过期字节或错误 disposition。
-            res.setHeader('Cache-Control', isEditableTextAsset(asset.metadata) || isPdfAsset
+            // download 变体也必须走 no-store，保证附件改名后点击下载能立即拿到最新的
+            // Content-Disposition 文件名（图片 /preview 与 /original 仍保持 immutable 缓存）。
+            res.setHeader('Cache-Control', req.params.variant === 'download' || isEditableTextAsset(asset.metadata) || isPdfAsset
                 ? 'no-store, private'
                 : 'private, max-age=31536000, immutable');
             res.type(asset.contentType);

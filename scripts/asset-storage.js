@@ -44,6 +44,25 @@ function createAssetStorage(storage) {
         return path.join(localRoot, id);
     }
 
+    async function writeMetadata(id, metadata) {
+        const safeId = safeAssetId(id);
+        if (!safeId) throw new Error('Invalid asset id');
+
+        if (storage.backend === 's3') {
+            await s3.putObject(
+                joinS3Key(assetPrefix(safeId), 'meta.json'),
+                JSON.stringify(metadata, null, 2),
+                'application/json'
+            );
+            return metadata;
+        }
+
+        const target = localAssetDir(safeId);
+        await fs.mkdir(target, { recursive: true });
+        await fs.writeFile(path.join(target, 'meta.json'), JSON.stringify(metadata, null, 2), 'utf8');
+        return metadata;
+    }
+
     async function writeAsset({ id, metadata, original, preview = null }) {
         const safeId = safeAssetId(id);
         if (!safeId) throw new Error('Invalid asset id');
@@ -190,12 +209,25 @@ function createAssetStorage(storage) {
     // ("image.png" taken twice yields "image (1).png", "image (2).png").
     // Callers must apply this only on the create path — hash-dedupe reuse must
     // never rename an already-stored asset.
-    async function uniqueName(name, kind = null) {
+    async function hasDisplayName(name, kind = null, excludeId = '') {
+        const wanted = String(name || '');
+        if (!wanted) return false;
+        const list = await listAssets();
+        return list.some(meta => meta
+            && meta.name === wanted
+            && (!excludeId || String(meta.id || '') !== String(excludeId))
+            && (!kind || (meta.kind || 'image') === kind));
+    }
+
+    async function uniqueName(name, kind = null, excludeId = '') {
         const wanted = String(name || '');
         if (!wanted) return wanted;
         const list = await listAssets();
         const taken = new Set(list
-            .filter(meta => meta && meta.name && (!kind || (meta.kind || 'image') === kind))
+            .filter(meta => meta
+                && meta.name
+                && (!excludeId || String(meta.id || '') !== String(excludeId))
+                && (!kind || (meta.kind || 'image') === kind))
             .map(meta => String(meta.name)));
         if (!taken.has(wanted)) return wanted;
         const { base, ext } = splitDisplayName(wanted);
@@ -256,7 +288,7 @@ function createAssetStorage(storage) {
         return { deleted, missing };
     }
 
-    return { readAsset, readMetadata, writeAsset, listAssets, findByHash, uniqueName, deleteAsset, deleteAssets };
+    return { readAsset, readMetadata, writeMetadata, writeAsset, listAssets, findByHash, hasDisplayName, uniqueName, deleteAsset, deleteAssets };
 }
 
 module.exports = { createAssetStorage, safeAssetId };

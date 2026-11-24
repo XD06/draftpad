@@ -49,7 +49,12 @@ import {
 import { TiptapSelectionMenu } from './managers/tiptap-selection-menu.js';
 import { TiptapSlashMenu } from './managers/tiptap-slash-menu.js';
 import { createFileCommandController, TiptapArticleUploadProgress } from './managers/tiptap-file-command.js';
-import { buildArticleImageMarkdown } from './managers/article-file-command.js';
+import {
+    buildArticleFileMarkdown,
+    buildArticleImageMarkdown,
+    buildArticleMediaMarkdown,
+} from './managers/article-file-command.js';
+import { isAudioFile, isImageFile, isVideoFile } from './managers/asset-api-client.js';
 import {
     DumbPadArticleFileLink,
     DumbPadImage,
@@ -1924,15 +1929,39 @@ export class HybridMarkdownEditor {
     }
 
     insertArticleAssetReference(asset) {
-        if (!asset) return false;
-        const url = String(asset.url || '');
-        if (!url) return false;
-        const isImage = asset.kind === 'image' || /\.(png|jpe?g|gif|webp|svg|avif)$/i.test(url);
-        const label = String(asset.name || asset.filename || (isImage ? 'image' : url));
-        // 与 /file、粘贴插图保持一致：默认「窄」档，插入时不占满纸面。
-        const markdown = isImage
-            ? buildArticleImageMarkdown({ name: label, previewUrl: url })
-            : `[${label}](${url})`;
+        if (!asset || !this.editor || this.editor.isDestroyed) return false;
+        const kindHint = String(asset.kind || '').toLowerCase();
+        const name = String(asset.name || asset.filename || '');
+        const type = String(asset.type || '');
+        const previewUrl = String(asset.previewUrl || asset.url || '');
+        const originalUrl = String(asset.originalUrl || asset.url || '');
+        const downloadUrl = String(asset.downloadUrl || asset.originalUrl || asset.url || '');
+
+        const isImage = kindHint === 'image'
+            || (!kindHint && (isImageFile({ type }) || /\.(png|jpe?g|gif|webp|svg|avif)$/i.test(previewUrl || name)));
+        const fileProbe = { name, type };
+        let markdown = '';
+        if (isImage && previewUrl) {
+            markdown = buildArticleImageMarkdown({ ...asset, name: name || '图片', previewUrl });
+        } else if (isVideoFile(fileProbe) && originalUrl) {
+            markdown = buildArticleMediaMarkdown({ ...asset, name: name || '视频', originalUrl }, 'video');
+        } else if (isAudioFile(fileProbe) && originalUrl) {
+            markdown = buildArticleMediaMarkdown({ ...asset, name: name || '音频', originalUrl }, 'audio');
+        } else if (downloadUrl) {
+            markdown = buildArticleFileMarkdown({ ...asset, name: name || '文件', downloadUrl, originalUrl });
+        }
+        if (!markdown) return false;
+
+        if (this.sourceMode) {
+            const textarea = this.getSourceTextarea();
+            if (!textarea) return false;
+            const start = Number(textarea.selectionStart || 0);
+            const end = Number(textarea.selectionEnd || start);
+            textarea.setRangeText(markdown, start, end, 'end');
+            this.notifyEditorValueChanged(textarea.value);
+            this.autosizeSourceTextarea(textarea);
+            return true;
+        }
         this.editor.commands.insertContentAt(this.editor.state.selection.from, markdown);
         this.notifyEditorValueChanged(this.getValue());
         return true;

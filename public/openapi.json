@@ -133,7 +133,20 @@
       }
     },
     "/api/assets/{id}": {
-      "delete": { "summary": "Delete a single asset", "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "description": "Deleted" }, "404": { "$ref": "#/components/responses/Error" } } }
+      "parameters": [
+        { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "pattern": "^[a-fA-F0-9-]{16,64}$" } }
+      ],
+      "patch": {
+        "summary": "Rename an asset (preserving or safely validating its extension) and optionally sync references across Notepads and Thoughts",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["name"], "properties": { "name": { "type": "string" }, "syncReferences": { "type": "boolean", "default": true } } } } } },
+        "responses": {
+          "200": { "description": "Renamed asset metadata and synced document ids", "content": { "application/json": { "schema": { "type": "object", "required": ["success", "asset"], "properties": { "success": { "type": "boolean" }, "unchanged": { "type": "boolean" }, "asset": { "type": "object" }, "updatedNoteIds": { "type": "array", "items": { "type": "string" } }, "updatedThoughtIds": { "type": "array", "items": { "type": "string" } } } } } } },
+          "400": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" },
+          "409": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "delete": { "summary": "Delete a single asset", "responses": { "200": { "description": "Deleted" }, "404": { "$ref": "#/components/responses/Error" } } }
     },
     "/api/assets/{id}/{variant}": {
       "parameters": [

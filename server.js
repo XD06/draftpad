@@ -613,7 +613,10 @@ registerDataManagementRoutes(app, {
 registerAssetRoutes(app, {
     storage,
     originValidationMiddleware,
-    maxFileBytes: ASSET_MAX_FILE_BYTES
+    maxFileBytes: ASSET_MAX_FILE_BYTES,
+    broadcastUpdate,
+    broadcastWebSocketMessage,
+    scheduleIndexNotepads
 });
 
 registerThoughtRoutes(app, {

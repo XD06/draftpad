@@ -173,6 +173,31 @@ export class AssetApiClient {
         return Array.isArray(data.assets) ? data.assets : [];
     }
 
+    async renameAsset(id, name, { syncReferences = true, userId = '' } = {}) {
+        const assetId = String(id || '').trim();
+        if (!assetId) throw new TypeError('An asset id is required');
+        const nextName = String(name ?? '').trim();
+        if (!nextName) throw new TypeError('Asset name is required');
+        const response = await fetch(`/api/assets/${encodeURIComponent(assetId)}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'same-origin',
+            body: JSON.stringify({
+                name: nextName,
+                syncReferences: Boolean(syncReferences),
+                ...(userId ? { userId: String(userId) } : {})
+            })
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            const error = new Error(data?.error || '重命名附件失败');
+            error.status = response.status;
+            error.code = data?.code || '';
+            throw error;
+        }
+        return data;
+    }
+
     async deleteAsset(id) {
         const assetId = String(id || '').trim();
         if (!assetId) throw new TypeError('An asset id is required');
