@@ -2507,7 +2507,7 @@ html:not([data-app-ready]) .empty-state-container::before {
 
 .hybrid-line ul,
 .hybrid-line ol {
-    padding-left: 1.35rem;
+    padding-left: 1.55em;
 }
 
 .hybrid-line blockquote {
@@ -2855,15 +2855,41 @@ html:not([data-app-ready]) .empty-state-container::before {
     color: var(--text-color);
 }
 
-/* 待办列表（Tiptap 官方 TaskItem 渲染的 ul[data-type=taskList]）：
-   去掉普通列表的圆点/序号，checkbox 与文字同行。桌面（≥981）缩进与普通
-   列表一致（ios-theme 的 1.75em，特异性 (0,3,2) 恰好压过这里的 (0,3,1)，
-   数值保持相同语义）；本值实际生效的场景只有 ≤980 的媒体查询覆盖（见下）。
-   负边距只由 label 自身宽度（input 16px + 两侧 margin 0.65em）决定，
-   不硬编码列表缩进，嵌套层级与缩进规则变化都不受影响。 */
+/* 列表（无序 / 有序）与待办列表对齐（Typora 基准）：
+   桌面与移动端统一使用 1.55em 悬挂缩进（(0,2,1) 压过动态加载的 vditor/index.css
+   (0,1,1)），保证无序圆点、有序数字与待办文字左沿同列，且复选框落在标记悬挂区内
+   不探出纸面左沿。有序标记改用系统等宽数字字形并显式补 ".\2004" 呼吸间距，
+   无序圆点改用 "•\2004\2006" 对齐同列，消除中文阅读字体西文标点过挤的问题。 */
+.typora-editor-shell .vditor-reset ul,
+.typora-editor-shell .vditor-reset ol,
+.typora-editor-shell .vditor-reset ul[data-type="taskList"] {
+    padding-left: 1.55em;
+}
+
+.typora-editor-shell .vditor-reset ol > li::marker {
+    content: counter(list-item) ".\2004";
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", "Helvetica Neue", sans-serif;
+    font-variant-numeric: tabular-nums;
+    font-size: 0.94em;
+    font-weight: 500;
+}
+
+.typora-editor-shell .vditor-reset ul:not([data-type="taskList"]) > li::marker {
+    content: "•\2004\2006";
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+    font-size: 1.05em;
+}
+
+.typora-editor-shell .vditor-reset ul:not([data-type="taskList"]) ul:not([data-type="taskList"]) > li::marker {
+    content: "◦\2004\2006";
+}
+
+.typora-editor-shell .vditor-reset ul:not([data-type="taskList"]) ul:not([data-type="taskList"]) ul:not([data-type="taskList"]) > li::marker {
+    content: "▪\2004\2006";
+}
+
 .typora-editor-shell .vditor-reset ul[data-type="taskList"] {
     list-style: none;
-    padding-left: 1.75em;
 }
 
 .typora-editor-shell .vditor-reset ul[data-type="taskList"] li {
@@ -2874,13 +2900,13 @@ html:not([data-app-ready]) .empty-state-container::before {
 
 .typora-editor-shell .vditor-reset ul[data-type="taskList"] li > label {
     flex: 0 0 auto;
-    /* 复选框整体拉进列表标记的悬挂区（ul 的 padding-left 区），任务文字因此与
-       同层级 bullet/有序列表的文字精确对齐——否则复选框(16px) + 间距(0.65em)
-       会把文字整体顶进内容区，待办天然比列表多出约 26px 一段缩进。
-       负值只由 label 自身的宽度（input 16px + 两侧 margin 0.65em）决定，
-       不硬编码列表缩进，嵌套层级与缩进规则变化都不受影响。 */
-    margin-left: calc(-16px - 0.65em);
-    margin-right: 0.35em;
+    /* 复选框整体拉进列表标记的悬挂区（ul 的 1.55em padding-left 区），任务文字因此与
+       同层级 bullet/有序列表的文字精确对齐。负值只由 label 自身宽度（input 15px
+       + input margin-right 0.3em + label margin-right 0.08em = 15px + 0.38em）决定，
+       全端（桌面 & 移动 PWA）复选框左沿始终落在容器 1.55em 留白内部而不探出纸面，
+       视觉中心对齐 1. / • 标记列。 */
+    margin-left: calc(-15px - 0.38em);
+    margin-right: 0.08em;
     user-select: none;
     -webkit-user-select: none;
 }
@@ -2888,21 +2914,21 @@ html:not([data-app-ready]) .empty-state-container::before {
 .typora-editor-shell .vditor-reset ul[data-type="taskList"] li > label input {
     appearance: none;
     -webkit-appearance: none;
-    width: 16px;
-    height: 16px;
+    font-size: inherit;
+    width: 15px;
+    height: 15px;
     margin: 2px 0.3em 0.15em 0;
     vertical-align: middle;
-    border: 1.5px solid #c9ced6;
+    border: 1.5px solid #c5cad3;
     border-radius: 4px;
     background: transparent;
     cursor: pointer;
     position: relative;
     flex: none;
-    /* 方框光学居中：待办行底部那截间隙（行距不变式要求的 0.25/0.32em）落在
-       文字下方，方框却按行盒居中，实测方框中心比文字墨迹中心低 1.71px。
+    /* 方框光学居中：待办行底部那截间隙落在文字下方，方框按行盒居中会偏低约 1.7px。
        这里只平移方框自身（position:relative 不参与布局），行高与文字位置
        分毫不动——退格阶梯的行距不变式依赖「li 高度恒定」，绝不能改用
-       padding/margin 去凑。真机 Chrome 实测：偏移后中心差 1.71px → 0.01px。 */
+       padding/margin 去凑。 */
     top: -1.7px;
 }
 
@@ -2917,8 +2943,8 @@ html:not([data-app-ready]) .empty-state-container::before {
     position: absolute;
     left: 50%;
     top: 40%;
-    width: 4.5px;
-    height: 8.5px;
+    width: 4px;
+    height: 7.5px;
     border: solid #fff;
     border-width: 0 2px 2px 0;
     transform: translate(-50%, -52%) rotate(45deg);
@@ -2929,19 +2955,8 @@ html:not([data-app-ready]) .empty-state-container::before {
     min-width: 0;
 }
 
-/* ≤980px（ios-theme 的移动端区间：1.75em 只写在 min-width: 981px 里）：全局
-   reset 已把列表 padding 清零，普通列表的标记本来就悬挂在纸面边缘；待办若
-   再负边距悬挂复选框，会探出纸面 17px 左右——移动端「待办超出编辑器」。
-   复选框改为内联排在文字前，缩进与普通列表（0）一致，任何宽度都不溢出。 */
-@media (max-width: 980px) {
-    .typora-editor-shell .vditor-reset ul[data-type="taskList"] {
-        padding-left: 0;
-    }
-
-    .typora-editor-shell .vditor-reset ul[data-type="taskList"] li > label {
-        margin-left: 0;
-    }
-}
+/* ≤980px（移动端/PWA）：与桌面保持同一条 1.75em 列表缩进 + (-16px - 0.4em)
+   悬挂复选框规则（约落在 +5..+7px 区间，始终留在卡片纸面内且与普通/有序列表对齐）。 */
 
 /* 列表/待办条目的行距不变式：Typora 式退格阶梯（DumbPadListBlankLineBackspace：
    空条目 ↔ 条目内空行 ↔ 退出列表）的每一步都会改变「前一个段落是否
@@ -2964,19 +2979,19 @@ html:not([data-app-ready]) .empty-state-container::before {
     margin-top: 0;
     margin-bottom: 0.25em;
 }
-
-@media (min-width: 981px) {
-    .typora-editor-shell .tiptap.ProseMirror.vditor-reset li > p,
-    .typora-editor-shell .tiptap.ProseMirror.vditor-reset li > div > p {
-        margin-bottom: 0.32em;
-    }
-}
 .typora-editor-shell .vditor-reset ul[data-type="taskList"] li[data-checked] + li {
     margin-top: 0;
 }
 .typora-editor-shell .tiptap.ProseMirror.vditor-reset ul,
 .typora-editor-shell .tiptap.ProseMirror.vditor-reset ol {
+    margin-top: 0;
     margin-bottom: 0;
+}
+.typora-editor-shell .tiptap.ProseMirror.vditor-reset ul + ol,
+.typora-editor-shell .tiptap.ProseMirror.vditor-reset ol + ul,
+.typora-editor-shell .tiptap.ProseMirror.vditor-reset ul + ul,
+.typora-editor-shell .tiptap.ProseMirror.vditor-reset ol + ol {
+    margin-top: 0.25em;
 }
 /* 勾选完成的待办：文字删除线 + 淡灰（直接命中 div 与内部 p，
    否则 .vditor-reset p 的直接颜色规则会把继承的灰色顶掉） */
@@ -3036,31 +3051,26 @@ html:not([data-app-ready]) .empty-state-container::before {
    901–980 纸面 padding 只有 10px，但卡片外侧还有页边距放得下竖条；
    ≤900 卡片贴住视口、裁剪沿只隔着 10px padding，竖条须整体收进 padding 区） */
 
-/* 桌面（≥981）：普通条目停在本条目标记悬挂区之外（= 该行最前面的空白），
-   默认的 -12px 会落进悬挂区压住「17.」这类序号数字；待办条目的复选框经
-   负边距（-16px - 0.65em）悬挂在条目内容之外，竖条再往左让出悬挂宽 + 12px。 */
+/* 桌面（≥981）：普通列表与待办列表统一保持 1.55em 缩进，竖条停在标记悬挂区最左（-1.55em），
+   与数字序号及复选框左沿均有充足呼吸空间。 */
 @media (min-width: 981px) {
-    .typora-editor-shell .vditor-reset li.article-jump-target::before {
-        left: -1.75em;
-    }
-
+    .typora-editor-shell .vditor-reset li.article-jump-target::before,
     .typora-editor-shell .vditor-reset ul[data-type="taskList"] li.article-jump-target::before {
-        left: calc(-16px - 0.65em - 12px);
+        left: -1.55em;
     }
 }
 
-/* 901–980：列表缩进为零，序号悬挂、待办复选框内联，竖条统一停在本行
-   最前方 1.75em（越过序号与复选框），与桌面「停在悬挂区最左」同一语义。 */
+/* 901–980：列表统一 1.55em 缩进，竖条同停在 -1.55em。 */
 @media (min-width: 901px) and (max-width: 980px) {
     .typora-editor-shell .vditor-reset li.article-jump-target::before,
     .typora-editor-shell .vditor-reset ul[data-type="taskList"] li.article-jump-target::before {
-        left: -1.75em;
+        left: -1.55em;
     }
 }
 
 /* ≤900：卡片（.tiptap）自身 overflow-x:auto，左内沿只有 padding 的 10px，
    默认的 -12px 会越界被裁——竖条收紧到 -9px（实测评定：落点距裁剪沿 1px、
-   距文字/复选框 ≥6px，完整可见），列表条目自带缩进、竖条停在缩进空档。
+   距文字 ≥6px，完整可见），列表条目统一有 1.55em 缩进、竖条停在标记左侧。
    落点表现与桌面统一 = 左侧竖条 + 文字短暂变主色，不再有背景脉冲。
    标题落点另有一坑：标题级别侧标（> h1–h6::before，(0,3,1)）与竖条共用
    同一条 ::before，且 ≤980 把该伪元素整体 display:none——移动端标题落点
@@ -3076,14 +3086,10 @@ html:not([data-app-ready]) .empty-state-container::before {
         transform: none;
     }
 
-    /* 普通列表条目有 2em 缩进：竖条越过悬挂的圆点标记，停在标记左侧。 */
-    .typora-editor-shell .tiptap.vditor-reset li.article-jump-target::before {
-        left: -2em;
-    }
-
-    /* 待办列表 ≤980 已把 padding 清零（复选框内联），与普通条目同位。 */
+    /* 普通列表与待办列表统一有 1.55em 缩进：竖条越过悬挂标记/复选框，停在左侧。 */
+    .typora-editor-shell .tiptap.vditor-reset li.article-jump-target::before,
     .typora-editor-shell .tiptap.vditor-reset ul[data-type="taskList"] li.article-jump-target::before {
-        left: -9px;
+        left: -1.55em;
     }
 }
 

@@ -10,7 +10,7 @@
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const express = require('express');
-const { chromium } = require('playwright');
+const { chromium } = require(process.env.DUMBPAD_PLAYWRIGHT_MODULE || 'playwright');
 const { registerNoteRoutes } = require('../../routes/note-routes');
 const { registerNotepadRoutes } = require('../../routes/notepad-routes');
 const { createWebSocketHub } = require('../../server/websocket');
@@ -18,15 +18,17 @@ const { createWebSocketHub } = require('../../server/websocket');
 async function main() {
     const root = path.resolve(__dirname, '../..');
     const note = { id: 'note', name: 'Mobile UX', version: 1, createdAt: Date.now(), updatedAt: Date.now() };
-    let metadata = { notepads: [note] };
+    const alignNote = { id: 'align-note', name: 'Align UX', version: 1, createdAt: Date.now(), updatedAt: Date.now() };
+    let metadata = { notepads: [note, alignNote] };
     let content = '第一段原始内容\n\n第二段用户正在输入\n\n' + Array.from({ length: 18 }, (_, i) => `占位段落 ${i + 1}`).join('\n\n');
+    const alignedContent = '- [ ] 待办对齐项\n\n1. 有序对齐项\n\n- 无序对齐项';
     let lock = Promise.resolve();
     const storage = {
         init: async () => {},
         readNotepadsMeta: async () => structuredClone(metadata),
         saveNotepadsMeta: async next => { metadata = structuredClone(next); },
-        readNoteContent: async () => content,
-        writeNoteContent: async (_notepad, next) => { content = next; },
+        readNoteContent: async (notepad) => (notepad?.id === 'align-note' ? alignedContent : content),
+        writeNoteContent: async (notepad, next) => { if (notepad?.id !== 'align-note') content = next; },
         withNotepadWriteLock(operation) {
             const result = lock.then(operation);
             lock = result.catch(() => {});
@@ -233,6 +235,196 @@ async function main() {
         assert.equal(nestedResult.hasNestedLi, true, `expected nested ol > li > ul > li, got: ${nestedResult.html}`);
         assert(nestedResult.nestedText.includes('嵌套子项'), `expected nested text, got: ${nestedResult.nestedText}`);
         console.log('PASS mobile Android 229/beforeinput + IME "- " creates nested list');
+
+        // 3.5. Mobile & Desktop Typora-aligned list / taskList geometry
+        const measureEditorListAlignment = async (targetPage) => targetPage.evaluate(() => {
+            const root = document.querySelector('.tiptap');
+            const rootRect = root.getBoundingClientRect();
+            const csRoot = getComputedStyle(root);
+            const innerLeft = rootRect.left + parseFloat(csRoot.borderLeftWidth || '0') + parseFloat(csRoot.paddingLeft || '0');
+            const taskUl = root.querySelector('ul[data-type="taskList"]');
+            const taskInput = taskUl.querySelector('input');
+            const taskDiv = taskUl.querySelector('li > div');
+            const ol = root.querySelector('ol');
+            const olP = ol.querySelector('li > p');
+            const ul = root.querySelector('ul:not([data-type="taskList"])');
+            const ulP = ul.querySelector('li > p');
+            const olMarker = getComputedStyle(ol.querySelector('li'), '::marker');
+            const ulMarker = getComputedStyle(ul.querySelector('li'), '::marker');
+            return {
+                taskPad: getComputedStyle(taskUl).paddingLeft,
+                olPad: getComputedStyle(ol).paddingLeft,
+                ulPad: getComputedStyle(ul).paddingLeft,
+                taskBoxLeftRel: Math.round((taskInput.getBoundingClientRect().left - innerLeft) * 100) / 100,
+                taskTextRel: Math.round((taskDiv.getBoundingClientRect().left - innerLeft) * 100) / 100,
+                olTextRel: Math.round((olP.getBoundingClientRect().left - innerLeft) * 100) / 100,
+                ulTextRel: Math.round((ulP.getBoundingClientRect().left - innerLeft) * 100) / 100,
+                olMarkerContent: olMarker.content,
+                olMarkerTabular: olMarker.fontVariantNumeric,
+                ulMarkerContent: ulMarker.content,
+            };
+        });
+
+        await page.goto(`http://127.0.0.1:${listener.address().port}/?id=align-note`);
+        await page.waitForSelector('.tiptap ul[data-type="taskList"] input', { timeout: 10000 });
+        await page.waitForSelector('.tiptap ol > li p', { timeout: 5000 });
+        await page.waitForSelector('.tiptap ul:not([data-type="taskList"]) > li p', { timeout: 5000 });
+
+        const mobileListAlign = await measureEditorListAlignment(page);
+        assert.equal(mobileListAlign.taskPad, mobileListAlign.olPad, 'Mobile taskList and ol must share padding-left');
+        assert.equal(mobileListAlign.taskPad, mobileListAlign.ulPad, 'Mobile taskList and ul must share padding-left');
+        assert.equal(mobileListAlign.olMarkerTabular, 'tabular-nums', 'Mobile ol marker should use tabular-nums');
+        assert(mobileListAlign.olMarkerContent.includes('counter(list-item)'), `Mobile ol marker unexpected: ${mobileListAlign.olMarkerContent}`);
+        assert(mobileListAlign.ulMarkerContent.includes('•'), `Mobile ul marker unexpected: ${mobileListAlign.ulMarkerContent}`);
+        assert(mobileListAlign.taskBoxLeftRel >= 2, `Mobile task checkbox must stay inside gutter, got ${mobileListAlign.taskBoxLeftRel}px`);
+        assert(
+            Math.abs(mobileListAlign.taskTextRel - mobileListAlign.olTextRel) <= 0.5
+            && Math.abs(mobileListAlign.taskTextRel - mobileListAlign.ulTextRel) <= 0.5,
+            `Mobile list text origins must match: ${JSON.stringify(mobileListAlign)}`
+        );
+
+        const desktopCtx = await browser.newContext({ viewport: { width: 1280, height: 800 }, serviceWorkers: 'block' });
+        const desktopPage = await desktopCtx.newPage();
+        desktopPage.on('pageerror', error => errors.push(error.message));
+        try {
+            await desktopPage.goto(`http://127.0.0.1:${listener.address().port}/?id=align-note`);
+            await desktopPage.waitForSelector('.tiptap ul[data-type="taskList"] input', { timeout: 10000 });
+            await desktopPage.waitForSelector('.tiptap ol > li p', { timeout: 5000 });
+            await desktopPage.waitForSelector('.tiptap ul:not([data-type="taskList"]) > li p', { timeout: 5000 });
+            const desktopListAlign = await measureEditorListAlignment(desktopPage);
+            assert.equal(desktopListAlign.taskPad, desktopListAlign.olPad, 'Desktop taskList and ol must share padding-left');
+            assert.equal(desktopListAlign.taskPad, desktopListAlign.ulPad, 'Desktop taskList and ul must share padding-left');
+            assert.equal(desktopListAlign.olMarkerTabular, 'tabular-nums', 'Desktop ol marker should use tabular-nums');
+            assert(desktopListAlign.olMarkerContent.includes('counter(list-item)'), `Desktop ol marker unexpected: ${desktopListAlign.olMarkerContent}`);
+            assert(desktopListAlign.ulMarkerContent.includes('•'), `Desktop ul marker unexpected: ${desktopListAlign.ulMarkerContent}`);
+            assert(desktopListAlign.taskBoxLeftRel >= 2, `Desktop task checkbox must stay inside gutter, got ${desktopListAlign.taskBoxLeftRel}px`);
+            assert(
+                Math.abs(desktopListAlign.taskTextRel - desktopListAlign.olTextRel) <= 0.5
+                && Math.abs(desktopListAlign.taskTextRel - desktopListAlign.ulTextRel) <= 0.5,
+                `Desktop list text origins must match: ${JSON.stringify(desktopListAlign)}`
+            );
+            console.log('PASS desktop & mobile editor list / taskList Typora alignment');
+        } finally {
+            await desktopCtx.close();
+        }
+
+        // 4. Android Chrome UA mobile code block: Enter / multiline IME / paste / Backspace / source mode
+        const androidContext = await browser.newContext({
+            viewport: { width: 390, height: 844 },
+            deviceScaleFactor: 3,
+            isMobile: true,
+            hasTouch: true,
+            serviceWorkers: 'block',
+            userAgent: 'Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36'
+        });
+        try {
+            const androidPage = await androidContext.newPage();
+            androidPage.on('pageerror', error => errors.push(error.message));
+            const androidCdp = await androidContext.newCDPSession(androidPage);
+            await androidPage.goto(`http://127.0.0.1:${listener.address().port}/?id=note`);
+            await androidPage.waitForSelector('.tiptap[contenteditable="true"]', { timeout: 10000 });
+            await androidPage.waitForTimeout(150);
+
+            await androidPage.locator('.tiptap').click();
+            await androidPage.keyboard.press('Control+a');
+            await androidPage.keyboard.press('Backspace');
+            await androidPage.keyboard.type('```markdown ');
+            await androidPage.waitForTimeout(80);
+            await androidPage.keyboard.type('# markdown块渲染');
+            await androidPage.keyboard.press('Enter');
+            await androidPage.keyboard.type('## 存在问题');
+            await androidPage.keyboard.press('Enter');
+            await androidPage.keyboard.type('与源码不一致');
+            await androidPage.waitForTimeout(250);
+
+            const codeState = await androidPage.evaluate(() => ({
+                codeCount: document.querySelectorAll('.tiptap .vditor-wysiwyg__block pre code').length,
+                lineNumbers: document.querySelector('.tiptap .vditor-wysiwyg__block pre')?.dataset.lineNumbers,
+                text: document.querySelector('.tiptap .vditor-wysiwyg__block pre code')?.textContent || '',
+            }));
+            assert.equal(codeState.codeCount, 1, 'Android codeBlock must keep a single <code> element');
+            assert.equal(codeState.lineNumbers, '1\n2\n3', `expected 3 line numbers, got: ${codeState.lineNumbers}`);
+            assert(codeState.text.includes('与源码不一致'), `expected line 3 in code, got: ${codeState.text}`);
+
+            // Switching to Source Mode must serialize all 3 lines (not just line 1)
+            await androidPage.evaluate(() => document.getElementById('toggle-source-mode').click());
+            await androidPage.waitForSelector('.tiptap-source-textarea', { state: 'visible', timeout: 5000 });
+            const sourceValue = await androidPage.locator('.tiptap-source-textarea').inputValue();
+            assert.equal(sourceValue, '```markdown\n# markdown块渲染\n## 存在问题\n与源码不一致\n```',
+                `source mode must preserve all code lines, got: ${JSON.stringify(sourceValue)}`);
+            await androidPage.evaluate(() => document.getElementById('toggle-source-mode').click());
+            await androidPage.waitForFunction(() => {
+                const ed = document.querySelector('.tiptap[contenteditable="true"]');
+                const ta = document.querySelector('.tiptap-source-textarea');
+                return ed && (!ta || getComputedStyle(ta).display === 'none') && document.activeElement === ed;
+            }, null, { timeout: 5000 });
+            // Wait past ProseMirror's 50ms suppressSelectionUpdates window after restoreCaretAfterModeSwitch
+            await androidPage.waitForTimeout(80);
+
+            // Backspace at end of line 3 must stay on line 3 (not jump to line 1 or destroy block)
+            await androidPage.evaluate(() => {
+                const ed = document.querySelector('.tiptap[contenteditable="true"]');
+                ed?.focus();
+                const code = document.querySelector('.tiptap .vditor-wysiwyg__block pre code');
+                const walker = document.createTreeWalker(code, NodeFilter.SHOW_TEXT);
+                let lastText = null;
+                for (let n = walker.nextNode(); n; n = walker.nextNode()) lastText = n;
+                const range = document.createRange();
+                range.setStart(lastText, lastText.length);
+                range.collapse(true);
+                const sel = getSelection();
+                sel.removeAllRanges();
+                sel.addRange(range);
+            });
+            await androidPage.waitForTimeout(50);
+            await androidPage.keyboard.press('Backspace');
+            await androidPage.waitForTimeout(100);
+            await androidPage.keyboard.type('!');
+            await androidPage.waitForTimeout(250);
+            await androidPage.evaluate(() => document.getElementById('toggle-source-mode').click());
+            await androidPage.waitForSelector('.tiptap-source-textarea', { state: 'visible', timeout: 5000 });
+            const afterBackspaceSource = await androidPage.locator('.tiptap-source-textarea').inputValue();
+            assert.equal(afterBackspaceSource, '```markdown\n# markdown块渲染\n## 存在问题\n与源码不一!\n```',
+                `backspace on line 3 must edit line 3, got: ${JSON.stringify(afterBackspaceSource)}`);
+            await androidPage.evaluate(() => document.getElementById('toggle-source-mode').click());
+            await androidPage.waitForFunction(() => {
+                const ed = document.querySelector('.tiptap[contenteditable="true"]');
+                const ta = document.querySelector('.tiptap-source-textarea');
+                return ed && (!ta || getComputedStyle(ta).display === 'none') && document.activeElement === ed;
+            }, null, { timeout: 5000 });
+            await androidPage.waitForTimeout(80);
+
+            // Multi-line CDP Input.insertText (clipboard/IME paste path) stays inside single <code>
+            await androidPage.evaluate(() => {
+                const ed = document.querySelector('.tiptap[contenteditable="true"]');
+                ed?.focus();
+                const code = document.querySelector('.tiptap .vditor-wysiwyg__block pre code');
+                const walker = document.createTreeWalker(code, NodeFilter.SHOW_TEXT);
+                let lastText = null;
+                for (let n = walker.nextNode(); n; n = walker.nextNode()) lastText = n;
+                const range = document.createRange();
+                range.setStart(lastText, lastText.length);
+                range.collapse(true);
+                const sel = getSelection();
+                sel.removeAllRanges();
+                sel.addRange(range);
+            });
+            await androidPage.waitForTimeout(50);
+            await androidCdp.send('Input.insertText', { text: '\n第四行粘贴\n第五行粘贴' });
+            await androidPage.waitForTimeout(150);
+            const afterInsertLines = await androidPage.evaluate(() => ({
+                codeCount: document.querySelectorAll('.tiptap .vditor-wysiwyg__block pre code').length,
+                lineNumbers: document.querySelector('.tiptap .vditor-wysiwyg__block pre')?.dataset.lineNumbers,
+            }));
+            assert.equal(afterInsertLines.codeCount, 1);
+            assert.equal(afterInsertLines.lineNumbers, '1\n2\n3\n4\n5');
+            await androidPage.evaluate(() => document.getElementById('toggle-source-mode').click());
+            const afterPasteSource = await androidPage.locator('.tiptap-source-textarea').inputValue();
+            assert.equal(afterPasteSource, '```markdown\n# markdown块渲染\n## 存在问题\n与源码不一!\n第四行粘贴\n第五行粘贴\n```');
+            console.log('PASS mobile Android code block Enter, multiline paste, Backspace, and source mode');
+        } finally {
+            await androidContext.close();
+        }
 
         assert.equal(errors.length, 0, errors.join('\n'));
         console.log('\nMobile editor experience browser checks passed');

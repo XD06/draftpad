@@ -372,8 +372,8 @@
 }
 
 .preview-content ul {
-    padding-left: 20px;
-    margin-bottom: 14px;
+    padding-left: 1.55em;
+    margin-bottom: 12px;
 }
 
 .preview-content li {
@@ -573,8 +573,8 @@
 }
 
 .preview-content ol {
-    padding-left: 20px;
-    margin-bottom: 14px;
+    padding-left: 1.55em;
+    margin-bottom: 12px;
 }
 
 .preview-content ol li {

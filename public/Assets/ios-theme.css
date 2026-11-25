@@ -1880,11 +1880,11 @@ main {
 
     body:not(.thoughts-mode) .typora-editor-shell .vditor-reset ul,
     body:not(.thoughts-mode) .typora-editor-shell .vditor-reset ol {
-        padding-left: 1.75em;
+        padding-left: 1.55em;
     }
 
     body:not(.thoughts-mode) .typora-editor-shell .vditor-reset li + li {
-        margin-top: 0.32em;
+        margin-top: 0.25em;
     }
 
     /* 宽屏下引用块只把竖线右侧的呼吸感放大一点；实心卡片已按用户要求撤掉，

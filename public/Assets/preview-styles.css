@@ -208,14 +208,15 @@
 #preview-pane input[type="checkbox"] {
   appearance: none;
   -webkit-appearance: none;
-  width: 18px;
-  height: 18px;
+  font-size: inherit;
+  width: 15px;
+  height: 15px;
   background-color: var(--textarea-bg);
   border: 2px solid var(--secondary-color);
   border-radius: 3px;
   position: relative;
   cursor: not-allowed;
-  margin-right: 8px;
+  margin-right: 0;
   vertical-align: middle;
 }
 #preview-pane input[type="checkbox"]:checked {
@@ -229,26 +230,27 @@
   left: 50%;
   transform: translate(-50%, -50%);
   color: white;
-  font-size: 12px;
+  font-size: 10px;
   font-weight: bold;
 }
 
 /* Support for browsers that don't support :has() */
 #preview-pane ul li input[type="checkbox"] {
-  margin-left: -20px;
+  margin-left: calc(-15px - 0.38em);
+  margin-right: 0.38em;
 }
 #preview-pane ul li:has(input[type="checkbox"]) {
   list-style: none;
 }
 /* Fallback for older browsers */
 #preview-pane ul {
-  padding-left: 20px;
+  padding-left: 1.55em;
 }
 #preview-pane ul li {
   list-style: disc;
 }
 #preview-pane ul li input[type="checkbox"] + * {
-  margin-left: 4px;
+  margin-left: 0;
 }
 /* Reduce spacing between list items */
 #preview-pane ul li,
@@ -259,7 +261,13 @@
 }
 #preview-pane ul,
 #preview-pane ol {
-  padding-left: 20px;
+  padding-left: 1.55em;
+}
+#preview-pane ol > li::marker {
+  content: counter(list-item) ".\2004";
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif;
+  font-variant-numeric: tabular-nums;
+  font-size: 0.94em;
 }
 
 /* Table styling for markdown preview */
