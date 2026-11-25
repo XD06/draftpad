@@ -8,7 +8,8 @@ const {
     renderSharePage,
     renderShareBody,
     extractFrontmatter,
-    parseFrontmatterEntries
+    parseFrontmatterEntries,
+    highlightShareCodeBlocks
 } = require('../scripts/share-renderer');
 
 function assertSecurityInvariants(html) {
@@ -96,13 +97,57 @@ async function testRendererUnitCases() {
     });
     assert(/<h1\b[^>]*>另一标题<\/h1>/.test(preservedBody), 'leading H1 differing from notepad.name must be preserved');
 
-    // Marks & code masking invariants
+    // Marks & code masking + syntax highlighting invariants
     const codeEls = Array.from(doc.querySelectorAll('#article-body code'));
     assert(codeEls.some((el) => el.textContent === '==代码内字面量=='), 'inline code containing == must not be tokenized');
+    const jsCodeEl = doc.querySelector('#article-body .ios-code-card pre code.language-js');
+    assert(jsCodeEl, 'fenced js code block should keep language-js class inside .ios-code-card');
+    assert(jsCodeEl.classList.contains('hljs'), 'highlighted js block must gain .hljs class');
+    assert(jsCodeEl.querySelector('.hljs-keyword')?.textContent === 'const', 'js keyword must be syntax-highlighted');
+    assert(jsCodeEl.querySelector('.hljs-string')?.textContent.includes('==代码围栏里不该高亮=='), 'string token inside js fence must retain literal text cleanly');
     assert(
-        doc.querySelector('#article-body pre code').textContent.includes('==代码围栏里不该高亮=='),
+        jsCodeEl.textContent.includes('==代码围栏里不该高亮=='),
         'fenced code block containing == must stay literal'
     );
+    assert(fullHtml.includes('html[data-theme="dark"] .markdown-body pre code.hljs .hljs-keyword'), 'share HTML must bundle dark hljs token theme');
+
+    // Lazy extra hljs language (e.g. powershell) + safe escaping inside highlighted HTML
+    const extraCodeBody = renderShareBody({
+        content: [
+            '```powershell',
+            'Get-ChildItem -Path "C:\\Temp" | Where-Object { $_.Length -gt 0 }',
+            '```',
+            '',
+            '```html',
+            '<div onclick="alert(1)"><script>bad()</script></div>',
+            '```',
+            '',
+            '```plaintext',
+            'plain raw text without keyword highlight',
+            '```'
+        ].join('\n'),
+        notepadName: '代码高亮扩展测试',
+        marked,
+        sanitizeHtml
+    });
+    assertSecurityInvariants(extraCodeBody);
+    const extraDoc = new JSDOM(`<div id="b">${extraCodeBody}</div>`).window.document;
+    const psCode = extraDoc.querySelector('pre code.language-powershell');
+    assert(psCode && psCode.classList.contains('hljs') && psCode.querySelector('.hljs-built_in, .hljs-string'), 'lazy-loaded powershell language should highlight on SSR share page');
+    const htmlCode = extraDoc.querySelector('pre code.language-html');
+    assert(htmlCode && htmlCode.classList.contains('hljs') && Array.from(htmlCode.querySelectorAll('.hljs-name')).some((el) => el.textContent === 'script'), 'html code fence should highlight safely');
+    assert(htmlCode.textContent.includes('<script>bad()</script>'), 'html code block text must decode cleanly without script execution');
+    const rawPreBody = renderShareBody({
+        content: '<pre><code onclick="alert(1)"><script>alert(9)</script>ok</code></pre>',
+        notepadName: '裸 pre XSS 防护',
+        marked,
+        sanitizeHtml
+    });
+    assertSecurityInvariants(rawPreBody);
+    assert(!/onclick/i.test(rawPreBody), 'raw HTML <pre><code onclick=...> must still be sanitized');
+    const plainCode = extraDoc.querySelector('pre code.language-plaintext');
+    assert(plainCode && !plainCode.classList.contains('hljs') && plainCode.querySelectorAll('span').length === 0, 'plaintext fence must stay uncolored');
+    assert.strictEqual(highlightShareCodeBlocks('<pre><code class="language-mermaid">graph TD\nA-->B</code></pre>'), '<pre><code class="language-mermaid">graph TD\nA-->B</code></pre>', 'mermaid fence must not be rewritten into hljs spans');
     assert(doc.querySelector('#article-body mark.md-mark'), 'plain ==highlight== / <mark> should render as .md-mark');
     assert(doc.querySelector('#article-body [data-draw]'), 'blue draw underline should preserve data-draw');
     assert(doc.querySelector('#article-body .time-chip.is-update'), '[[time:update...]] should render as time chip');

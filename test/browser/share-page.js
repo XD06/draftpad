@@ -202,6 +202,8 @@ async function bootServer() {
             const img = document.querySelector('.markdown-body img');
             const imgRect = img.getBoundingClientRect();
             const pre = document.querySelector('.markdown-body .ios-code-card pre');
+            const codeKw = document.querySelector('.markdown-body .ios-code-card pre code.hljs .hljs-keyword');
+            const codeStr = document.querySelector('.markdown-body .ios-code-card pre code.hljs .hljs-string');
             const h1Count = document.querySelectorAll('.markdown-body h1').length;
             const tocLinks = Array.from(document.querySelectorAll('#rail-nav a'));
             const tocItems = tocLinks.map((a) => a.textContent.trim());
@@ -272,6 +274,8 @@ async function bootServer() {
                 imgWidth: Math.round(imgRect.width),
                 imgComplete: img.complete && img.naturalWidth > 0,
                 preFitsSheet: pre.getBoundingClientRect().width <= sheet.width + 1,
+                codeKwColor: codeKw ? getComputedStyle(codeKw).color : '',
+                codeStrColor: codeStr ? getComputedStyle(codeStr).color : '',
                 mermaidRendered: mSvgRect.width > 120 && mSvgRect.height > 60 && mSvgRect.width <= sheet.width,
                 mermaidSourceHidden: mCards[0].querySelector('.ios-mermaid-source').hidden === true,
                 brokenMermaidSourceShown: mCards[1].querySelector('.ios-mermaid-source').hidden === false,
@@ -299,6 +303,8 @@ async function bootServer() {
         assert(desktop.imgComplete, 'Uploaded image must load properly');
         assert(desktop.imgWidth >= 340 && desktop.imgWidth <= 365, `Expected ~360px width image, got ${desktop.imgWidth}`);
         assert.equal(desktop.preFitsSheet, true, 'Long code block must not push sheet wider');
+        assert.equal(desktop.codeKwColor, 'rgb(215, 58, 73)', 'Light mode code keyword should use GitHub light red');
+        assert.equal(desktop.codeStrColor, 'rgb(3, 47, 98)', 'Light mode code string should use GitHub light navy');
         assert.equal(desktop.mermaidRendered, true, 'Valid Mermaid diagram must render to bounded inline SVG');
         assert.equal(desktop.mermaidSourceHidden, true, 'Mermaid raw code must collapse when rendered');
         assert.equal(desktop.brokenMermaidSourceShown, true, 'Broken Mermaid diagram must keep source visible');
@@ -415,11 +421,15 @@ async function bootServer() {
         const darkState = await page.evaluate(() => ({
             attr: document.documentElement.getAttribute('data-theme'),
             bodyBg: getComputedStyle(document.body).backgroundColor,
-            sheetBg: getComputedStyle(document.querySelector('.ios-sheet')).backgroundColor
+            sheetBg: getComputedStyle(document.querySelector('.ios-sheet')).backgroundColor,
+            codeKwColor: getComputedStyle(document.querySelector('.markdown-body .ios-code-card pre code.hljs .hljs-keyword')).color,
+            codeStrColor: getComputedStyle(document.querySelector('.markdown-body .ios-code-card pre code.hljs .hljs-string')).color
         }));
         assert.equal(darkState.attr, 'dark');
         assert.equal(darkState.bodyBg, 'rgb(28, 28, 30)');
         assert.equal(darkState.sheetBg, 'rgb(44, 44, 46)');
+        assert.equal(darkState.codeKwColor, 'rgb(255, 123, 114)', 'Dark mode code keyword should use GitHub dark coral');
+        assert.equal(darkState.codeStrColor, 'rgb(165, 214, 255)', 'Dark mode code string should use GitHub dark sky blue');
 
         await page.close();
 

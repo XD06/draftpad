@@ -5,6 +5,75 @@
  */
 
 const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
+const vm = require('vm');
+const hljs = require('@highlightjs/cdn-assets/highlight.min.js');
+
+const HLJS_LANGUAGES_DIR = path.join(
+    path.dirname(require.resolve('@highlightjs/cdn-assets/package.json')),
+    'languages'
+);
+
+const SHARE_CODE_LANGUAGE_ALIASES = {
+    'c#': 'csharp',
+    'c++': 'cpp',
+    conf: 'ini',
+    cs: 'csharp',
+    docker: 'dockerfile',
+    html: 'xml',
+    js: 'javascript',
+    jsx: 'javascript',
+    kt: 'kotlin',
+    md: 'markdown',
+    ps: 'powershell',
+    ps1: 'powershell',
+    pwsh: 'powershell',
+    py: 'python',
+    rb: 'ruby',
+    rs: 'rust',
+    sass: 'scss',
+    sh: 'bash',
+    shell: 'bash',
+    tex: 'latex',
+    ts: 'typescript',
+    tsx: 'typescript',
+    yml: 'yaml',
+    zsh: 'bash'
+};
+
+const SKIP_HIGHLIGHT_LANGUAGES = new Set([
+    'code',
+    'dumbpad-frontmatter',
+    'mermaid',
+    'nohighlight',
+    'none',
+    'plain',
+    'plaintext',
+    'text',
+    'txt'
+]);
+
+const missingHljsLanguages = new Set();
+
+function ensureHljsLanguage(rawLanguage) {
+    const normalized = String(rawLanguage || '').trim().toLowerCase();
+    if (!normalized || SKIP_HIGHLIGHT_LANGUAGES.has(normalized)) return '';
+    const candidate = SHARE_CODE_LANGUAGE_ALIASES[normalized] || normalized;
+    if (hljs.getLanguage(candidate)) return candidate;
+    if (missingHljsLanguages.has(candidate) || !/^[a-z0-9-]+$/.test(candidate)) return '';
+
+    const langFile = path.join(HLJS_LANGUAGES_DIR, `${candidate}.min.js`);
+    try {
+        const scriptSource = fs.readFileSync(langFile, 'utf8');
+        vm.runInNewContext(scriptSource, { hljs }, { filename: langFile });
+        if (hljs.getLanguage(candidate)) return candidate;
+    } catch {
+        // Optional language file missing or unreadable: fall back to plain code block.
+    }
+    missingHljsLanguages.add(candidate);
+    return '';
+}
 
 function escapeHtml(str) {
     return String(str == null ? '' : str)
@@ -18,10 +87,42 @@ function escapeHtml(str) {
 function decodeBasicEntities(str) {
     return String(str == null ? '' : str)
         .replace(/&quot;/g, '"')
-        .replace(/&#39;/g, "'")
+        .replace(/&#39;|&apos;|&#x27;/gi, "'")
         .replace(/&lt;/g, '<')
         .replace(/&gt;/g, '>')
         .replace(/&amp;/g, '&');
+}
+
+function highlightShareCodeBlocks(html) {
+    return String(html || '').replace(
+        /<pre\b[^>]*>\s*<code(?:\s+class="([^"]*)")?[^>]*>([\s\S]*?)<\/code>\s*<\/pre>/gi,
+        (match, classAttr = '', encodedBody = '') => {
+            const langMatch = String(classAttr).match(/\blanguage-([A-Za-z0-9_+.#-]+)\b/i);
+            const rawLang = langMatch ? langMatch[1] : '';
+            const hljsLang = ensureHljsLanguage(rawLang);
+            if (!hljsLang) return match;
+
+            const normalizedCode = decodeBasicEntities(encodedBody).replace(/\n$/, '');
+            try {
+                const highlighted = hljs.highlight(normalizedCode, {
+                    language: hljsLang,
+                    ignoreIllegals: true
+                }).value;
+                const classes = String(classAttr || '')
+                    .split(/\s+/)
+                    .filter(Boolean);
+                if (!classes.includes('hljs')) classes.unshift('hljs');
+                if (rawLang && !classes.some((c) => c.toLowerCase() === `language-${rawLang.toLowerCase()}`)) {
+                    classes.push(`language-${rawLang}`);
+                }
+                const safeClasses = escapeHtml(classes.join(' '));
+                const trailingNewline = encodedBody.endsWith('\n') ? '\n' : '';
+                return `<pre><code class="${safeClasses}">${highlighted}${trailingNewline}</code></pre>`;
+            } catch {
+                return match;
+            }
+        }
+    );
 }
 
 function maskCodeSegments(markdown, nonce) {
@@ -342,14 +443,63 @@ function renderFrontmatterCardHtml(frontmatterRaw) {
     </details>`;
 }
 
+function renderHighlightedCodeBlockHtml(rawCode, rawLang) {
+    const codeText = String(rawCode == null ? '' : rawCode);
+    const langToken = String(rawLang || '').trim().split(/\s+/)[0];
+    const hljsLang = ensureHljsLanguage(langToken);
+    if (!hljsLang) {
+        const cls = langToken ? ` class="language-${escapeHtml(langToken)}"` : '';
+        return `<pre><code${cls}>${escapeHtml(codeText)}</code></pre>`;
+    }
+
+    try {
+        const cleanSource = codeText.replace(/\n$/, '');
+        const highlighted = hljs.highlight(cleanSource, {
+            language: hljsLang,
+            ignoreIllegals: true
+        }).value;
+        const suffix = codeText.endsWith('\n') || cleanSource !== '' ? '\n' : '';
+        return `<pre><code class="hljs language-${escapeHtml(langToken)}">${highlighted}${suffix}</code></pre>`;
+    } catch {
+        const cls = langToken ? ` class="language-${escapeHtml(langToken)}"` : '';
+        return `<pre><code${cls}>${escapeHtml(codeText)}</code></pre>`;
+    }
+}
+
 function renderShareBody({ content, notepadName, marked, sanitizeHtml }) {
     const { bodyMarkdown } = extractFrontmatter(content);
     const nonce = crypto.randomBytes(6).toString('hex');
     const { textForMarked, marks } = tokenizeDumbPadMarks(bodyMarkdown, nonce);
-    const parsed = marked.parse(textForMarked, { breaks: true, gfm: true });
+
+    // Mask fenced/indented Markdown code blocks during marked.parse so safe
+    // escaped HTML examples (e.g. `<div onclick="...">`) are highlighted directly
+    // from plain text without being mangled by sanitizeHtml's raw-HTML ON_ATTRS
+    // sweep. User-authored raw `<pre>` HTML still runs through sanitizeHtml.
+    const fencedBlocks = [];
+    const parseOptions = { breaks: true, gfm: true };
+    if (typeof marked?.Renderer === 'function') {
+        const renderer = new marked.Renderer();
+        renderer.code = ({ text, lang }) => {
+            const id = fencedBlocks.length;
+            fencedBlocks.push(renderHighlightedCodeBlockHtml(text, lang));
+            return `\n@@CODEBLOCK_${nonce}_${id}@@\n`;
+        };
+        parseOptions.renderer = renderer;
+    }
+
+    const parsed = marked.parse(textForMarked, parseOptions);
     const withTaskTokens = preprocessTaskLists(parsed, nonce);
     const sanitized = sanitizeHtml(withTaskTokens);
     let htmlBody = rehydrateTokens({ html: sanitized, marks, nonce, marked, sanitizeHtml });
+    if (fencedBlocks.length > 0) {
+        const codePattern = new RegExp(`(?:<p>)?@@CODEBLOCK_${nonce}_(\\d+)@@(?:<\\/p>)?`, 'g');
+        htmlBody = htmlBody.replace(codePattern, (match, idStr) => {
+            const idx = parseInt(idStr, 10);
+            return fencedBlocks[idx] !== undefined ? fencedBlocks[idx] : match;
+        });
+    } else {
+        htmlBody = highlightShareCodeBlocks(htmlBody);
+    }
     htmlBody = stripDuplicateLeadingHeading(htmlBody, notepadName);
     htmlBody = applyImageWidthHints(htmlBody);
     return htmlBody;
@@ -1295,6 +1445,92 @@ function renderSharePage({ notepad, content, marked, sanitizeHtml }) {
             white-space: pre;
             overflow-wrap: normal;
         }
+        .markdown-body pre code.hljs {
+            display: block;
+            padding: 0;
+            background: transparent;
+            color: #24292e;
+        }
+        .markdown-body pre code.hljs .hljs-doctag,
+        .markdown-body pre code.hljs .hljs-keyword,
+        .markdown-body pre code.hljs .hljs-meta .hljs-keyword,
+        .markdown-body pre code.hljs .hljs-template-tag,
+        .markdown-body pre code.hljs .hljs-template-variable,
+        .markdown-body pre code.hljs .hljs-type,
+        .markdown-body pre code.hljs .hljs-variable.language_ { color: #d73a49; }
+        .markdown-body pre code.hljs .hljs-title,
+        .markdown-body pre code.hljs .hljs-title.class_,
+        .markdown-body pre code.hljs .hljs-title.class_.inherited__,
+        .markdown-body pre code.hljs .hljs-title.function_ { color: #6f42c1; }
+        .markdown-body pre code.hljs .hljs-attr,
+        .markdown-body pre code.hljs .hljs-attribute,
+        .markdown-body pre code.hljs .hljs-literal,
+        .markdown-body pre code.hljs .hljs-meta,
+        .markdown-body pre code.hljs .hljs-number,
+        .markdown-body pre code.hljs .hljs-operator,
+        .markdown-body pre code.hljs .hljs-selector-attr,
+        .markdown-body pre code.hljs .hljs-selector-class,
+        .markdown-body pre code.hljs .hljs-selector-id,
+        .markdown-body pre code.hljs .hljs-variable { color: #005cc5; }
+        .markdown-body pre code.hljs .hljs-meta .hljs-string,
+        .markdown-body pre code.hljs .hljs-regexp,
+        .markdown-body pre code.hljs .hljs-string { color: #032f62; }
+        .markdown-body pre code.hljs .hljs-built_in,
+        .markdown-body pre code.hljs .hljs-symbol { color: #e36209; }
+        .markdown-body pre code.hljs .hljs-code,
+        .markdown-body pre code.hljs .hljs-comment,
+        .markdown-body pre code.hljs .hljs-formula { color: #6a737d; }
+        .markdown-body pre code.hljs .hljs-name,
+        .markdown-body pre code.hljs .hljs-quote,
+        .markdown-body pre code.hljs .hljs-selector-pseudo,
+        .markdown-body pre code.hljs .hljs-selector-tag { color: #22863a; }
+        .markdown-body pre code.hljs .hljs-subst { color: #24292e; }
+        .markdown-body pre code.hljs .hljs-section { color: #005cc5; font-weight: 700; }
+        .markdown-body pre code.hljs .hljs-bullet { color: #735c0f; }
+        .markdown-body pre code.hljs .hljs-emphasis { font-style: italic; }
+        .markdown-body pre code.hljs .hljs-strong { font-weight: 700; }
+        .markdown-body pre code.hljs .hljs-addition { color: #22863a; background-color: #f0fff4; }
+        .markdown-body pre code.hljs .hljs-deletion { color: #b31d28; background-color: #ffeef0; }
+
+        html[data-theme="dark"] .markdown-body pre code.hljs,
+        html[data-theme="dark"] .markdown-body pre code.hljs .hljs-subst { color: #c9d1d9; }
+        html[data-theme="dark"] .markdown-body pre code.hljs .hljs-doctag,
+        html[data-theme="dark"] .markdown-body pre code.hljs .hljs-keyword,
+        html[data-theme="dark"] .markdown-body pre code.hljs .hljs-meta .hljs-keyword,
+        html[data-theme="dark"] .markdown-body pre code.hljs .hljs-template-tag,
+        html[data-theme="dark"] .markdown-body pre code.hljs .hljs-template-variable,
+        html[data-theme="dark"] .markdown-body pre code.hljs .hljs-type,
+        html[data-theme="dark"] .markdown-body pre code.hljs .hljs-variable.language_ { color: #ff7b72; }
+        html[data-theme="dark"] .markdown-body pre code.hljs .hljs-title,
+        html[data-theme="dark"] .markdown-body pre code.hljs .hljs-title.class_,
+        html[data-theme="dark"] .markdown-body pre code.hljs .hljs-title.class_.inherited__,
+        html[data-theme="dark"] .markdown-body pre code.hljs .hljs-title.function_ { color: #d2a8ff; }
+        html[data-theme="dark"] .markdown-body pre code.hljs .hljs-attr,
+        html[data-theme="dark"] .markdown-body pre code.hljs .hljs-attribute,
+        html[data-theme="dark"] .markdown-body pre code.hljs .hljs-literal,
+        html[data-theme="dark"] .markdown-body pre code.hljs .hljs-meta,
+        html[data-theme="dark"] .markdown-body pre code.hljs .hljs-number,
+        html[data-theme="dark"] .markdown-body pre code.hljs .hljs-operator,
+        html[data-theme="dark"] .markdown-body pre code.hljs .hljs-selector-attr,
+        html[data-theme="dark"] .markdown-body pre code.hljs .hljs-selector-class,
+        html[data-theme="dark"] .markdown-body pre code.hljs .hljs-selector-id,
+        html[data-theme="dark"] .markdown-body pre code.hljs .hljs-variable { color: #79c0ff; }
+        html[data-theme="dark"] .markdown-body pre code.hljs .hljs-meta .hljs-string,
+        html[data-theme="dark"] .markdown-body pre code.hljs .hljs-regexp,
+        html[data-theme="dark"] .markdown-body pre code.hljs .hljs-string { color: #a5d6ff; }
+        html[data-theme="dark"] .markdown-body pre code.hljs .hljs-built_in,
+        html[data-theme="dark"] .markdown-body pre code.hljs .hljs-symbol { color: #ffa657; }
+        html[data-theme="dark"] .markdown-body pre code.hljs .hljs-code,
+        html[data-theme="dark"] .markdown-body pre code.hljs .hljs-comment,
+        html[data-theme="dark"] .markdown-body pre code.hljs .hljs-formula { color: #8b949e; }
+        html[data-theme="dark"] .markdown-body pre code.hljs .hljs-name,
+        html[data-theme="dark"] .markdown-body pre code.hljs .hljs-quote,
+        html[data-theme="dark"] .markdown-body pre code.hljs .hljs-selector-pseudo,
+        html[data-theme="dark"] .markdown-body pre code.hljs .hljs-selector-tag { color: #7ee787; }
+        html[data-theme="dark"] .markdown-body pre code.hljs .hljs-section { color: #58a6ff; font-weight: 700; }
+        html[data-theme="dark"] .markdown-body pre code.hljs .hljs-bullet { color: #f2cc60; }
+        html[data-theme="dark"] .markdown-body pre code.hljs .hljs-addition { color: #aff5b4; background-color: rgba(46, 160, 67, 0.16); }
+        html[data-theme="dark"] .markdown-body pre code.hljs .hljs-deletion { color: #ffdcd7; background-color: rgba(248, 81, 73, 0.16); }
         .ios-code-card {
             margin: 1.3em 0;
             border-radius: 12px;
@@ -2348,6 +2584,7 @@ function renderSharePage({ notepad, content, marked, sanitizeHtml }) {
 module.exports = {
     renderSharePage,
     renderShareBody,
+    highlightShareCodeBlocks,
     extractFrontmatter,
     parseFrontmatterEntries,
     renderFrontmatterCardHtml,
