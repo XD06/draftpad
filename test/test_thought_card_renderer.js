@@ -193,6 +193,12 @@ function run() {
     assert(/\.thought-attachments\.has-files\s+\.thought-attachment-image[\s\S]*?width:\s*80px[\s\S]*?height:\s*80px/.test(mixedAttachmentCss), 'mixed attachment images should preserve the image-only card dimensions');
     assert(mixedAttachmentCss.includes('grid-template-columns: repeat(3, 80px);'), 'both layouts should use three uniform compact attachment tiles');
 
+    assert(/\.subtask-copy-btn\s*\{[^}]*align-self:\s*flex-end/s.test(thoughtsCss), 'subtask copy button should align to the bottom-right end of the last line rather than vertical middle');
+    assert(/\.thought-card\.expanded\s+\.thought-text\s*\{[^}]*padding-bottom:\s*0/s.test(thoughtsCss), 'expanded thought text should not push .thought-copy-btn into a separate blank row below');
+    assert(/\.thought-card\.editing\s+\.thought-copy-btn\s*\{[^}]*display:\s*none/s.test(thoughtsCss), 'thought copy button should hide while editing card text');
+    const iosCss = fs.readFileSync(path.join(ROOT, 'public', 'Assets', 'ios-theme.css'), 'utf8');
+    assert(/\.thought-text\s*\{[^}]*padding:\s*0\s+28px\s+0\s+0/s.test(iosCss), 'iOS theme must keep right gutter on .thought-text for bottom-right copy button');
+
     console.log('Thought card renderer checks passed');
 }
 

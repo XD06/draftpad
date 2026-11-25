@@ -704,7 +704,7 @@
 
 .thought-body {
     position: relative;
-    padding-bottom: 4px;
+    padding-bottom: 0;
 }
 
 .thought-text {
@@ -714,8 +714,7 @@
     white-space: pre-wrap;
     word-break: break-word;
     cursor: text;
-    padding: 4px 0;
-    padding-right: 28px;
+    padding: 0 28px 0 0;
     transition: max-height 0.3s ease;
     font-weight: 680;
     letter-spacing: 0;
@@ -725,9 +724,11 @@
     position: absolute;
     bottom: 0;
     right: 0;
+    width: 24px;
+    height: 24px;
     background: none;
     border: none;
-    padding: 4px 6px;
+    padding: 0;
     margin: 0;
     color: var(--muted-text);
     cursor: pointer;
@@ -740,9 +741,14 @@
     transition: opacity 0.2s ease, transform 0.2s ease, color 0.2s ease, background-color 0.2s ease;
 }
 
-.thought-body:hover .thought-copy-btn {
+.thought-body:hover .thought-copy-btn,
+.thought-body:focus-within .thought-copy-btn {
     opacity: 0.5;
     transform: scale(1);
+}
+
+.thought-card.editing .thought-copy-btn {
+    display: none;
 }
 
 .thought-copy-btn:hover {
@@ -794,7 +800,7 @@
     max-height: none;
     mask-image: none;
     -webkit-mask-image: none;
-    padding-bottom: 12px;
+    padding-bottom: 0;
 }
 
 /* Thought 卡片选区工具条：直接复用文章编辑器 iOS 风格选区菜单的基类
@@ -2426,6 +2432,7 @@ color: var(--primary-color);
 
 .subtask-text {
     flex: 1;
+    min-width: 0;
     cursor: text;
     user-select: text;
     word-break: break-word;
@@ -2434,9 +2441,12 @@ color: var(--primary-color);
 }
 
 .subtask-copy-btn {
+    align-self: flex-end;
     background: none;
     border: none;
-    padding: 3px;
+    width: 22px;
+    height: 21px;
+    padding: 0;
     margin: 0;
     color: var(--muted-text);
     cursor: pointer;
@@ -2450,9 +2460,14 @@ color: var(--primary-color);
     flex-shrink: 0;
 }
 
-.subtask:hover .subtask-copy-btn {
+.subtask:hover .subtask-copy-btn,
+.subtask:focus-within .subtask-copy-btn {
     opacity: 0.5;
     transform: scale(1);
+}
+
+.subtask:has(.subtask-inline-input) .subtask-copy-btn {
+    display: none;
 }
 
 .subtask-copy-btn:hover {

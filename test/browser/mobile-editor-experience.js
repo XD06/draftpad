@@ -21,7 +21,21 @@ async function main() {
     const alignNote = { id: 'align-note', name: 'Align UX', version: 1, createdAt: Date.now(), updatedAt: Date.now() };
     let metadata = { notepads: [note, alignNote] };
     let content = '第一段原始内容\n\n第二段用户正在输入\n\n' + Array.from({ length: 18 }, (_, i) => `占位段落 ${i + 1}`).join('\n\n');
-    const alignedContent = '- [ ] 待办对齐项\n\n1. 有序对齐项\n\n- 无序对齐项';
+    const alignedContent = [
+        '# 一级标题',
+        '',
+        '#### 四级标题',
+        '',
+        '请求返回 `400` 时核对 `/openapi.json` 契约。',
+        '',
+        '---',
+        '',
+        '- [ ] 待办对齐项',
+        '',
+        '1. 有序对齐项',
+        '',
+        '- 无序对齐项'
+    ].join('\n');
     let lock = Promise.resolve();
     const storage = {
         init: async () => {},
@@ -251,6 +265,14 @@ async function main() {
             const ulP = ul.querySelector('li > p');
             const olMarker = getComputedStyle(ol.querySelector('li'), '::marker');
             const ulMarker = getComputedStyle(ul.querySelector('li'), '::marker');
+            const inlineCode = root.querySelector('p > code');
+            const h1 = root.querySelector('h1');
+            const h4 = root.querySelector('h4');
+            const hr = root.querySelector('hr');
+            const codeStyle = getComputedStyle(inlineCode);
+            const h1Style = getComputedStyle(h1);
+            const h4Style = getComputedStyle(h4);
+            const hrStyle = getComputedStyle(hr);
             return {
                 taskPad: getComputedStyle(taskUl).paddingLeft,
                 olPad: getComputedStyle(ol).paddingLeft,
@@ -262,8 +284,27 @@ async function main() {
                 olMarkerContent: olMarker.content,
                 olMarkerTabular: olMarker.fontVariantNumeric,
                 ulMarkerContent: ulMarker.content,
+                inlineCodeBg: codeStyle.backgroundColor,
+                inlineCodeRadius: codeStyle.borderRadius,
+                inlineCodeFont: codeStyle.fontFamily,
+                inlineCodePadLeft: parseFloat(codeStyle.paddingLeft || '0'),
+                inlineCodePadTop: parseFloat(codeStyle.paddingTop || '0'),
+                h1FontSize: h1Style.fontSize,
+                h1MarginTop: h1Style.marginTop,
+                h4FontSize: h4Style.fontSize,
+                hrBg: hrStyle.backgroundColor,
             };
         });
+        const assertEditorMarkdownParity = (label, metrics) => {
+            assert.notEqual(metrics.inlineCodeBg, 'rgba(0, 0, 0, 0)', `${label}: inline code must keep pill background`);
+            assert.equal(metrics.inlineCodeRadius, '4px', `${label}: inline code radius must be 4px`);
+            assert(metrics.inlineCodeFont.includes('DumbPad Code'), `${label}: inline code must use --font-code, got ${metrics.inlineCodeFont}`);
+            assert(metrics.inlineCodePadLeft >= 4 && metrics.inlineCodePadTop >= 1.5,
+                `${label}: inline code pill padding missing (${metrics.inlineCodePadTop}x${metrics.inlineCodePadLeft})`);
+            assert.equal(metrics.h1FontSize, '28px', `${label}: h1 must use DumbPad typography`);
+            assert.equal(metrics.h1MarginTop, '0px', `${label}: leading h1 must not leave empty top gap`);
+            assert.equal(metrics.h4FontSize, '17px', `${label}: h4 must use DumbPad typography`);
+        };
 
         await page.goto(`http://127.0.0.1:${listener.address().port}/?id=align-note`);
         await page.waitForSelector('.tiptap ul[data-type="taskList"] input', { timeout: 10000 });
@@ -282,6 +323,13 @@ async function main() {
             && Math.abs(mobileListAlign.taskTextRel - mobileListAlign.ulTextRel) <= 0.5,
             `Mobile list text origins must match: ${JSON.stringify(mobileListAlign)}`
         );
+        assertEditorMarkdownParity('Mobile Light', mobileListAlign);
+
+        await page.evaluate(() => document.documentElement.setAttribute('data-theme', 'dark'));
+        const mobileDarkAlign = await measureEditorListAlignment(page);
+        assertEditorMarkdownParity('Mobile Dark', mobileDarkAlign);
+        assert.notEqual(mobileDarkAlign.hrBg, 'rgb(234, 236, 239)', 'Mobile Dark <hr> must not render bright #eaecef fallback');
+        await page.evaluate(() => document.documentElement.setAttribute('data-theme', 'light'));
 
         const desktopCtx = await browser.newContext({ viewport: { width: 1280, height: 800 }, serviceWorkers: 'block' });
         const desktopPage = await desktopCtx.newPage();
@@ -303,7 +351,8 @@ async function main() {
                 && Math.abs(desktopListAlign.taskTextRel - desktopListAlign.ulTextRel) <= 0.5,
                 `Desktop list text origins must match: ${JSON.stringify(desktopListAlign)}`
             );
-            console.log('PASS desktop & mobile editor list / taskList Typora alignment');
+            assertEditorMarkdownParity('Desktop Light', desktopListAlign);
+            console.log('PASS desktop & mobile editor list / taskList alignment + Markdown typography/inline code parity');
         } finally {
             await desktopCtx.close();
         }

@@ -332,7 +332,7 @@ header {
     font-size: 16px;
     line-height: 1.55;
     font-weight: 400;
-    padding: 0;
+    padding: 0 28px 0 0;
     color: var(--text-color);
 }
 
@@ -931,6 +931,12 @@ main {
         min-height: var(--mobile-control-min);
     }
 
+    header .icon-button svg {
+        width: 20px;
+        height: 20px;
+        stroke-width: 2;
+    }
+
     body.mobile-sidebar-open {
         overflow: hidden !important;
         touch-action: none;
@@ -1001,7 +1007,7 @@ main {
         font-size: 16px;
         line-height: 1.58;
         font-weight: 430;
-        padding-right: 0;
+        padding-right: 28px;
     }
 
     .thought-tags,
@@ -1817,8 +1823,89 @@ main {
     }
 }
 
-/* Desktop reading rhythm: retain the existing paper width while making long
-   notes scan more like a notebook than a rendered technical document. */
+/* Shared article typography & inline code pills across desktop and mobile so
+   mobile/PWA renders headings, vertical rhythm, and inline `code` identically
+   to desktop (without falling back to unstyled Vditor defaults). */
+body:not(.thoughts-mode) .typora-editor-shell .vditor-reset h1,
+body:not(.thoughts-mode) .typora-editor-shell .vditor-reset h2,
+body:not(.thoughts-mode) .typora-editor-shell .vditor-reset h3,
+body:not(.thoughts-mode) .typora-editor-shell .vditor-reset h4,
+body:not(.thoughts-mode) .typora-editor-shell .vditor-reset h5,
+body:not(.thoughts-mode) .typora-editor-shell .vditor-reset h6 {
+    margin-top: 1.55em;
+    margin-bottom: 0.62em;
+    line-height: 1.32;
+    letter-spacing: -0.012em;
+    text-wrap: balance;
+}
+
+body:not(.thoughts-mode) .typora-editor-shell .vditor-reset > h1:first-child,
+body:not(.thoughts-mode) .typora-editor-shell .vditor-reset > h2:first-child,
+body:not(.thoughts-mode) .typora-editor-shell .vditor-reset > h3:first-child,
+body:not(.thoughts-mode) .typora-editor-shell .vditor-reset > h4:first-child,
+body:not(.thoughts-mode) .typora-editor-shell .vditor-reset > h5:first-child,
+body:not(.thoughts-mode) .typora-editor-shell .vditor-reset > h6:first-child {
+    margin-top: 0;
+}
+
+body:not(.thoughts-mode) .typora-editor-shell .vditor-reset h1 {
+    font-size: 28px;
+}
+
+body:not(.thoughts-mode) .typora-editor-shell .vditor-reset h2 {
+    font-size: 24px;
+}
+
+body:not(.thoughts-mode) .typora-editor-shell .vditor-reset h3 {
+    font-size: 20px;
+}
+
+body:not(.thoughts-mode) .typora-editor-shell .vditor-reset h4,
+body:not(.thoughts-mode) .typora-editor-shell .vditor-reset h5,
+body:not(.thoughts-mode) .typora-editor-shell .vditor-reset h6 {
+    font-size: 17px;
+}
+
+body:not(.thoughts-mode) .typora-editor-shell .vditor-reset p,
+body:not(.thoughts-mode) .typora-editor-shell .vditor-reset ul,
+body:not(.thoughts-mode) .typora-editor-shell .vditor-reset ol,
+body:not(.thoughts-mode) .typora-editor-shell .vditor-reset blockquote {
+    margin-bottom: 14px;
+}
+
+body:not(.thoughts-mode) .typora-editor-shell .vditor-reset p,
+body:not(.thoughts-mode) .typora-editor-shell .vditor-reset li {
+    text-wrap: pretty;
+}
+
+body:not(.thoughts-mode) .typora-editor-shell .vditor-reset ul,
+body:not(.thoughts-mode) .typora-editor-shell .vditor-reset ol {
+    padding-left: 1.55em;
+}
+
+body:not(.thoughts-mode) .typora-editor-shell .vditor-reset li + li {
+    margin-top: 0.25em;
+}
+
+/* 引用块最后一段不保留段尾间距；这里显式归零避免与上方 `p { margin-bottom: 14px }` 冲突。 */
+body:not(.thoughts-mode) .typora-editor-shell .vditor-reset blockquote > :last-child {
+    margin-bottom: 0;
+}
+
+body:not(.thoughts-mode) .typora-editor-shell .vditor-reset :not(pre) > code:not(.hljs):not(.highlight-chroma) {
+    padding: 0.16em 0.36em;
+    border-radius: 4px;
+    background: color-mix(in srgb, var(--secondary-color) 54%, transparent);
+    font-family: var(--font-code);
+    font-size: 0.88em;
+}
+
+[data-theme="dark"] body:not(.thoughts-mode) .typora-editor-shell .vditor-reset hr {
+    background-color: rgba(255, 255, 255, 0.14);
+}
+
+/* Desktop reading rhythm: keep mobile's 1.68 line-height aligned with .boot-editor,
+   while widening desktop line height and blockquote gutter breathing room. */
 @media (min-width: 981px) {
     body:not(.thoughts-mode) .typora-editor-shell .vditor-reset {
         line-height: 1.72;
@@ -1826,84 +1913,8 @@ main {
         text-rendering: optimizeLegibility;
     }
 
-    body:not(.thoughts-mode) .typora-editor-shell .vditor-reset h1,
-    body:not(.thoughts-mode) .typora-editor-shell .vditor-reset h2,
-    body:not(.thoughts-mode) .typora-editor-shell .vditor-reset h3,
-    body:not(.thoughts-mode) .typora-editor-shell .vditor-reset h4,
-    body:not(.thoughts-mode) .typora-editor-shell .vditor-reset h5,
-    body:not(.thoughts-mode) .typora-editor-shell .vditor-reset h6 {
-        margin-top: 1.55em;
-        margin-bottom: 0.62em;
-        line-height: 1.32;
-        letter-spacing: -0.012em;
-        text-wrap: balance;
-    }
-
-    body:not(.thoughts-mode) .typora-editor-shell .vditor-reset > h1:first-child,
-    body:not(.thoughts-mode) .typora-editor-shell .vditor-reset > h2:first-child,
-    body:not(.thoughts-mode) .typora-editor-shell .vditor-reset > h3:first-child,
-    body:not(.thoughts-mode) .typora-editor-shell .vditor-reset > h4:first-child,
-    body:not(.thoughts-mode) .typora-editor-shell .vditor-reset > h5:first-child,
-    body:not(.thoughts-mode) .typora-editor-shell .vditor-reset > h6:first-child {
-        margin-top: 0;
-    }
-
-    body:not(.thoughts-mode) .typora-editor-shell .vditor-reset h1 {
-        font-size: 28px;
-    }
-
-    body:not(.thoughts-mode) .typora-editor-shell .vditor-reset h2 {
-        font-size: 24px;
-    }
-
-    body:not(.thoughts-mode) .typora-editor-shell .vditor-reset h3 {
-        font-size: 20px;
-    }
-
-    body:not(.thoughts-mode) .typora-editor-shell .vditor-reset h4,
-    body:not(.thoughts-mode) .typora-editor-shell .vditor-reset h5,
-    body:not(.thoughts-mode) .typora-editor-shell .vditor-reset h6 {
-        font-size: 17px;
-    }
-
-    body:not(.thoughts-mode) .typora-editor-shell .vditor-reset p,
-    body:not(.thoughts-mode) .typora-editor-shell .vditor-reset ul,
-    body:not(.thoughts-mode) .typora-editor-shell .vditor-reset ol,
-    body:not(.thoughts-mode) .typora-editor-shell .vditor-reset blockquote {
-        margin-bottom: 14px;
-    }
-
-    body:not(.thoughts-mode) .typora-editor-shell .vditor-reset p,
-    body:not(.thoughts-mode) .typora-editor-shell .vditor-reset li {
-        text-wrap: pretty;
-    }
-
-    body:not(.thoughts-mode) .typora-editor-shell .vditor-reset ul,
-    body:not(.thoughts-mode) .typora-editor-shell .vditor-reset ol {
-        padding-left: 1.55em;
-    }
-
-    body:not(.thoughts-mode) .typora-editor-shell .vditor-reset li + li {
-        margin-top: 0.25em;
-    }
-
-    /* 宽屏下引用块只把竖线右侧的呼吸感放大一点；实心卡片已按用户要求撤掉，
-     * 形态统一是「细竖线 + 浅一档的正体字」。段尾间距必须在这里压一次：桌面端
-     * `.vditor-reset p { margin-bottom: 14px }` 的优先级比 styles.css 那条高。 */
     body:not(.thoughts-mode) .typora-editor-shell .vditor-reset blockquote {
         padding-left: 26px;
-    }
-
-    body:not(.thoughts-mode) .typora-editor-shell .vditor-reset blockquote > :last-child {
-        margin-bottom: 0;
-    }
-
-    body:not(.thoughts-mode) .typora-editor-shell .vditor-reset :not(pre) > code:not(.hljs):not(.highlight-chroma) {
-        padding: 0.16em 0.36em;
-        border-radius: 4px;
-        background: color-mix(in srgb, var(--secondary-color) 54%, transparent);
-        font-family: var(--font-code);
-        font-size: 0.88em;
     }
 }
 

@@ -26,7 +26,13 @@ function makeSeedThoughts(count = 35) {
             id: `t-${num}`,
             text: i === 1 ? ('Long expanded intro line\n'.repeat(12) + 'End') : `Thought ${num} body content`,
             subItems: [
-                { id: `s-${num}-1`, text: `Subtask ${num}-1`, completed: false },
+                {
+                    id: `s-${num}-1`,
+                    text: i === 2
+                        ? '这是一个多行子任务夹具用于真实浏览器回归验证复制按钮必须落在最后一行右下角而非垂直居中的位置且不得单独占一行'
+                        : `Subtask ${num}-1`,
+                    completed: false
+                },
                 { id: `s-${num}-2`, text: `Subtask ${num}-2`, completed: false }
             ],
             tags: i % 2 === 0 ? ['work'] : ['life'],
@@ -83,6 +89,59 @@ async function runScenario(browser, viewport) {
     try {
         await page.goto(`${BASE_URL}/#thoughts`, { waitUntil: 'networkidle' });
         await page.waitForFunction(() => document.querySelectorAll('.thought-card').length === 30);
+
+        // Verify Thought main-body and multi-line subtask copy buttons sit at bottom-right
+        // aligned with the last text line (not vertically centered, not pushed into a new row),
+        // and header action icons render valid non-zero bounding boxes.
+        const copyGeom = await page.evaluate(() => {
+            const subRow = document.querySelector('.thought-card[data-id="t-02"] .subtask[data-subid="s-02-1"]');
+            const subText = subRow.querySelector('.subtask-text');
+            const subCopy = subRow.querySelector('.subtask-copy-btn');
+            const subTextRect = subText.getBoundingClientRect();
+            const subCopyRect = subCopy.getBoundingClientRect();
+            const card01 = document.querySelector('.thought-card[data-id="t-01"]');
+            const bodyEl = card01.querySelector('.thought-body');
+            const textEl = card01.querySelector('.thought-text');
+            const bodyCopy = card01.querySelector('.thought-copy-btn');
+            const headerBtns = ['mobile-menu-toggle', 'new-notepad-header', 'copy-link', 'toggle-reading-mode', 'global-search-toggle', 'settings-button']
+                .map((id) => {
+                    const btn = document.getElementById(id);
+                    const visSvg = Array.from(btn?.querySelectorAll('svg') || []).find((s) => getComputedStyle(s).display !== 'none');
+                    if (!visSvg || getComputedStyle(btn).display === 'none') return null;
+                    const rect = visSvg.getBoundingClientRect();
+                    return { id, w: rect?.width || 0, h: rect?.height || 0, sw: getComputedStyle(visSvg).strokeWidth };
+                })
+                .filter(Boolean);
+            return {
+                subTextHeight: Math.round(subTextRect.height),
+                subTextBottom: Math.round(subTextRect.bottom),
+                subCopyTop: Math.round(subCopyRect.top),
+                subCopyBottom: Math.round(subCopyRect.bottom),
+                subTextRight: Math.round(subTextRect.right),
+                subCopyLeft: Math.round(subCopyRect.left),
+                bodyPadRight: parseFloat(getComputedStyle(textEl).paddingRight),
+                bodyBottom: Math.round(bodyEl.getBoundingClientRect().bottom),
+                textBottom: Math.round(textEl.getBoundingClientRect().bottom),
+                bodyCopyBottom: Math.round(bodyCopy.getBoundingClientRect().bottom),
+                headerBtns
+            };
+        });
+        assert(copyGeom.subTextHeight >= 36, `expected wrapped multi-line subtask in ${viewport.width}px, got ${copyGeom.subTextHeight}px`);
+        assert(Math.abs(copyGeom.subCopyBottom - copyGeom.subTextBottom) <= 4,
+            `subtask copy button must align to last text line bottom, got copyBottom=${copyGeom.subCopyBottom} vs textBottom=${copyGeom.subTextBottom}`);
+        assert(copyGeom.subCopyTop > (copyGeom.subTextBottom - copyGeom.subTextHeight / 2) - 4,
+            `subtask copy button must sit in bottom half (not middle), got copyTop=${copyGeom.subCopyTop}, textHeight=${copyGeom.subTextHeight}`);
+        assert(copyGeom.subCopyLeft >= copyGeom.subTextRight - 1, 'subtask copy button must not overlap .subtask-text');
+        assert(copyGeom.bodyPadRight >= 24, `thought-text must preserve right clearance for copy button, got ${copyGeom.bodyPadRight}`);
+        assert(Math.abs(copyGeom.bodyCopyBottom - copyGeom.textBottom) <= 4,
+            `main thought copy button must align with bottom of .thought-text, got ${copyGeom.bodyCopyBottom} vs ${copyGeom.textBottom}`);
+        for (const hBtn of copyGeom.headerBtns) {
+            assert.strictEqual(Math.round(hBtn.w), 20, `header button ${hBtn.id} width must match 20px in thoughts view, got ${hBtn.w}`);
+            assert.strictEqual(Math.round(hBtn.h), 20, `header button ${hBtn.id} height must match 20px in thoughts view, got ${hBtn.h}`);
+            if (viewport.width <= 980) {
+                assert.strictEqual(hBtn.sw, '2px', `mobile header button ${hBtn.id} stroke-width must normalize to 2px, got ${hBtn.sw}`);
+            }
+        }
 
         // Install DOM teardown / identity monitor & scroll card t-15 into view
         const setupInfo = await page.evaluate(() => {
