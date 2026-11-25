@@ -79,6 +79,7 @@
     "test:tiptap-soft-enter-link": "node test/test_tiptap_soft_enter_link.js",
     "test:tiptap-soft-enter-block-rules": "node test/test_tiptap_soft_enter_block_rules.js",
     "test:tiptap-code-fence-input": "node test/test_tiptap_code_fence_input.js",
+    "test:tiptap-code-block-mobile-input": "node test/test_tiptap_code_block_mobile_input.js",
     "test:tiptap-divider-input": "node test/test_tiptap_divider_input.js",
     "test:tiptap-frontmatter-input": "node test/test_tiptap_frontmatter_input.js",
     "test:tiptap-undo-history": "node test/test_tiptap_undo_history.js",

@@ -45,6 +45,7 @@ import {
     DumbPadListBlankLineBackspace,
     DumbPadMobileInputRuleSettler,
     DumbPadTaskItemInPlaceShortcut,
+    DumbPadCodeBlockInputGuard,
 } from './managers/tiptap-extensions.js';
 import { TiptapSelectionMenu } from './managers/tiptap-selection-menu.js';
 import { TiptapSlashMenu } from './managers/tiptap-slash-menu.js';
@@ -357,6 +358,8 @@ export class HybridMarkdownEditor {
                 // 移动端 IME compositionend 与 DOM readDOMChange 后补跑一次内核输入规则，
                 // 保证退格留缩进后打 `- ` / `1. ` / `[ ] ` 在 Android/iOS 上稳定转嵌套列表。
                 DumbPadMobileInputRuleSettler,
+                // 移动端 PWA 代码块回车 / 换行 / 粘贴 / DOM 拆分自愈守卫，见 tiptap-extensions.js。
+                DumbPadCodeBlockInputGuard,
                 // 列表项首段落上的 [ ] 就地转待办（内核规则此时会抬升到根，
                 // 嵌套待办「渲染到最前面」的根因）。priority 101 先于内核
                 // TaskItem 规则咨询，与 SoftBreakBlockRules 同套路，
@@ -1342,18 +1345,17 @@ export class HybridMarkdownEditor {
         let selection = TextSelection.near(state.doc.resolve(position), 1);
         if (!selection) selection = TextSelection.atStart(state.doc);
         const tr = state.tr.setSelection(selection);
+        // 先聚焦再 dispatch：若先 dispatch 后 dom.focus()，updateState 时 !hasFocus() 会跳过
+        // selectionToDOM，随后 focus 沿用失活前缓存的旧 DOM 选区且与 currentSelection 相等，
+        // 导致视觉光标与 PM state.selection 错位（退格删错节点）。先以 preventScroll 聚焦
+        // 再 dispatch，updateState 可同步把新选区刷到 DOM 且不触发浏览器默认滚动。
+        if (focus) this.editor.view.dom.focus({ preventScroll: true });
         // 不调 PM 的 scrollIntoView（含编辑器聚焦的场合）：它的最小滚动会把光标
         // 怼到视口顶缘（移动端真机实测光标行贴到 y≈5），切换场景要的是「保住
         // 滚动比例已恢复的视线，光标只在出带时轻推」。jsdom 没有布局，
         // 带状滚动内部自行跳过。
         this.editor.view.dispatch(tr);
         this._trackedCaret = { mode: 'wysiwyg', pos: selection.from };
-        // PM 只在聚焦时才把状态里的选区同步到 DOM——不聚焦的话用户看不到光标，
-        // 而且下一次按键会先经过 focus 把选区重置掉。
-        // 不走 Tiptap 的 focus 命令：它的 iOS/Android 分支是裸 dom.focus()（无
-        // preventScroll，会把编辑器顶缘滚进视野），且默认再补一次 PM
-        // scrollIntoView。这里以 preventScroll 聚焦，焦点与选区同步照常成立。
-        if (focus) this.editor.view.dom.focus({ preventScroll: true });
         if (scrollIntoView) this.scrollEditorCaretIntoView();
         return true;
     }

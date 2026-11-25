@@ -37,6 +37,284 @@ function buildLineNumbers(codeText) {
     return rows.join('\n');
 }
 
+const CODE_BLOCK_WRAPPER_TAG_RE = /^(?:ADDRESS|ARTICLE|ASIDE|BLOCKQUOTE|DD|DETAILS|DIALOG|DIV|DL|DT|FIELDSET|FIGCAPTION|FIGURE|FOOTER|FORM|H[1-6]|HEADER|HGROUP|HR|LI|MAIN|NAV|OL|P|PRE|SECTION|TABLE|TR|UL)$/i;
+const SKIP_CLIPBOARD_TAG_RE = /^(?:STYLE|SCRIPT|NOSCRIPT|META|LINK|TITLE)$/i;
+
+function isCodeHeaderElement(node) {
+    return node?.nodeType === 1 && Boolean(node.classList?.contains?.('dumbpad-code-header'));
+}
+
+function isTrailingHackBreak(node) {
+    return node?.nodeType === 1 && node.nodeName === 'BR' && Boolean(node.classList?.contains?.('ProseMirror-trailingBreak'));
+}
+
+function isBlockLikeInsidePre(node) {
+    return node?.nodeType === 1 && (node.nodeName === 'CODE' || CODE_BLOCK_WRAPPER_TAG_RE.test(node.nodeName));
+}
+
+function isSkipChromeInPre(node) {
+    return node?.nodeType === 1 && (
+        node.classList?.contains?.('dumbpad-code-header')
+        || node.classList?.contains?.('dumbpad-mermaid-render')
+        || node.classList?.contains?.('mermaid-error-hint')
+    );
+}
+
+function hasContentAfterBreakInBlock(brNode, blockBoundary) {
+    let cursor = brNode;
+    while (cursor && cursor !== blockBoundary) {
+        let sibling = cursor.nextSibling;
+        while (sibling) {
+            if (sibling.nodeType === 3) {
+                if (sibling.nodeValue && sibling.nodeValue.length > 0) return true;
+            } else if (sibling.nodeType === 1) {
+                if (CODE_BLOCK_WRAPPER_TAG_RE.test(sibling.nodeName)) return true;
+                if (sibling.nodeName === 'BR') return true;
+                if (sibling.querySelector?.('br') || (sibling.textContent && sibling.textContent.length > 0)) {
+                    return true;
+                }
+            }
+            sibling = sibling.nextSibling;
+        }
+        cursor = cursor.parentNode;
+        if (cursor && cursor !== blockBoundary && cursor.nodeType === 1 && CODE_BLOCK_WRAPPER_TAG_RE.test(cursor.nodeName)) {
+            break;
+        }
+    }
+    return false;
+}
+
+function normalizedTextOffset(rawText, domOffset) {
+    const clamped = Math.max(0, Math.min(Number(domOffset) || 0, rawText.length));
+    return rawText.slice(0, clamped).replace(/\r\n?/g, '\n').length;
+}
+
+function extractTextAndCaret(container, { domSelection = null, preMode = false } = {}) {
+    const anchorNode = domSelection?.anchorNode || null;
+    const anchorOffset = Number(domSelection?.anchorOffset || 0);
+    const focusNode = domSelection?.focusNode || null;
+    const focusOffset = Number(domSelection?.focusOffset || 0);
+    let out = '';
+    let resolvedAnchor = null;
+    let resolvedFocus = null;
+
+    const recordBoundary = (el, childIndex) => {
+        if (anchorNode === el && anchorOffset === childIndex) resolvedAnchor = out.length;
+        if (focusNode === el && focusOffset === childIndex) resolvedFocus = out.length;
+    };
+
+    const walkChildren = (parent, blockBoundary, isPreRoot) => {
+        const children = Array.from(parent.childNodes || []);
+        let prevEmitted = false;
+        let prevWasBlock = false;
+        for (let index = 0; index < children.length; index += 1) {
+            recordBoundary(parent, index);
+            const child = children[index];
+            if (isPreRoot && isSkipChromeInPre(child)) continue;
+            if (!isPreRoot && child.nodeType === 1 && SKIP_CLIPBOARD_TAG_RE.test(child.nodeName)) continue;
+
+            if (child.nodeType === 3) {
+                if (prevWasBlock) {
+                    out += '\n';
+                    prevWasBlock = false;
+                }
+                const raw = child.nodeValue || '';
+                if (anchorNode === child) resolvedAnchor = out.length + normalizedTextOffset(raw, anchorOffset);
+                if (focusNode === child) resolvedFocus = out.length + normalizedTextOffset(raw, focusOffset);
+                if (raw) {
+                    out += raw.replace(/\r\n?/g, '\n');
+                    prevEmitted = true;
+                }
+                continue;
+            }
+
+            if (child.nodeType !== 1) continue;
+
+            if (child.nodeName === 'BR') {
+                if (isPreRoot && prevEmitted) {
+                    out += '\n';
+                } else if (!isTrailingHackBreak(child) && hasContentAfterBreakInBlock(child, blockBoundary)) {
+                    out += '\n';
+                    prevEmitted = true;
+                }
+                prevWasBlock = false;
+                continue;
+            }
+
+            const isBlock = isPreRoot ? isBlockLikeInsidePre(child) : CODE_BLOCK_WRAPPER_TAG_RE.test(child.nodeName);
+            if (isBlock) {
+                if (prevEmitted || prevWasBlock) {
+                    out += '\n';
+                }
+                walkChildren(child, child, false);
+                prevEmitted = true;
+                prevWasBlock = true;
+            } else {
+                if (prevWasBlock) {
+                    out += '\n';
+                    prevWasBlock = false;
+                }
+                const beforeLen = out.length;
+                walkChildren(child, blockBoundary, false);
+                if (out.length > beforeLen) prevEmitted = true;
+            }
+        }
+        recordBoundary(parent, children.length);
+    };
+
+    walkChildren(container, container, preMode);
+    return { text: out, anchorOffset: resolvedAnchor, headOffset: resolvedFocus };
+}
+
+/** 从富文本 HTML（仅有 text/html 剪贴板）提取保留换行语义的纯文本，不触发资源加载。 */
+export function extractClipboardHtmlText(html) {
+    if (!html) return '';
+    const detached = document.implementation.createHTMLDocument('');
+    detached.body.innerHTML = String(html);
+    detached.body.querySelectorAll('style, script, noscript').forEach(el => el.remove());
+    return extractTextAndCaret(detached.body, { preMode: false }).text;
+}
+
+/** 从代码块 <pre> 及其内部提取真实源码文本与相对选区偏移（兼容被浏览器/IME 拆散的 sibling 元素）。 */
+export function extractCodeBlockTextAndCaret(pre, code, domSelection = null) {
+    if (!pre) return { text: code?.textContent || '', anchorOffset: null, headOffset: null };
+    return extractTextAndCaret(pre, { domSelection, preMode: true });
+}
+
+/** 检查代码块 DOM 是否被浏览器/IME 拆出多个 <code> / 块容器 / 非 ProseMirror 占位 <br>。 */
+export function isCodeBlockDOMCorrupted(pre, code) {
+    if (!pre || !code || !pre.contains(code)) return false;
+    for (let child = pre.firstChild; child; child = child.nextSibling) {
+        if (child !== code && !isCodeHeaderElement(child)) return true;
+    }
+    const walker = document.createTreeWalker(code, 1 /* NodeFilter.SHOW_ELEMENT */);
+    for (let el = walker.nextNode(); el; el = walker.nextNode()) {
+        if (CODE_BLOCK_WRAPPER_TAG_RE.test(el.nodeName)) return true;
+        if (el.nodeName === 'BR' && !isTrailingHackBreak(el)) return true;
+    }
+    return false;
+}
+
+/** 清理 <pre> 中除 .dumbpad-code-header 与唯一 contentDOM <code> 外的游离 DOM 节点。 */
+export function cleanStrayPreChildren(pre, header, code) {
+    if (!pre) return;
+    for (const child of Array.from(pre.childNodes)) {
+        if (child !== header && child !== code) child.remove();
+    }
+}
+
+export function findCodeBlockWrapperFromEvent(view, event) {
+    const direct = event?.target?.closest?.('.vditor-wysiwyg__block[data-type="code-block"]');
+    if (direct && view?.dom?.contains(direct)) return direct;
+    const domSel = view?.domSelectionRange?.() || document.getSelection?.();
+    const anchor = domSel?.anchorNode;
+    const anchorEl = anchor?.nodeType === 1 ? anchor : anchor?.parentElement;
+    const fromSel = anchorEl?.closest?.('.vditor-wysiwyg__block[data-type="code-block"]');
+    if (fromSel && view?.dom?.contains(fromSel)) return fromSel;
+    const $from = view?.state?.selection?.$from;
+    if ($from?.parent?.type?.name === 'codeBlock') {
+        const nodeDom = view.nodeDOM?.($from.before());
+        return nodeDom?.closest?.('.vditor-wysiwyg__block[data-type="code-block"]') || nodeDom || null;
+    }
+    return null;
+}
+
+function findSingleTextChangeBounds(previousText, nextText) {
+    let start = 0;
+    const minLen = Math.min(previousText.length, nextText.length);
+    while (start < minLen && previousText[start] === nextText[start]) {
+        start += 1;
+    }
+    let oldEnd = previousText.length;
+    let newEnd = nextText.length;
+    while (oldEnd > start && newEnd > start && previousText[oldEnd - 1] === nextText[newEnd - 1]) {
+        oldEnd -= 1;
+        newEnd -= 1;
+    }
+    return { start, oldEnd, replacement: nextText.slice(start, newEnd) };
+}
+
+/**
+ * 自愈被移动端浏览器 / IME / 原生粘贴拆碎的代码块 DOM：
+ * 把游离 sibling <code>/<div>/<br> 连同精确光标位置折叠回唯一的 contentDOM，并同步到 ProseMirror 文档。
+ */
+export function reconcileCodeBlockDOM(view, containerEl) {
+    if (!view || view.isDestroyed || !containerEl) return false;
+    const wrapper = containerEl.closest?.('.vditor-wysiwyg__block[data-type="code-block"]') || containerEl;
+    const pre = wrapper.querySelector?.(':scope > pre');
+    const header = pre?.querySelector?.(':scope > .dumbpad-code-header') || null;
+    const code = pre?.querySelector?.(':scope > code') || null;
+    if (!pre || !code || !isCodeBlockDOMCorrupted(pre, code)) return false;
+
+    let blockPos = -1;
+    try {
+        const innerPos = view.posAtDOM(code, 0);
+        const $inner = view.state.doc.resolve(innerPos);
+        for (let d = $inner.depth; d >= 0; d -= 1) {
+            if ($inner.node(d).type.name === 'codeBlock') {
+                blockPos = $inner.before(d);
+                break;
+            }
+        }
+    } catch (_error) {
+        return false;
+    }
+    if (blockPos < 0) return false;
+    const liveNode = view.state.doc.nodeAt(blockPos);
+    if (!liveNode || liveNode.type.name !== 'codeBlock') return false;
+
+    const domSel = view.domSelectionRange?.() || document.getSelection?.();
+    const selInsidePre = Boolean(domSel?.anchorNode && pre.contains(domSel.anchorNode) && !header?.contains(domSel.anchorNode));
+    const { text, anchorOffset, headOffset } = extractCodeBlockTextAndCaret(pre, code, selInsidePre ? domSel : null);
+    const contentStart = blockPos + 1;
+    const contentEnd = blockPos + liveNode.nodeSize - 1;
+    const TextSelection = globalThis.DumbPadTiptap?.PM?.state?.TextSelection;
+
+    view.domObserver?.stop?.();
+    let rewroteCodeChildren = false;
+    try {
+        cleanStrayPreChildren(pre, header, code);
+        if (isCodeBlockDOMCorrupted(pre, code)) {
+            code.replaceChildren(text ? document.createTextNode(text) : document.createElement('br'));
+            rewroteCodeChildren = true;
+            view.docView?.markDirty?.(contentStart, contentEnd);
+        }
+    } finally {
+        view.domObserver?.start?.();
+    }
+
+    const previousText = liveNode.textContent || '';
+    const hasLayout = typeof document.createRange?.().getClientRects === 'function';
+    if (text !== previousText) {
+        const diff = findSingleTextChangeBounds(previousText, text);
+        const tr = view.state.tr.replaceWith(
+            contentStart + diff.start,
+            contentStart + diff.oldEnd,
+            diff.replacement ? view.state.schema.text(diff.replacement) : []
+        );
+        if (TextSelection && anchorOffset !== null) {
+            const max = text.length;
+            const anchorPos = contentStart + Math.max(0, Math.min(anchorOffset, max));
+            const headPos = contentStart + Math.max(0, Math.min(headOffset ?? anchorOffset, max));
+            tr.setSelection(TextSelection.create(tr.doc, anchorPos, headPos));
+        }
+        view.dispatch(hasLayout ? tr.scrollIntoView() : tr);
+        return true;
+    }
+
+    if (rewroteCodeChildren) {
+        view.updateState(view.state);
+    }
+    if (TextSelection && anchorOffset !== null) {
+        const max = previousText.length;
+        const anchorPos = contentStart + Math.max(0, Math.min(anchorOffset, max));
+        const headPos = contentStart + Math.max(0, Math.min(headOffset ?? anchorOffset, max));
+        const selTr = view.state.tr.setSelection(TextSelection.create(view.state.doc, anchorPos, headPos));
+        view.dispatch(hasLayout ? selTr.scrollIntoView() : selTr);
+    }
+    return true;
+}
+
 function renderBadge(badge, language) {
     const displayLanguage = String(language || 'plaintext').trim().toLowerCase() || 'plaintext';
     const iconPath = getCodeLanguageIconPath(displayLanguage);
@@ -456,6 +734,9 @@ export function buildCodeBlockNodeView() {
 
         const renderChrome = (updatedNode) => {
             currentCodeNode = updatedNode;
+            if (!view?.composing) {
+                cleanStrayPreChildren(pre, header, code);
+            }
             syncBadgeEditable();
             const language = normalizeCodeLanguage(updatedNode.attrs.language);
             if (currentLanguage !== language) {

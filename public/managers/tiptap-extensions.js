@@ -6,7 +6,12 @@
  */
 import { Mark, Node, Extension, TaskList, TaskItem, InputRule, findParentNode, CodeBlockLowlight, Underline, PM, getMarkdownSpec } from './tiptap-runtime.js';
 import { TIME_COMMAND, parseTimeMarkerText, buildTimeMarker } from './time-command.js';
-import { buildCodeBlockNodeView } from './tiptap-code-block-view.js';
+import {
+    buildCodeBlockNodeView,
+    extractClipboardHtmlText,
+    findCodeBlockWrapperFromEvent,
+    reconcileCodeBlockDOM,
+} from './tiptap-code-block-view.js';
 import { buildTaskItemNodeView } from './tiptap-task-item-view.js';
 
 const { Plugin, PluginKey, TextSelection } = PM.state;
@@ -2344,5 +2349,177 @@ export const DumbPadTaskItemInPlaceShortcut = Extension.create({
                 tr.scrollIntoView();
             },
         })];
+    },
+});
+
+/**
+ * 移动端 PWA 代码块输入与粘贴守卫：
+ * 1) prosemirror-view 在 Android Chrome 上跳过 keyCode 13 的 handleKeyDown，且移动软键盘/IME
+ *    的 keyCode 229 或组合态也会绕过 keydown；同时代码块内的 contentDOM（`code`）设为
+ *    `display: block` 后，浏览器原生的 `insertParagraph` / `insertLineBreak` / `insertFromPaste` /
+ *    含换行符的 `insertText` 会直接在 `<pre>` 下拆出多个同级 `<code>` 或 `<div>`——且被
+ *    NodeView 的 `ignoreMutation` 视为 contentDOM 之外而忽略，导致屏幕看似输入成功、源码与
+ *    行号却停在第一行、退格跳回第一行、删空第一行后整块消失。
+ * 2) 在 `beforeinput` 层拦截 `insertParagraph` / `insertLineBreak` / `insertFromPaste` /
+ *    带换行的 `insertText` / `insertReplacementText`，统一走 ProseMirror 事务（含三连回车退出）。
+ * 3) 对组合态下的 `paste`（iOS Safari 会跳过 editHandlers.paste）及不可取消的 DOM 拆分
+ *    （如 `insertCompositionText` 或原生 HTML 注入），在 `input` / `compositionend` 时
+ *    通过 `reconcileCodeBlockDOM` 把游离 DOM 与光标精确折叠回唯一 contentDOM。
+ */
+export const DumbPadCodeBlockInputGuard = Extension.create({
+    name: 'dumbpadCodeBlockInputGuard',
+
+    addProseMirrorPlugins() {
+        const editor = this.editor;
+
+        const flushPendingDOM = (view) => {
+            if (!view?.domObserver) return;
+            if (view.domObserver.flushingSoon > -1) {
+                view.domObserver.forceFlush?.();
+            } else {
+                view.domObserver.flush?.();
+            }
+        };
+
+        const getCodeBlockContext = (view) => {
+            if (!view?.editable) return null;
+            const { selection } = view.state;
+            const { $from, $to } = selection;
+            if ($from.parent.type.name !== 'codeBlock' || !$from.sameParent($to)) return null;
+            const blockStart = $from.start();
+            return {
+                selection,
+                $from,
+                blockStart,
+                blockEnd: blockStart + $from.parent.content.size,
+            };
+        };
+
+        const resolveTargetRange = (view, event, context) => {
+            const targetRange = typeof event?.getTargetRanges === 'function' ? event.getTargetRanges()[0] : null;
+            if (targetRange && typeof view.posAtDOM === 'function') {
+                try {
+                    const start = view.posAtDOM(targetRange.startContainer, targetRange.startOffset);
+                    const end = view.posAtDOM(targetRange.endContainer, targetRange.endOffset);
+                    const from = Math.max(context.blockStart, Math.min(start, end, context.blockEnd));
+                    const to = Math.max(from, Math.min(Math.max(start, end), context.blockEnd));
+                    return [from, to];
+                } catch (_error) {
+                    // 目标范围不在视图内时回落当前选区。
+                }
+            }
+            return [context.selection.from, context.selection.to];
+        };
+
+        const insertNormalizedText = (view, from, to, rawText, { isPaste = false } = {}) => {
+            const normalized = String(rawText ?? '').replace(/\r\n?/g, '\n');
+            const tr = view.state.tr.insertText(normalized, from, to);
+            if (isPaste) tr.setMeta('paste', true);
+            const hasLayout = typeof document.createRange?.().getClientRects === 'function';
+            view.dispatch(hasLayout ? tr.scrollIntoView() : tr);
+            return true;
+        };
+
+        const applyEnterInCodeBlock = (view, context, allowTripleExit) => {
+            const { selection, $from } = context;
+            const codeBlockExt = editor?.extensionManager?.extensions?.find(ext => ext.name === 'codeBlock');
+            const exitEnabled = codeBlockExt?.options?.exitOnTripleEnter !== false;
+            if (allowTripleExit
+                && exitEnabled
+                && selection.empty
+                && $from.parentOffset === $from.parent.content.size
+                && $from.parent.textContent.endsWith('\n\n')
+                && typeof editor?.chain === 'function') {
+                return editor.chain().command(({ tr }) => {
+                    tr.delete($from.pos - 2, $from.pos);
+                    return true;
+                }).exitCode().run();
+            }
+            return insertNormalizedText(view, selection.from, selection.to, '\n');
+        };
+
+        return [
+            new Plugin({
+                key: new PluginKey('dumbpadCodeBlockInputGuard'),
+                props: {
+                    handleDOMEvents: {
+                        beforeinput: (view, event) => {
+                            if (!view?.editable || event?.defaultPrevented) return false;
+                            const inputType = event?.inputType;
+                            if (inputType !== 'insertParagraph'
+                                && inputType !== 'insertLineBreak'
+                                && inputType !== 'insertFromPaste'
+                                && inputType !== 'insertText'
+                                && inputType !== 'insertReplacementText') {
+                                return false;
+                            }
+
+                            const wrapper = findCodeBlockWrapperFromEvent(view, event);
+                            if (wrapper) reconcileCodeBlockDOM(view, wrapper);
+
+                            if (inputType === 'insertParagraph' || inputType === 'insertLineBreak') {
+                                flushPendingDOM(view);
+                                const context = getCodeBlockContext(view);
+                                if (!context) return false;
+                                event.preventDefault?.();
+                                return applyEnterInCodeBlock(view, context, inputType === 'insertParagraph');
+                            }
+
+                            if (inputType === 'insertFromPaste') {
+                                const raw = event.dataTransfer?.getData?.('text/plain')
+                                    || event.dataTransfer?.getData?.('Text')
+                                    || (typeof event.data === 'string' ? event.data : '');
+                                if (!raw) return false;
+                                flushPendingDOM(view);
+                                const context = getCodeBlockContext(view);
+                                if (!context) return false;
+                                event.preventDefault?.();
+                                const [from, to] = resolveTargetRange(view, event, context);
+                                return insertNormalizedText(view, from, to, raw, { isPaste: true });
+                            }
+
+                            if (!event.isComposing && typeof event.data === 'string' && /[\r\n]/.test(event.data)) {
+                                flushPendingDOM(view);
+                                const context = getCodeBlockContext(view);
+                                if (!context) return false;
+                                event.preventDefault?.();
+                                const [from, to] = resolveTargetRange(view, event, context);
+                                return insertNormalizedText(view, from, to, event.data);
+                            }
+                            return false;
+                        },
+                        paste: (view, event) => {
+                            const context = getCodeBlockContext(view);
+                            if (!context) return false;
+                            const clipboardData = event?.clipboardData;
+                            if (!clipboardData) return false;
+                            const plain = clipboardData.getData('text/plain') || clipboardData.getData('Text') || '';
+                            const html = clipboardData.getData('text/html') || '';
+                            if (!view.composing && (plain || !html)) return false;
+                            const extracted = plain || extractClipboardHtmlText(html);
+                            if (!extracted && plain === '' && !html) return false;
+                            event.preventDefault?.();
+                            return insertNormalizedText(view, context.selection.from, context.selection.to, extracted, { isPaste: true });
+                        },
+                        input: (view, event) => {
+                            if (!view?.editable || view.composing || event?.isComposing) return false;
+                            const wrapper = findCodeBlockWrapperFromEvent(view, event);
+                            if (wrapper) reconcileCodeBlockDOM(view, wrapper);
+                            return false;
+                        },
+                        compositionend: (view, event) => {
+                            const wrapper = findCodeBlockWrapperFromEvent(view, event);
+                            if (!wrapper) return false;
+                            queueMicrotask(() => {
+                                if (!view.isDestroyed && !view.composing) {
+                                    reconcileCodeBlockDOM(view, wrapper);
+                                }
+                            });
+                            return false;
+                        },
+                    },
+                },
+            }),
+        ];
     },
 });
