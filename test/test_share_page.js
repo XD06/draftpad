@@ -4,7 +4,12 @@ const express = require('express');
 const { marked } = require('marked');
 const { JSDOM } = require('jsdom');
 const { registerShareRoutes, sanitizeHtml } = require('../routes/share-routes');
-const { renderSharePage, renderShareBody } = require('../scripts/share-renderer');
+const {
+    renderSharePage,
+    renderShareBody,
+    extractFrontmatter,
+    parseFrontmatterEntries
+} = require('../scripts/share-renderer');
 
 function assertSecurityInvariants(html) {
     assert(!/<script\b[^>]*>\s*alert/i.test(html), 'must strip user script tags');
@@ -167,6 +172,117 @@ async function testRendererUnitCases() {
     });
     assert(/<body class="no-toc">/.test(noHeadingHtml), 'headingless note must render with no-toc body class');
     assert(noHeadingHtml.includes('class="sheet-header-actions"'), 'headingless mode should include inline header actions');
+
+    // Leading YAML frontmatter extraction, XSS safety, and collapsible card
+    const fmMarkdown = [
+        '---',
+        'name: dumbpad-api',
+        'description: Manage DumbPad through its authenticated HTTP API. Never edit storage directly.',
+        'tags: [skill, api, <script>alert(1)</script>]',
+        '---',
+        '',
+        '# SKILL.md',
+        '',
+        '## DumbPad API Agent',
+        '',
+        '### Sub Operations',
+        '',
+        '##### Deep Tip',
+        '',
+        '正文段落。',
+        '',
+        '---',
+        '',
+        '文章底部段落。'
+    ].join('\n');
+
+    const extracted = extractFrontmatter(fmMarkdown);
+    assert(extracted.frontmatterRaw.includes('name: dumbpad-api'), 'extractFrontmatter should extract YAML block');
+    assert(!extracted.bodyMarkdown.trim().startsWith('---'), 'extractFrontmatter should strip leading YAML from body');
+    const parsedFm = parseFrontmatterEntries(extracted.frontmatterRaw);
+    assert.strictEqual(parsedFm.entries.length, 3, 'should parse all 3 top-level YAML keys');
+    assert.deepStrictEqual(parsedFm.entries[2].values, ['skill', 'api', '<script>alert(1)</script>']);
+
+    // Edge cases: ---\n---, blank-only frontmatter, unclosed frontmatter, mid-doc hr must NOT become fm-card
+    assert.strictEqual(extractFrontmatter('---\n---\n正文').frontmatterRaw, null, 'adjacent --- rules must not become frontmatter');
+    assert.strictEqual(extractFrontmatter('---\n   \n---\n正文').frontmatterRaw, null, 'blank-only --- delimiters must not become frontmatter');
+    assert.strictEqual(extractFrontmatter('---\ntitle: Unclosed\n正文').frontmatterRaw, null, 'unclosed --- must not become frontmatter');
+    assert.strictEqual(extractFrontmatter('# Title\n\n---\n\nBody').frontmatterRaw, null, 'mid-document hr must not become frontmatter');
+
+    const fmPageHtml = renderSharePage({
+        notepad: { id: 'note-fm', name: 'SKILL.md', editCount: 1 },
+        content: fmMarkdown,
+        marked,
+        sanitizeHtml
+    });
+    assertSecurityInvariants(fmPageHtml);
+    const fmDom = new JSDOM(fmPageHtml, { runScripts: 'dangerously', url: 'http://127.0.0.1/s/note-fm?t=abc' });
+    const fmDoc = fmDom.window.document;
+    const fmCard = fmDoc.querySelector('details.fm-card');
+    assert(fmCard, 'frontmatter should render as collapsible details.fm-card');
+    assert(!fmCard.hasAttribute('open'), 'frontmatter card should be collapsed by default');
+    assert(!fmDoc.querySelector('#article-body details.fm-card'), 'frontmatter card must live outside #article-body so正文复制不受污染');
+    assert(!fmDoc.querySelector('#article-body > hr:first-child'), 'leading frontmatter --- must not render as <hr> inside body');
+    assert.strictEqual(fmDoc.querySelectorAll('#article-body h1').length, 0, 'duplicate leading H1 after frontmatter should still be stripped');
+    assert.strictEqual(fmDoc.querySelectorAll('#article-body hr').length, 1, 'mid-document --- divider should still render cleanly');
+
+    const fmTocLinks = Array.from(fmDoc.querySelectorAll('#rail-nav a'));
+    assert.deepStrictEqual(
+        fmTocLinks.map((a) => a.textContent.trim()),
+        ['DumbPad API Agent', 'Sub Operations', 'Deep Tip'],
+        'TOC must support H2/H3/H5 headings cleanly without polluted frontmatter Setext H2'
+    );
+    assert.deepStrictEqual(
+        fmTocLinks.map((a) => a.getAttribute('data-depth')),
+        ['0', '1', '3'],
+        'TOC should normalize relative depth dynamically from document min heading level'
+    );
+    assert.strictEqual(fmDoc.getElementById('rail-toc-count').textContent, '3 节', 'TOC count should reflect heading count');
+    assert.strictEqual(fmDoc.getElementById('toc-popover-count').textContent, '3 节', 'mobile TOC popover count should match');
+    assert.strictEqual(fmTocLinks[0].getAttribute('title'), 'DumbPad API Agent', 'TOC links should expose full title tooltip');
+    assert(fmTocLinks[0].querySelector('.toc-link-label'), 'TOC link label should use clamping span wrapper');
+    assert.deepStrictEqual(
+        fmTocLinks.map((a) => a.querySelector('.toc-level-badge')?.getAttribute('data-badge')),
+        ['H2', 'H3', 'H5'],
+        'TOC items should carry visual level badges via data-badge without polluting textContent'
+    );
+    const popBadges = Array.from(fmDoc.querySelectorAll('#toc-popover-list a .toc-level-badge')).map((b) => b.getAttribute('data-badge'));
+    assert.deepStrictEqual(popBadges, ['H2', 'H3', 'H5'], 'mobile TOC popover links should render level badges too');
+
+    const mixedHtml = renderSharePage({
+        notepad: { id: 'note-mixed', name: '混排与换行', editCount: 1 },
+        content: [
+            '1. 有序列表测试',
+            '- [ ] 待办测试',
+            '- [ ] 再次测试',
+            '- 无序列表',
+            '',
+            '普通段落测试',
+            '代码块测试'
+        ].join('\n'),
+        marked,
+        sanitizeHtml
+    });
+    assertSecurityInvariants(mixedHtml);
+    assert(
+        mixedHtml.includes('ol > li:not(.task-item)::marker'),
+        'share page CSS must style ordered list markers explicitly'
+    );
+    assert(
+        !/\.markdown-body ul\.task-list[^}]*list-style:\s*none/.test(mixedHtml),
+        'share page CSS must not suppress bullets on ul.task-list parent (breaks mixed task+bullet lists)'
+    );
+    const mixedDoc = new JSDOM(mixedHtml, { runScripts: 'dangerously', url: 'http://127.0.0.1/s/note-mixed?t=abc' }).window.document;
+    const mixedLis = Array.from(mixedDoc.querySelectorAll('#article-body ul.task-list > li'));
+    assert.strictEqual(mixedLis.length, 3, 'mixed task + bullet items should render in list');
+    assert(mixedLis[0].classList.contains('task-item') && mixedLis[0].querySelector('.task-check'));
+    assert(mixedLis[1].classList.contains('task-item') && mixedLis[1].querySelector('.task-check'));
+    assert(
+        !mixedLis[2].classList.contains('task-item') && !mixedLis[2].querySelector('.task-check'),
+        'non-task bullet sibling in mixed list must not be treated as task item'
+    );
+    const bodyPara = mixedDoc.querySelector('#article-body > p');
+    assert(bodyPara && /普通段落测试<br\s*\/?>代码块测试/.test(bodyPara.innerHTML), 'single newline inside paragraph must render as <br>');
 }
 
 async function testShareRoutesHttp() {
@@ -207,6 +323,7 @@ async function testShareRoutesHttp() {
 
         const okRes = await fetch(`${base}/s/n-ok?t=${token}`);
         assert.strictEqual(okRes.status, 200);
+        assert.strictEqual(okRes.headers.get('cache-control'), 'no-store', 'HTTP share route should send Cache-Control: no-store');
         const pageHtml = await okRes.text();
         assert(pageHtml.includes('class="ios-sheet"'), 'HTTP share route should render B+C sheet layout');
         assert(pageHtml.includes('data-task-state="doing"'), 'HTTP share route should render 3-state doing task');

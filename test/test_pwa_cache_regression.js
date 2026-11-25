@@ -85,6 +85,11 @@ assert(
     'service worker should treat an older app cache as an update and clean it after installing the current cache'
 );
 assert(serviceWorker.includes('requestUrl.pathname.startsWith("/api/")'), 'service worker should bypass API requests');
+assert(
+    serviceWorker.includes('requestUrl.pathname.startsWith("/s/")') &&
+    serviceWorker.includes('isAppShellNavigation'),
+    'service worker should bypass timeout/index fallback for /s/ share routes and scope /index.html fallback strictly to root navigations'
+);
 const buildVersionSource = fs.readFileSync(path.join(root, 'scripts', 'build-version.js'), 'utf8');
 assert(
     buildVersionSource.includes('collectBuildFingerprintStats') &&
@@ -391,6 +396,100 @@ assert(
             );
         }
     }
+
+    // 运行真实 service-worker.js fetch 处理器：即使服务端响应慢于 600ms 且缓存中已有 /index.html，
+    // 访问 /s/:id?t=... 也绝不能返回 /index.html（否则相对资源 path 解析为 /s/Assets/* 全 404），
+    // /login 同样不得回退为 /index.html，而根路由 / 仍保持 600ms 限时回退缓存。
+    const listeners = {};
+    const indexShellResponse = { ok: true, status: 200, redirected: false, body: '__INDEX_HTML__' };
+    const swMockCaches = {
+        match: async (req) => {
+            const urlStr = typeof req === 'string' ? req : req?.url;
+            if (urlStr === '/index.html') return indexShellResponse;
+            return null;
+        },
+        open: async () => ({ put: async () => {}, match: async () => null, keys: async () => [] }),
+        keys: async () => []
+    };
+    const swContext = {
+        URL,
+        Promise,
+        Response: class MockResponse {
+            constructor(body, init = {}) {
+                this.body = body;
+                this.status = init.status || 200;
+                this.statusText = init.statusText || '';
+                this.ok = this.status >= 200 && this.status < 300;
+            }
+        },
+        caches: swMockCaches,
+        self: {
+            location: { origin: 'https://draft.example.test' },
+            registration: {},
+            clients: { claim: async () => {}, matchAll: async () => [] },
+            addEventListener: (type, handler) => { listeners[type] = handler; }
+        },
+        console: { log: () => {}, warn: () => {}, error: () => {} },
+        setTimeout,
+        clearTimeout,
+        fetch: async (req) => {
+            const urlStr = typeof req === 'string' ? req : req.url;
+            if (urlStr.includes('/s/')) {
+                await new Promise((r) => setTimeout(r, 750));
+                return { ok: true, status: 200, redirected: false, body: '__SHARE_HTML__' };
+            }
+            if (urlStr.includes('/login')) {
+                await new Promise((r) => setTimeout(r, 750));
+                throw new Error('offline');
+            }
+            await new Promise((r) => setTimeout(r, 750));
+            return { ok: true, status: 200, redirected: false, body: '__FRESH_INDEX__' };
+        }
+    };
+    vm.runInNewContext(serviceWorker, swContext);
+    assert(typeof listeners.fetch === 'function', 'service worker should register fetch listener');
+
+    const dispatchNavFetch = (url, preloadResponse = null) => new Promise((resolve, reject) => {
+        let responded = null;
+        listeners.fetch({
+            request: { method: 'GET', mode: 'navigate', url },
+            preloadResponse,
+            respondWith: (p) => { responded = Promise.resolve(p); }
+        });
+        if (!responded) {
+            resolve(null);
+            return;
+        }
+        responded.then(resolve, reject);
+    });
+
+    const slowShareRes = await dispatchNavFetch('https://draft.example.test/s/note-1?t=abc');
+    assert.strictEqual(
+        slowShareRes?.body,
+        '__SHARE_HTML__',
+        'slow (>600ms) mobile share navigation must wait for share HTML instead of falling back to /index.html'
+    );
+    const preloadShareRes = await dispatchNavFetch(
+        'https://draft.example.test/s/note-1?t=abc',
+        Promise.resolve({ ok: true, status: 200, body: '__PRELOAD_SHARE__' })
+    );
+    assert.strictEqual(
+        preloadShareRes?.body,
+        '__PRELOAD_SHARE__',
+        'share navigation should reuse navigation preload response when available'
+    );
+    const offlineLoginRes = await dispatchNavFetch('https://draft.example.test/login');
+    assert.notStrictEqual(
+        offlineLoginRes?.body,
+        '__INDEX_HTML__',
+        '/login navigation must never fall back to cached /index.html'
+    );
+    const rootSlowRes = await dispatchNavFetch('https://draft.example.test/');
+    assert.strictEqual(
+        rootSlowRes?.body,
+        '__INDEX_HTML__',
+        'root / navigation must still fall back to cached /index.html after 600ms timeout'
+    );
 
     console.log('PWA cache regression checks passed');
 })().catch((error) => {

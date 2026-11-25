@@ -391,6 +391,18 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
+  // Share pages (/s/:id?t=...) are server-rendered tokenized HTML outside the SPA
+  // shell: never enforce the 600ms timeout, cache share HTML, or fall back to
+  // /index.html (relative paths under /s/ break all CSS/JS when /index.html is served).
+  if (requestUrl.pathname.startsWith("/s/")) {
+    event.respondWith(
+      Promise.resolve(event.preloadResponse)
+        .catch(() => null)
+        .then((preloaded) => preloaded || fetch(event.request))
+    );
+    return;
+  }
+
   const staticAssetExtensions = [".js", ".css", ".json", ".png", ".ico", ".svg", ".woff", ".woff2", ".ttf", ".wasm"];
   const isNavigation = event.request.mode === "navigate";
   const isStaticAsset = staticAssetExtensions.some(ext => requestUrl.pathname.endsWith(ext));
@@ -405,11 +417,15 @@ self.addEventListener("fetch", (event) => {
     // Never cache redirected (e.g. → /login) responses under the original URL:
     // otherwise a logged-out navigation can pollute the "/" cache slot with the
     // login page, or leave a stale app shell that hides the login redirect.
+    // Restrict the "/index.html" shell fallback strictly to root app navigations
+    // so non-shell routes (/login, etc.) never receive an unstyled/mis-scoped shell.
+    const isAppShellNavigation =
+      requestUrl.pathname === "/" || requestUrl.pathname === "/index.html";
     event.respondWith(
       networkFirstWithTimeout(event.request, {
         timeout: NAVIGATION_NETWORK_TIMEOUT,
         fetchOptions: { cache: "no-store" },
-        fallbackRequests: ["/index.html"],
+        fallbackRequests: isAppShellNavigation ? ["/index.html"] : [],
         preloadResponse: event.preloadResponse,
         shouldCache: (response) => response.ok && !response.redirected,
       })

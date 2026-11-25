@@ -108,6 +108,7 @@ function registerShareRoutes(app, context) {
 
             const content = await storage.readNoteContent(notepad);
             const htmlContent = renderSharePage({ notepad, content, marked, sanitizeHtml });
+            res.setHeader('Cache-Control', 'no-store');
             res.send(htmlContent);
         } catch (err) {
             console.error('Share rendering error:', err);

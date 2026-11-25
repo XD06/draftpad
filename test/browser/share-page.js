@@ -102,8 +102,16 @@ async function bootServer() {
         const asset = await uploadRes.json();
 
         const title = 'B+C 分享设计实机验收';
+        const longHeading = '超长章节标题验证在文章目录左侧窄栏中最多折叠显示两行避免无限换行破坏目录高度与视觉节奏';
         const filler = Array.from({ length: 14 }, (_, i) => `第 ${i + 1} 段用于撑开页面高度，验证桌面左栏 sticky 目录跟随与移动端的阅读进度条行为。`).join('\n\n');
+        const extraSections = Array.from({ length: 16 }, (_, i) => `### 子节 ${i + 1}\n\n子节内容占位用于撑高文章目录测试内滚动与底部跟随。`).join('\n\n');
         const content = [
+            '---',
+            'name: dumbpad-api',
+            'description: Manage DumbPad through its authenticated HTTP API. Never edit storage directly.',
+            'tags: [share, frontmatter]',
+            '---',
+            '',
             `# ${title}`,
             '',
             '> 中文引用块应当保持正体排版，不倾斜，且在暗色模式下具备清晰对比度。',
@@ -115,6 +123,14 @@ async function bootServer() {
             '- [ ] 待办事项',
             '- [~] 进行中事项',
             '- [x] 已完成事项',
+            '- 混排无序',
+            '',
+            '1. 有序列表对齐基准',
+            '',
+            '- 无序列表对齐基准',
+            '',
+            '第一行换行测试',
+            '第二行换行测试',
             '',
             '## 宽图与代码约束',
             '',
@@ -142,7 +158,11 @@ async function bootServer() {
             '',
             '## 滚动章节',
             '',
-            filler
+            filler,
+            '',
+            `#### ${longHeading}`,
+            '',
+            extraSections
         ].join('\n');
 
         const createRes = await fetch(`${base}/api/notepads`, {
@@ -183,16 +203,71 @@ async function bootServer() {
             const imgRect = img.getBoundingClientRect();
             const pre = document.querySelector('.markdown-body .ios-code-card pre');
             const h1Count = document.querySelectorAll('.markdown-body h1').length;
-            const tocItems = Array.from(document.querySelectorAll('#rail-nav a')).map((a) => a.textContent.trim());
+            const tocLinks = Array.from(document.querySelectorAll('#rail-nav a'));
+            const tocItems = tocLinks.map((a) => a.textContent.trim());
+            const tocBadges = tocLinks.map((a) => ({
+                badge: a.querySelector('.toc-level-badge')?.getAttribute('data-badge') || '',
+                badgePseudo: getComputedStyle(a.querySelector('.toc-level-badge'), '::before').content
+            }));
+            const listMetrics = (() => {
+                const body = document.getElementById('article-body');
+                const taskUl = body.querySelector('ul.task-list');
+                const taskLi = taskUl.querySelector('li');
+                const taskBox = taskLi.querySelector('.task-check').getBoundingClientRect();
+                const ol = body.querySelector('ol');
+                const ul = Array.from(body.querySelectorAll('ul')).find((u) => !u.classList.contains('task-list'));
+                const firstCharLeft = (el) => {
+                    const w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+                    let n;
+                    while ((n = w.nextNode())) { if (n.nodeValue.trim()) break; }
+                    const idx = n.nodeValue.search(/\S/);
+                    const r = document.createRange();
+                    r.setStart(n, idx);
+                    r.setEnd(n, idx + 1);
+                    return Math.round(r.getBoundingClientRect().left * 10) / 10;
+                };
+                const mixedLis = Array.from(taskUl.querySelectorAll(':scope > li'));
+                const mixedBulletLi = mixedLis[mixedLis.length - 1];
+                const mixedBulletStyle = getComputedStyle(mixedBulletLi);
+                const mixedBulletMarker = getComputedStyle(mixedBulletLi, '::marker');
+                const olMarker = getComputedStyle(ol.querySelector('li'), '::marker');
+                return {
+                    taskPad: getComputedStyle(taskUl).paddingLeft,
+                    olPad: getComputedStyle(ol).paddingLeft,
+                    ulPad: getComputedStyle(ul).paddingLeft,
+                    taskBoxLeftRel: Math.round((taskBox.left - body.getBoundingClientRect().left) * 10) / 10,
+                    taskTextLeft: firstCharLeft(taskLi),
+                    olTextLeft: firstCharLeft(ol.querySelector('li')),
+                    ulTextLeft: firstCharLeft(ul.querySelector('li')),
+                    mixedBulletIsTask: mixedBulletLi.classList.contains('task-item'),
+                    mixedBulletListStyle: mixedBulletStyle.listStyleType,
+                    mixedBulletMarker: mixedBulletMarker.content,
+                    olMarkerTabular: olMarker.fontVariantNumeric,
+                    olMarkerContent: olMarker.content,
+                    olToUlGap: Math.round((ul.getBoundingClientRect().top - ol.getBoundingClientRect().bottom) * 10) / 10,
+                    softBreakRendered: Array.from(body.querySelectorAll('p')).some((p) => /第一行换行测试<br\s*\/?>第二行换行测试/.test(p.innerHTML))
+                };
+            })();
+            const longTocRect = tocLinks[3]?.getBoundingClientRect();
+            const docRailEl = document.querySelector('.doc-rail');
+            const railNavEl = document.querySelector('#rail-nav');
+            const fmCardEl = document.querySelector('details.fm-card');
+            const fmSummaryRect = fmCardEl?.querySelector('summary')?.getBoundingClientRect();
             const checks = Array.from(document.querySelectorAll('.task-check')).map((el) => el.getAttribute('data-task-state'));
             const mCards = document.querySelectorAll('.ios-mermaid-card');
             const mSvgRect = mCards[0].querySelector('.ios-mermaid-stage svg').getBoundingClientRect();
             return {
                 overflow: docEl.scrollWidth - window.innerWidth,
                 mobileBarDisplay: getComputedStyle(document.getElementById('mobile-nav')).display,
-                railVisible: getComputedStyle(document.querySelector('.doc-rail')).display !== 'none',
+                railVisible: getComputedStyle(docRailEl).display !== 'none',
+                railOverflowY: getComputedStyle(docRailEl).overflowY,
+                railNavOverflowY: getComputedStyle(railNavEl).overflowY,
                 railLeftOfSheet: rail.right < sheet.left,
                 railToolsVisible: getComputedStyle(document.querySelector('.rail-tools')).display !== 'none',
+                fmExists: Boolean(fmCardEl),
+                fmOpenInitially: fmCardEl?.open ?? null,
+                fmSummaryHeight: fmSummaryRect ? Math.round(fmSummaryRect.height) : 0,
+                longTocHeight: longTocRect ? Math.round(longTocRect.height) : 0,
                 bqFontStyle: getComputedStyle(bq).fontStyle,
                 imgWidth: Math.round(imgRect.width),
                 imgComplete: img.complete && img.naturalWidth > 0,
@@ -203,6 +278,8 @@ async function bootServer() {
                 brokenMermaidHintShown: mCards[1].querySelector('.ios-mermaid-hint').hidden === false,
                 h1Count,
                 tocItems,
+                tocBadges,
+                listMetrics,
                 checks
             };
         });
@@ -210,8 +287,14 @@ async function bootServer() {
         assert.equal(desktop.overflow, 0, 'Desktop must have zero horizontal overflow');
         assert.equal(desktop.mobileBarDisplay, 'none', 'Desktop must hide mobile-only topbar');
         assert.equal(desktop.railVisible, true, 'Desktop left rail must be visible');
+        assert.equal(desktop.railOverflowY, 'hidden', 'Outer .doc-rail should stay unscrollable so .rail-card stays pinned');
+        assert.equal(desktop.railNavOverflowY, 'auto', 'Only inner #rail-nav should handle scrolling');
         assert.equal(desktop.railLeftOfSheet, true, 'Left rail must sit to the left of main sheet');
         assert.equal(desktop.railToolsVisible, true, 'Desktop left rail action strip must be visible');
+        assert.equal(desktop.fmExists, true, 'Frontmatter must render as collapsible .fm-card');
+        assert.equal(desktop.fmOpenInitially, false, 'Frontmatter card must default to collapsed');
+        assert(desktop.fmSummaryHeight > 0 && desktop.fmSummaryHeight <= 44, `Expected compact single-row fm summary, got ${desktop.fmSummaryHeight}`);
+        assert(desktop.longTocHeight > 0 && desktop.longTocHeight <= 50, `Long TOC title should clamp at 2 lines, got ${desktop.longTocHeight}px`);
         assert.equal(desktop.bqFontStyle, 'normal', 'Blockquotes must stay non-italic');
         assert(desktop.imgComplete, 'Uploaded image must load properly');
         assert(desktop.imgWidth >= 340 && desktop.imgWidth <= 365, `Expected ~360px width image, got ${desktop.imgWidth}`);
@@ -221,8 +304,62 @@ async function bootServer() {
         assert.equal(desktop.brokenMermaidSourceShown, true, 'Broken Mermaid diagram must keep source visible');
         assert.equal(desktop.brokenMermaidHintShown, true, 'Broken Mermaid diagram must display syntax hint');
         assert.equal(desktop.h1Count, 0, 'Duplicate H1 matching title should be deduplicated');
-        assert.deepEqual(desktop.tocItems, ['任务与进度', '宽图与代码约束', '滚动章节']);
+        assert.deepEqual(desktop.tocItems.slice(0, 4), ['任务与进度', '宽图与代码约束', '滚动章节', longHeading]);
+        assert.deepEqual(
+            desktop.tocBadges.slice(0, 4),
+            [
+                { badge: 'H2', badgePseudo: '"H2"' },
+                { badge: 'H2', badgePseudo: '"H2"' },
+                { badge: 'H2', badgePseudo: '"H2"' },
+                { badge: 'H4', badgePseudo: '"H4"' }
+            ],
+            'Desktop TOC must visibly render H2/H4 level badges via CSS ::before'
+        );
+        assert.equal(desktop.listMetrics.taskPad, desktop.listMetrics.olPad, 'Share taskList and ol must share indentation');
+        assert.equal(desktop.listMetrics.taskPad, desktop.listMetrics.ulPad, 'Share taskList and ul must share indentation');
+        assert(desktop.listMetrics.taskBoxLeftRel > 0, 'Task checkbox must sit inside list gutter, not flush at 0');
+        assert(
+            Math.abs(desktop.listMetrics.taskTextLeft - desktop.listMetrics.olTextLeft) <= 1.5
+            && Math.abs(desktop.listMetrics.taskTextLeft - desktop.listMetrics.ulTextLeft) <= 1.5,
+            `Share list text left edges must align across task/ol/ul: ${JSON.stringify(desktop.listMetrics)}`
+        );
+        assert.equal(desktop.listMetrics.mixedBulletIsTask, false, 'Mixed bullet sibling must not get task-item class');
+        assert.notEqual(desktop.listMetrics.mixedBulletListStyle, 'none', 'Mixed bullet sibling must retain bullet list-style');
+        assert(desktop.listMetrics.mixedBulletMarker.includes('•'), `Mixed bullet marker must render bullet, got ${desktop.listMetrics.mixedBulletMarker}`);
+        assert.equal(desktop.listMetrics.olMarkerTabular, 'tabular-nums', 'Share ol marker must use tabular-nums');
+        assert(desktop.listMetrics.olMarkerContent.includes('counter(list-item)'), `Share ol marker unexpected: ${desktop.listMetrics.olMarkerContent}`);
+        assert(desktop.listMetrics.olToUlGap > 0 && desktop.listMetrics.olToUlGap <= 8, `Adjacent list gap should stay compact (<=8px), got ${desktop.listMetrics.olToUlGap}`);
+        assert.equal(desktop.listMetrics.softBreakRendered, true, 'Single newline inside share paragraph must render as <br>');
+        assert(!desktop.tocItems.some((item) => item.includes('dumbpad-api')), 'Frontmatter must never leak into TOC');
         assert.deepEqual(desktop.checks, ['todo', 'doing', 'done']);
+
+        // Toggle frontmatter details card open and verify key-value rows
+        await page.click('.fm-card > summary');
+        const fmExpanded = await page.evaluate(() => ({
+            open: document.querySelector('details.fm-card').open,
+            keys: Array.from(document.querySelectorAll('.fm-key')).map((k) => k.textContent.trim())
+        }));
+        assert.equal(fmExpanded.open, true);
+        assert.deepEqual(fmExpanded.keys, ['name', 'description', 'tags']);
+
+        // Scroll to page bottom and verify sticky rail stays pinned AND active TOC auto-scrolls into view
+        await page.evaluate(() => window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'instant' }));
+        await page.waitForTimeout(100);
+        const atBottom = await page.evaluate(() => {
+            const nav = document.getElementById('rail-nav');
+            const active = nav.querySelector('a.active');
+            const navRect = nav.getBoundingClientRect();
+            const actRect = active.getBoundingClientRect();
+            return {
+                cardTop: Math.round(document.querySelector('.rail-card').getBoundingClientRect().top),
+                activeText: active?.textContent.trim(),
+                lastText: nav.querySelector('li:last-child a')?.textContent.trim(),
+                visibleInNav: actRect.top >= navRect.top - 2 && actRect.bottom <= navRect.bottom + 2
+            };
+        });
+        assert(atBottom.cardTop >= 18 && atBottom.cardTop <= 36, `Expected .rail-card pinned at top while TOC scrolls, got ${atBottom.cardTop}`);
+        assert.equal(atBottom.activeText, atBottom.lastText, 'Scrolling to bottom should highlight the final TOC heading');
+        assert.equal(atBottom.visibleInNav, true, 'Active TOC link must auto-scroll into view inside #rail-nav');
 
         // Toggle source view on Mermaid card and back to diagram
         await page.click('.ios-mermaid-card .ios-mermaid-tools button:first-child');
@@ -286,41 +423,66 @@ async function bootServer() {
 
         await page.close();
 
-        // 2. Mobile 390x844
-        const mPage = await browser.newPage({ viewport: { width: 390, height: 844 } });
+        // 2. Mobile 390x844 (with active Service Worker + >600ms slow share response)
+        const mContext = await browser.newContext({ viewport: { width: 390, height: 844 } });
+        const mPage = await mContext.newPage();
         mPage.on('pageerror', (e) => errors.push(`mobile pageerror: ${e.message}`));
         mPage.on('console', (m) => { if (m.type() === 'error') errors.push(`mobile console.error: ${m.text()}`); });
 
+        // First visit "/" to register SW and cache "/index.html" just like an installed mobile PWA user
+        await mPage.goto(`${base}/`, { waitUntil: 'networkidle' });
+        await mPage.evaluate(async () => {
+            if (!('serviceWorker' in navigator)) return;
+            await navigator.serviceWorker.ready;
+        });
+
+        // Delay /s/ response by 850ms (> 600ms NAVIGATION_NETWORK_TIMEOUT) to verify SW never falls back to /index.html
+        await mPage.route('**/s/**', async (route) => {
+            await new Promise((r) => setTimeout(r, 850));
+            await route.continue();
+        });
+
         await mPage.goto(shareUrl, { waitUntil: 'networkidle' });
+        await mPage.unroute('**/s/**');
         await mPage.waitForFunction(() => Boolean(document.querySelector('.ios-mermaid-stage svg')), null, { timeout: 10000 });
         const mobile = await mPage.evaluate(() => ({
+            isShareSheet: Boolean(document.querySelector('.ios-sheet')),
+            isMainAppLeak: Boolean(document.getElementById('command-input')),
             overflow: document.documentElement.scrollWidth - window.innerWidth,
             navTop: document.getElementById('mobile-nav').getBoundingClientRect().top,
             navDisplay: getComputedStyle(document.getElementById('mobile-nav')).display,
             railDisplay: getComputedStyle(document.querySelector('.doc-rail')).display,
             pillsDisplay: getComputedStyle(document.querySelector('.meta-pills')).display,
             tocBtnDisplay: getComputedStyle(document.getElementById('toc-btn')).display,
+            tocPopoverTitle: document.querySelector('.toc-popover-title')?.textContent.trim() || '',
             imgWidth: document.querySelector('.markdown-body img').getBoundingClientRect().width,
             mermaidWidth: document.querySelector('.ios-mermaid-stage svg').getBoundingClientRect().width
         }));
+        assert.equal(mobile.isShareSheet, true, 'Mobile share link must render .ios-sheet even when SW is active and response > 600ms');
+        assert.equal(mobile.isMainAppLeak, false, 'Mobile share link must never fall back to /index.html');
         assert.equal(mobile.overflow, 0, 'Mobile 390px must have zero horizontal overflow');
         assert.equal(mobile.navDisplay, 'flex', 'Mobile must show seamless top bar');
         assert.equal(Math.round(mobile.navTop), 0, 'Mobile top bar must sit flush at top edge (no floating gap)');
         assert.equal(mobile.railDisplay, 'none', 'Mobile should collapse left rail');
         assert.equal(mobile.pillsDisplay, 'flex', 'Mobile should reveal header meta pills');
         assert.notEqual(mobile.tocBtnDisplay, 'none', 'Mobile should show floating TOC popover toggle');
+        assert.equal(mobile.tocPopoverTitle, '文章目录', 'Mobile TOC popover should display heading title');
         assert(mobile.imgWidth <= 354, `Mobile image must fit card inner width, got ${mobile.imgWidth}`);
         assert(mobile.mermaidWidth <= 354, `Mobile Mermaid SVG must stay bounded, got ${mobile.mermaidWidth}`);
 
-        // Open mobile TOC popover & click annotation
+        // Open mobile TOC popover, close via toggle/Escape, then click annotation
         await mPage.click('#toc-btn');
         assert.equal(await mPage.evaluate(() => document.getElementById('toc-popover').classList.contains('open')), true);
+        await mPage.keyboard.press('Escape');
+        assert.equal(await mPage.evaluate(() => document.getElementById('toc-popover').classList.contains('open')), false);
+        await mPage.evaluate(() => window.scrollTo({ top: 0, behavior: 'instant' }));
         await mPage.click('.has-annotation');
         const mPop = await mPage.evaluate(() => {
             const r = document.querySelector('.ios-popover').getBoundingClientRect();
             return { left: r.left, right: r.right, vw: window.innerWidth };
         });
         assert(mPop.left >= 8 && mPop.right <= mPop.vw - 8, 'Mobile annotation popover must stay inside viewport');
+        await mContext.close();
 
         assert.deepEqual(errors, [], `Unexpected browser errors: ${errors.join('; ')}`);
         console.log('browser share-page checks passed (Desktop 1440x900 & Mobile 390x844)');
