@@ -8,6 +8,13 @@
 
 ### 新增 / 优化
 
+- **主题与外观排版定制及阅读灰阶/间距优化**：
+  - 在设置中心「主题与外观」面板的 `推荐主题搭配` 与 `自定义单项配色（高级）` 之间新增 `排版与提示块样式`（[appearance-presets.js](public/managers/appearance-presets.js)、[settings.js](public/managers/settings.js)、[index.html](public/index.html)），均默认保持原样零改动，支持实时预览、`Cancel` 撤回、`Save` 持久化及 `<head>` 首屏防闪烁恢复，切换推荐配色搭配时自动保留所选排版样式：
+    - **提示块样式（`calloutStyle`）**：`雾底左浮标（默认）`、`纸面圆徽风`、`无底引号轻角标` 3 档（含暗色实心圆徽对比适配，普通 `>` 引用不受影响）；
+    - **标题装饰（`headingStyle`）**：`极淡边标（默认）`、`书签色楔`、`章节印记`、`短杠底线`、`几何微标` 5 档（`::before` 全部排除 `.article-jump-target` 以保留目录跳转闪光，且 `H1` 在非默认模式下保持纯净留白）；
+    - **列表符号（`listStyle`）**：`经典圆点（默认）`、`主色柔点`、`几何方菱`、`嵌套引导线`（覆盖 `ul` / `ol` / `taskList` 互嵌且增强引导线可见度）4 档，仅作用 `::marker` 与子列表引导线，不改动 `li > p` 与待办对齐。
+  - 置顶预览区新增 `is-typo-preview` 二级联动预览行，同步扩展 [test_appearance_presets.js](test/test_appearance_presets.js) 覆盖 7 键归一化、属性同步与 FOUC 还原测试。
+  - [styles.css](public/Assets/styles.css) 为正文/列表引入柔和炭灰与标题/加粗高对比的三阶阅读灰阶（[L3166-L3179](public/Assets/styles.css#L3166-L3179)）、还原普通 `>` 引用段落柔和对比度（`blockquote:not(.dumbpad-callout) p/li`），并在守住 `ul/ol` 收尾归零与列表行距不变式的前提下为普通引用与列表后继异类块补齐 `14px` 垂直呼吸间距。
 - **移动端阅读态顶栏隐显（Headroom）与悬浮胶囊打磨**：
   - 分享页移动端（[share-renderer.js](scripts/share-renderer.js) `< 1060px`）与主应用移动端阅读态（[app.js](public/app.js) `readingHeadroom` + [ios-theme.css](public/Assets/ios-theme.css) `≤ 980px`）：向下阅读滚动（`> 96px` 且累计下滑 `>= 28px`）时平滑向上收起顶部栏（分享页保留顶部 `2px` 进度条），轻微上滑（`>= 12px`）、回顶、打开目录/抽屉/弹窗或退出阅读态即时恢复；同步在下滑沉浸阅读时柔和弱化未展开的左下角 `.floating-actions` 胶囊为 `opacity: 0.72` 减少正文遮挡（编辑态与桌面端零变化），由 `test:share-page-browser`、`test:mobile-editor-browser` 与 `test:source-mode-browser` 覆盖。
 - **精简 GFM Callout 提示块（A4 雾底左浮标风）+ `/` 快速插入 + `H1–H6` 边标修距 + 底部防抖**：

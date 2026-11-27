@@ -9,7 +9,10 @@ export const DEFAULT_APPEARANCE = Object.freeze({
     accent: 'default',
     drawColor: 'default',
     highlightColor: 'default',
-    annotationColor: 'default'
+    annotationColor: 'default',
+    calloutStyle: 'default',
+    headingStyle: 'default',
+    listStyle: 'default'
 });
 
 export const ACCENT_PRESETS = Object.freeze({
@@ -184,11 +187,35 @@ export const ANNOTATION_PRESETS = Object.freeze({
     })
 });
 
+export const CALLOUT_STYLE_PRESETS = Object.freeze({
+    default: Object.freeze({ id: 'default', label: '雾底左浮标' }),
+    tint: Object.freeze({ id: 'tint', label: '纸面圆徽风' }),
+    quote: Object.freeze({ id: 'quote', label: '无底引号轻角标' })
+});
+
+export const HEADING_STYLE_PRESETS = Object.freeze({
+    default: Object.freeze({ id: 'default', label: '极淡边标' }),
+    bookmark: Object.freeze({ id: 'bookmark', label: '书签色楔' }),
+    section: Object.freeze({ id: 'section', label: '章节印记' }),
+    underline: Object.freeze({ id: 'underline', label: '短杠底线' }),
+    diamond: Object.freeze({ id: 'diamond', label: '几何微标' })
+});
+
+export const LIST_STYLE_PRESETS = Object.freeze({
+    default: Object.freeze({ id: 'default', label: '经典圆点' }),
+    tinted: Object.freeze({ id: 'tinted', label: '主色柔点' }),
+    geometric: Object.freeze({ id: 'geometric', label: '几何方菱' }),
+    guide: Object.freeze({ id: 'guide', label: '嵌套引导线' })
+});
+
 export const APPEARANCE_GROUP_REGISTRY = Object.freeze({
     accent: ACCENT_PRESETS,
     drawColor: DRAW_PRESETS,
     highlightColor: HIGHLIGHT_PRESETS,
-    annotationColor: ANNOTATION_PRESETS
+    annotationColor: ANNOTATION_PRESETS,
+    calloutStyle: CALLOUT_STYLE_PRESETS,
+    headingStyle: HEADING_STYLE_PRESETS,
+    listStyle: LIST_STYLE_PRESETS
 });
 
 export const APPEARANCE_BUNDLES = Object.freeze([
@@ -279,7 +306,10 @@ export function normalizeAppearanceSettings(raw) {
         accent: normalizePresetId(ACCENT_PRESETS, src.accent),
         drawColor: normalizePresetId(DRAW_PRESETS, src.drawColor),
         highlightColor: normalizePresetId(HIGHLIGHT_PRESETS, src.highlightColor),
-        annotationColor: normalizePresetId(ANNOTATION_PRESETS, src.annotationColor)
+        annotationColor: normalizePresetId(ANNOTATION_PRESETS, src.annotationColor),
+        calloutStyle: normalizePresetId(CALLOUT_STYLE_PRESETS, src.calloutStyle),
+        headingStyle: normalizePresetId(HEADING_STYLE_PRESETS, src.headingStyle),
+        listStyle: normalizePresetId(LIST_STYLE_PRESETS, src.listStyle)
     };
 }
 
@@ -287,6 +317,12 @@ export function serializeAppearanceKey(appearance) {
     const norm = normalizeAppearanceSettings(appearance);
     return `${norm.accent}|${norm.drawColor}|${norm.highlightColor}|${norm.annotationColor}`;
 }
+
+const LAYOUT_STYLE_ATTRS = Object.freeze([
+    ['calloutStyle', 'data-callout-style'],
+    ['headingStyle', 'data-heading-style'],
+    ['listStyle', 'data-list-style']
+]);
 
 export function getPresetLabel(group, id) {
     const groupMap = APPEARANCE_GROUP_REGISTRY[group];
@@ -351,6 +387,17 @@ export function applyAppearanceSettings(
                 rootEl.style.setProperty(prop, activeVars[prop]);
             } else {
                 rootEl.style.removeProperty(prop);
+            }
+        }
+    }
+
+    if (typeof rootEl?.setAttribute === 'function' && typeof rootEl?.removeAttribute === 'function') {
+        for (const [key, attrName] of LAYOUT_STYLE_ATTRS) {
+            const val = norm[key];
+            if (val && val !== 'default') {
+                rootEl.setAttribute(attrName, val);
+            } else {
+                rootEl.removeAttribute(attrName);
             }
         }
     }

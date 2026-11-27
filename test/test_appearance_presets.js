@@ -29,14 +29,33 @@ function runPresetResolutionTests() {
         'null settings normalize to defaults'
     );
     assert.deepEqual(
-        normalizeAppearanceSettings({ accent: 'unknown', drawColor: 'teal', highlightColor: 42 }),
+        normalizeAppearanceSettings({ accent: 'unknown', drawColor: 'teal', highlightColor: 42, calloutStyle: 'nope', headingStyle: 'section', listStyle: 'dash' }),
         {
             accent: 'default',
             drawColor: 'teal',
             highlightColor: 'default',
-            annotationColor: 'default'
+            annotationColor: 'default',
+            calloutStyle: 'default',
+            headingStyle: 'section',
+            listStyle: 'default'
         },
         'invalid keys fall back to default while preserving valid ones'
+    );
+    assert.equal(normalizeAppearanceSettings({ headingStyle: 'clean', listStyle: 'dash' }).headingStyle, 'default');
+    assert.equal(normalizeAppearanceSettings({ headingStyle: 'clean', listStyle: 'dash' }).listStyle, 'default');
+
+    assert.deepEqual(
+        Object.keys(APPEARANCE_GROUP_REGISTRY.calloutStyle),
+        ['default', 'tint', 'quote'],
+        'calloutStyle preset group must stay strictly 3 options'
+    );
+    assert.deepEqual(
+        Object.keys(APPEARANCE_GROUP_REGISTRY.headingStyle),
+        ['default', 'bookmark', 'section', 'underline', 'diamond']
+    );
+    assert.deepEqual(
+        Object.keys(APPEARANCE_GROUP_REGISTRY.listStyle),
+        ['default', 'tinted', 'geometric', 'guide']
     );
 
     assert.deepEqual(
@@ -124,6 +143,28 @@ function runApplyAndCacheTests() {
         assert.equal(styleStore.has(prop), false, `default reset must clear inline override ${prop}`);
     }
     assert.equal(localMap.has(APPEARANCE_CACHE_KEY), false, 'default appearance leaves no FOUC cache behind');
+
+    // Step 8: layout style attributes set/cleared cleanly on DOM root
+    const attrs = new Map();
+    const attrRoot = {
+        style: mockRoot.style,
+        setAttribute(k, v) { attrs.set(k, String(v)); },
+        removeAttribute(k) { attrs.delete(k); },
+        getAttribute(k) { return attrs.has(k) ? attrs.get(k) : null; }
+    };
+    applyAppearanceSettings(
+        { calloutStyle: 'tint', headingStyle: 'bookmark', listStyle: 'guide' },
+        'light',
+        attrRoot
+    );
+    assert.equal(attrRoot.getAttribute('data-callout-style'), 'tint');
+    assert.equal(attrRoot.getAttribute('data-heading-style'), 'bookmark');
+    assert.equal(attrRoot.getAttribute('data-list-style'), 'guide');
+
+    applyAppearanceSettings(DEFAULT_APPEARANCE, 'light', attrRoot);
+    assert.equal(attrRoot.getAttribute('data-callout-style'), null);
+    assert.equal(attrRoot.getAttribute('data-heading-style'), null);
+    assert.equal(attrRoot.getAttribute('data-list-style'), null);
 }
 
 function runDomAndSettingsManagerTests() {
@@ -204,6 +245,39 @@ function runDomAndSettingsManagerTests() {
     cobaltBtn.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
     assert.equal(calmBtn.classList.contains('is-active'), true);
 
+    // Step 8: selecting layout styles applies data-* attrs, updates labels, and survives color bundle switch
+    const tintBtn = dom.window.document.querySelector('[data-appearance-group="calloutStyle"][data-appearance-value="tint"]');
+    const bookmarkBtn = dom.window.document.querySelector('[data-appearance-group="headingStyle"][data-appearance-value="bookmark"]');
+    const guideBtn = dom.window.document.querySelector('[data-appearance-group="listStyle"][data-appearance-value="guide"]');
+    tintBtn.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+    bookmarkBtn.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+    guideBtn.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+
+    assert.equal(dom.window.document.documentElement.getAttribute('data-callout-style'), 'tint');
+    assert.equal(dom.window.document.documentElement.getAttribute('data-heading-style'), 'bookmark');
+    assert.equal(dom.window.document.documentElement.getAttribute('data-list-style'), 'guide');
+    assert.equal(
+        dom.window.document.querySelector('[data-appearance-active-label="calloutStyle"]')?.textContent,
+        '纸面圆徽风'
+    );
+    assert.equal(
+        dom.window.document.querySelector('[data-appearance-active-label="headingStyle"]')?.textContent,
+        '书签色楔'
+    );
+    assert.equal(
+        dom.window.document.querySelector('[data-appearance-active-label="listStyle"]')?.textContent,
+        '嵌套引导线'
+    );
+
+    const warmPaperBtn = dom.window.document.querySelector('[data-appearance-bundle="warm-paper"]');
+    warmPaperBtn.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+    assert.equal(dom.window.document.documentElement.getAttribute('data-callout-style'), 'tint');
+    assert.equal(dom.window.document.documentElement.getAttribute('data-heading-style'), 'bookmark');
+    assert.equal(dom.window.document.documentElement.getAttribute('data-list-style'), 'guide');
+
+    // Re-apply calm-study to keep accent color check happy before save
+    calmBtn.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+
     assert.equal(
         dom.window.document.querySelector('[data-appearance-active-label="accent"]')?.textContent,
         '海盐蓝'
@@ -217,14 +291,21 @@ function runDomAndSettingsManagerTests() {
     // Save writes normalized appearance and persists
     const saved = manager.saveSettings();
     assert.equal(saved.appearance.accent, 'blue');
+    assert.equal(saved.appearance.calloutStyle, 'tint');
+    assert.equal(saved.appearance.headingStyle, 'bookmark');
+    assert.equal(saved.appearance.listStyle, 'guide');
     assert.equal(persisted.dumbpad_settings.appearance.accent, 'blue');
+    assert.equal(persisted.dumbpad_settings.appearance.calloutStyle, 'tint');
     assert.equal(applyCalls.at(-1).opts.persistCache, true);
 
-    // Reset restores Amber Gold defaults and clears inline CSS vars
+    // Reset restores Amber Gold defaults and clears inline CSS vars + layout attributes
     const reset = manager.saveSettings(true);
     manager.loadSettings();
     assert.deepEqual(reset.appearance, DEFAULT_APPEARANCE);
     assert.equal(dom.window.document.documentElement.style.getPropertyValue('--primary-color'), '');
+    assert.equal(dom.window.document.documentElement.getAttribute('data-callout-style'), null);
+    assert.equal(dom.window.document.documentElement.getAttribute('data-heading-style'), null);
+    assert.equal(dom.window.document.documentElement.getAttribute('data-list-style'), null);
     assert.equal(
         dom.window.document.querySelector('[data-appearance-bundle-status]')?.textContent,
         '琥珀经典'
@@ -234,13 +315,21 @@ function runDomAndSettingsManagerTests() {
         '琥珀金'
     );
 
-    // 3. Verify index.html <head> FOUC script consumes dumbpad_appearance_vars_v1 safely
+    // 3. Verify index.html <head> FOUC script consumes dumbpad_appearance_vars_v1 + layout styles safely
     const headScriptMatch = indexHtml.match(/<script>\s*\(function \(\) \{ \/\/ Initialize theme immediately[\s\S]*?\}\)\(\);\s*<\/script>/);
     assert.ok(headScriptMatch, 'index.html should keep inline theme + appearance init script');
 
     const foucDom = new JSDOM('<!doctype html><html><head></head><body></body></html>', { url: 'http://localhost/' });
     foucDom.window.matchMedia = () => ({ matches: false });
-    const appCfg = { accent: 'plum', drawColor: 'cobalt', highlightColor: 'default', annotationColor: 'default' };
+    const appCfg = {
+        accent: 'plum',
+        drawColor: 'cobalt',
+        highlightColor: 'default',
+        annotationColor: 'default',
+        calloutStyle: 'quote',
+        headingStyle: 'section',
+        listStyle: 'geometric'
+    };
     foucDom.window.localStorage.setItem('dumbpad_theme', JSON.stringify('dark'));
     foucDom.window.localStorage.setItem('dumbpad_settings', JSON.stringify({ appearance: appCfg }));
     foucDom.window.localStorage.setItem(
@@ -272,6 +361,9 @@ function runDomAndSettingsManagerTests() {
         '#38BDF8',
         'head FOUC initializer applies cached dark draw color pre-paint'
     );
+    assert.equal(foucDom.window.document.documentElement.getAttribute('data-callout-style'), 'quote');
+    assert.equal(foucDom.window.document.documentElement.getAttribute('data-heading-style'), 'section');
+    assert.equal(foucDom.window.document.documentElement.getAttribute('data-list-style'), 'geometric');
 
     delete global.document;
     delete global.window;

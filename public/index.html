@@ -35,6 +35,15 @@
                 const rawSettings = JSON.parse(localStorage.getItem('dumbpad_settings') || 'null');
                 const app = rawSettings && rawSettings.appearance;
                 if (app && typeof app === 'object') {
+                    if (app.calloutStyle && app.calloutStyle !== 'default') {
+                        document.documentElement.setAttribute('data-callout-style', String(app.calloutStyle));
+                    }
+                    if (app.headingStyle && app.headingStyle !== 'default') {
+                        document.documentElement.setAttribute('data-heading-style', String(app.headingStyle));
+                    }
+                    if (app.listStyle && app.listStyle !== 'default') {
+                        document.documentElement.setAttribute('data-list-style', String(app.listStyle));
+                    }
                     const key = [
                         app.accent || 'default',
                         app.drawColor || 'default',
@@ -952,6 +961,21 @@
                                             <span style="text-decoration:underline wavy;text-decoration-thickness:2px;">批注波浪线</span><span class="annotation-badge" aria-hidden="true"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg></span>
                                         </span>
                                     </div>
+                                    <div class="settings-appearance-preview-row is-typo-preview" aria-hidden="true">
+                                        <span class="settings-preview-heading-sample">章节标题</span>
+                                        <ul class="settings-preview-list-sample">
+                                            <li>
+                                                <span class="settings-preview-list-line">父级列表</span>
+                                                <ul class="settings-preview-list-nested">
+                                                    <li>嵌套子项</li>
+                                                </ul>
+                                            </li>
+                                        </ul>
+                                        <span class="settings-preview-callout-sample">
+                                            <span class="settings-preview-callout-icon">i</span>
+                                            <span class="settings-preview-callout-text">备注提示块</span>
+                                        </span>
+                                    </div>
                                 </div>
                                 <div class="settings-appearance-scroll">
                                     <div class="settings-appearance-block">
@@ -1038,6 +1062,112 @@
                                                 </div>
                                                 <span class="settings-bundle-sub">低噪中性 · 标注点睛</span>
                                             </button>
+                                        </div>
+                                    </div>
+
+                                    <div class="settings-appearance-block">
+                                        <div class="settings-appearance-block-head">
+                                            <span class="settings-section-kicker">排版与提示块样式</span>
+                                        </div>
+                                        <div class="settings-pref-group settings-typography-group">
+                                            <div class="settings-appearance-row">
+                                                <div class="settings-appearance-row-head">
+                                                    <div class="settings-pref-meta">
+                                                        <span class="settings-pref-icon" aria-hidden="true">
+                                                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+                                                        </span>
+                                                        <div class="settings-pref-text">
+                                                            <span class="settings-row-title">提示块样式</span>
+                                                            <span class="settings-row-subtitle">作用于 /note · /tip · /warning 提示块外观</span>
+                                                        </div>
+                                                    </div>
+                                                    <span class="settings-appearance-current" data-appearance-active-label="calloutStyle">雾底左浮标</span>
+                                                </div>
+                                                <div class="settings-swatch-list" role="group" aria-label="提示块样式">
+                                                    <button type="button" class="settings-swatch-btn settings-style-chip is-active" aria-pressed="true"
+                                                        data-appearance-group="calloutStyle" data-appearance-value="default">
+                                                        <span>雾底左浮标（默认）</span>
+                                                    </button>
+                                                    <button type="button" class="settings-swatch-btn settings-style-chip" aria-pressed="false"
+                                                        data-appearance-group="calloutStyle" data-appearance-value="tint">
+                                                        <span>纸面圆徽风</span>
+                                                    </button>
+                                                    <button type="button" class="settings-swatch-btn settings-style-chip" aria-pressed="false"
+                                                        data-appearance-group="calloutStyle" data-appearance-value="quote">
+                                                        <span>无底引号轻角标</span>
+                                                    </button>
+                                                </div>
+                                            </div>
+
+                                            <div class="settings-appearance-row">
+                                                <div class="settings-appearance-row-head">
+                                                    <div class="settings-pref-meta">
+                                                        <span class="settings-pref-icon" aria-hidden="true">
+                                                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h8"/><path d="M4 18V6"/><path d="M12 18V6"/><path d="M17 10v8"/></svg>
+                                                        </span>
+                                                        <div class="settings-pref-text">
+                                                            <span class="settings-row-title">标题装饰</span>
+                                                            <span class="settings-row-subtitle">H1 保持留白，轻量区别二级/三级章节层次</span>
+                                                        </div>
+                                                    </div>
+                                                    <span class="settings-appearance-current" data-appearance-active-label="headingStyle">极淡边标</span>
+                                                </div>
+                                                <div class="settings-swatch-list" role="group" aria-label="标题装饰">
+                                                    <button type="button" class="settings-swatch-btn settings-style-chip is-active" aria-pressed="true"
+                                                        data-appearance-group="headingStyle" data-appearance-value="default">
+                                                        <span>极淡边标（默认）</span>
+                                                    </button>
+                                                    <button type="button" class="settings-swatch-btn settings-style-chip" aria-pressed="false"
+                                                        data-appearance-group="headingStyle" data-appearance-value="bookmark">
+                                                        <span>书签色楔</span>
+                                                    </button>
+                                                    <button type="button" class="settings-swatch-btn settings-style-chip" aria-pressed="false"
+                                                        data-appearance-group="headingStyle" data-appearance-value="section">
+                                                        <span>章节印记</span>
+                                                    </button>
+                                                    <button type="button" class="settings-swatch-btn settings-style-chip" aria-pressed="false"
+                                                        data-appearance-group="headingStyle" data-appearance-value="underline">
+                                                        <span>短杠底线</span>
+                                                    </button>
+                                                    <button type="button" class="settings-swatch-btn settings-style-chip" aria-pressed="false"
+                                                        data-appearance-group="headingStyle" data-appearance-value="diamond">
+                                                        <span>几何微标</span>
+                                                    </button>
+                                                </div>
+                                            </div>
+
+                                            <div class="settings-appearance-row">
+                                                <div class="settings-appearance-row-head">
+                                                    <div class="settings-pref-meta">
+                                                        <span class="settings-pref-icon" aria-hidden="true">
+                                                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="9" y1="6" x2="20" y2="6"/><line x1="9" y1="12" x2="20" y2="12"/><line x1="9" y1="18" x2="20" y2="18"/><circle cx="4" cy="6" r="1"/><circle cx="4" cy="12" r="1"/><circle cx="4" cy="18" r="1"/></svg>
+                                                        </span>
+                                                        <div class="settings-pref-text">
+                                                            <span class="settings-row-title">列表符号</span>
+                                                            <span class="settings-row-subtitle">仅改变符号外观与层次线，不改动行距对齐</span>
+                                                        </div>
+                                                    </div>
+                                                    <span class="settings-appearance-current" data-appearance-active-label="listStyle">经典圆点</span>
+                                                </div>
+                                                <div class="settings-swatch-list" role="group" aria-label="列表符号">
+                                                    <button type="button" class="settings-swatch-btn settings-style-chip is-active" aria-pressed="true"
+                                                        data-appearance-group="listStyle" data-appearance-value="default">
+                                                        <span>经典圆点（默认）</span>
+                                                    </button>
+                                                    <button type="button" class="settings-swatch-btn settings-style-chip" aria-pressed="false"
+                                                        data-appearance-group="listStyle" data-appearance-value="tinted">
+                                                        <span>主色柔点</span>
+                                                    </button>
+                                                    <button type="button" class="settings-swatch-btn settings-style-chip" aria-pressed="false"
+                                                        data-appearance-group="listStyle" data-appearance-value="geometric">
+                                                        <span>几何方菱</span>
+                                                    </button>
+                                                    <button type="button" class="settings-swatch-btn settings-style-chip" aria-pressed="false"
+                                                        data-appearance-group="listStyle" data-appearance-value="guide">
+                                                        <span>嵌套引导线</span>
+                                                    </button>
+                                                </div>
+                                            </div>
                                         </div>
                                     </div>
 

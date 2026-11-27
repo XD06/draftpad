@@ -224,7 +224,12 @@ export default class SettingsManager {
       if (bundleBtn) {
         const bundle = getBundleById(bundleBtn.dataset.appearanceBundle);
         if (!bundle) return;
-        const nextAppearance = normalizeAppearanceSettings(bundle.appearance);
+        const nextAppearance = normalizeAppearanceSettings({
+          calloutStyle: this.currentAppearance?.calloutStyle,
+          headingStyle: this.currentAppearance?.headingStyle,
+          listStyle: this.currentAppearance?.listStyle,
+          ...bundle.appearance
+        });
         this.currentAppearance = nextAppearance;
         this.syncAppearanceUI(nextAppearance);
         this.applySettings?.(this.getInputValues(), { persistCache: false });

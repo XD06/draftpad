@@ -2784,11 +2784,17 @@ html:not([data-app-ready]) .empty-state-container::before {
  * 块内最后一个子块不带段尾间距，否则单行引用会在文字下面多出一整行空白。 */
 .typora-editor-shell .vditor-reset blockquote {
     position: relative;
-    margin-left: 2px;
+    margin: 14px 0 14px 2px;
     border-left: 0;
     padding-left: 22px;
     font-style: normal;
     color: color-mix(in srgb, var(--text-color) 52%, var(--muted-text));
+}
+
+/* Tiptap 引用内包裹 <p>/<li>，显式继承引用自身的柔灰对比度（提示块 .dumbpad-callout 保持正常正文墨色） */
+.typora-editor-shell .vditor-reset blockquote:not(.dumbpad-callout) p,
+.typora-editor-shell .vditor-reset blockquote:not(.dumbpad-callout) li {
+    color: inherit;
 }
 
 .typora-editor-shell .vditor-reset blockquote::before {
@@ -2897,6 +2903,84 @@ body:not(.thoughts-mode) .typora-editor-shell .vditor-reset blockquote.dumbpad-c
     .typora-editor-shell .vditor-reset blockquote.dumbpad-callout .dumbpad-callout-icon {
         left: -29px;
     }
+}
+
+/* Step 8：提示块主题可选外观（纸面圆徽风 / 无底引号轻角标；default 维持雾底左浮标） */
+html[data-callout-style="tint"] body:not(.thoughts-mode) .typora-editor-shell .vditor-reset blockquote.dumbpad-callout {
+    padding: 12px 15px 12px 16px;
+    border-radius: 10px;
+    border: 1px solid color-mix(in srgb, var(--callout-accent) 14%, transparent);
+    border-left: 3px solid var(--callout-accent);
+    background: color-mix(in srgb, var(--callout-accent) 6%, var(--textarea-bg));
+}
+
+html[data-callout-style="tint"] .typora-editor-shell .vditor-reset blockquote.dumbpad-callout .dumbpad-callout-header {
+    gap: 7px;
+    min-height: 20px;
+}
+
+html[data-callout-style="tint"] .typora-editor-shell .vditor-reset blockquote.dumbpad-callout .dumbpad-callout-icon {
+    position: static;
+    left: auto;
+    top: auto;
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
+    background: var(--callout-accent);
+    color: #fff;
+}
+
+html[data-callout-style="tint"][data-theme="dark"] .typora-editor-shell .vditor-reset blockquote.dumbpad-callout .dumbpad-callout-icon {
+    color: #18181b;
+}
+
+html[data-callout-style="tint"] .typora-editor-shell .vditor-reset blockquote.dumbpad-callout .dumbpad-callout-icon svg {
+    width: 11px;
+    height: 11px;
+}
+
+html[data-callout-style="tint"] .typora-editor-shell .vditor-reset blockquote.dumbpad-callout .dumbpad-callout-title {
+    color: color-mix(in srgb, var(--callout-accent) 84%, var(--text-color));
+}
+
+html[data-callout-style="quote"] body:not(.thoughts-mode) .typora-editor-shell .vditor-reset blockquote.dumbpad-callout {
+    padding: 6px 2px 6px 15px;
+    border-radius: 0;
+    border: 0;
+    border-left: 2.5px solid color-mix(in srgb, var(--callout-accent) 72%, transparent);
+    background: transparent;
+}
+
+html[data-callout-style="quote"] .typora-editor-shell .vditor-reset blockquote.dumbpad-callout .dumbpad-callout-header {
+    display: inline-flex;
+    width: fit-content;
+    gap: 5px;
+    min-height: 22px;
+    margin-bottom: 6px;
+    padding: 2px 9px 2px 6px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--callout-accent) 11%, transparent);
+}
+
+html[data-callout-style="quote"] .typora-editor-shell .vditor-reset blockquote.dumbpad-callout .dumbpad-callout-icon {
+    position: static;
+    left: auto;
+    top: auto;
+    width: 15px;
+    height: 15px;
+    flex-shrink: 0;
+    background: transparent;
+    color: color-mix(in srgb, var(--callout-accent) 88%, var(--text-color));
+}
+
+html[data-callout-style="quote"] .typora-editor-shell .vditor-reset blockquote.dumbpad-callout .dumbpad-callout-icon svg {
+    width: 13px;
+    height: 13px;
+}
+
+html[data-callout-style="quote"] .typora-editor-shell .vditor-reset blockquote.dumbpad-callout .dumbpad-callout-title {
+    font-size: 12px;
+    color: color-mix(in srgb, var(--callout-accent) 88%, var(--text-color));
 }
 .typora-editor-shell .tiptap mark.md-mark {
     background: var(--highlight-bg, rgba(255, 214, 10, 0.35));
@@ -3078,8 +3162,19 @@ body:not(.thoughts-mode) .typora-editor-shell .vditor-reset blockquote.dumbpad-c
     display: block;
 }
 
+/* 正文与列表采用柔和炭灰（标题/加粗保持纯黑/纯白高对比），拉开纸面阅读灰阶层次 */
 .typora-editor-shell .vditor-reset p,
 .typora-editor-shell .vditor-reset li {
+    color: color-mix(in srgb, var(--text-color) 76%, var(--muted-text));
+}
+
+[data-theme="dark"] .typora-editor-shell .vditor-reset p,
+[data-theme="dark"] .typora-editor-shell .vditor-reset li {
+    color: color-mix(in srgb, var(--text-color) 86%, var(--muted-text));
+}
+
+.typora-editor-shell .vditor-reset :is(p, li) strong,
+.typora-editor-shell .vditor-reset :is(p, li) b {
     color: var(--text-color);
 }
 
@@ -3114,6 +3209,82 @@ body:not(.thoughts-mode) .typora-editor-shell .vditor-reset blockquote.dumbpad-c
 
 .typora-editor-shell .vditor-reset ul:not([data-type="taskList"]) ul:not([data-type="taskList"]) ul:not([data-type="taskList"]) > li::marker {
     content: "▪\2004\2006";
+}
+
+/* Step 8：列表符号与层次线主题预设（仅作用 ::marker 与子列表左引导线，不改动 li > p 行距与待办对齐） */
+html[data-list-style="tinted"] .typora-editor-shell .vditor-reset ul:not([data-type="taskList"]) > li::marker {
+    color: color-mix(in srgb, var(--primary-color, #E5A100) 66%, var(--muted-text));
+}
+
+html[data-list-style="tinted"] .typora-editor-shell .vditor-reset ul:not([data-type="taskList"]) ul:not([data-type="taskList"]) > li::marker {
+    color: color-mix(in srgb, var(--primary-color, #E5A100) 50%, var(--muted-text));
+}
+
+html[data-list-style="tinted"] .typora-editor-shell .vditor-reset ul:not([data-type="taskList"]) ul:not([data-type="taskList"]) ul:not([data-type="taskList"]) > li::marker {
+    color: var(--muted-text);
+}
+
+html[data-list-style="tinted"] .typora-editor-shell .vditor-reset ol > li::marker {
+    color: color-mix(in srgb, var(--primary-color, #E5A100) 66%, var(--muted-text));
+    font-weight: 600;
+}
+
+html[data-list-style="geometric"] .typora-editor-shell .vditor-reset ul:not([data-type="taskList"]) > li::marker {
+    content: "▪\2004\2006";
+    font-size: 0.92em;
+    color: color-mix(in srgb, var(--primary-color, #E5A100) 72%, var(--muted-text));
+}
+
+html[data-list-style="geometric"] .typora-editor-shell .vditor-reset ul:not([data-type="taskList"]) ul:not([data-type="taskList"]) > li::marker {
+    content: "▫\2004\2006";
+    font-size: 0.92em;
+    color: var(--muted-text);
+}
+
+html[data-list-style="geometric"] .typora-editor-shell .vditor-reset ul:not([data-type="taskList"]) ul:not([data-type="taskList"]) ul:not([data-type="taskList"]) > li::marker {
+    content: "–\2004\2006";
+    font-size: 0.95em;
+    color: var(--muted-text);
+}
+
+html[data-list-style="geometric"] .typora-editor-shell .vditor-reset ol > li::marker {
+    content: counter(list-item, decimal-leading-zero) "\2004\2006";
+    font-family: var(--font-code);
+    font-size: 0.84em;
+    color: color-mix(in srgb, var(--primary-color, #E5A100) 72%, var(--muted-text));
+}
+
+html[data-list-style="guide"] .typora-editor-shell .vditor-reset ul:not([data-type="taskList"]) > li::marker {
+    color: color-mix(in srgb, var(--primary-color, #E5A100) 64%, var(--muted-text));
+}
+
+html[data-list-style="guide"] .typora-editor-shell .vditor-reset ul:not([data-type="taskList"]) ul:not([data-type="taskList"]) > li::marker {
+    color: var(--muted-text);
+}
+
+html[data-list-style="guide"] .typora-editor-shell .vditor-reset ol > li::marker {
+    color: color-mix(in srgb, var(--primary-color, #E5A100) 64%, var(--muted-text));
+}
+
+/* 覆盖所有嵌套列表组合（ul / ol / taskList 互嵌），确保左竖引导线在不同缩进层级均清晰可见 */
+html[data-list-style="guide"] .typora-editor-shell .vditor-reset :is(ul, ol) :is(ul, ol) {
+    position: relative;
+}
+
+html[data-list-style="guide"] .typora-editor-shell .vditor-reset :is(ul, ol) :is(ul, ol)::before {
+    content: "";
+    position: absolute;
+    left: -0.82em;
+    top: 0.15em;
+    bottom: 0.15em;
+    width: 2px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--primary-color, #E5A100) 45%, color-mix(in srgb, var(--muted-text) 28%, transparent));
+    pointer-events: none;
+}
+
+html[data-list-style="guide"] .typora-editor-shell .vditor-reset :is(ul, ol) :is(ul, ol) :is(ul, ol)::before {
+    background: color-mix(in srgb, var(--primary-color, #E5A100) 28%, color-mix(in srgb, var(--muted-text) 24%, transparent));
 }
 
 .typora-editor-shell .vditor-reset ul[data-type="taskList"] {
@@ -3220,6 +3391,10 @@ body:not(.thoughts-mode) .typora-editor-shell .vditor-reset blockquote.dumbpad-c
 .typora-editor-shell .tiptap.ProseMirror.vditor-reset ul + ul,
 .typora-editor-shell .tiptap.ProseMirror.vditor-reset ol + ol {
     margin-top: 0.25em;
+}
+/* 顶层列表收尾归零（守住退格阶梯不变式）后，与后续异类块补回 14px 呼吸留白 */
+.typora-editor-shell .tiptap.ProseMirror.vditor-reset > :is(ul, ol) + :is(p, blockquote, pre, .vditor-wysiwyg__block, hr, table) {
+    margin-top: 14px;
 }
 /* 勾选完成的待办：文字删除线 + 淡灰（直接命中 div 与内部 p，
    否则 .vditor-reset p 的直接颜色规则会把继承的灰色顶掉） */
@@ -4673,6 +4848,216 @@ body:not(.thoughts-mode) .typora-editor-shell .vditor-reset blockquote.dumbpad-c
     text-decoration-thickness: 2px;
     text-decoration-color: var(--draw-color, #2563EB) !important;
     text-underline-offset: 2px;
+}
+
+.settings-style-chip {
+    padding: 5px 11px;
+    font-size: 12px;
+    font-weight: 500;
+    border-radius: 999px;
+}
+
+.settings-appearance-preview-row.is-typo-preview {
+    margin-top: 2px;
+    padding-top: 7px;
+    border-top: 1px dashed color-mix(in srgb, var(--border-color) 72%, transparent);
+    gap: 14px;
+    align-items: center;
+}
+
+.settings-preview-heading-sample {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 12.5px;
+    font-weight: 700;
+    color: var(--text-color);
+    line-height: 1.3;
+}
+
+.settings-preview-heading-sample::before {
+    content: "H2";
+    font-family: var(--font-code);
+    font-size: 10px;
+    font-weight: 500;
+    color: var(--muted-text);
+    opacity: 0.68;
+}
+
+html[data-heading-style="bookmark"] .settings-preview-heading-sample::before {
+    content: "";
+    width: 3px;
+    height: 12px;
+    border-radius: 999px;
+    background: var(--primary-color, #E5A100);
+    opacity: 1;
+}
+
+html[data-heading-style="section"] .settings-preview-heading-sample::before {
+    content: "##";
+    font-family: var(--font-code);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: -0.04em;
+    color: color-mix(in srgb, var(--primary-color, #E5A100) 80%, var(--muted-text));
+    opacity: 1;
+}
+
+html[data-heading-style="underline"] .settings-preview-heading-sample {
+    padding-bottom: 3px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+html[data-heading-style="underline"] .settings-preview-heading-sample::before {
+    display: none;
+}
+
+html[data-heading-style="underline"] .settings-preview-heading-sample::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    bottom: -1px;
+    width: 18px;
+    height: 2px;
+    border-radius: 999px;
+    background: var(--primary-color, #E5A100);
+}
+
+html[data-heading-style="diamond"] .settings-preview-heading-sample::before {
+    content: "";
+    width: 6px;
+    height: 6px;
+    border-radius: 1.5px;
+    background: var(--primary-color, #E5A100);
+    transform: rotate(45deg);
+    opacity: 1;
+}
+
+.settings-preview-list-sample {
+    position: relative;
+    margin: 0;
+    padding: 0 0 0 14px;
+    font-size: 11px;
+    line-height: 1.3;
+    color: var(--text-color);
+}
+
+.settings-preview-list-nested {
+    position: relative;
+    margin: 1px 0 0;
+    padding: 0 0 0 13px;
+    color: var(--muted-text);
+}
+
+.settings-preview-list-sample > li::marker {
+    content: "•\2004";
+    color: var(--text-color);
+}
+
+.settings-preview-list-nested > li::marker {
+    content: "◦\2004";
+    color: var(--muted-text);
+}
+
+html[data-list-style="tinted"] .settings-preview-list-sample > li::marker,
+html[data-list-style="guide"] .settings-preview-list-sample > li::marker {
+    content: "•\2004";
+    color: color-mix(in srgb, var(--primary-color, #E5A100) 70%, var(--muted-text));
+}
+
+html[data-list-style="tinted"] .settings-preview-list-nested > li::marker {
+    content: "◦\2004";
+    color: color-mix(in srgb, var(--primary-color, #E5A100) 52%, var(--muted-text));
+}
+
+html[data-list-style="guide"] .settings-preview-list-nested::before {
+    content: "";
+    position: absolute;
+    left: -8px;
+    top: 1px;
+    bottom: 1px;
+    width: 2px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--primary-color, #E5A100) 52%, color-mix(in srgb, var(--muted-text) 28%, transparent));
+}
+
+html[data-list-style="geometric"] .settings-preview-list-sample > li::marker {
+    content: "▪\2004";
+    font-size: 0.9em;
+    color: color-mix(in srgb, var(--primary-color, #E5A100) 74%, var(--muted-text));
+}
+
+html[data-list-style="geometric"] .settings-preview-list-nested > li::marker {
+    content: "▫\2004";
+    font-size: 0.9em;
+    color: var(--muted-text);
+}
+
+.settings-preview-callout-sample {
+    --preview-co: var(--callout-note, #2563EB);
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 9px;
+    border-radius: 7px;
+    border: 1px solid color-mix(in srgb, var(--border-color) 90%, transparent);
+    background: color-mix(in srgb, var(--muted-text) 6%, var(--textarea-bg));
+    font-size: 11.5px;
+    font-weight: 600;
+    color: var(--text-color);
+    line-height: 1.3;
+}
+
+.settings-preview-callout-icon {
+    width: 14px;
+    height: 14px;
+    border-radius: 999px;
+    display: inline-grid;
+    place-items: center;
+    font-size: 9.5px;
+    font-weight: 700;
+    font-style: italic;
+    font-family: Georgia, serif;
+    background: color-mix(in srgb, var(--preview-co) 16%, transparent);
+    color: var(--preview-co);
+}
+
+html[data-callout-style="tint"] .settings-preview-callout-sample {
+    border-color: color-mix(in srgb, var(--preview-co) 16%, transparent);
+    border-left: 3px solid var(--preview-co);
+    background: color-mix(in srgb, var(--preview-co) 7%, var(--textarea-bg));
+    border-radius: 6px;
+}
+
+html[data-callout-style="tint"] .settings-preview-callout-icon {
+    background: var(--preview-co);
+    color: #fff;
+}
+
+html[data-callout-style="tint"][data-theme="dark"] .settings-preview-callout-icon {
+    color: #18181b;
+}
+
+html[data-callout-style="tint"] .settings-preview-callout-text {
+    color: color-mix(in srgb, var(--preview-co) 84%, var(--text-color));
+}
+
+html[data-callout-style="quote"] .settings-preview-callout-sample {
+    padding: 2px 8px;
+    border: 0;
+    border-left: 2.5px solid color-mix(in srgb, var(--preview-co) 72%, transparent);
+    border-radius: 0;
+    background: transparent;
+}
+
+html[data-callout-style="quote"] .settings-preview-callout-icon {
+    background: color-mix(in srgb, var(--preview-co) 13%, transparent);
+    color: color-mix(in srgb, var(--preview-co) 88%, var(--text-color));
+}
+
+html[data-callout-style="quote"] .settings-preview-callout-text {
+    color: color-mix(in srgb, var(--preview-co) 88%, var(--text-color));
 }
 
 @media (max-width: 980px) {
@@ -8573,6 +8958,160 @@ body.reading-mode-active .editor-main {
     .typora-editor-shell .vditor-wysiwyg > .vditor-reset > h6::before {
         display: none;
     }
+}
+
+/* Step 8：标题装饰风格（bookmark / section / underline / diamond；
+   所有 ::before 规则均排除 .article-jump-target，避免盖住目录跳转高亮闪烁条） */
+html[data-heading-style="bookmark"] .typora-editor-shell .vditor-wysiwyg > .vditor-reset > h1:not(.article-jump-target)::before,
+html[data-heading-style="bookmark"] .typora-editor-shell .vditor-wysiwyg > .vditor-reset > h4:not(.article-jump-target)::before,
+html[data-heading-style="bookmark"] .typora-editor-shell .vditor-wysiwyg > .vditor-reset > h5:not(.article-jump-target)::before,
+html[data-heading-style="bookmark"] .typora-editor-shell .vditor-wysiwyg > .vditor-reset > h6:not(.article-jump-target)::before,
+html[data-heading-style="section"] .typora-editor-shell .vditor-wysiwyg > .vditor-reset > h1:not(.article-jump-target)::before,
+html[data-heading-style="section"] .typora-editor-shell .vditor-wysiwyg > .vditor-reset > h4:not(.article-jump-target)::before,
+html[data-heading-style="section"] .typora-editor-shell .vditor-wysiwyg > .vditor-reset > h5:not(.article-jump-target)::before,
+html[data-heading-style="section"] .typora-editor-shell .vditor-wysiwyg > .vditor-reset > h6:not(.article-jump-target)::before,
+html[data-heading-style="underline"] .typora-editor-shell .vditor-wysiwyg > .vditor-reset > h1:not(.article-jump-target)::before,
+html[data-heading-style="underline"] .typora-editor-shell .vditor-wysiwyg > .vditor-reset > h2:not(.article-jump-target)::before,
+html[data-heading-style="underline"] .typora-editor-shell .vditor-wysiwyg > .vditor-reset > h3:not(.article-jump-target)::before,
+html[data-heading-style="underline"] .typora-editor-shell .vditor-wysiwyg > .vditor-reset > h4:not(.article-jump-target)::before,
+html[data-heading-style="underline"] .typora-editor-shell .vditor-wysiwyg > .vditor-reset > h5:not(.article-jump-target)::before,
+html[data-heading-style="underline"] .typora-editor-shell .vditor-wysiwyg > .vditor-reset > h6:not(.article-jump-target)::before,
+html[data-heading-style="diamond"] .typora-editor-shell .vditor-wysiwyg > .vditor-reset > h1:not(.article-jump-target)::before,
+html[data-heading-style="diamond"] .typora-editor-shell .vditor-wysiwyg > .vditor-reset > h4:not(.article-jump-target)::before,
+html[data-heading-style="diamond"] .typora-editor-shell .vditor-wysiwyg > .vditor-reset > h5:not(.article-jump-target)::before,
+html[data-heading-style="diamond"] .typora-editor-shell .vditor-wysiwyg > .vditor-reset > h6:not(.article-jump-target)::before {
+    display: none;
+}
+
+html[data-heading-style="bookmark"] .typora-editor-shell .vditor-wysiwyg > .vditor-reset > h2 {
+    padding-left: 12px;
+}
+
+html[data-heading-style="bookmark"] .typora-editor-shell .vditor-wysiwyg > .vditor-reset > h2:not(.article-jump-target)::before {
+    display: block;
+    content: "";
+    right: auto;
+    left: 0;
+    top: 0.2em;
+    bottom: 0.2em;
+    width: 3px;
+    height: auto;
+    transform: none;
+    border-radius: 999px;
+    background: var(--primary-color, #E5A100);
+    opacity: 0.92;
+}
+
+html[data-heading-style="bookmark"] .typora-editor-shell .vditor-wysiwyg > .vditor-reset > h3 {
+    padding-left: 11px;
+}
+
+html[data-heading-style="bookmark"] .typora-editor-shell .vditor-wysiwyg > .vditor-reset > h3:not(.article-jump-target)::before {
+    display: block;
+    content: "";
+    right: auto;
+    left: 0;
+    top: 0.3em;
+    bottom: 0.3em;
+    width: 2px;
+    height: auto;
+    transform: none;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--primary-color, #E5A100) 56%, var(--muted-text));
+    opacity: 0.88;
+}
+
+html[data-heading-style="section"] .typora-editor-shell .vditor-wysiwyg > .vditor-reset > h2 {
+    padding-left: 24px;
+}
+
+html[data-heading-style="section"] .typora-editor-shell .vditor-wysiwyg > .vditor-reset > h2:not(.article-jump-target)::before {
+    display: block;
+    content: "##";
+    right: auto;
+    left: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    font-family: var(--font-code);
+    font-size: 0.68em;
+    font-weight: 600;
+    letter-spacing: -0.05em;
+    text-align: left;
+    color: color-mix(in srgb, var(--primary-color, #E5A100) 76%, var(--muted-text));
+    opacity: 0.92;
+}
+
+html[data-heading-style="section"] .typora-editor-shell .vditor-wysiwyg > .vditor-reset > h3 {
+    padding-left: 20px;
+}
+
+html[data-heading-style="section"] .typora-editor-shell .vditor-wysiwyg > .vditor-reset > h3:not(.article-jump-target)::before {
+    display: block;
+    content: "§";
+    right: auto;
+    left: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    font-family: var(--font-sans);
+    font-size: 0.82em;
+    font-weight: 600;
+    text-align: left;
+    color: var(--muted-text);
+    opacity: 0.84;
+}
+
+html[data-heading-style="underline"] .typora-editor-shell .vditor-wysiwyg > .vditor-reset > h2 {
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+html[data-heading-style="underline"] .typora-editor-shell .vditor-wysiwyg > .vditor-reset > h2::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    bottom: -1px;
+    width: 32px;
+    height: 2px;
+    border-radius: 999px;
+    background: var(--primary-color, #E5A100);
+    pointer-events: none;
+}
+
+html[data-heading-style="diamond"] .typora-editor-shell .vditor-wysiwyg > .vditor-reset > h2 {
+    padding-left: 16px;
+}
+
+html[data-heading-style="diamond"] .typora-editor-shell .vditor-wysiwyg > .vditor-reset > h2:not(.article-jump-target)::before {
+    display: block;
+    content: "";
+    right: auto;
+    left: 2px;
+    top: 50%;
+    transform: translateY(-50%) rotate(45deg);
+    width: 7px;
+    height: 7px;
+    border-radius: 2px;
+    background: var(--primary-color, #E5A100);
+    opacity: 0.92;
+}
+
+html[data-heading-style="diamond"] .typora-editor-shell .vditor-wysiwyg > .vditor-reset > h3 {
+    padding-left: 14px;
+}
+
+html[data-heading-style="diamond"] .typora-editor-shell .vditor-wysiwyg > .vditor-reset > h3:not(.article-jump-target)::before {
+    display: block;
+    content: "";
+    right: auto;
+    left: 2px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 6px;
+    height: 6px;
+    border-radius: 999px;
+    border: 1.5px solid color-mix(in srgb, var(--primary-color, #E5A100) 72%, var(--muted-text));
+    background: transparent;
+    opacity: 0.9;
 }
 
 .typora-editor-shell .vditor-tip {
