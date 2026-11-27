@@ -1689,6 +1689,8 @@ function renderSharePage({ notepad, content, marked, sanitizeHtml }) {
         .ios-table-wrap {
             margin: 1.3em 0;
             overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+            scrollbar-width: thin;
             border-radius: 12px;
             border: 1px solid var(--border-color);
         }
@@ -1907,6 +1909,19 @@ function renderSharePage({ notepad, content, marked, sanitizeHtml }) {
                 padding: 3px 0;
             }
             .markdown-body { font-size: 15px; }
+            .markdown-body :not(pre) > code {
+                word-break: break-all;
+                box-decoration-break: clone;
+                -webkit-box-decoration-break: clone;
+            }
+            .markdown-body th { white-space: nowrap; }
+            .markdown-body th, .markdown-body td { padding: 8px 11px; }
+            .markdown-body td code, .markdown-body th code {
+                word-break: normal;
+                overflow-wrap: break-word;
+                box-decoration-break: slice;
+                -webkit-box-decoration-break: slice;
+            }
             .mobile-copy-label { display: none; }
         }
     </style>

@@ -184,6 +184,7 @@ async function testRendererUnitCases() {
     assert(doc.querySelector('#article-body .dumbpad-share-media video'), 'dumbpad-video=1 should upgrade to video player');
     assert(doc.querySelector('#article-body a.file-pill'), 'dumbpad-file=1 link should gain .file-pill');
     assert.strictEqual(doc.querySelectorAll('#article-body .ios-table-wrap table').length, 1, 'table must be wrapped for mobile scrolling');
+    assert(fullHtml.includes('box-decoration-break: clone;') && fullHtml.includes('.markdown-body :not(pre) > code'), 'mobile share styles must wrap long inline code fragments cleanly');
 
     // Left rail integrates brand, utility actions & metadata (no floating banner)
     assert(!doc.querySelector('.floating-nav'), 'legacy floating-nav banner should be replaced');

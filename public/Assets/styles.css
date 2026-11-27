@@ -2301,7 +2301,7 @@ html:not([data-app-ready]) .empty-state-container::before {
         bottom: 0;
         height: 100%;
         min-height: calc(100vh - 135px);
-        padding: 10px 10px 64px;
+        padding: 18px 16px 64px;
         line-height: 1.68;
         border-color: var(--border-color);
     }
@@ -2310,13 +2310,12 @@ html:not([data-app-ready]) .empty-state-container::before {
         border-color: var(--border-color);
     }
 
-    /* 活编辑卡片（旧 vditor 的 pre / Tiptap 的 .tiptap）在移动端同样回到
-       实测几何：桌面那段 64px margin / 24px padding 的规则不适用（容器
-       padding-top 已给浮动工具条让位），10px 内边距让文字近乎平铺。 */
+    /* 活编辑卡片（旧 vditor 的 pre / Tiptap 的 .tiptap）与预水合 .boot-editor
+       在移动端保持一致的舒适阅读留白（18px 顶 / 16px 左右）。 */
     body:not(.thoughts-mode) .typora-editor-shell .vditor-wysiwyg pre.vditor-reset,
     body:not(.thoughts-mode) .typora-editor-shell .vditor-wysiwyg .tiptap {
         margin: 0 auto;
-        padding: 10px 10px 64px;
+        padding: 18px 16px 64px;
     }
 
     /* 移动端整页滚动、祖先高度 auto，min-height 百分比解析为 0；「一屏」改用
@@ -2759,7 +2758,7 @@ html:not([data-app-ready]) .empty-state-container::before {
     .typora-editor-shell .tiptap-source-textarea {
         min-height: calc(100vh - 135px);
         margin: 0 auto;
-        padding: 10px 10px 64px;
+        padding: 18px 16px 64px;
     }
 }
 

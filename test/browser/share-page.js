@@ -132,6 +132,8 @@ async function bootServer() {
             '第一行换行测试',
             '第二行换行测试',
             '',
+            '这里还有行内路径 `public/hybrid-editor.js` 验证移动端窄屏折行。',
+            '',
             '## 宽图与代码约束',
             '',
             `![1400px 宽图](${asset.previewUrl} "dumbpad-width=360")`,
@@ -466,7 +468,10 @@ async function bootServer() {
             tocBtnDisplay: getComputedStyle(document.getElementById('toc-btn')).display,
             tocPopoverTitle: document.querySelector('.toc-popover-title')?.textContent.trim() || '',
             imgWidth: document.querySelector('.markdown-body img').getBoundingClientRect().width,
-            mermaidWidth: document.querySelector('.ios-mermaid-stage svg').getBoundingClientRect().width
+            mermaidWidth: document.querySelector('.ios-mermaid-stage svg').getBoundingClientRect().width,
+            inlineCodeWordBreak: getComputedStyle(document.querySelector('.markdown-body :not(pre) > code')).wordBreak,
+            tableCodeWordBreak: getComputedStyle(document.querySelector('.markdown-body td') || document.body).wordBreak,
+            thWhiteSpace: getComputedStyle(document.querySelector('.markdown-body th')).whiteSpace
         }));
         assert.equal(mobile.isShareSheet, true, 'Mobile share link must render .ios-sheet even when SW is active and response > 600ms');
         assert.equal(mobile.isMainAppLeak, false, 'Mobile share link must never fall back to /index.html');
@@ -479,6 +484,8 @@ async function bootServer() {
         assert.equal(mobile.tocPopoverTitle, '文章目录', 'Mobile TOC popover should display heading title');
         assert(mobile.imgWidth <= 354, `Mobile image must fit card inner width, got ${mobile.imgWidth}`);
         assert(mobile.mermaidWidth <= 354, `Mobile Mermaid SVG must stay bounded, got ${mobile.mermaidWidth}`);
+        assert.equal(mobile.inlineCodeWordBreak, 'break-all', 'Share mobile inline code must wrap cleanly without leaving half-line gaps');
+        assert.equal(mobile.thWhiteSpace, 'nowrap', 'Share mobile table header cells must stay single-line inside horizontal scroll wrapper');
 
         // Open mobile TOC popover, close via toggle/Escape, then click annotation
         await mPage.click('#toc-btn');

@@ -198,6 +198,7 @@ function run() {
     assert(/\.thought-card\.editing\s+\.thought-copy-btn\s*\{[^}]*display:\s*none/s.test(thoughtsCss), 'thought copy button should hide while editing card text');
     const iosCss = fs.readFileSync(path.join(ROOT, 'public', 'Assets', 'ios-theme.css'), 'utf8');
     assert(/\.thought-text\s*\{[^}]*padding:\s*0\s+28px\s+0\s+0/s.test(iosCss), 'iOS theme must keep right gutter on .thought-text for bottom-right copy button');
+    assert(/\.thought-link\s*\{[^}]*display:\s*inline;[^}]*word-break:\s*break-all;/s.test(thoughtsCss), '.thought-link must flow inline rather than inline-block so URLs wrap smoothly');
 
     console.log('Thought card renderer checks passed');
 }

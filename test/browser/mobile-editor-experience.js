@@ -26,9 +26,17 @@ async function main() {
         '',
         '#### 四级标题',
         '',
+        '### 1.1 编辑器更换是否会影响现有 API 与 Skill?',
+        '',
+        '核心目标：将 DraftPad 现有 `public/hybrid-editor.js`（基于 Vditor/Lute 的 281KB 封装）彻底替换。',
+        '',
         '请求返回 `400` 时核对 `/openapi.json` 契约。',
         '',
         '---',
+        '',
+        '```javascript',
+        'const result = await fetch("/api/thoughts?format=page&light=1");',
+        '```',
         '',
         '- [ ] 待办对齐项',
         '',
@@ -271,9 +279,45 @@ async function main() {
             const hr = root.querySelector('hr');
             const codeStyle = getComputedStyle(inlineCode);
             const h1Style = getComputedStyle(h1);
+            const h3 = [...root.querySelectorAll('h3')].find(el => el.textContent.includes('1.1 编辑器更换'));
+            const h3Style = getComputedStyle(h3);
+            const pathP = [...root.querySelectorAll('p')].find(el => el.textContent.includes('public/hybrid-editor.js'));
+            const pathCode = pathP.querySelector('code');
+            const pathCodeStyle = getComputedStyle(pathCode);
+            const pre = root.querySelector('.vditor-wysiwyg__block[data-type="code-block"] > pre');
             const h4Style = getComputedStyle(h4);
             const hrStyle = getComputedStyle(hr);
+            // Measure how many visual lines the path code chip breaks into and whether its first line shares Y with the preceding "现有" text
+            const getFirstRectTop = (node, offset) => {
+                const r = document.createRange();
+                r.setStart(node, offset);
+                r.setEnd(node, Math.min(offset + 1, node.length));
+                return r.getBoundingClientRect().top;
+            };
+            const prevTextNode = pathCode.previousSibling;
+            const prevEndTop = prevTextNode && prevTextNode.nodeType === Node.TEXT_NODE
+                ? getFirstRectTop(prevTextNode, Math.max(0, prevTextNode.textContent.trimEnd().length - 1))
+                : null;
+            const pathCodeStartTop = pathCode.firstChild && pathCode.firstChild.nodeType === Node.TEXT_NODE
+                ? getFirstRectTop(pathCode.firstChild, 0)
+                : null;
+            const h3Rects = (() => {
+                const r = document.createRange();
+                r.selectNodeContents(h3);
+                const byLine = new Map();
+                for (const cr of r.getClientRects()) {
+                    const key = Math.round(cr.top / 6) * 6;
+                    byLine.set(key, Math.max(byLine.get(key) || 0, cr.right));
+                }
+                const maxLineRight = Math.max(...byLine.values());
+                return { rightGapPx: Math.round(h3.getBoundingClientRect().right - [...byLine.values()][0]), lines: byLine.size, maxLineRight };
+            })();
             return {
+                viewportOverflowX: document.documentElement.scrollWidth > window.innerWidth,
+                rootPadTop: parseFloat(csRoot.paddingTop || '0'),
+                rootPadLeft: parseFloat(csRoot.paddingLeft || '0'),
+                wysiwygPadBottom: parseFloat(getComputedStyle(root.closest('.vditor-wysiwyg')).paddingBottom || '0'),
+                prePadLeft: parseFloat(getComputedStyle(pre).paddingLeft || '0'),
                 taskPad: getComputedStyle(taskUl).paddingLeft,
                 olPad: getComputedStyle(ol).paddingLeft,
                 ulPad: getComputedStyle(ul).paddingLeft,
@@ -289,8 +333,15 @@ async function main() {
                 inlineCodeFont: codeStyle.fontFamily,
                 inlineCodePadLeft: parseFloat(codeStyle.paddingLeft || '0'),
                 inlineCodePadTop: parseFloat(codeStyle.paddingTop || '0'),
+                pathCodeWordBreak: pathCodeStyle.wordBreak,
+                pathCodeBoxDecorationBreak: pathCodeStyle.boxDecorationBreak,
+                pathCodeSameLineDeltaY: prevEndTop != null && pathCodeStartTop != null ? Math.abs(pathCodeStartTop - prevEndTop) : null,
                 h1FontSize: h1Style.fontSize,
                 h1MarginTop: h1Style.marginTop,
+                h1TextWrap: h1Style.textWrap,
+                h3TextWrap: h3Style.textWrap,
+                h3FirstLineRightGapPx: h3Rects.rightGapPx,
+                pTextWrap: getComputedStyle(pathP).textWrap,
                 h4FontSize: h4Style.fontSize,
                 hrBg: hrStyle.backgroundColor,
             };
@@ -304,6 +355,9 @@ async function main() {
             assert.equal(metrics.h1FontSize, '28px', `${label}: h1 must use DumbPad typography`);
             assert.equal(metrics.h1MarginTop, '0px', `${label}: leading h1 must not leave empty top gap`);
             assert.equal(metrics.h4FontSize, '17px', `${label}: h4 must use DumbPad typography`);
+            assert.notEqual(metrics.h1TextWrap, 'balance', `${label}: headings must not balance-wrap awkwardly`);
+            assert.notEqual(metrics.h3TextWrap, 'balance', `${label}: h3 headings must not balance-wrap awkwardly`);
+            assert.notEqual(metrics.pTextWrap, 'pretty', `${label}: paragraphs must wrap naturally without pretty-orphan shifts`);
         };
 
         await page.goto(`http://127.0.0.1:${listener.address().port}/?id=align-note`);
@@ -324,6 +378,19 @@ async function main() {
             `Mobile list text origins must match: ${JSON.stringify(mobileListAlign)}`
         );
         assertEditorMarkdownParity('Mobile Light', mobileListAlign);
+        assert.equal(mobileListAlign.viewportOverflowX, false, 'Mobile 390px must have zero horizontal overflow');
+        assert(mobileListAlign.rootPadTop >= 16 && mobileListAlign.rootPadLeft >= 16,
+            `Mobile card should keep comfortable reading padding, got ${mobileListAlign.rootPadTop}x${mobileListAlign.rootPadLeft}`);
+        assert(mobileListAlign.wysiwygPadBottom >= 80,
+            `Mobile scroll container must clear bottom floating pill (>=80px), got ${mobileListAlign.wysiwygPadBottom}px`);
+        assert(mobileListAlign.prePadLeft <= 44,
+            `Mobile code block gutter should stay compact (<=44px), got ${mobileListAlign.prePadLeft}px`);
+        assert.equal(mobileListAlign.pathCodeWordBreak, 'break-all', 'Mobile inline code paths must allow mid-token wrapping');
+        assert.equal(mobileListAlign.pathCodeBoxDecorationBreak, 'clone', 'Wrapped mobile inline code fragments must clone pill borders');
+        assert(mobileListAlign.pathCodeSameLineDeltaY !== null && mobileListAlign.pathCodeSameLineDeltaY < 8,
+            `Inline code path should start on the same line after preceding text instead of leaving half a line blank (deltaY=${mobileListAlign.pathCodeSameLineDeltaY})`);
+        assert(mobileListAlign.h3FirstLineRightGapPx <= 60,
+            `Mobile heading line 1 must fill naturally instead of wrapping mid-line (gap=${mobileListAlign.h3FirstLineRightGapPx}px)`);
 
         await page.evaluate(() => document.documentElement.setAttribute('data-theme', 'dark'));
         const mobileDarkAlign = await measureEditorListAlignment(page);

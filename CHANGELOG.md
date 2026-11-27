@@ -8,6 +8,10 @@
 
 ### 新增 / 优化
 
+- **移动端阅读排版、折行与布局优化**：
+  - **消除标题与长行内代码/URL 异常提前换行**：`public/Assets/ios-theme.css` 移除文章标题的 `text-wrap: balance` 与正文的 `text-wrap: pretty`，消除窄屏标题只排半行即提前断行（如首行右侧大片留白）的观感割裂；在 `≤ 980px` 视口为 `:not(pre) > code:not(.hljs):not(.highlight-chroma)` 启用 `overflow-wrap: anywhere`、`word-break: break-all` 与 `box-decoration-break: clone`，让路径/接口等长行内代码紧随中文续排并在跨行两端保留完整胶囊圆角（桌面端仍保持原整词折行）；同步修复 `public/Assets/thoughts.css` `.thought-link` 误用 `display: inline-block` 导致整条链接被推到下一行的问题（改为 `display: inline` + `overflow-wrap: anywhere`）。
+  - **分享页移动端换行与表格可读性**：`scripts/share-renderer.js` 在 `≤ 680px` 下对行内代码同步启用 `word-break: break-all` + `box-decoration-break: clone`，并为 `.ios-table-wrap` 补齐触控横向滚动惯性、`th { white-space: nowrap; }` 及表格单元格内 `code` 正常换行保护，防止长键名在滚动表格内被挤碎成数截。
+  - **移动端阅读卡片呼吸感、代码槽宽与顶栏/底栏空间**：`public/Assets/styles.css` 与 `public/Assets/ios-theme.css` 将移动端文章卡片（`.tiptap` / 预水合 `.boot-editor` / `.tiptap-source-textarea`）内边距由 `10px 10px 64px` 调整为 `18px 16px 64px` 并圆角柔和为 `14px`，`.vditor-wysiwyg` 底留白微调为 `84px` 避让悬浮胶囊，收窄 `≤ 980px` 代码块行号槽宽（`32px` / `padding-left: 42px`）释放代码视口宽度，并微调 `≤ 640px` 顶栏按钮与边距为文档标题腾出更多显示空间；扩展 `test:mobile-editor-browser`、`test:share-page`、`test:share-page-browser` 与 `test:thought-card-renderer`。
 - **分享页代码块语法高亮、Thought 复制按钮定位及顶栏矢量图标统一**：
   - **分享页代码块语法高亮**：`scripts/share-renderer.js` 基于 `@highlightjs/cdn-assets`（内置 36 种常用语言 + `vm` 沙箱按需加载 `languages/*.min.js` 与常见语言别名映射）为 Markdown 围栏代码块提供服务端语法高亮，并在 `marked` `Renderer.code` 阶段通过 nonce 隔离保护已转义的 HTML 代码示例（如含 `onclick` 属性的代码示例不再被 `sanitizeHtml` 正则误截断；原始手写 `<pre>` HTML 仍完整走 `sanitizeHtml` 消毒，`mermaid` / `plaintext` 保持原生展示）；内置作用域隔离的 GitHub 亮/暗双色 `.hljs-*` Token 样式表。回归扩展 `test:share-page` 与 `test:share-page-browser`（亮/暗主题计算色验证）。
   - **Thought 主任务与子任务复制按钮末行右下角对齐**：`public/Assets/thoughts.css` 与 `public/Assets/ios-theme.css` 恢复 `.thought-text` 桌面与移动端右侧 `28px` 避让边距、移除 `.thought-card.expanded .thought-text` 的 `padding-bottom: 12px` 与 `.thought-body` 多余底边距，并将 `.subtask-copy-btn` 从居中改为 `align-self: flex-end` 对齐最后一行右缘（编辑态与行内编辑输入框开启时隐藏，不单独占行、不遮挡正文）；扩展 `test:thought-card-renderer` 与真机 `test:thought-render-stability-browser`。

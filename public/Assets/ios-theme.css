@@ -517,10 +517,10 @@ body::before {
 
     header {
         top: calc(8px + env(safe-area-inset-top, 0px));
-        left: 10px;
-        right: 10px;
+        left: 8px;
+        right: 8px;
         border-radius: 12px !important;
-        padding: 4px 12px !important;
+        padding: 4px 8px !important;
         min-height: 48px;
     }
 
@@ -944,14 +944,9 @@ main {
 }
 
 @media (max-width: 640px) {
-    header {
-        left: 10px;
-        right: 10px;
-    }
-
     .header-left,
     .header-right {
-        gap: 4px;
+        gap: 2px;
         flex: 0 1 auto;
     }
 
@@ -962,13 +957,15 @@ main {
 
     #header-title h1 {
         max-width: 100%;
-        font-size: 16px;
+        font-size: 15px;
     }
 
     header .icon-button {
-        min-width: 38px;
-        min-height: 38px;
-        padding: 7px;
+        min-width: 34px;
+        width: 34px;
+        min-height: 36px;
+        height: 36px;
+        padding: 6px;
         color: var(--primary-color);
         opacity: 0.92;
     }
@@ -1188,7 +1185,10 @@ main {
             0 1px 0 rgba(255, 255, 255, 0.38) inset;
     }
 
-    .typora-editor-shell .vditor-wysiwyg,
+    .typora-editor-shell .vditor-wysiwyg {
+        padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 84px) !important;
+    }
+
     .typora-editor-shell .vditor-reset,
     .typora-editor-shell.is-source-mode .typora-source-editor {
         padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 64px) !important;
@@ -1836,7 +1836,6 @@ body:not(.thoughts-mode) .typora-editor-shell .vditor-reset h6 {
     margin-bottom: 0.62em;
     line-height: 1.32;
     letter-spacing: -0.012em;
-    text-wrap: balance;
 }
 
 body:not(.thoughts-mode) .typora-editor-shell .vditor-reset > h1:first-child,
@@ -1871,11 +1870,6 @@ body:not(.thoughts-mode) .typora-editor-shell .vditor-reset ul,
 body:not(.thoughts-mode) .typora-editor-shell .vditor-reset ol,
 body:not(.thoughts-mode) .typora-editor-shell .vditor-reset blockquote {
     margin-bottom: 14px;
-}
-
-body:not(.thoughts-mode) .typora-editor-shell .vditor-reset p,
-body:not(.thoughts-mode) .typora-editor-shell .vditor-reset li {
-    text-wrap: pretty;
 }
 
 body:not(.thoughts-mode) .typora-editor-shell .vditor-reset ul,
@@ -2206,6 +2200,35 @@ body:not(.thoughts-mode) .typora-editor-shell .vditor-reset :not(pre) > code:not
 }
 
 @media (max-width: 980px) {
+    /* 移动端阅读卡片采用更柔和的 iOS 卡片圆角，与 .boot-editor / 源码面对齐。 */
+    .boot-editor,
+    body:not(.thoughts-mode) .typora-editor-shell .vditor-wysiwyg pre.vditor-reset,
+    body:not(.thoughts-mode) .typora-editor-shell .vditor-wysiwyg .tiptap,
+    .typora-editor-shell .tiptap-source-textarea {
+        border-radius: 14px;
+    }
+
+    /* 移动端窄屏下行内代码（文件路径/接口地址/长标识符）允许按字符折行并在换行处
+       各自保留完整胶囊圆角，避免因整段挪到下一行而留下大片右端空白。 */
+    body:not(.thoughts-mode) .typora-editor-shell .vditor-reset :not(pre) > code:not(.hljs):not(.highlight-chroma) {
+        overflow-wrap: anywhere;
+        word-break: break-all;
+        box-decoration-break: clone;
+        -webkit-box-decoration-break: clone;
+    }
+
+    /* 移动端收窄代码块左侧行号槽宽度，为代码内容让出更多横向空间。 */
+    .typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] > pre {
+        padding: 28px 12px 12px 42px !important;
+    }
+
+    .typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] > pre.dumbpad-code-lines::before {
+        top: 28px;
+        width: 32px;
+        padding: 0 6px 0 2px;
+        font-size: 12px;
+    }
+
     /* 移动端代码块：长行不折行，横向滑动查看（左右滑条）。行号栏是
        pre 上的绝对定位 ::before，不随 code 横向滚动。编辑与阅读模式
        共用该 DOM，规则对两者同时生效。 */

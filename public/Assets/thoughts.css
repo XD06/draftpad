@@ -3063,7 +3063,8 @@ body.quick-add-open {
     transition: color 0.2s ease, background-color 0.2s ease;
     padding: 0 2px;
     margin: 0 -2px;
-    display: inline-block;
+    display: inline;
+    overflow-wrap: anywhere;
     word-break: break-all;
 }
 
