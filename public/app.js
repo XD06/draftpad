@@ -39,7 +39,7 @@ import {
     updateSidebarSelection
 } from './sidebar.js';
 import { ArticleMetaFooter } from './managers/article-meta-footer.js';
-import { collectTocSectionEntries } from './managers/heading-index.js';
+import { collectTocSectionEntries, computeReadingProgress } from './managers/heading-index.js';
 import { applyFloatingActionsVisibility } from './managers/floating-actions-config.js';
 import { deriveArticleTitle, DEFAULT_NOTEPAD_NAME_RE } from './managers/article-title.js';
 import { createCommandSearchManager } from './managers/command-search/command-search-manager.js';
@@ -2390,6 +2390,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (!currentNotepadId) {
             tocList.innerHTML = '<div class="article-toc-empty">打开文章后显示目录</div>';
             tocMarkRefs = [];
+            updateTocReadingProgress(false);
             updateActiveTocItem();
             return;
         }
@@ -2399,6 +2400,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (toc.length === 0) {
             tocList.innerHTML = '<div class="article-toc-empty">本文暂无标题目录</div>';
             tocMarkRefs = [];
+            lastGeneratedToc = [];
+            updateTocReadingProgress(false);
             return;
         }
 
@@ -2464,6 +2467,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
         tocList.innerHTML = markHtml;
         tocMarkRefs = markRefs;
+        updateTocReadingProgress(true);
 
         tocList.querySelectorAll('.mark-entry').forEach(el => {
             el.onclick = () => {
@@ -2566,6 +2570,39 @@ document.addEventListener('DOMContentLoaded', async () => {
         entry._tocFlashTimer = setTimeout(() => entry.classList.remove('jump-flash'), 2000);
     }
 
+    function updateTocReadingProgress(hasHeadings = lastGeneratedToc.length > 0) {
+        const progressEl = document.getElementById('article-toc-progress');
+        if (!progressEl) return;
+        if (!currentNotepadId || !hasHeadings) {
+            progressEl.hidden = true;
+            if (progressEl.textContent) progressEl.textContent = '';
+            return;
+        }
+        const scroller = document.querySelector('.vditor-wysiwyg');
+        const isPageScroll = window.matchMedia?.('(max-width: 980px)')?.matches
+            || !scroller
+            || scroller.scrollHeight <= scroller.clientHeight + 4;
+        const pct = isPageScroll
+            ? computeReadingProgress({
+                scrollTop: window.scrollY || document.documentElement.scrollTop || 0,
+                scrollHeight: document.documentElement.scrollHeight,
+                clientHeight: window.innerHeight
+            })
+            : computeReadingProgress({
+                scrollTop: scroller.scrollTop,
+                scrollHeight: scroller.scrollHeight,
+                clientHeight: scroller.clientHeight
+            });
+        if (pct === null) {
+            progressEl.hidden = true;
+            if (progressEl.textContent) progressEl.textContent = '';
+            return;
+        }
+        const label = `${pct}%`;
+        progressEl.hidden = false;
+        if (progressEl.textContent !== label) progressEl.textContent = label;
+    }
+
     // Highlight the sidebar TOC entry for the heading currently near the top
     // of the editor viewport. Bound once to the editor scroll container.
     let tocScrollSyncBound = false;
@@ -2585,6 +2622,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             frame = requestAnimationFrame(() => {
                 frame = 0;
                 updateActiveTocItem();
+                updateTocReadingProgress(lastGeneratedToc.length > 0);
             });
         };
         // 桌面端编辑器容器内滚动；≤980px（ios-theme）是整页滚动，.vditor-wysiwyg

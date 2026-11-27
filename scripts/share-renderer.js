@@ -784,6 +784,8 @@ function renderSharePage({ notepad, content, marked, sanitizeHtml }) {
             scrollbar-color: color-mix(in srgb, var(--text-muted) 28%, transparent) transparent;
         }
         .toc-popover a {
+            position: relative;
+            --share-toc-guide: color-mix(in srgb, var(--border-color) 92%, transparent);
             display: flex;
             align-items: flex-start;
             gap: 7px;
@@ -800,6 +802,22 @@ function renderSharePage({ notepad, content, marked, sanitizeHtml }) {
         .toc-popover a[data-depth="2"] { padding-left: 29px; font-size: 12.5px; color: var(--text-muted); }
         .toc-popover a[data-depth="3"] { padding-left: 37px; font-size: 12px; color: var(--text-faint); }
         .toc-popover a[data-depth="4"] { padding-left: 45px; font-size: 12px; color: var(--text-faint); }
+        .toc-popover a[data-depth="1"]::before,
+        .toc-popover a[data-depth="2"]::before,
+        .toc-popover a[data-depth="3"]::before,
+        .toc-popover a[data-depth="4"]::before {
+            content: '';
+            position: absolute;
+            left: 11px;
+            top: 3px;
+            bottom: 3px;
+            width: 1px;
+            background: var(--share-toc-guide);
+            pointer-events: none;
+        }
+        .toc-popover a[data-depth="2"]::before { box-shadow: 10px 0 0 var(--share-toc-guide); }
+        .toc-popover a[data-depth="3"]::before { box-shadow: 10px 0 0 var(--share-toc-guide), 19px 0 0 var(--share-toc-guide); }
+        .toc-popover a[data-depth="4"]::before { box-shadow: 10px 0 0 var(--share-toc-guide), 19px 0 0 var(--share-toc-guide), 27px 0 0 var(--share-toc-guide); }
         .toc-popover a:hover, .toc-popover a.active {
             background: var(--primary-soft);
             color: var(--primary);
@@ -971,6 +989,8 @@ function renderSharePage({ notepad, content, marked, sanitizeHtml }) {
             background: color-mix(in srgb, var(--text-muted) 46%, transparent);
         }
         .rail-nav a {
+            position: relative;
+            --share-toc-guide: color-mix(in srgb, var(--border-color) 92%, transparent);
             display: flex;
             align-items: flex-start;
             gap: 7px;
@@ -993,6 +1013,25 @@ function renderSharePage({ notepad, content, marked, sanitizeHtml }) {
         .rail-nav a[data-depth="2"] { padding-left: 30px; font-size: 12px; }
         .rail-nav a[data-depth="3"] { padding-left: 38px; font-size: 11.5px; color: var(--text-faint); }
         .rail-nav a[data-depth="4"] { padding-left: 46px; font-size: 11.5px; color: var(--text-faint); }
+        .rail-nav a[data-depth="1"]::before,
+        .rail-nav a[data-depth="2"]::before,
+        .rail-nav a[data-depth="3"]::before,
+        .rail-nav a[data-depth="4"]::before {
+            content: '';
+            position: absolute;
+            left: 12px;
+            top: 2px;
+            bottom: 2px;
+            width: 1px;
+            background: var(--share-toc-guide);
+            pointer-events: none;
+        }
+        .rail-nav a[data-depth="2"]::before { box-shadow: 10px 0 0 var(--share-toc-guide); }
+        .rail-nav a[data-depth="3"]::before { box-shadow: 10px 0 0 var(--share-toc-guide), 19px 0 0 var(--share-toc-guide); }
+        .rail-nav a[data-depth="4"]::before { box-shadow: 10px 0 0 var(--share-toc-guide), 19px 0 0 var(--share-toc-guide), 27px 0 0 var(--share-toc-guide); }
+        .rail-nav a.active {
+            --share-toc-guide: color-mix(in srgb, var(--primary) 36%, transparent);
+        }
         .rail-nav a:hover {
             color: var(--text-primary);
             background: color-mix(in srgb, var(--text-primary) 4%, transparent);
@@ -2521,6 +2560,14 @@ function renderSharePage({ notepad, content, marked, sanitizeHtml }) {
                         p.rail.classList.toggle('active', active);
                         p.pop.classList.toggle('active', active);
                     });
+                    var maxScroll = doc.scrollHeight - window.innerHeight;
+                    var countLabel = headings.length + ' 节';
+                    if (maxScroll > 24) {
+                        var pct = Math.max(0, Math.min(100, Math.round((Math.max(0, window.scrollY || doc.scrollTop || 0) / maxScroll) * 100)));
+                        countLabel = headings.length + ' 节 · ' + pct + '%';
+                    }
+                    if (railTocCount && railTocCount.textContent !== countLabel) railTocCount.textContent = countLabel;
+                    if (tocPopCount && tocPopCount.textContent !== countLabel) tocPopCount.textContent = countLabel;
                     if (current && current !== lastActivePair) {
                         lastActivePair = current;
                         keepLinkVisibleInContainer(railNav, current.rail, false);

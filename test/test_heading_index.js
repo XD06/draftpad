@@ -6,10 +6,10 @@ const vm = require('vm');
 const sourcePath = path.join(__dirname, '..', 'public', 'managers', 'heading-index.js');
 const source = fs.readFileSync(sourcePath, 'utf8')
     .replace(/export function /g, 'function ')
-    + '\nmodule.exports = { buildMarkdownHeadingIndex };\n';
-const context = { module: { exports: {} }, exports: {}, Map, String, Array };
+    + '\nmodule.exports = { buildMarkdownHeadingIndex, computeReadingProgress };\n';
+const context = { module: { exports: {} }, exports: {}, Map, String, Array, Number, Math };
 vm.runInNewContext(source, context, { filename: sourcePath });
-const { buildMarkdownHeadingIndex } = context.module.exports;
+const { buildMarkdownHeadingIndex, computeReadingProgress } = context.module.exports;
 
 const empty = buildMarkdownHeadingIndex('');
 assert.strictEqual(empty.toc.length, 0, 'empty Markdown should have no headings');
@@ -51,5 +51,12 @@ assert.deepStrictEqual(Array.from(fencedTilde.toc, item => item.text), ['Real'],
 
 const unterminated = buildMarkdownHeadingIndex('```js\nconst a = "# not a heading";\n');
 assert.strictEqual(unterminated.toc.length, 0, 'unterminated fence swallows the rest');
+
+assert.strictEqual(computeReadingProgress({ scrollTop: 0, scrollHeight: 600, clientHeight: 600 }), null, 'single-screen notes hide progress');
+assert.strictEqual(computeReadingProgress({ scrollTop: 0, scrollHeight: 620, clientHeight: 600 }), null, 'sub-threshold scroll delta hides progress');
+assert.strictEqual(computeReadingProgress({ scrollTop: 0, scrollHeight: 1600, clientHeight: 600 }), 0);
+assert.strictEqual(computeReadingProgress({ scrollTop: 500, scrollHeight: 1600, clientHeight: 600 }), 50);
+assert.strictEqual(computeReadingProgress({ scrollTop: 1200, scrollHeight: 1600, clientHeight: 600 }), 100, 'overscroll clamps to 100');
+assert.strictEqual(computeReadingProgress({ scrollTop: -30, scrollHeight: 1600, clientHeight: 600 }), 0, 'negative bounce clamps to 0');
 
 console.log('Heading index checks passed');

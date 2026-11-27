@@ -368,12 +368,14 @@ async function bootServer() {
                 cardTop: Math.round(document.querySelector('.rail-card').getBoundingClientRect().top),
                 activeText: active?.textContent.trim(),
                 lastText: nav.querySelector('li:last-child a')?.textContent.trim(),
-                visibleInNav: actRect.top >= navRect.top - 2 && actRect.bottom <= navRect.bottom + 2
+                visibleInNav: actRect.top >= navRect.top - 2 && actRect.bottom <= navRect.bottom + 2,
+                tocCountText: document.getElementById('rail-toc-count')?.textContent?.trim() || ''
             };
         });
         assert(atBottom.cardTop >= 18 && atBottom.cardTop <= 36, `Expected .rail-card pinned at top while TOC scrolls, got ${atBottom.cardTop}`);
         assert.equal(atBottom.activeText, atBottom.lastText, 'Scrolling to bottom should highlight the final TOC heading');
         assert.equal(atBottom.visibleInNav, true, 'Active TOC link must auto-scroll into view inside #rail-nav');
+        assert.match(atBottom.tocCountText, /节 · 100%$/, `At bottom share TOC count should show 100%, got ${atBottom.tocCountText}`);
 
         // Toggle source view on Mermaid card and back to diagram
         await page.click('.ios-mermaid-card .ios-mermaid-tools button:first-child');

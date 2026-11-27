@@ -171,3 +171,20 @@ export function collectTocSectionEntries(toc, root = document.querySelector('.vd
     groups.delete('__preamble__');
     return groups;
 }
+
+/**
+ * 计算长文阅读进度百分比（0..100 整数）；当文档总可滚距离不超过阈值（默认 24px，
+ * 即一屏以内短文）时返回 null，避免短文界面出现无意义的 0% 徽标。
+ */
+export function computeReadingProgress({
+    scrollTop = 0,
+    scrollHeight = 0,
+    clientHeight = 0,
+    minScrollableDelta = 24
+} = {}) {
+    const total = Number(scrollHeight) - Number(clientHeight);
+    if (!Number.isFinite(total) || total <= minScrollableDelta) return null;
+    const rawOffset = Number(scrollTop);
+    const offset = Number.isFinite(rawOffset) ? Math.max(0, rawOffset) : 0;
+    return Math.max(0, Math.min(100, Math.round((offset / total) * 100)));
+}

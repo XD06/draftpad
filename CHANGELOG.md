@@ -8,6 +8,9 @@
 
 ### 新增 / 优化
 
+- **文章与分享页目录可读性增强**：
+  - 主站右栏目录头部与移动端大纲抽屉新增实时滚动阅读进度百分比胶囊（[heading-index.js](public/managers/heading-index.js) `computeReadingProgress` 夹取 `0%–100%`，单屏内短文自动隐藏），分享页 `#rail-toc-count` / `#toc-popover-count` 同步展示「`N 节 · X%`」并由 `test:share-page-browser` 覆盖。
+  - 在 `public/Assets/styles.css` 与 `scripts/share-renderer.js` 为二级以下标题及区段子条目补充 `1px` 极浅竖向层级引导线（`::before`，默认仍保持全目录展开，零布局抖动）。
 - **默认划线色柔化与分享页列表标记降饱和**：
   - 将 `public/Assets/ios-theme.css` 默认划线令牌 `--draw-color` 从纯 `blue` 柔化为静谧蓝（亮色 `#2563EB` / 暗色 `#60A5FA`），同步更新 `appearance-presets.js` 与设置界面「静谧蓝（默认）」圆点及「深海蓝」区分色阶，保持序列化内联格式零改动；将 `scripts/share-renderer.js` 分享页 `.markdown-body li::marker` 改为 `color-mix(in srgb, var(--primary) 58%, var(--text-muted))` 弱化长列表刺眼感，并通过 `test:tiptap-underline-annotation-browser` 与 `test:share-page-browser` 亮/暗计算色校验。
 - **阅读色彩变量底座与设置中心「主题与外观」Tab**：

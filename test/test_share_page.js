@@ -319,6 +319,10 @@ async function testRendererUnitCases() {
         'share page list markers should use softened mixed tone instead of raw primary neon'
     );
     assert(
+        mixedHtml.includes('.rail-nav a[data-depth="1"]::before'),
+        'share page TOC should include subtle 1px tree guide lines'
+    );
+    assert(
         !/\.markdown-body ul\.task-list[^}]*list-style:\s*none/.test(mixedHtml),
         'share page CSS must not suppress bullets on ul.task-list parent (breaks mixed task+bullet lists)'
     );

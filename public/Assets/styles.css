@@ -6832,6 +6832,46 @@ body.reading-mode-active .editor-main {
     font-size: 12.5px;
 }
 
+/* 子层级极浅 1px 竖向引导线（不改动缩进与文本排版，零额外 DOM） */
+.article-toc-list .toc-item {
+    --toc-guide-color: color-mix(in srgb, var(--border-color) 90%, transparent);
+}
+
+.article-toc-list .toc-item:hover,
+.article-toc-list .toc-item.active {
+    --toc-guide-color: rgba(var(--primary-rgb), 0.34);
+}
+
+.article-toc-list .toc-item.h2::before,
+.article-toc-list .toc-item.h3::before,
+.article-toc-list .toc-item.h4::before,
+.article-toc-list .toc-item.h5::before,
+.article-toc-list .toc-item.h6::before,
+.article-toc-list .toc-item.mark-entry::before {
+    content: '';
+    position: absolute;
+    left: 16px;
+    top: 2px;
+    bottom: 2px;
+    width: 1px;
+    background: var(--toc-guide-color);
+    pointer-events: none;
+    transition: background-color 0.16s ease;
+}
+
+.article-toc-list .toc-item.h3::before,
+.article-toc-list .toc-item.mark-entry::before {
+    box-shadow: 18px 0 0 var(--toc-guide-color);
+}
+
+.article-toc-list .toc-item.h4::before,
+.article-toc-list .toc-item.h5::before,
+.article-toc-list .toc-item.h6::before {
+    box-shadow:
+        18px 0 0 var(--toc-guide-color),
+        36px 0 0 var(--toc-guide-color);
+}
+
 .article-toc-list .toc-item.mark-entry .mark-badge {
     min-width: 18px;
     font-size: 9px;
@@ -6995,6 +7035,24 @@ body.reading-mode-active .editor-main {
     display: block;
 }
 
+.article-toc-progress {
+    margin-left: auto;
+    font-size: 11px;
+    font-weight: 650;
+    line-height: 1.25;
+    font-variant-numeric: tabular-nums;
+    padding: 2px 7px;
+    border-radius: 999px;
+    color: color-mix(in srgb, var(--primary-color) 76%, var(--muted-text));
+    background: rgba(var(--primary-rgb), 0.1);
+    flex-shrink: 0;
+    pointer-events: none;
+}
+
+.article-toc-progress[hidden] {
+    display: none;
+}
+
 @media (min-width: 981px) {
     .sidebar-tabs {
         display: flex;
@@ -7084,7 +7142,17 @@ body.reading-mode-active .editor-main {
     }
 
     #sidebar-right .sidebar-header {
-        justify-content: space-between;
+        justify-content: flex-start;
+        gap: 8px;
+    }
+
+    #sidebar-right .article-toc-progress {
+        margin-left: 0;
+        margin-right: auto;
+    }
+
+    #close-sidebar-right {
+        margin-left: auto;
     }
 }
 
