@@ -8,6 +8,12 @@
 
 ### 新增 / 优化
 
+- **移动端阅读态顶栏隐显（Headroom）与悬浮胶囊打磨**：
+  - 分享页移动端（[share-renderer.js](scripts/share-renderer.js) `< 1060px`）与主应用移动端阅读态（[app.js](public/app.js) `readingHeadroom` + [ios-theme.css](public/Assets/ios-theme.css) `≤ 980px`）：向下阅读滚动（`> 96px` 且累计下滑 `>= 28px`）时平滑向上收起顶部栏（分享页保留顶部 `2px` 进度条），轻微上滑（`>= 12px`）、回顶、打开目录/抽屉/弹窗或退出阅读态即时恢复；同步在下滑沉浸阅读时柔和弱化未展开的左下角 `.floating-actions` 胶囊为 `opacity: 0.72` 减少正文遮挡（编辑态与桌面端零变化），由 `test:share-page-browser`、`test:mobile-editor-browser` 与 `test:source-mode-browser` 覆盖。
+- **精简 GFM Callout 提示块（A4 雾底左浮标风）+ `/` 快速插入 + `H1–H6` 边标修距 + 底部防抖**：
+  - Tiptap 编辑器新增 `CalloutDecorator`（[tiptap-extensions.js](public/managers/tiptap-extensions.js)）与导出去转义 `unescapeCalloutMarkers`（[tiptap-editor.js](public/tiptap-editor.js)），仅针对 `NOTE`（备注）、`TIP`（提示）、`WARNING`（注意）3 类标准 `> [!TYPE]` 块应用 A4 雾底圆标样式，采用 Live-Preview 按选区显隐首行 `[!TYPE]` 源码标签（正文/阅读态纯净双行展示，正文行首 `Backspace` 安全剥离标签或解封空提示块），普通 `>` 引用保持原样；分享页同步通过 `transformShareCallouts`（[share-renderer.js](scripts/share-renderer.js)）呈现同款 A4 提示块并新增 `npm run test:tiptap-callout` 与 `test:share-page-browser` 校验。
+  - [tiptap-slash-menu.js](public/managers/tiptap-slash-menu.js) 接入 `/note`、`/tip`、`/warning` 及中文关键词快速插入；同步将 `.slash-command-menu` 改为 `position: fixed` 同步测算定死坐标、屏蔽菜单内滚重定位并用容器内 `scrollTop` 替代 `scrollIntoView()`，彻底修复页面底部唤出 `/` 菜单时的视口抖动。
+  - [styles.css](public/Assets/styles.css) 修正桌面 `H1–H6` 侧标过于贴卡左边缘的定位（`left: -36px` → `right: calc(100% + 10px); white-space: nowrap; opacity: 0.42;`）。
 - **阅读态与分享页长代码块智能折叠及分享页横向/换行切换**：
   - 主编辑器只读（阅读）模式（[tiptap-code-block-view.js](public/managers/tiptap-code-block-view.js) `LONG_CODE_LINE_THRESHOLD = 18` 与 [styles.css](public/Assets/styles.css) `.typora-editor-shell.is-reading-mode` 限定规则）：仅对非编辑态且非 `mermaid`/`frontmatter` 的 `>= 18` 行长代码块默认折叠（限高 `296px` + 底部 `--code-bg` 平滑渐隐遮罩与居中圆角胶囊 `展开代码 · {N} 行` / `收起代码`，页眉配轻量展开/收起 SVG 图标）；编辑态与退回编辑时始终全量展开且零 DOM 污染。新增 `npm run test:code-block-folding` 与主应用真机折叠验证。
   - 分享页代码块卡片（[share-renderer.js](scripts/share-renderer.js) `.ios-code-card`）：超宽代码按需显示 `换行`/`横向` 切换按钮（`.ios-code-wrap-btn`），`>= 18` 行长代码默认折叠（限高 `284px` + 同款渐隐遮罩与 `展开代码 · {N} 行` / `收起代码` 胶囊及页眉 SVG 按钮），由 `test:share-page` 与 `test:share-page-browser` 覆盖。

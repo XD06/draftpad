@@ -94,6 +94,9 @@ const TODO_ICON_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="non
 const DOING_ICON_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3"></rect><path d="M8.5 12h7"></path></svg>';
 const HEADING_ICON_SVG = (level) => `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12h8"></path><path d="M4 18V6"></path><path d="M12 18V6"></path><text x="15" y="18" font-size="9" font-weight="700" fill="currentColor" stroke="none">${level}</text></svg>`;
 const QUOTE_ICON_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 21c3 0 7-1 7-8V5c0-1.25-.756-2.017-2-2H4c-1.25 0-2 .75-2 1.972V11c0 1.25.75 2 2 2 1 0 1 0 1 1v1c0 1-1 2-2 2s-1 .008-1 1.031V20c0 1 0 1 1 1z"></path><path d="M15 21c3 0 7-1 7-8V5c0-1.25-.757-2.017-2-2h-4c-1.25 0-2 .75-2 1.972V11c0 1.25.75 2 2 2h.75c0 2.25.25 4-2.75 4v3c0 1 0 1 1 1z"></path></svg>';
+const NOTE_CALLOUT_ICON_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>';
+const TIP_CALLOUT_ICON_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18h6"></path><path d="M10 22h4"></path><path d="M15.09 14c.18-.98.65-1.74 1.41-2.5A4.65 4.65 0 0 0 18 8 6 6 0 0 0 6 8c0 1 .23 2.23 1.5 3.5A4.61 4.61 0 0 1 8.91 14"></path></svg>';
+const WARNING_CALLOUT_ICON_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 9v4"></path><path d="M12 17h.01"></path><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path></svg>';
 const HR_ICON_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><line x1="3" y1="12" x2="21" y2="12"></line></svg>';
 const TABLE_ICON_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"></rect><line x1="3" y1="10" x2="21" y2="10"></line><line x1="3" y1="15" x2="21" y2="15"></line><line x1="9" y1="10" x2="9" y2="20"></line><line x1="15" y1="10" x2="15" y2="20"></line></svg>';
 const FRONTMATTER_ICON_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h16"></path><path d="M4 10h10"></path><path d="M4 14h16"></path><path d="M4 18h8"></path></svg>';
@@ -310,6 +313,26 @@ registerSlashCommand({
     },
 });
 
+function insertCalloutSlashCommand(editor, range, kind) {
+    const tagText = `[!${String(kind || 'NOTE').toUpperCase()}]`;
+    runBlockSlashCommand(editor, range, chain => chain.command(({ tr, state }) => {
+        const { blockquote, paragraph, hardBreak } = state.schema.nodes;
+        if (!blockquote || !paragraph || !hardBreak) return false;
+        const $head = tr.selection.$head;
+        const blockFrom = $head.before($head.depth);
+        const blockTo = $head.after($head.depth);
+        const paraNode = paragraph.create(null, [
+            state.schema.text(tagText),
+            hardBreak.create(),
+        ]);
+        const calloutNode = blockquote.create(null, paraNode);
+        tr.replaceWith(blockFrom, blockTo, calloutNode);
+        const caretPos = blockFrom + 2 + tagText.length + 1;
+        tr.setSelection(TextSelection.create(tr.doc, caretPos));
+        return true;
+    }));
+}
+
 registerSlashCommand({
     id: 'quote',
     title: '引用块',
@@ -318,6 +341,30 @@ registerSlashCommand({
     run: ({ editor, range }) => {
         runBlockSlashCommand(editor, range, chain => chain.setBlockquote());
     },
+});
+
+registerSlashCommand({
+    id: 'note',
+    title: '备注提示块',
+    keywords: ['note', 'callout', 'info', '备注', '说明', '信息', '提示块'],
+    icon: NOTE_CALLOUT_ICON_SVG,
+    run: ({ editor, range }) => insertCalloutSlashCommand(editor, range, 'NOTE'),
+});
+
+registerSlashCommand({
+    id: 'tip',
+    title: '技巧提示块',
+    keywords: ['tip', 'hint', 'callout', '提示', '技巧', '建议', '提示块'],
+    icon: TIP_CALLOUT_ICON_SVG,
+    run: ({ editor, range }) => insertCalloutSlashCommand(editor, range, 'TIP'),
+});
+
+registerSlashCommand({
+    id: 'warning',
+    title: '注意警告块',
+    keywords: ['warning', 'warn', 'alert', 'callout', '注意', '警告', '提醒', '提示块'],
+    icon: WARNING_CALLOUT_ICON_SVG,
+    run: ({ editor, range }) => insertCalloutSlashCommand(editor, range, 'WARNING'),
 });
 
 registerSlashCommand({
@@ -468,6 +515,7 @@ class SlashMenuView {
         this.items = [];
         this.selectedIndex = 0;
         this.visible = false;
+        this._rafId = 0;
 
         this.root = document.createElement('div');
         this.root.className = 'slash-command-menu';
@@ -491,8 +539,12 @@ class SlashMenuView {
         });
         document.body.appendChild(this.root);
 
-        this.handleScroll = () => this.position();
-        this.handleResize = () => this.position();
+        this.handleScroll = (event) => {
+            // 菜单自身列表滚动绝不能重算外层定位，否则会引发位置反馈抖动。
+            if (event?.target === this.root || this.root.contains(event?.target)) return;
+            this.schedulePosition();
+        };
+        this.handleResize = () => this.schedulePosition();
         // 点编辑器外（其他面板/正文）收起菜单：编辑器 blur 即收。
         // 菜单自身的 mousedown 已 preventDefault，不会触发这条路径。
         this.handleBlur = () => this.hide();
@@ -524,8 +576,8 @@ class SlashMenuView {
             this.show(next);
             return;
         }
-        // 命令区间未变、只是光标或周边内容微动：重定位即可。
-        this.position();
+        // 命令区间未变、只是光标或周边内容微动：同步贴合。
+        this.positionNow();
     }
 
     show(state) {
@@ -538,14 +590,22 @@ class SlashMenuView {
             return;
         }
         this.renderItems();
+        // 先隐身同步测算并定死 fixed 坐标再放开可见，消除「第 0 帧停在文档底部撑高页面再跳回」的抖动。
+        this.root.style.visibility = 'hidden';
         this.root.style.display = 'flex';
         this.visible = true;
-        this.position();
+        this.positionNow();
+        this.root.style.visibility = '';
     }
 
     hide() {
+        if (this._rafId) {
+            cancelAnimationFrame(this._rafId);
+            this._rafId = 0;
+        }
         if (!this.visible) return;
         this.visible = false;
+        this.root.style.visibility = '';
         this.root.style.display = 'none';
     }
 
@@ -590,7 +650,16 @@ class SlashMenuView {
         if (!this.items.length) return;
         const count = this.items.length;
         this.setSelected((this.selectedIndex + delta + count) % count);
-        this.root.children[this.selectedIndex]?.scrollIntoView({ block: 'nearest' });
+        // 只在菜单列表容器内调节 scrollTop，避免 scrollIntoView() 连带把外层页面拽动。
+        const item = this.root.children[this.selectedIndex];
+        if (item) {
+            const top = item.offsetTop;
+            const bottom = top + item.offsetHeight;
+            const viewTop = this.root.scrollTop;
+            const viewBottom = viewTop + this.root.clientHeight;
+            if (top < viewTop) this.root.scrollTop = Math.max(0, top - 5);
+            else if (bottom > viewBottom) this.root.scrollTop = bottom - this.root.clientHeight + 5;
+        }
     }
 
     executeSelected() {
@@ -623,53 +692,69 @@ class SlashMenuView {
         this.view.dispatch(this.view.state.tr.setMeta(slashMenuPluginKey, { type: 'dismiss' }));
     }
 
-    position() {
-        if (!this.visible) return;
-        const state = slashMenuPluginKey.getState(this.view.state);
-        if (!state?.open || state.from < 0) return;
-        requestAnimationFrame(() => {
-            if (!this.visible) return;
-            let caret;
-            try {
-                caret = this.view.coordsAtPos(Math.min(state.from, this.view.state.doc.content.size));
-            } catch (_error) {
-                // jsdom 等无布局环境 coordsAtPos 会 throw：跳过定位，
-                // 不能把刚显示的菜单藏掉（真实浏览器不会 throw）。
-                return;
-            }
-            const menuRect = this.root.getBoundingClientRect();
-            const vv = window.visualViewport;
-            const viewportHeight = Number(vv?.height || window.innerHeight || 0);
-            const viewportOffsetTop = Number(vv?.offsetTop || 0);
-            const scrollX = window.scrollX || 0;
-            const scrollY = window.scrollY || 0;
-            const visibleTopDoc = scrollY + viewportOffsetTop;
-            const visibleBottomDoc = visibleTopDoc + viewportHeight;
-            const spaceBelow = visibleBottomDoc - (caret.bottom + scrollY) - 10;
-            const spaceAbove = (caret.top + scrollY) - visibleTopDoc - 10;
-            const menuHeight = menuRect.height || 240;
-
-            let top;
-            let maxHeight;
-            if (spaceBelow >= Math.min(menuHeight, 180) || spaceBelow >= spaceAbove) {
-                top = caret.bottom + scrollY + 8;
-                maxHeight = Math.max(140, Math.min(320, spaceBelow));
-            } else {
-                maxHeight = Math.max(140, Math.min(320, spaceAbove));
-                top = caret.top + scrollY - Math.min(menuHeight, maxHeight) - 8;
-            }
-            top = Math.max(visibleTopDoc + 8, top);
-
-            const width = Math.min(menuRect.width || 280, window.innerWidth - 16);
-            let left = caret.left + scrollX - width / 2;
-            left = Math.min(Math.max(left, scrollX + 8), scrollX + window.innerWidth - width - 8);
-            this.root.style.left = `${Math.round(left)}px`;
-            this.root.style.top = `${Math.round(top)}px`;
-            this.root.style.maxHeight = `${Math.round(maxHeight)}px`;
+    schedulePosition() {
+        if (!this.visible || this._rafId) return;
+        this._rafId = requestAnimationFrame(() => {
+            this._rafId = 0;
+            this.positionNow();
         });
     }
 
+    position() {
+        this.schedulePosition();
+    }
+
+    positionNow() {
+        if (!this.visible) return;
+        const state = slashMenuPluginKey.getState(this.view.state);
+        if (!state?.open || state.from < 0) return;
+        let caret;
+        try {
+            caret = this.view.coordsAtPos(Math.min(state.from, this.view.state.doc.content.size));
+        } catch (_error) {
+            // jsdom 等无布局环境 coordsAtPos 会 throw：跳过定位，
+            // 不能把刚显示的菜单藏掉（真实浏览器不会 throw）。
+            return;
+        }
+        const vv = window.visualViewport;
+        const viewportHeight = Number(vv?.height || window.innerHeight || 0);
+        const viewportWidth = Number(vv?.width || window.innerWidth || 0);
+        const vvTop = Number(vv?.offsetTop || 0);
+        const vvLeft = Number(vv?.offsetLeft || 0);
+        const spaceBelow = (vvTop + viewportHeight) - caret.bottom - 10;
+        const spaceAbove = caret.top - vvTop - 10;
+
+        this.root.style.maxHeight = '';
+        const naturalRect = this.root.getBoundingClientRect();
+        const menuHeight = naturalRect.height || 240;
+
+        let top;
+        let maxHeight;
+        if (spaceBelow >= Math.min(menuHeight, 180) || spaceBelow >= spaceAbove) {
+            maxHeight = Math.max(140, Math.min(320, spaceBelow));
+            this.root.style.maxHeight = `${Math.round(maxHeight)}px`;
+            const actualHeight = Math.min(menuHeight, maxHeight);
+            top = Math.min(caret.bottom + 8, vvTop + viewportHeight - actualHeight - 8);
+        } else {
+            maxHeight = Math.max(140, Math.min(320, spaceAbove));
+            this.root.style.maxHeight = `${Math.round(maxHeight)}px`;
+            const actualHeight = Math.min(menuHeight, maxHeight);
+            top = caret.top - actualHeight - 8;
+        }
+        top = Math.max(vvTop + 8, top);
+
+        const width = Math.min(naturalRect.width || 280, Math.max(180, viewportWidth - 16));
+        let left = caret.left - width / 2;
+        left = Math.min(Math.max(left, vvLeft + 8), vvLeft + viewportWidth - width - 8);
+        this.root.style.left = `${Math.round(left)}px`;
+        this.root.style.top = `${Math.round(top)}px`;
+    }
+
     destroy() {
+        if (this._rafId) {
+            cancelAnimationFrame(this._rafId);
+            this._rafId = 0;
+        }
         document.removeEventListener('scroll', this.handleScroll, { capture: true });
         window.removeEventListener('resize', this.handleResize);
         this.view.dom.removeEventListener('blur', this.handleBlur, true);

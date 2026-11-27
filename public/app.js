@@ -520,6 +520,78 @@ document.addEventListener('DOMContentLoaded', async () => {
     let notepadIdToRename = null;
     let _siteTitle = 'DumbPad';
     let isReadingMode = false;
+    const readingHeadroom = (() => {
+        let lastY = 0;
+        let downAcc = 0;
+        let upAcc = 0;
+        let guardUntil = 0;
+        let lastTarget = null;
+
+        const reset = ({ guardMs = 0 } = {}) => {
+            document.body.classList.remove('reading-headroom-hidden');
+            downAcc = 0;
+            upAcc = 0;
+            if (guardMs > 0) {
+                guardUntil = Math.max(guardUntil, Date.now() + guardMs);
+            }
+        };
+
+        const isEligible = () => isReadingMode
+            && window.innerWidth <= 980
+            && !document.body.classList.contains('thoughts-mode')
+            && !document.body.classList.contains('today-drafts-mode')
+            && !document.body.classList.contains('mobile-sidebar-open')
+            && !document.body.classList.contains('fab-expanded')
+            && !document.documentElement.classList.contains('keyboard-open')
+            && !document.getElementById('sidebar-right')?.classList.contains('visible')
+            && !document.querySelector('.modal.visible');
+
+        const sync = (target) => {
+            if (!target) return;
+            const y = Math.max(0, target.scrollTop || 0);
+            if (!isEligible()) {
+                reset();
+                lastTarget = target;
+                lastY = y;
+                return;
+            }
+            if (target !== lastTarget) {
+                lastTarget = target;
+                lastY = y;
+                downAcc = 0;
+                upAcc = 0;
+                return;
+            }
+            if (Date.now() < guardUntil) {
+                lastY = y;
+                downAcc = 0;
+                upAcc = 0;
+                return;
+            }
+            if (y <= 64) {
+                reset();
+                lastY = y;
+                return;
+            }
+            const dy = y - lastY;
+            if (dy > 0) {
+                upAcc = 0;
+                downAcc += dy;
+                if (y > 96 && downAcc >= 28) {
+                    document.body.classList.add('reading-headroom-hidden');
+                }
+            } else if (dy < 0) {
+                downAcc = 0;
+                upAcc += -dy;
+                if (upAcc >= 12) {
+                    document.body.classList.remove('reading-headroom-hidden');
+                }
+            }
+            lastY = y;
+        };
+
+        return { reset, sync };
+    })();
     let startupSyncSnapshot = {
         state: 'idle',
         label: '同步状态',
@@ -2701,6 +2773,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (!side) return;
         side.classList.toggle('visible', visible);
         overlay?.classList.toggle('visible', visible || document.getElementById('sidebar-left')?.classList.contains('visible'));
+        readingHeadroom.reset({ guardMs: visible ? 0 : 450 });
         if (visible) {
             updateToC();
         }
@@ -4492,6 +4565,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             } else {
                 document.body.classList.remove('reading-mode-active');
             }
+            readingHeadroom.reset();
             applyCurrentNotepadTitle();
 
             updateToC(); // Update TOC when toggling mode
@@ -4631,6 +4705,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             sidebarLeft.classList.toggle('visible', visible);
             overlay?.classList.toggle('visible', visible);
             document.body.classList.toggle('mobile-sidebar-open', visible);
+            if (visible) readingHeadroom.reset();
 
             if (!mobileSidebarHost) return;
             if (visible && document.body.classList.contains('thoughts-mode')) {
@@ -4678,6 +4753,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const applyFabExpanded = (expanded) => {
             document.body.classList.toggle('fab-expanded', expanded);
             document.getElementById('fab-toggle-group')?.setAttribute('aria-expanded', String(expanded));
+            if (expanded) readingHeadroom.reset();
         };
         applyFabExpanded(false);
         document.getElementById('fab-toggle-group')?.addEventListener('click', () => {
@@ -4762,13 +4838,19 @@ document.addEventListener('DOMContentLoaded', async () => {
                     return;
                 }
                 updateScrollDirection(target);
+                readingHeadroom.sync(target);
             };
 
             // Scroll does not bubble, but capture sees scrolls from nested
             // editors created after app startup as well as the document.
             document.addEventListener('scroll', handleScroll, true);
             window.addEventListener('scroll', () => {
-                updateScrollDirection(document.scrollingElement || document.documentElement);
+                const docEl = document.scrollingElement || document.documentElement;
+                updateScrollDirection(docEl);
+                readingHeadroom.sync(docEl);
+            }, { passive: true });
+            window.addEventListener('resize', () => {
+                if (window.innerWidth > 980) readingHeadroom.reset();
             }, { passive: true });
 
             let scrollAnim = null;

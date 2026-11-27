@@ -37,6 +37,9 @@
     --button-hover: rgba(0, 0, 0, 0.05);
     --danger-color: #ff3b30;
     --danger-hover: #ff3b30;
+    --callout-note: #2563EB;
+    --callout-tip: #059669;
+    --callout-warning: #D97706;
 
     /* iOS 圆角体系 */
     --radius-sm: 10px;
@@ -112,6 +115,9 @@
     --annotation-color-hover: #ff4d4f;
     --task-checked-color: #ecb015;
     --task-doing-color: #d98a00;
+    --callout-note: #60A5FA;
+    --callout-tip: #34D399;
+    --callout-warning: #FBBF24;
 }
 
 /* ──────────────────────────────────────
@@ -1196,6 +1202,45 @@ main {
         box-shadow:
             0 10px 30px rgba(0, 0, 0, 0.14),
             0 1px 0 rgba(255, 255, 255, 0.38) inset;
+    }
+
+    /* Step 6 (C4 + C5): 移动端阅读态下滑自动收起顶栏（Headroom），轻量让位底部胶囊 */
+    body.reading-mode-active:not(.thoughts-mode):not(.today-drafts-mode) header {
+        transition:
+            transform 0.22s cubic-bezier(0.22, 1, 0.36, 1),
+            opacity 0.18s ease;
+    }
+
+    body.reading-mode-active.reading-headroom-hidden:not(.thoughts-mode):not(.today-drafts-mode):not(.mobile-sidebar-open):not(.fab-expanded) header {
+        transform: translateY(calc(-100% - 20px - env(safe-area-inset-top, 0px)));
+        opacity: 0;
+        pointer-events: none;
+    }
+
+    /* C5: 下滑沉浸阅读时柔和弱化左下角折叠态胶囊，上滑、触碰或展开立即恢复清晰 */
+    body.reading-mode-active:not(.thoughts-mode):not(.today-drafts-mode) .floating-actions {
+        transition: opacity 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
+    }
+
+    body.reading-mode-active.reading-headroom-hidden:not(.thoughts-mode):not(.today-drafts-mode):not(.fab-expanded) .floating-actions {
+        opacity: 0.72;
+        transform: translateY(2px) scale(0.96);
+        box-shadow:
+            0 4px 14px rgba(0, 0, 0, 0.08),
+            0 1px 0 rgba(255, 255, 255, 0.24) inset;
+    }
+
+    body.reading-mode-active.reading-headroom-hidden:not(.thoughts-mode):not(.today-drafts-mode):not(.fab-expanded) .floating-actions:hover,
+    body.reading-mode-active.reading-headroom-hidden:not(.thoughts-mode):not(.today-drafts-mode):not(.fab-expanded) .floating-actions:focus-within {
+        opacity: 1;
+        transform: none;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        body.reading-mode-active:not(.thoughts-mode):not(.today-drafts-mode) header,
+        body.reading-mode-active:not(.thoughts-mode):not(.today-drafts-mode) .floating-actions {
+            transition-duration: 0.01ms !important;
+        }
     }
 
     .typora-editor-shell .vditor-wysiwyg {

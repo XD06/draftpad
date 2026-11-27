@@ -253,6 +253,75 @@ function rehydrateTokens({ html, marks, nonce, marked, sanitizeHtml }) {
     return out;
 }
 
+const SHARE_CALLOUT_SPEC = Object.freeze({
+    note: Object.freeze({
+        label: '备注',
+        icon: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>'
+    }),
+    tip: Object.freeze({
+        label: '提示',
+        icon: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M15.09 14c.18-.98.65-1.74 1.41-2.5A4.65 4.65 0 0 0 18 8 6 6 0 0 0 6 8c0 1 .23 2.23 1.5 3.5A4.61 4.61 0 0 1 8.91 14"/></svg>'
+    }),
+    warning: Object.freeze({
+        label: '注意',
+        icon: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg>'
+    })
+});
+
+function transformShareCallouts(html) {
+    const src = String(html || '');
+    if (!/\[!(?:NOTE|TIP|WARNING)\]/i.test(src) || !/<blockquote\b/i.test(src)) return src;
+
+    let out = '';
+    let cursor = 0;
+    const tagRe = /<\/?blockquote\b[^>]*>/gi;
+    while (cursor < src.length) {
+        tagRe.lastIndex = cursor;
+        const openMatch = tagRe.exec(src);
+        if (!openMatch) {
+            out += src.slice(cursor);
+            break;
+        }
+        if (openMatch[0].startsWith('</')) {
+            out += src.slice(cursor, tagRe.lastIndex);
+            cursor = tagRe.lastIndex;
+            continue;
+        }
+        out += src.slice(cursor, openMatch.index);
+        const innerStart = tagRe.lastIndex;
+        let depth = 1;
+        let closeMatch = null;
+        while (depth > 0) {
+            const nextTag = tagRe.exec(src);
+            if (!nextTag) break;
+            if (nextTag[0].startsWith('</')) depth -= 1;
+            else depth += 1;
+            if (depth === 0) closeMatch = nextTag;
+        }
+        if (!closeMatch) {
+            out += src.slice(openMatch.index);
+            break;
+        }
+        const rawInner = src.slice(innerStart, closeMatch.index);
+        const inner = transformShareCallouts(rawInner);
+        const leadMatch = inner.match(/^\s*<p\b[^>]*>([\s\S]*?)<\/p>([\s\S]*)$/i);
+        const firstParaBody = leadMatch ? leadMatch[1] : '';
+        const markerMatch = firstParaBody.match(/^\s*\[!(NOTE|TIP|WARNING)\](?:[ \t]*<br\s*\/?>\s*|[ \t]+|$)([\s\S]*)$/i);
+        if (!markerMatch) {
+            out += `${openMatch[0]}${inner}</blockquote>`;
+            cursor = tagRe.lastIndex;
+            continue;
+        }
+        const kind = markerMatch[1].toLowerCase();
+        const spec = SHARE_CALLOUT_SPEC[kind];
+        const remainingFirstPara = markerMatch[2].trim() ? `<p>${markerMatch[2]}</p>` : '';
+        const bodyHtml = `${remainingFirstPara}${leadMatch[2]}`;
+        out += `<blockquote class="ios-callout ios-callout-${kind}" data-callout="${kind}"><div class="ios-callout-icon" aria-hidden="true">${spec.icon}</div><div class="ios-callout-content"><div class="ios-callout-title">${spec.label}</div><div class="ios-callout-body">${bodyHtml}</div></div></blockquote>`;
+        cursor = tagRe.lastIndex;
+    }
+    return out;
+}
+
 function stripDuplicateLeadingHeading(html, title) {
     const normalizedTitle = String(title || '').trim().replace(/\s+/g, ' ').toLowerCase();
     if (!normalizedTitle) return html;
@@ -491,6 +560,7 @@ function renderShareBody({ content, notepadName, marked, sanitizeHtml }) {
     const withTaskTokens = preprocessTaskLists(parsed, nonce);
     const sanitized = sanitizeHtml(withTaskTokens);
     let htmlBody = rehydrateTokens({ html: sanitized, marks, nonce, marked, sanitizeHtml });
+    htmlBody = transformShareCallouts(htmlBody);
     if (fencedBlocks.length > 0) {
         const codePattern = new RegExp(`(?:<p>)?@@CODEBLOCK_${nonce}_(\\d+)@@(?:<\\/p>)?`, 'g');
         htmlBody = htmlBody.replace(codePattern, (match, idStr) => {
@@ -595,6 +665,9 @@ function renderSharePage({ notepad, content, marked, sanitizeHtml }) {
             --draw-color: #007AFF;
             --danger-note: #FF3B30;
             --danger-soft: rgba(255, 59, 48, 0.10);
+            --callout-note: #2563EB;
+            --callout-tip: #059669;
+            --callout-warning: #D97706;
             --shadow-card: 0 2px 10px rgba(0, 0, 0, 0.03), 0 12px 32px rgba(0, 0, 0, 0.045);
             --shadow-pill: 0 8px 24px rgba(15, 23, 42, 0.07);
             --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", sans-serif;
@@ -622,6 +695,9 @@ function renderSharePage({ notepad, content, marked, sanitizeHtml }) {
             --draw-color: #0A84FF;
             --danger-note: #FF453A;
             --danger-soft: rgba(255, 69, 58, 0.16);
+            --callout-note: #60A5FA;
+            --callout-tip: #34D399;
+            --callout-warning: #FBBF24;
             --shadow-card: 0 4px 18px rgba(0, 0, 0, 0.28);
             --shadow-pill: 0 8px 28px rgba(0, 0, 0, 0.35);
         }
@@ -677,6 +753,10 @@ function renderSharePage({ notepad, content, marked, sanitizeHtml }) {
             align-items: center;
             justify-content: space-between;
             gap: 10px;
+            transition: transform 0.22s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.18s ease;
+        }
+        @media (prefers-reduced-motion: reduce) {
+            .mobile-topbar { transition-duration: 0.01ms; }
         }
         .nav-left {
             display: flex;
@@ -1336,6 +1416,44 @@ function renderSharePage({ notepad, content, marked, sanitizeHtml }) {
         }
         .markdown-body blockquote p { margin: 0 0 0.5em; }
         .markdown-body blockquote p:last-child { margin-bottom: 0; }
+
+        /* A4 Mist-base Left-badge Callouts (NOTE / TIP / WARNING only) */
+        .markdown-body blockquote.ios-callout {
+            --callout-accent: var(--callout-note);
+            margin: 1.25em 0;
+            padding: 12px 15px;
+            border-radius: 12px;
+            border: 1px solid var(--border-color);
+            border-left: 1px solid var(--border-color);
+            background: color-mix(in srgb, var(--surface-subtle) 85%, var(--card-bg));
+            color: var(--text-body);
+            display: grid;
+            grid-template-columns: 22px minmax(0, 1fr);
+            gap: 11px;
+            align-items: start;
+        }
+        .markdown-body blockquote.ios-callout[data-callout="tip"] { --callout-accent: var(--callout-tip); }
+        .markdown-body blockquote.ios-callout[data-callout="warning"] { --callout-accent: var(--callout-warning); }
+        .ios-callout-icon {
+            width: 22px;
+            height: 22px;
+            border-radius: 999px;
+            background: color-mix(in srgb, var(--callout-accent) 14%, transparent);
+            color: var(--callout-accent);
+            display: grid;
+            place-items: center;
+            margin-top: 1px;
+        }
+        .ios-callout-content { min-width: 0; }
+        .ios-callout-title {
+            font-size: 13px;
+            font-weight: 650;
+            color: var(--text-primary);
+            margin-bottom: 3px;
+            line-height: 1.45;
+        }
+        .ios-callout-body > :first-child { margin-top: 0; }
+        .ios-callout-body > :last-child { margin-bottom: 0; }
 
         /* Lists (Typora-aligned: ul / ol / taskList share 1.55em text origin & balanced vertical rhythm) */
         .markdown-body ul, .markdown-body ol {
@@ -2018,6 +2136,11 @@ function renderSharePage({ notepad, content, marked, sanitizeHtml }) {
         /* Collapse Left Rail below 1060px -> Seamless Mobile/Tablet Top Bar */
         @media (max-width: 1059px) {
             .mobile-topbar { display: flex; }
+            .mobile-topbar.is-headroom-hidden {
+                transform: translateY(calc(-100% - 4px));
+                opacity: 0;
+                pointer-events: none;
+            }
             .share-grid {
                 display: block;
                 max-width: 832px;
@@ -2282,13 +2405,59 @@ function renderSharePage({ notepad, content, marked, sanitizeHtml }) {
                 }
             });
 
-            // Reading progress bar
+            // Reading progress bar & mobile headroom (hide fixed topbar on downward scroll, reveal on upward scroll)
             var progressFill = document.getElementById('progress-fill');
+            var mobileNav = document.getElementById('mobile-nav');
+            var headroomLastY = Math.max(0, window.scrollY || 0);
+            var headroomDownAcc = 0;
+            var headroomUpAcc = 0;
+            var headroomGuardUntil = 0;
+            var resetShareHeadroom = function (guardMs) {
+                if (mobileNav) mobileNav.classList.remove('is-headroom-hidden');
+                headroomDownAcc = 0;
+                headroomUpAcc = 0;
+                if (guardMs > 0) headroomGuardUntil = Math.max(headroomGuardUntil, Date.now() + guardMs);
+            };
+            var syncShareHeadroom = function () {
+                if (!mobileNav) return;
+                if (window.innerWidth >= 1060) {
+                    resetShareHeadroom(0);
+                    return;
+                }
+                var y = Math.max(0, window.scrollY || document.documentElement.scrollTop || 0);
+                var popOpen = Boolean(document.getElementById('toc-popover')?.classList.contains('open'));
+                var lbOpen = Boolean(lb && lb.classList.contains('open'));
+                var noteOpen = Boolean(document.querySelector('.ios-popover'));
+                if (y <= 72 || popOpen || lbOpen || noteOpen || Date.now() < headroomGuardUntil) {
+                    if (y <= 72 || popOpen || lbOpen || noteOpen) mobileNav.classList.remove('is-headroom-hidden');
+                    headroomDownAcc = 0;
+                    headroomUpAcc = 0;
+                    headroomLastY = y;
+                    return;
+                }
+                var dy = y - headroomLastY;
+                if (dy > 0) {
+                    headroomUpAcc = 0;
+                    headroomDownAcc += dy;
+                    if (y > 96 && headroomDownAcc >= 28) {
+                        mobileNav.classList.add('is-headroom-hidden');
+                    }
+                } else if (dy < 0) {
+                    headroomDownAcc = 0;
+                    headroomUpAcc += -dy;
+                    if (headroomUpAcc >= 12) {
+                        mobileNav.classList.remove('is-headroom-hidden');
+                    }
+                }
+                headroomLastY = y;
+            };
             var updateProgress = function () {
                 var max = document.documentElement.scrollHeight - window.innerHeight;
                 progressFill.style.width = max > 0 ? Math.min(100, (window.scrollY / max) * 100) + '%' : '0%';
+                syncShareHeadroom();
             };
             window.addEventListener('scroll', updateProgress, { passive: true });
+            window.addEventListener('resize', syncShareHeadroom, { passive: true });
             updateProgress();
 
             // Normalize 3-state task list classes for browsers without :has()
@@ -2715,6 +2884,7 @@ function renderSharePage({ notepad, content, marked, sanitizeHtml }) {
                     var ma = buildTocAnchor();
                     ma.addEventListener('click', function () {
                         tocPop.classList.remove('open');
+                        resetShareHeadroom(450);
                         h.classList.remove('toc-flash');
                         void h.offsetWidth;
                         h.classList.add('toc-flash');
@@ -2761,6 +2931,7 @@ function renderSharePage({ notepad, content, marked, sanitizeHtml }) {
                 e.stopPropagation();
                 var willOpen = !tocPop.classList.contains('open');
                 tocPop.classList.toggle('open', willOpen);
+                if (willOpen) resetShareHeadroom(0);
                 if (willOpen && lastActivePair) {
                     keepLinkVisibleInContainer(tocPopList, lastActivePair.pop, true);
                 }
@@ -2830,6 +3001,7 @@ module.exports = {
     extractFrontmatter,
     parseFrontmatterEntries,
     renderFrontmatterCardHtml,
+    transformShareCallouts,
     tokenizeDumbPadMarks,
     preprocessTaskLists,
     stripDuplicateLeadingHeading,

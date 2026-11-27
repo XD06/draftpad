@@ -116,6 +116,11 @@ async function bootServer() {
             '',
             '> 中文引用块应当保持正体排版，不倾斜，且在暗色模式下具备清晰对比度。',
             '',
+            '> [!NOTE]',
+            '> 雾底左浮标备注块：在亮/暗双色下保持克制纸面与清晰圆标对比。',
+            '',
+            '> [!TIP] 技巧提示同行也可正常拆出标签并保持正文对齐。',
+            '',
             '这里有一句带<span data-note="视口边界批注气泡验证：无论标注在行首还是行尾，弹窗都必须严丝合缝夹在屏幕安全边距以内。" style="text-decoration:underline wavy #e74c3c;">行内长批注文本点击可查看说明</span>的正文，还有 ==重点高亮==、<span data-draw="true" style="text-decoration:underline blue;">蓝色划线</span> 与 [[time:update@1:2026-11-14 10:00:00]]。',
             '',
             '## 任务与进度',
@@ -592,6 +597,36 @@ async function bootServer() {
             return { left: r.left, right: r.right, vw: window.innerWidth };
         });
         assert(mPop.left >= 8 && mPop.right <= mPop.vw - 8, 'Mobile annotation popover must stay inside viewport');
+        await mPage.evaluate(() => document.body.click());
+
+        // Mobile headroom: scrolling down hides #mobile-nav while progress bar stays, slight upward scroll reveals it cleanly
+        await mPage.evaluate(() => window.scrollTo(0, 220));
+        await mPage.waitForTimeout(50);
+        await mPage.evaluate(() => window.scrollTo(0, 620));
+        await mPage.waitForTimeout(300);
+        const mobileHeadroomHidden = await mPage.evaluate(() => {
+            const nav = document.getElementById('mobile-nav');
+            return {
+                hasHiddenClass: nav.classList.contains('is-headroom-hidden'),
+                navBottom: Math.round(nav.getBoundingClientRect().bottom),
+                progressTop: Math.round(document.querySelector('.progress-track').getBoundingClientRect().top)
+            };
+        });
+        assert.equal(mobileHeadroomHidden.hasHiddenClass, true, 'Scrolling down on mobile share page should trigger headroom hide');
+        assert(mobileHeadroomHidden.navBottom <= 0, `Hidden share mobile topbar should slide off top, got bottom=${mobileHeadroomHidden.navBottom}`);
+        assert.equal(mobileHeadroomHidden.progressTop, 0, 'Reading progress bar should remain pinned at top edge');
+
+        await mPage.evaluate(() => window.scrollTo(0, 500));
+        await mPage.waitForTimeout(300);
+        const mobileHeadroomShown = await mPage.evaluate(() => {
+            const nav = document.getElementById('mobile-nav');
+            return {
+                hasHiddenClass: nav.classList.contains('is-headroom-hidden'),
+                navTop: Math.round(nav.getBoundingClientRect().top)
+            };
+        });
+        assert.equal(mobileHeadroomShown.hasHiddenClass, false, 'Slight upward scroll should reveal mobile share topbar');
+        assert.equal(mobileHeadroomShown.navTop, 0, 'Revealed share mobile topbar must sit flush at top');
         await mContext.close();
 
         assert.deepEqual(errors, [], `Unexpected browser errors: ${errors.join('; ')}`);

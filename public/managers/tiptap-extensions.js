@@ -2523,3 +2523,218 @@ export const DumbPadCodeBlockInputGuard = Extension.create({
         ];
     },
 });
+
+/* ============================================================================
+ * 精简 GFM Callout 提示块（A4 雾底左浮标风：仅支持 NOTE / TIP / WARNING）
+ * - 完全不改动 ProseMirror 文档结构（底层仍是 blockquote > paragraph），
+ *   序列化与 Markdown 往返零迁移；
+ * - 由 CalloutDecorator 用 PM Decoration 挂出 .dumbpad-callout / 标题图标 widget /
+ *   首行标记类，编辑态保留可编辑的 [!TYPE] 微标，阅读态自动隐藏纯语法标签。
+ * ============================================================================ */
+
+export const CALLOUT_SPECS = Object.freeze({
+    note: Object.freeze({
+        label: '备注',
+        icon: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>',
+    }),
+    tip: Object.freeze({
+        label: '提示',
+        icon: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M15.09 14c.18-.98.65-1.74 1.41-2.5A4.65 4.65 0 0 0 18 8 6 6 0 0 0 6 8c0 1 .23 2.23 1.5 3.5A4.61 4.61 0 0 1 8.91 14"/></svg>',
+    }),
+    warning: Object.freeze({
+        label: '注意',
+        icon: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg>',
+    }),
+});
+
+export function parseCalloutBlockquote(bqNode, bqPos) {
+    if (!bqNode || bqNode.type.name !== 'blockquote') return null;
+    const firstPara = bqNode.firstChild;
+    if (!firstPara || firstPara.type.name !== 'paragraph') return null;
+
+    const firstParaPos = bqPos + 1;
+    const contentStart = firstParaPos + 1;
+
+    let leadingText = '';
+    let firstHardBreakPos = null;
+    let hasInlineAfterLeadingText = false;
+
+    for (let i = 0; i < firstPara.childCount; i += 1) {
+        const child = firstPara.child(i);
+        if (child.isText) {
+            if (firstHardBreakPos === null) {
+                leadingText += child.text || '';
+                continue;
+            }
+            hasInlineAfterLeadingText = true;
+            break;
+        }
+        if (child.type.name === 'hardBreak' && firstHardBreakPos === null) {
+            firstHardBreakPos = contentStart + leadingText.length;
+            continue;
+        }
+        hasInlineAfterLeadingText = true;
+        break;
+    }
+
+    const match = leadingText.match(/^(\[!(NOTE|TIP|WARNING)\])(?:([ \t]+)|$)/i);
+    if (!match) return null;
+
+    const kind = match[2].toLowerCase();
+    const rawTag = match[1];
+    const sepSpaces = match[3] || '';
+    const remainder = leadingText.slice(match[0].length);
+
+    let tagTo = contentStart + rawTag.length;
+    let breakPos = null;
+    let isTagOnlyParagraph = false;
+
+    if (firstHardBreakPos !== null && remainder.length === 0) {
+        // 形式：[!NOTE]\n正文
+        tagTo = contentStart + match[0].length;
+        breakPos = firstHardBreakPos;
+    } else if (remainder.length === 0 && !hasInlineAfterLeadingText) {
+        // 形式：[!NOTE] 独占第一段（如 > [!NOTE]\n>\n> 正文 或刚插入尚未输入）
+        tagTo = contentStart + match[0].length;
+        isTagOnlyParagraph = bqNode.childCount > 1;
+    } else {
+        // 形式：[!NOTE] 正文在同一视觉行（把 1 个分隔空格一起纳进 tag，阅读态隐去时正文左齐）
+        tagTo = contentStart + rawTag.length + (sepSpaces ? 1 : 0);
+    }
+
+    return {
+        kind,
+        bqPos,
+        bqEnd: bqPos + bqNode.nodeSize,
+        firstParaPos,
+        firstParaEnd: firstParaPos + firstPara.nodeSize,
+        tagFrom: contentStart,
+        tagTo,
+        breakPos,
+        isTagOnlyParagraph,
+    };
+}
+
+function createCalloutHeaderEl(kind) {
+    const spec = CALLOUT_SPECS[kind] || CALLOUT_SPECS.note;
+    const header = document.createElement('div');
+    header.className = 'dumbpad-callout-header';
+    header.setAttribute('contenteditable', 'false');
+    header.innerHTML = `<span class="dumbpad-callout-icon" aria-hidden="true">${spec.icon}</span><span class="dumbpad-callout-title">${spec.label}</span>`;
+    return header;
+}
+
+function isCaretEditingCalloutTag(parsed, selection) {
+    if (!selection) return false;
+    const { from, to } = selection;
+    // 只有光标真实落在 `[!NOTE]` 标签自身区间（或折行前的行尾）才显露微源码标记；
+    // 落在标签后面的 `<br>` 之后或同一行正文里时，编辑态与阅读态一样呈现干净正文。
+    const upperBound = parsed.breakPos !== null ? parsed.breakPos : parsed.tagTo - 1;
+    return from >= parsed.tagFrom && from <= Math.max(parsed.tagFrom, upperBound) && to <= Math.max(parsed.tagFrom, upperBound);
+}
+
+function buildCalloutDecorationState(doc, selection) {
+    if (!doc) return { hasCallout: false, set: DecorationSet.empty };
+    const decorations = [];
+    let hasCallout = false;
+    doc.descendants((node, pos) => {
+        if (node.type.name !== 'blockquote') return true;
+        const parsed = parseCalloutBlockquote(node, pos);
+        if (!parsed) return true;
+        hasCallout = true;
+
+        const spec = CALLOUT_SPECS[parsed.kind];
+        const editingTag = isCaretEditingCalloutTag(parsed, selection);
+        decorations.push(Decoration.node(parsed.bqPos, parsed.bqEnd, {
+            class: `dumbpad-callout is-callout-${parsed.kind}${editingTag ? ' is-callout-editing-tag' : ''}`,
+            'data-callout': parsed.kind,
+            'data-callout-label': spec.label,
+        }));
+        decorations.push(Decoration.widget(
+            parsed.bqPos + 1,
+            () => createCalloutHeaderEl(parsed.kind),
+            {
+                side: -1,
+                ignoreSelection: true,
+                key: `callout-head-${parsed.kind}`,
+            }
+        ));
+        if (parsed.tagTo > parsed.tagFrom) {
+            decorations.push(Decoration.inline(parsed.tagFrom, parsed.tagTo, {
+                class: 'dumbpad-callout-tag',
+            }));
+        }
+        if (parsed.breakPos !== null) {
+            decorations.push(Decoration.node(parsed.breakPos, parsed.breakPos + 1, {
+                class: 'dumbpad-callout-tag-break',
+            }));
+        }
+        if (parsed.isTagOnlyParagraph) {
+            decorations.push(Decoration.node(parsed.firstParaPos, parsed.firstParaEnd, {
+                class: 'dumbpad-callout-tag-line',
+            }));
+        }
+        return true;
+    });
+    return {
+        hasCallout,
+        set: decorations.length > 0 ? DecorationSet.create(doc, decorations) : DecorationSet.empty,
+    };
+}
+
+export const calloutDecoratorPluginKey = new PluginKey('dumbpadCalloutDecorator');
+
+export const CalloutDecorator = Extension.create({
+    name: 'calloutDecorator',
+
+    addProseMirrorPlugins() {
+        return [
+            new Plugin({
+                key: calloutDecoratorPluginKey,
+                state: {
+                    init: (_config, instance) => buildCalloutDecorationState(instance.doc, instance.selection),
+                    apply: (tr, value) => {
+                        if (tr.docChanged) return buildCalloutDecorationState(tr.doc, tr.selection);
+                        if (tr.selectionSet && value?.hasCallout) {
+                            return buildCalloutDecorationState(tr.doc, tr.selection);
+                        }
+                        return value;
+                    },
+                },
+                props: {
+                    decorations(state) {
+                        return calloutDecoratorPluginKey.getState(state)?.set || DecorationSet.empty;
+                    },
+                    handleKeyDown(view, event) {
+                        if (!view?.editable || event?.key !== 'Backspace' || event?.isComposing) return false;
+                        const { selection } = view.state;
+                        if (!selection?.empty) return false;
+                        const $from = selection.$from;
+                        if ($from.depth < 2 || $from.node($from.depth - 1).type.name !== 'blockquote') return false;
+                        const bqNode = $from.node($from.depth - 1);
+                        const bqPos = $from.before($from.depth - 1);
+                        const parsed = parseCalloutBlockquote(bqNode, bqPos);
+                        if (!parsed || parsed.breakPos === null || selection.from !== parsed.breakPos + 1) return false;
+
+                        event.preventDefault();
+                        const tr = view.state.tr;
+                        const firstPara = bqNode.firstChild;
+                        const hasBodyInFirstPara = (parsed.breakPos + 1) < (parsed.firstParaEnd - 1);
+                        const paraType = view.state.schema.nodes.paragraph;
+                        if (bqNode.childCount === 1 && !hasBodyInFirstPara && paraType) {
+                            // 空提示块正文行首按退格：直接还原为干净普通空段落
+                            tr.replaceWith(parsed.bqPos, parsed.bqEnd, paraType.create());
+                            tr.setSelection(TextSelection.create(tr.doc, parsed.bqPos + 1));
+                        } else if (firstPara) {
+                            // 带正文的提示块首行退格：摘掉 [!TYPE]+<br>，退成普通引用（再按退格由 QuoteBackspaceShortcut 抬出）
+                            tr.delete(parsed.tagFrom, parsed.breakPos + 1);
+                            tr.setSelection(TextSelection.create(tr.doc, parsed.tagFrom));
+                        }
+                        view.dispatch(tr.scrollIntoView());
+                        return true;
+                    },
+                },
+            }),
+        ];
+    },
+});

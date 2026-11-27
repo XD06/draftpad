@@ -2806,6 +2806,98 @@ html:not([data-app-ready]) .empty-state-container::before {
 .typora-editor-shell .vditor-reset blockquote > :last-child {
     margin-bottom: 0;
 }
+
+/* 精简 GFM Callout 提示块（A4 雾底左浮标风：NOTE / TIP / WARNING，普通 > 引用维持不变） */
+body:not(.thoughts-mode) .typora-editor-shell .vditor-reset blockquote.dumbpad-callout {
+    --callout-accent: var(--callout-note, #2563EB);
+    position: relative;
+    margin: 14px 0;
+    padding: 12px 15px 12px 46px;
+    border-radius: 12px;
+    border: 1px solid color-mix(in srgb, var(--border-color) 92%, transparent);
+    border-left: 1px solid color-mix(in srgb, var(--border-color) 92%, transparent);
+    background: color-mix(in srgb, var(--muted-text) 5.5%, var(--textarea-bg));
+    color: var(--text-color);
+    font-style: normal;
+}
+
+body:not(.thoughts-mode) .typora-editor-shell .vditor-reset blockquote.dumbpad-callout[data-callout="tip"] {
+    --callout-accent: var(--callout-tip, #059669);
+}
+
+body:not(.thoughts-mode) .typora-editor-shell .vditor-reset blockquote.dumbpad-callout[data-callout="warning"] {
+    --callout-accent: var(--callout-warning, #D97706);
+}
+
+.typora-editor-shell .vditor-reset blockquote.dumbpad-callout::before {
+    content: none !important;
+    display: none !important;
+}
+
+.typora-editor-shell .vditor-reset blockquote.dumbpad-callout .dumbpad-callout-header {
+    position: relative;
+    display: flex;
+    align-items: center;
+    min-height: 22px;
+    margin-bottom: 4px;
+    user-select: none;
+    -webkit-user-select: none;
+    pointer-events: none;
+}
+
+.typora-editor-shell .vditor-reset blockquote.dumbpad-callout .dumbpad-callout-icon {
+    position: absolute;
+    left: -32px;
+    top: 0;
+    width: 22px;
+    height: 22px;
+    border-radius: 999px;
+    display: inline-grid;
+    place-items: center;
+    background: color-mix(in srgb, var(--callout-accent) 14%, transparent);
+    color: var(--callout-accent);
+}
+
+.typora-editor-shell .vditor-reset blockquote.dumbpad-callout[data-callout="warning"] .dumbpad-callout-icon svg {
+    transform: translateY(-0.5px);
+}
+
+.typora-editor-shell .vditor-reset blockquote.dumbpad-callout .dumbpad-callout-title {
+    font: 650 13px/1.4 var(--font-sans);
+    color: var(--text-color);
+}
+
+/* Live-Preview：仅当光标真正停在首行 [!TYPE] 标签上时以极轻灰码显示，避免出现“注意 + [!WARNING]”重复两行 */
+.typora-editor-shell .vditor-reset blockquote.dumbpad-callout .dumbpad-callout-tag {
+    display: inline-block;
+    margin-right: 4px;
+    padding: 0 4px;
+    border-radius: 4px;
+    background: color-mix(in srgb, var(--muted-text) 10%, transparent);
+    color: var(--muted-text);
+    font: 500 11px/1.45 var(--font-code);
+    letter-spacing: 0.02em;
+    vertical-align: baseline;
+}
+
+.typora-editor-shell .vditor-reset blockquote.dumbpad-callout:not(.is-callout-editing-tag) .dumbpad-callout-tag,
+.typora-editor-shell .vditor-reset blockquote.dumbpad-callout:not(.is-callout-editing-tag) br.dumbpad-callout-tag-break,
+.typora-editor-shell .vditor-reset blockquote.dumbpad-callout:not(.is-callout-editing-tag) > p.dumbpad-callout-tag-line,
+.typora-editor-shell.is-reading-mode .vditor-reset blockquote.dumbpad-callout .dumbpad-callout-tag,
+.typora-editor-shell.is-reading-mode .vditor-reset blockquote.dumbpad-callout br.dumbpad-callout-tag-break,
+.typora-editor-shell.is-reading-mode .vditor-reset blockquote.dumbpad-callout > p.dumbpad-callout-tag-line {
+    display: none;
+}
+
+@media (max-width: 980px) {
+    body:not(.thoughts-mode) .typora-editor-shell .vditor-reset blockquote.dumbpad-callout {
+        padding: 11px 13px 11px 42px;
+    }
+
+    .typora-editor-shell .vditor-reset blockquote.dumbpad-callout .dumbpad-callout-icon {
+        left: -29px;
+    }
+}
 .typora-editor-shell .tiptap mark.md-mark {
     background: var(--highlight-bg, rgba(255, 214, 10, 0.35));
     color: inherit;
@@ -7556,7 +7648,7 @@ body.reading-mode-active .editor-main {
 /* Slash Command Menu（/ 快捷命令）：光标处输入 / 浮出的操作面板。
    定位坐标由 tiptap-slash-menu.js 以页面坐标写 inline style（absolute）。 */
 .slash-command-menu {
-    position: absolute;
+    position: fixed;
     z-index: 1200;
     display: none;
     flex-direction: column;
@@ -7571,10 +7663,15 @@ body.reading-mode-active .editor-main {
     border: 1px solid var(--border-color);
     border-radius: 12px;
     box-shadow: 0 12px 40px rgba(0, 0, 0, 0.16), 0 2px 8px rgba(0, 0, 0, 0.06);
-    animation: selectionFadeIn 0.18s ease-out;
+    animation: slashMenuFadeIn 0.12s ease-out;
     user-select: none;
     -webkit-user-select: none;
     -webkit-touch-callout: none;
+}
+
+@keyframes slashMenuFadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
 }
 
 .slash-command-item {
@@ -8434,16 +8531,37 @@ body.reading-mode-active .editor-main {
 .typora-editor-shell .vditor-wysiwyg > .vditor-reset > h6::before {
     float: none;
     position: absolute;
-    left: -36px;
+    left: auto;
+    right: calc(100% + 10px);
     top: 50%;
     transform: translateY(-50%);
     margin: 0;
     padding: 0;
+    font-family: var(--font-code);
     font-size: 11px;
     line-height: 1;
     font-weight: 500;
-    opacity: 0.55;
+    letter-spacing: 0.02em;
+    text-align: right;
+    white-space: nowrap;
+    opacity: 0.42;
     pointer-events: none;
+    transition: opacity 0.15s ease;
+}
+
+.typora-editor-shell .vditor-wysiwyg > .vditor-reset > h1:hover::before,
+.typora-editor-shell .vditor-wysiwyg > .vditor-reset > h2:hover::before,
+.typora-editor-shell .vditor-wysiwyg > .vditor-reset > h3:hover::before,
+.typora-editor-shell .vditor-wysiwyg > .vditor-reset > h4:hover::before,
+.typora-editor-shell .vditor-wysiwyg > .vditor-reset > h5:hover::before,
+.typora-editor-shell .vditor-wysiwyg > .vditor-reset > h6:hover::before,
+.typora-editor-shell .vditor-wysiwyg > .vditor-reset > h1:focus-within::before,
+.typora-editor-shell .vditor-wysiwyg > .vditor-reset > h2:focus-within::before,
+.typora-editor-shell .vditor-wysiwyg > .vditor-reset > h3:focus-within::before,
+.typora-editor-shell .vditor-wysiwyg > .vditor-reset > h4:focus-within::before,
+.typora-editor-shell .vditor-wysiwyg > .vditor-reset > h5:focus-within::before,
+.typora-editor-shell .vditor-wysiwyg > .vditor-reset > h6:focus-within::before {
+    opacity: 0.72;
 }
 
 @media (max-width: 980px) {

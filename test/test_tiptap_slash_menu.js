@@ -58,16 +58,16 @@ async function main() {
         filterSlashCommands,
     } = await import('../public/managers/tiptap-slash-menu.js');
 
-    const expectedIds = 'code,doing,file,frontmatter,h1,h2,h3,hr,mermaid,quote,table,time,todo';
-    check('registry auto-registers all 13 built-in commands without /date',
-        slashCommandRegistry.length === 13
+    const expectedIds = 'code,doing,file,frontmatter,h1,h2,h3,hr,mermaid,note,quote,table,time,tip,todo,warning';
+    check('registry auto-registers all 16 built-in commands without /date',
+        slashCommandRegistry.length === 16
         && slashCommandRegistry.map(entry => entry.id).sort().join(',') === expectedIds
         && !slashCommandRegistry.some(entry => entry.id === 'date'));
     check('filter ranks prefix match /time first for t', filterSlashCommands('t')[0]?.id === 'time');
     check('filter by prefix tim narrows to time', filterSlashCommands('tim').map(entry => entry.id).join(',') === 'time');
     check('filter ranks /file first for f', filterSlashCommands('f')[0]?.id === 'file');
     check('filter by keyword', filterSlashCommands('附件').map(entry => entry.id).join(',') === 'file');
-    check('empty query lists everything', filterSlashCommands('').length === 13);
+    check('empty query lists everything', filterSlashCommands('').length === 16);
 
     const container = document.createElement('div');
     document.body.appendChild(container);
@@ -95,12 +95,12 @@ async function main() {
         return event.defaultPrevented;
     };
 
-    // 1. 空段落里输入 /：菜单打开，全部 13 条命令都在
+    // 1. 空段落里输入 /：菜单打开，全部 16 条命令都在
     editor.setValue('', false);
     caretEnd();
     type('/');
     check('typing / opens the menu', menuVisible());
-    check('typing / lists all 13 commands', itemEls().length === 13,
+    check('typing / lists all 16 commands', itemEls().length === 16,
         { count: itemEls().length });
     check('first item is selected by default', itemEls()[0]?.classList.contains('is-selected'));
 
@@ -283,9 +283,25 @@ async function main() {
     expectCommandResult('h2', val => val.startsWith('## '), '/h2');
     expectCommandResult('h3', val => val.startsWith('### '), '/h3');
     expectCommandResult('quote', val => val.startsWith('> '), '/quote');
+    expectCommandResult('note', val => val.includes('[!NOTE]'), '/note');
+    expectCommandResult('tip', val => val.includes('[!TIP]'), '/tip');
+    expectCommandResult('warning', val => val.includes('[!WARNING]'), '/warning');
     expectCommandResult('hr', val => val.includes('---'), '/hr');
     expectCommandResult('table', val => val.includes('|') && val.includes('---'), '/table');
     expectCommandResult('frontmatter', val => /^---\s*\n[\s\S]*---/.test(val), '/frontmatter');
+
+    // 验证 /note 插入后光标直接落在正文行，继续打字即构成标准 Callout 且立刻装饰生效
+    editor.setValue('', false);
+    caretEnd();
+    type('/tip');
+    press('Enter');
+    type('快捷键按 Ctrl+S 立即同步');
+    const typedCallout = editor.getValue();
+    check('/tip places caret in body line after [!TIP]',
+        /^>\s*\[!TIP\]\s*\n>\s*快捷键按 Ctrl\+S 立即同步/.test(typedCallout),
+        { typedCallout });
+    check('/tip DOM renders A4 callout decoration immediately',
+        Boolean(container.querySelector('blockquote.dumbpad-callout[data-callout="tip"] .dumbpad-callout-header')));
 
     await new Promise(resolve => setTimeout(resolve, 25));
     editor.editor?.destroy?.();

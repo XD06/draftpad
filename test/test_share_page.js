@@ -329,6 +329,16 @@ async function testRendererUnitCases() {
         'share page CSS must include long code-block fold footer and wrap toggle rules'
     );
     assert(
+        mixedHtml.includes('.mobile-topbar.is-headroom-hidden')
+        && mixedHtml.includes('syncShareHeadroom'),
+        'share page must include mobile headroom auto-hide CSS and scroll sync hook'
+    );
+    assert(
+        mixedHtml.includes('.markdown-body blockquote.ios-callout')
+        && mixedHtml.includes('.ios-callout-icon'),
+        'share page CSS must include A4 callout styles'
+    );
+    assert(
         !/\.markdown-body ul\.task-list[^}]*list-style:\s*none/.test(mixedHtml),
         'share page CSS must not suppress bullets on ul.task-list parent (breaks mixed task+bullet lists)'
     );
@@ -368,6 +378,50 @@ async function testRendererUnitCases() {
     assert(!longCard.classList.contains('is-collapsed') && foldHeaderBtn.getAttribute('aria-expanded') === 'true' && foldFooter.textContent.includes('收起代码'), 'clicking fold footer should expand share code card and show collapse pill');
     foldHeaderBtn.click();
     assert(longCard.classList.contains('is-collapsed') && foldHeaderBtn.getAttribute('aria-expanded') === 'false' && foldFooter.textContent.includes('展开代码 · 20 行'), 'clicking header fold button should re-collapse share code card');
+
+    // A4 Callout transform: NOTE / TIP / WARNING converted cleanly; normal blockquotes, [!CAUTION], and fenced code preserved
+    const calloutMd = [
+        '# 提示块验证',
+        '',
+        '> 普通引用保持原样',
+        '',
+        '> [!NOTE]',
+        '> 这里是一条备注 **加粗**。',
+        '',
+        '> [!TIP] 同行提示内容 <img src=x onerror=alert(9)>',
+        '',
+        '> [!WARNING]',
+        '>',
+        '> 注意边界风险',
+        '',
+        '> [!CAUTION]',
+        '> 未启用类型保持普通引用',
+        '',
+        '```markdown',
+        '> [!NOTE]',
+        '> 代码示例里的标签不转换',
+        '```'
+    ].join('\n');
+    const calloutHtml = renderSharePage({
+        notepad: { id: 'note-callout', name: '提示块验证', createdAt: 0, updatedAt: 0, editCount: 1 },
+        content: calloutMd,
+        marked,
+        sanitizeHtml
+    });
+    assertSecurityInvariants(calloutHtml);
+    const calloutDoc = new JSDOM(calloutHtml, { runScripts: 'dangerously', url: 'http://127.0.0.1/s/note-callout?t=abc' }).window.document;
+    const shareQuotes = Array.from(calloutDoc.querySelectorAll('#article-body blockquote'));
+    assert.strictEqual(shareQuotes.length, 5, 'should keep 2 plain blockquotes and 3 callouts');
+    assert(!shareQuotes[0].classList.contains('ios-callout'), 'plain blockquote must stay plain');
+    assert.strictEqual(shareQuotes[1].getAttribute('data-callout'), 'note');
+    assert.strictEqual(shareQuotes[1].querySelector('.ios-callout-title').textContent.trim(), '备注');
+    assert(!shareQuotes[1].textContent.includes('[!NOTE]'), 'share page should strip raw [!NOTE] marker');
+    assert.strictEqual(shareQuotes[2].getAttribute('data-callout'), 'tip');
+    assert.strictEqual(shareQuotes[2].querySelector('.ios-callout-body').textContent.trim(), '同行提示内容');
+    assert.strictEqual(shareQuotes[3].getAttribute('data-callout'), 'warning');
+    assert(shareQuotes[3].querySelector('.ios-callout-body').textContent.includes('注意边界风险'));
+    assert(!shareQuotes[4].classList.contains('ios-callout'), 'CAUTION is intentionally omitted from minimal 3 callouts');
+    assert(calloutDoc.querySelector('#article-body .ios-code-card pre code').textContent.includes('[!NOTE]'), 'callout tag inside code fence must stay literal');
 }
 
 async function testShareRoutesHttp() {

@@ -68,12 +68,12 @@ async function main() {
         })).catch(() => null);
         const itemCount = () => page.$$eval('.slash-command-item', els => els.length);
 
-        // ---- 1. 输入 / 菜单出现，13 条内置命令都在 ----
+        // ---- 1. 输入 / 菜单出现，16 条内置命令都在 ----
         await page.keyboard.type('/');
         await page.waitForTimeout(150);
         const opened = await menuBox();
         check('typing / shows the menu', opened?.visible === true, opened);
-        check('menu lists all 13 built-in commands', await itemCount() === 13);
+        check('menu lists all 16 built-in commands', await itemCount() === 16);
 
         // ---- 2. 过滤 + ↑↓ + Enter 执行 /time ----
         await page.keyboard.type('t');

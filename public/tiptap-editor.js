@@ -40,6 +40,7 @@ import {
     DumbPadDoingTaskItem,
     HeadingAnchor,
     headingAnchorPluginKey,
+    CalloutDecorator,
     TimeCommandShortcut,
     TimeMarkerNode,
     DumbPadListBlankLineBackspace,
@@ -184,6 +185,51 @@ export function normalizeAmbiguousEmptyListMarkers(value = '') {
     return output.join('\n');
 }
 
+const CALLOUT_ESCAPED_QUOTE_LINE_RE = /^([ \t]*>[ \t]*(?:>[ \t]*)*)\\\[!(NOTE|TIP|WARNING)\\\](?=[ \t]|$)/i;
+
+/**
+ * 取消 prosemirror-markdown 对引用块首行 `[!NOTE|TIP|WARNING]` 的反斜杠转义，
+ * 让存储、源码模式与分享页保持标准 GFM Alert 原文（`> [!NOTE]`）。跳过
+ * 文首 frontmatter 与围栏代码块内部，不损伤字面代码示例。
+ */
+export function unescapeCalloutMarkers(value = '') {
+    const source = String(value ?? '');
+    if (!source.includes('\\[!')) return source;
+    const lines = source.split('\n');
+    let fenceChar = null;
+    let fenceLen = 0;
+    let inFrontmatter = source.startsWith('---\n');
+    let frontmatterClosed = false;
+    const output = [];
+    for (let i = 0; i < lines.length; i += 1) {
+        const line = lines[i];
+        if (inFrontmatter && !frontmatterClosed) {
+            output.push(line);
+            if (i > 0 && line.trim() === '---') frontmatterClosed = true;
+            continue;
+        }
+        const fenceMatch = line.match(/^[ \t]*(`{3,}|~{3,})/);
+        if (fenceMatch) {
+            const marker = fenceMatch[1];
+            if (!fenceChar) {
+                fenceChar = marker[0];
+                fenceLen = marker.length;
+            } else if (marker[0] === fenceChar && marker.length >= fenceLen && line.trim() === fenceChar.repeat(marker.length)) {
+                fenceChar = null;
+                fenceLen = 0;
+            }
+            output.push(line);
+            continue;
+        }
+        if (fenceChar) {
+            output.push(line);
+            continue;
+        }
+        output.push(line.replace(CALLOUT_ESCAPED_QUOTE_LINE_RE, '$1[!$2]'));
+    }
+    return output.join('\n');
+}
+
 export class HybridMarkdownEditor {
     /**
      * `performanceMonitor` 由 app.js 传入（`?debugPerformance=1` 时启用）。它只在
@@ -296,6 +342,8 @@ export class HybridMarkdownEditor {
                 // 文章最开头打 --- 当场转正为 frontmatter 块（与粘贴 / setValue 同形态）
                 FrontmatterLeadInputShortcut,
                 HeadingAnchor,
+                // GFM Alert 提示块装饰（NOTE / TIP / WARNING，PM Decoration 渲染）
+                CalloutDecorator,
                 // 全局搜索跳转的词级 + 块级命中高亮（PM Decoration，见 tiptap-extensions.js）
                 SearchHitHighlight,
                 // 目录跳转的落点闪光（PM Decoration，见 tiptap-extensions.js）
@@ -485,9 +533,9 @@ export class HybridMarkdownEditor {
         } else {
             serialize();
         }
-        // 空标记行归一化（见函数注释）：空列表项的歧义形态在重新解析时会被
-        // setext 吞掉父行，出口补空行让「打字时 == 刷新后」在空条目上也成立。
-        const value = normalizeAmbiguousEmptyListMarkers(this.fenceToFrontmatter(serialized));
+        // 空标记行归一化（见函数注释）与 Callout 方括号去转义共同组成唯一出口链，
+        // 让「打字时 == 源码视图 == 刷新后 == 分享页」始终逐字等价。
+        const value = unescapeCalloutMarkers(normalizeAmbiguousEmptyListMarkers(this.fenceToFrontmatter(serialized)));
         this._serializedDoc = doc;
         this._serializedValue = value;
         return value;
@@ -1184,7 +1232,7 @@ export class HybridMarkdownEditor {
             const rawPrefix = this.editor.storage.markdown.serializer
                 .serialize(doc.slice(0, clamped, false).content);
             // 与 getValue() 逐字节同一条出口链：前缀空间 == textarea 空间。
-            return normalizeAmbiguousEmptyListMarkers(this.fenceToFrontmatter(rawPrefix)).length;
+            return unescapeCalloutMarkers(normalizeAmbiguousEmptyListMarkers(this.fenceToFrontmatter(rawPrefix))).length;
         } catch (_error) {
             return null;
         }
