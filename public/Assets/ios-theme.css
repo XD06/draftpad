@@ -69,6 +69,13 @@
     --modal-overlay: rgba(0, 0, 0, 0.4);
     --success-status-bg: rgba(229, 161, 0, 0.85);
     --danger-status-bg: rgba(255, 59, 48, 0.85);
+    /* 阅读标记与任务色彩令牌（Step 1：保持既有默认配色不变，供后续主题/外观设置统一覆写） */
+    --draw-color: blue;
+    --highlight-bg: rgba(255, 214, 10, 0.35);
+    --annotation-color: #e74c3c;
+    --annotation-color-hover: #ff4d4f;
+    --task-checked-color: #ecb015;
+    --task-doing-color: #d98a00;
 }
 
 [data-theme="dark"] {
@@ -99,6 +106,12 @@
     --success-status-bg: rgba(255, 214, 10, 0.85);
     --danger-status-bg: rgba(255, 69, 58, 0.85);
     --modal-overlay: rgba(0, 0, 0, 0.6);
+    --draw-color: blue;
+    --highlight-bg: rgba(255, 214, 10, 0.35);
+    --annotation-color: #e74c3c;
+    --annotation-color-hover: #ff4d4f;
+    --task-checked-color: #ecb015;
+    --task-doing-color: #d98a00;
 }
 
 /* ──────────────────────────────────────

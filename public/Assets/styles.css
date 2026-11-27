@@ -1342,7 +1342,7 @@ main {
     width: 100%;
     height: 100%;
     background-color: var(--modal-overlay);
-    z-index: 1000;
+    z-index: 1050;
     align-items: center;
     justify-content: center;
 }
@@ -2677,10 +2677,17 @@ html:not([data-app-ready]) .empty-state-container::before {
     margin-bottom: 0;
 }
 .typora-editor-shell .tiptap mark.md-mark {
-    background: rgba(255, 214, 10, 0.35);
+    background: var(--highlight-bg, rgba(255, 214, 10, 0.35));
     color: inherit;
     padding: 0 1px;
     border-radius: 2px;
+}
+
+/* 划线显示色走 CSS 变量（保留内联 style 维持序列化往返兼容，不修改 tiptap-extensions.js） */
+.typora-editor-shell .tiptap span[data-draw],
+.vditor-reset span[data-draw],
+#preview-pane span[data-draw] {
+    text-decoration-color: var(--draw-color, blue) !important;
 }
 
 .typora-editor-shell .tiptap .article-search-hit {
@@ -2932,8 +2939,8 @@ html:not([data-app-ready]) .empty-state-container::before {
 }
 
 .typora-editor-shell .vditor-reset ul[data-type="taskList"] li > label input:checked {
-    background: #ecb015;
-    border-color: #ecb015;
+    background: var(--task-checked-color, #ecb015);
+    border-color: var(--task-checked-color, #ecb015);
 }
 
 /* 白色对勾：自定义绘制并整体居中，覆盖原生 accent 勾 */
@@ -3006,8 +3013,8 @@ html:not([data-app-ready]) .empty-state-container::before {
    文字与行距完全不动（不加行内底色/字重，避免与行距不变式打架）。
    进行中且被勾选时以已完成为准（NodeView 同步时已把 data-doing 置 false）。 */
 .typora-editor-shell .vditor-reset ul[data-type="taskList"] li[data-doing="true"] > label input {
-    border-color: #d98a00;
-    background: linear-gradient(90deg, #d98a00 50%, transparent 50%);
+    border-color: var(--task-doing-color, #d98a00);
+    background: linear-gradient(90deg, var(--task-doing-color, #d98a00) 50%, transparent 50%);
 }
 
 .typora-editor-shell .vditor-reset a {
@@ -4098,6 +4105,386 @@ html:not([data-app-ready]) .empty-state-container::before {
     box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary-color) 18%, transparent);
 }
 
+/* Appearance Tab Controls */
+#settings-modal .settings-form:has(> [data-settings-pane="appearance"].is-active) {
+    overflow-y: hidden;
+    scrollbar-gutter: auto;
+    padding-right: 0;
+}
+
+.settings-tab-panel[data-settings-pane="appearance"].is-active {
+    height: 100%;
+    max-height: 100%;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.settings-appearance-section {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    flex: 1 1 auto;
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.settings-appearance-preview {
+    flex: 0 0 auto;
+    padding: 10px 14px;
+    border-radius: 13px;
+    border: 1px solid var(--border-color);
+    background: var(--textarea-bg);
+    font-size: 13.5px;
+    line-height: 1.65;
+    color: var(--text-color);
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+
+.settings-appearance-scroll {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
+    scrollbar-width: thin;
+    display: flex;
+    flex-direction: column;
+    gap: 11px;
+    padding: 1px 4px 12px 1px;
+}
+
+.settings-appearance-scroll > * {
+    flex-shrink: 0;
+}
+
+.settings-appearance-block {
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+}
+
+.settings-appearance-block-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.settings-bundle-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+}
+
+.settings-bundle-card {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 7px;
+    padding: 10px 11px;
+    border-radius: 12px;
+    border: 1px solid var(--border-color);
+    background: var(--textarea-bg);
+    color: var(--text-color);
+    text-align: left;
+    cursor: pointer;
+    transition: border-color 0.14s ease, background-color 0.14s ease, box-shadow 0.14s ease;
+}
+
+.settings-bundle-card:hover {
+    border-color: color-mix(in srgb, var(--primary-color) 48%, var(--border-color));
+}
+
+.settings-bundle-card.is-active {
+    border-color: var(--primary-color);
+    background: color-mix(in srgb, var(--primary-color) 10%, var(--textarea-bg));
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--primary-color) 28%, transparent);
+}
+
+.settings-bundle-card:focus-visible {
+    outline: 2px solid var(--primary-color);
+    outline-offset: 2px;
+}
+
+.settings-bundle-card-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+}
+
+.settings-bundle-name {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--text-color);
+    line-height: 1.25;
+}
+
+.settings-bundle-dots {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+}
+
+.settings-bundle-sub {
+    font-size: 11.5px;
+    color: var(--muted-text);
+    line-height: 1.35;
+}
+
+.settings-swatch-dot.is-mini {
+    width: 10px;
+    height: 10px;
+}
+
+.settings-appearance-advanced {
+    border-radius: 13px;
+}
+
+.settings-appearance-advanced > summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 10px 13px;
+    list-style: none;
+    font-size: 12.5px;
+    font-weight: 650;
+    color: var(--text-color);
+}
+
+.settings-appearance-advanced > summary::-webkit-details-marker {
+    display: none;
+}
+
+.settings-appearance-advanced-lead {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+.settings-appearance-chevron {
+    flex-shrink: 0;
+    color: var(--muted-text);
+    transition: transform 0.16s ease;
+}
+
+.settings-appearance-advanced[open] .settings-appearance-chevron {
+    transform: rotate(90deg);
+}
+
+.settings-appearance-advanced .settings-pref-group {
+    border: none;
+    border-top: 1px solid var(--border-color);
+    border-radius: 0;
+    background: transparent;
+}
+
+.settings-appearance-advanced[open] {
+    padding-bottom: 0;
+    overflow: hidden;
+}
+
+.settings-pref-icon svg.sm-ic {
+    width: 15px;
+    height: 15px;
+    display: block;
+    fill: currentColor;
+    stroke: none;
+}
+
+.settings-appearance-row {
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.settings-appearance-row:last-child {
+    border-bottom: none;
+}
+
+.settings-appearance-row-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.settings-appearance-current {
+    flex-shrink: 0;
+    font-size: 11.5px;
+    font-weight: 600;
+    line-height: 1.3;
+    padding: 2px 9px;
+    border-radius: 999px;
+    color: var(--primary-color);
+    background: color-mix(in srgb, var(--primary-color) 12%, transparent);
+    border: 1px solid color-mix(in srgb, var(--primary-color) 22%, transparent);
+}
+
+.settings-appearance-current[data-custom="true"] {
+    color: var(--text-color);
+    background: color-mix(in srgb, var(--text-color) 8%, transparent);
+    border-color: var(--border-color);
+}
+
+.settings-swatch-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 7px;
+    padding-left: 41px;
+}
+
+.settings-swatch-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 10px 5px 7px;
+    border-radius: 999px;
+    border: 1px solid var(--border-color);
+    background: var(--bg-color);
+    color: var(--text-color);
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 1.2;
+    cursor: pointer;
+    transition: border-color 0.14s ease, background-color 0.14s ease, box-shadow 0.14s ease;
+}
+
+.settings-swatch-btn:hover {
+    border-color: color-mix(in srgb, var(--primary-color) 48%, var(--border-color));
+}
+
+.settings-swatch-btn.is-active {
+    border-color: var(--primary-color);
+    background: color-mix(in srgb, var(--primary-color) 11%, var(--textarea-bg));
+    font-weight: 650;
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--primary-color) 28%, transparent);
+}
+
+.settings-swatch-btn:focus-visible {
+    outline: 2px solid var(--primary-color);
+    outline-offset: 2px;
+}
+
+.settings-swatch-dot {
+    width: 13px;
+    height: 13px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    background: var(--swatch-light);
+    border: 1px solid rgba(0, 0, 0, 0.14);
+}
+
+[data-theme="dark"] .settings-swatch-dot {
+    background: var(--swatch-dark, var(--swatch-light));
+    border-color: rgba(255, 255, 255, 0.22);
+}
+
+.settings-appearance-preview-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--muted-text);
+}
+
+.settings-appearance-preview-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 14px;
+}
+
+.settings-preview-accent-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 1px 8px;
+    border-radius: 6px;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--primary-color);
+    background: rgba(var(--primary-rgb), 0.12);
+}
+
+.settings-preview-task-pair {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.settings-preview-task-box {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 14px;
+    height: 14px;
+    border-radius: 4px;
+    border: 1.5px solid var(--task-checked-color, #ecb015);
+    background: var(--task-checked-color, #ecb015);
+    color: #fff;
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 1;
+}
+
+.settings-preview-task-box.is-doing {
+    border-color: var(--task-doing-color, #d98a00);
+    background: linear-gradient(90deg, var(--task-doing-color, #d98a00) 50%, transparent 50%);
+}
+
+.settings-appearance-preview mark.md-mark {
+    background: var(--highlight-bg, rgba(255, 214, 10, 0.35));
+    color: inherit;
+    padding: 1px 4px;
+    border-radius: 3px;
+}
+
+.settings-appearance-preview span[data-draw] {
+    text-decoration: underline;
+    text-decoration-thickness: 2px;
+    text-decoration-color: var(--draw-color, blue) !important;
+    text-underline-offset: 2px;
+}
+
+@media (max-width: 980px) {
+    #settings-modal .settings-form:has(> [data-settings-pane="appearance"].is-active) {
+        overflow-y: hidden;
+        padding: 0;
+        margin: 0;
+    }
+
+    .settings-appearance-scroll {
+        padding: 1px 2px 16px;
+        scrollbar-gutter: auto;
+        scrollbar-width: none;
+    }
+
+    .settings-appearance-scroll::-webkit-scrollbar {
+        display: none;
+    }
+}
+
+@media (max-width: 600px) {
+    .settings-swatch-list {
+        padding-left: 0;
+    }
+
+    .settings-bundle-grid {
+        gap: 7px;
+    }
+
+    .settings-bundle-card {
+        padding: 9px 10px;
+    }
+}
+
 #settings-modal .modal-buttons {
     margin-top: 14px;
     padding-top: 12px;
@@ -4130,8 +4517,8 @@ html:not([data-app-ready]) .empty-state-container::before {
 
     .settings-nav {
         display: grid;
-        grid-template-columns: repeat(4, minmax(0, 1fr));
-        gap: 4px;
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+        gap: 3px;
         padding: 4px;
         border-radius: 13px;
         flex-shrink: 0;
@@ -4139,14 +4526,14 @@ html:not([data-app-ready]) .empty-state-container::before {
 
     .settings-nav-item {
         justify-content: center;
-        padding: 7px 5px;
-        font-size: 12px;
+        padding: 7px 3px;
+        font-size: 11.5px;
         border-radius: 9px;
-        gap: 4px;
+        gap: 3px;
     }
 
     .settings-nav-item-main {
-        gap: 4px;
+        gap: 3px;
     }
 
     .settings-nav-label {
@@ -5743,7 +6130,7 @@ blockquote {
 
 /* Mark styling */
 .md-mark {
-    background-color: #fcfdbf;
+    background-color: var(--highlight-preview-bg, #fcfdbf);
     /* Bright green */
     color: #000;
     padding: 0 4px;
@@ -6031,10 +6418,15 @@ blockquote {
 .has-annotation > span,
 span[data-note] {
     text-decoration-skip-ink: none;
+    text-decoration-color: var(--annotation-color, #e74c3c) !important;
+}
+
+sub[data-note-label] {
+    color: var(--annotation-color, #e74c3c) !important;
 }
 
 .annotation-note {
-    color: #e74c3c;
+    color: var(--annotation-color, #e74c3c);
     font-size: 0.72em;
     vertical-align: super;
     cursor: default;
@@ -6050,19 +6442,19 @@ span[data-note] {
     height: 14px;
     margin-left: 3px;
     vertical-align: middle;
-    background: color-mix(in srgb, #e74c3c 10%, transparent);
+    background: color-mix(in srgb, var(--annotation-color, #e74c3c) 10%, transparent);
     border-radius: 50%;
-    color: #e74c3c;
+    color: var(--annotation-color, #e74c3c);
     cursor: pointer;
     transition: all 0.2s ease;
     opacity: 0.78;
 }
 
 .annotation-badge:hover {
-    color: #ff4d4f;
+    color: var(--annotation-color-hover, #ff4d4f);
     opacity: 1;
     transform: scale(1.08);
-    filter: drop-shadow(0 0 8px rgba(255, 77, 79, 0.3));
+    filter: drop-shadow(0 0 8px color-mix(in srgb, var(--annotation-color-hover, #ff4d4f) 30%, transparent));
 }
 
 .annotation-badge svg {

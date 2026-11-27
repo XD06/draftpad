@@ -6,7 +6,9 @@
 import { WSClient } from './managers/ws-client.js';
 import { ToastManager } from './managers/toaster.js';
 import StorageManager from './managers/storage.js';
-import SettingsManager from './managers/settings.js'
+import SettingsManager from './managers/settings.js';
+import { applyAppearanceSettings } from './managers/appearance-presets.js';
+import { ensureSelectionMenuSprite } from './managers/selection-menu-icons.js';
 import ConfirmationManager from './managers/confirmation.js';
 import NoteSyncController from './managers/note-sync-controller.js';
 import SettingsDataPanel from './managers/settings-data-panel.js';
@@ -3496,7 +3498,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     function switchSettingsTab(tabName = 'overview') {
-        const validTabs = new Set(['overview', 'sync', 'assets', 'trash']);
+        const validTabs = new Set(['overview', 'appearance', 'sync', 'assets', 'trash']);
         const nextTab = validTabs.has(tabName) ? tabName : 'overview';
         currentSettingsTab = nextTab;
         if (!settingsModal) return;
@@ -4084,11 +4086,17 @@ document.addEventListener('DOMContentLoaded', async () => {
         return nextId;
     }
 
+    function restoreSavedAppearancePreview() {
+        const saved = settingsManager.loadSettings();
+        applySettings(saved, { persistCache: false });
+    }
+
     let editorFocusedBeforeModal = false;
     function hideModal(modal, msg) {
         if (modal === settingsModal) {
             hideHeatmapPopover();
             closeActiveAttachmentRename();
+            restoreSavedAppearancePreview();
         }
         modal.classList.remove('visible');
         if (msg) toaster.show(msg);
@@ -4113,6 +4121,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     function closeAllModals() {
+        if (settingsModal?.classList.contains('visible')) {
+            restoreSavedAppearancePreview();
+        }
         document.querySelectorAll('.modal').forEach(m => m.classList.remove('visible'));
     }
 
@@ -4505,6 +4516,10 @@ document.addEventListener('DOMContentLoaded', async () => {
                 syncThemeColorMeta(currentTheme);
                 previewManager.updateHighlightTheme(currentTheme);
                 storageManager.save(THEME_KEY, currentTheme);
+                const activeSettings = settingsModal?.classList.contains('visible')
+                    ? settingsManager.getInputValues()
+                    : settingsManager.getSettings();
+                applySettings(activeSettings, { persistCache: false });
             });
         }
 
@@ -4824,8 +4839,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         clear?.toggleAttribute('hidden', !input.value.trim());
     }
 
-    function applySettings(s) {
+    function applySettings(s, options = {}) {
         if (!s) return;
+        const theme = currentTheme || document.documentElement.getAttribute('data-theme') || 'light';
+        applyAppearanceSettings(s.appearance, theme, document.documentElement, {
+            storage: typeof window !== 'undefined' ? window.localStorage : null,
+            persistCache: Boolean(options.persistCache)
+        });
     }
 
     async function registerServiceWorker() {
@@ -4951,6 +4971,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             });
         }
         appSettings = settingsManager.loadSettings();
+        ensureSelectionMenuSprite(document);
+        applySettings(appSettings, { persistCache: true });
         if (initialWorkspace === 'thoughts') {
             await ensureThoughtsManager();
             scheduleIdleTask(() => {
@@ -4980,7 +5002,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         document.documentElement.dataset.appReady = 'true';
         if (startsInEditor) await syncCurrentDirtyNote();
         if (startsInEditor) void reconcileCurrentNote('startup');
-        applySettings(appSettings);
+        applySettings(appSettings, { persistCache: true });
         registerServiceWorker().catch(() => {});
         await router.init();
         isInitialLoad = false;

@@ -839,8 +839,8 @@
 .thought-inline-highlight {
     padding: 1px 4px;
     border-radius: 5px;
-    background: color-mix(in srgb, #facc15 34%, transparent);
-    color: color-mix(in srgb, var(--text-color) 88%, #7c5600);
+    background: var(--thought-highlight-bg, color-mix(in srgb, #facc15 34%, transparent));
+    color: var(--thought-highlight-color, color-mix(in srgb, var(--text-color) 88%, #7c5600));
     box-decoration-break: clone;
     -webkit-box-decoration-break: clone;
 }
@@ -967,12 +967,12 @@
     text-decoration-style: solid;
     text-decoration-thickness: 2px;
     text-underline-offset: 4px;
-    text-decoration-color: color-mix(in srgb, var(--primary-color) 78%, transparent);
+    text-decoration-color: var(--thought-draw-color, color-mix(in srgb, var(--primary-color) 78%, transparent));
 }
 
 .thought-note-line {
     text-decoration-style: wavy;
-    text-decoration-color: #e74c3c;
+    text-decoration-color: var(--annotation-color, #e74c3c);
     cursor: help;
 }
 

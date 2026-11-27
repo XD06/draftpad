@@ -37,6 +37,7 @@ const CORE_ASSETS = [
   "/managers/import-target-registry.js",
   "/managers/markdown-html-sanitizer.js",
   "/managers/preview.js",
+  "/managers/appearance-presets.js",
   "/managers/settings.js",
   "/managers/settings-data-panel.js",
   "/managers/storage.js",

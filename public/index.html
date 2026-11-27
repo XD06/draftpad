@@ -31,6 +31,27 @@
                 } catch (_error) {}
             }
             document.documentElement.setAttribute('data-theme', theme);
+            try {
+                const rawSettings = JSON.parse(localStorage.getItem('dumbpad_settings') || 'null');
+                const app = rawSettings && rawSettings.appearance;
+                if (app && typeof app === 'object') {
+                    const key = [
+                        app.accent || 'default',
+                        app.drawColor || 'default',
+                        app.highlightColor || 'default',
+                        app.annotationColor || 'default'
+                    ].join('|');
+                    const cache = JSON.parse(localStorage.getItem('dumbpad_appearance_vars_v1') || 'null');
+                    const vars = cache && cache.key === key ? cache[theme] : null;
+                    if (vars && typeof vars === 'object') {
+                        Object.keys(vars).forEach((prop) => {
+                            if (prop.startsWith('--') && typeof vars[prop] === 'string') {
+                                document.documentElement.style.setProperty(prop, vars[prop]);
+                            }
+                        });
+                    }
+                }
+            } catch (_error) {}
             // Edge/Chrome Android 用 theme-color 给状态栏着色。主题一旦落库就不再
             // 跟随系统，这里与 app.js 的切换处同步覆盖；带 media 的两条 meta 只兜
             // 脚本执行前与禁用 JS 的帧。
@@ -696,6 +717,21 @@
                             </span>
                         </button>
                         <button type="button" class="settings-nav-item" role="tab" aria-selected="false"
+                            data-settings-tab="appearance">
+                            <span class="settings-nav-item-main">
+                                <svg class="settings-nav-icon" width="18" height="18" viewBox="0 0 24 24" fill="none"
+                                    stroke="currentColor" stroke-width="1.8" stroke-linecap="round"
+                                    stroke-linejoin="round" aria-hidden="true">
+                                    <path d="M12 21a9 9 0 0 1 0 -18c4.97 0 9 3.582 9 8c0 1.06 -.474 2.078 -1.318 2.828c-.844 .75 -1.989 1.172 -3.182 1.172h-2.5a2 2 0 0 0 -1 3.75a1.3 1.3 0 0 1 -1 2.25" />
+                                    <path d="M8.5 10.5m-1 0a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" />
+                                    <path d="M12.5 7.5m-1 0a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" />
+                                    <path d="M16.5 10.5m-1 0a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" />
+                                </svg>
+                                <span class="settings-nav-label">主题与外观</span>
+                                <span class="settings-nav-label-short" aria-hidden="true">外观</span>
+                            </span>
+                        </button>
+                        <button type="button" class="settings-nav-item" role="tab" aria-selected="false"
                             data-settings-tab="sync">
                             <span class="settings-nav-item-main">
                                 <svg class="settings-nav-icon" width="18" height="18" viewBox="0 0 24 24" fill="none"
@@ -895,6 +931,298 @@
                                         </span>
                                         <input type="checkbox" id="settings-disable-print-expand" />
                                     </label>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="settings-tab-panel" data-settings-pane="appearance" hidden>
+                            <div id="settings-appearance-section" class="settings-appearance-section">
+                                <div class="settings-appearance-preview" aria-live="polite">
+                                    <div class="settings-appearance-preview-label">即时效果预览（点选下方搭配或微调，Save 后持久化）</div>
+                                    <div class="settings-appearance-preview-row">
+                                        <span class="settings-preview-accent-chip">强调色</span>
+                                        <span class="settings-preview-task-pair" aria-hidden="true">
+                                            <span class="settings-preview-task-box is-doing"></span>
+                                            <span class="settings-preview-task-box">✓</span>
+                                        </span>
+                                        <span data-draw>重点划线</span>
+                                        <mark class="md-mark">段落高亮</mark>
+                                        <span class="has-annotation">
+                                            <span style="text-decoration:underline wavy;text-decoration-thickness:2px;">批注波浪线</span><span class="annotation-badge" aria-hidden="true"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg></span>
+                                        </span>
+                                    </div>
+                                </div>
+                                <div class="settings-appearance-scroll">
+                                    <div class="settings-appearance-block">
+                                        <div class="settings-appearance-block-head">
+                                            <span class="settings-section-kicker">推荐主题搭配（一键套用）</span>
+                                            <span class="settings-appearance-current" data-appearance-bundle-status>琥珀经典</span>
+                                        </div>
+                                        <div class="settings-bundle-grid" role="group" aria-label="推荐主题搭配">
+                                            <button type="button" class="settings-bundle-card is-active" aria-pressed="true"
+                                                data-appearance-bundle="amber-classic">
+                                                <div class="settings-bundle-card-top">
+                                                    <span class="settings-bundle-name">琥珀经典</span>
+                                                    <span class="settings-bundle-dots" aria-hidden="true">
+                                                        <span class="settings-swatch-dot is-mini" style="--swatch-light:#E5A100;--swatch-dark:#FFD60A;"></span>
+                                                        <span class="settings-swatch-dot is-mini" style="--swatch-light:#0000FF;--swatch-dark:#3B82F6;"></span>
+                                                        <span class="settings-swatch-dot is-mini" style="--swatch-light:#FDE68A;--swatch-dark:#B48A16;"></span>
+                                                        <span class="settings-swatch-dot is-mini" style="--swatch-light:#E74C3C;--swatch-dark:#E74C3C;"></span>
+                                                    </span>
+                                                </div>
+                                                <span class="settings-bundle-sub">DumbPad 默认原味</span>
+                                            </button>
+                                            <button type="button" class="settings-bundle-card" aria-pressed="false"
+                                                data-appearance-bundle="calm-study">
+                                                <div class="settings-bundle-card-top">
+                                                    <span class="settings-bundle-name">海盐研读</span>
+                                                    <span class="settings-bundle-dots" aria-hidden="true">
+                                                        <span class="settings-swatch-dot is-mini" style="--swatch-light:#2563EB;--swatch-dark:#60A5FA;"></span>
+                                                        <span class="settings-swatch-dot is-mini" style="--swatch-light:#2563EB;--swatch-dark:#60A5FA;"></span>
+                                                        <span class="settings-swatch-dot is-mini" style="--swatch-light:#BAE6FD;--swatch-dark:#256B8E;"></span>
+                                                        <span class="settings-swatch-dot is-mini" style="--swatch-light:#4F46E5;--swatch-dark:#818CF8;"></span>
+                                                    </span>
+                                                </div>
+                                                <span class="settings-bundle-sub">冷静专注 · Notion 风</span>
+                                            </button>
+                                            <button type="button" class="settings-bundle-card" aria-pressed="false"
+                                                data-appearance-bundle="sage-forest">
+                                                <div class="settings-bundle-card-top">
+                                                    <span class="settings-bundle-name">鼠尾草护眼</span>
+                                                    <span class="settings-bundle-dots" aria-hidden="true">
+                                                        <span class="settings-swatch-dot is-mini" style="--swatch-light:#15803D;--swatch-dark:#4ADE80;"></span>
+                                                        <span class="settings-swatch-dot is-mini" style="--swatch-light:#0D9488;--swatch-dark:#2DD4BF;"></span>
+                                                        <span class="settings-swatch-dot is-mini" style="--swatch-light:#A7F3D0;--swatch-dark:#2A7B5C;"></span>
+                                                        <span class="settings-swatch-dot is-mini" style="--swatch-light:#0F766E;--swatch-dark:#2DD4BF;"></span>
+                                                    </span>
+                                                </div>
+                                                <span class="settings-bundle-sub">柔和自然 · 久读不累</span>
+                                            </button>
+                                            <button type="button" class="settings-bundle-card" aria-pressed="false"
+                                                data-appearance-bundle="warm-paper">
+                                                <div class="settings-bundle-card-top">
+                                                    <span class="settings-bundle-name">落日暖茶</span>
+                                                    <span class="settings-bundle-dots" aria-hidden="true">
+                                                        <span class="settings-swatch-dot is-mini" style="--swatch-light:#E5A100;--swatch-dark:#FFD60A;"></span>
+                                                        <span class="settings-swatch-dot is-mini" style="--swatch-light:#D97706;--swatch-dark:#FBBF24;"></span>
+                                                        <span class="settings-swatch-dot is-mini" style="--swatch-light:#FDE68A;--swatch-dark:#B48A16;"></span>
+                                                        <span class="settings-swatch-dot is-mini" style="--swatch-light:#EA580C;--swatch-dark:#FB923C;"></span>
+                                                    </span>
+                                                </div>
+                                                <span class="settings-bundle-sub">温润纸感 · 无冷蓝刺激</span>
+                                            </button>
+                                            <button type="button" class="settings-bundle-card" aria-pressed="false"
+                                                data-appearance-bundle="mist-lavender">
+                                                <div class="settings-bundle-card-top">
+                                                    <span class="settings-bundle-name">柔雾暮紫</span>
+                                                    <span class="settings-bundle-dots" aria-hidden="true">
+                                                        <span class="settings-swatch-dot is-mini" style="--swatch-light:#7C3AED;--swatch-dark:#A78BFA;"></span>
+                                                        <span class="settings-swatch-dot is-mini" style="--swatch-light:#2563EB;--swatch-dark:#60A5FA;"></span>
+                                                        <span class="settings-swatch-dot is-mini" style="--swatch-light:#DDD6FE;--swatch-dark:#5D479C;"></span>
+                                                        <span class="settings-swatch-dot is-mini" style="--swatch-light:#DB2777;--swatch-dark:#F472B6;"></span>
+                                                    </span>
+                                                </div>
+                                                <span class="settings-bundle-sub">雅致层次 · 重点分明</span>
+                                            </button>
+                                            <button type="button" class="settings-bundle-card" aria-pressed="false"
+                                                data-appearance-bundle="nordic-slate">
+                                                <div class="settings-bundle-card-top">
+                                                    <span class="settings-bundle-name">极简水墨</span>
+                                                    <span class="settings-bundle-dots" aria-hidden="true">
+                                                        <span class="settings-swatch-dot is-mini" style="--swatch-light:#475569;--swatch-dark:#CBD5E1;"></span>
+                                                        <span class="settings-swatch-dot is-mini" style="--swatch-light:#0D9488;--swatch-dark:#2DD4BF;"></span>
+                                                        <span class="settings-swatch-dot is-mini" style="--swatch-light:#A7F3D0;--swatch-dark:#2A7B5C;"></span>
+                                                        <span class="settings-swatch-dot is-mini" style="--swatch-light:#E74C3C;--swatch-dark:#E74C3C;"></span>
+                                                    </span>
+                                                </div>
+                                                <span class="settings-bundle-sub">低噪中性 · 标注点睛</span>
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    <details id="settings-appearance-custom-details" class="settings-cloud-advanced settings-appearance-advanced">
+                                        <summary>
+                                            <span class="settings-appearance-advanced-lead">
+                                                <svg class="settings-appearance-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none"
+                                                    stroke="currentColor" stroke-width="2.2" stroke-linecap="round"
+                                                    stroke-linejoin="round" aria-hidden="true">
+                                                    <path d="M9 6l6 6l-6 6" />
+                                                </svg>
+                                                <span>自定义单项配色（高级）</span>
+                                            </span>
+                                            <span class="settings-row-subtitle">单项微调</span>
+                                        </summary>
+                                        <div class="settings-pref-group">
+                                            <div class="settings-appearance-row">
+                                                <div class="settings-appearance-row-head">
+                                                    <div class="settings-pref-meta">
+                                                        <span class="settings-pref-icon" aria-hidden="true">
+                                                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+                                                                stroke="currentColor" stroke-width="1.8" stroke-linecap="round"
+                                                                stroke-linejoin="round">
+                                                                <path d="M12 21a9 9 0 0 1 0 -18c4.97 0 9 3.582 9 8c0 1.06 -.474 2.078 -1.318 2.828c-.844 .75 -1.989 1.172 -3.182 1.172h-2.5a2 2 0 0 0 -1 3.75a1.3 1.3 0 0 1 -1 2.25" />
+                                                                <circle cx="8.5" cy="10.5" r="1" fill="currentColor" stroke="none" />
+                                                                <circle cx="12.5" cy="7.5" r="1" fill="currentColor" stroke="none" />
+                                                                <circle cx="16.5" cy="10.5" r="1" fill="currentColor" stroke="none" />
+                                                            </svg>
+                                                        </span>
+                                                        <div class="settings-pref-text">
+                                                            <span class="settings-row-title">主题强调色</span>
+                                                            <span class="settings-row-subtitle">作用于主按钮、激活态、文章链接与待办方框</span>
+                                                        </div>
+                                                    </div>
+                                                    <span class="settings-appearance-current" data-appearance-active-label="accent">琥珀金</span>
+                                                </div>
+                                                <div class="settings-swatch-list" role="group" aria-label="主题强调色">
+                                                    <button type="button" class="settings-swatch-btn is-active" aria-pressed="true"
+                                                        data-appearance-group="accent" data-appearance-value="default">
+                                                        <span class="settings-swatch-dot" style="--swatch-light:#E5A100;--swatch-dark:#FFD60A;" aria-hidden="true"></span>
+                                                        <span>琥珀金（默认）</span>
+                                                    </button>
+                                                    <button type="button" class="settings-swatch-btn" aria-pressed="false"
+                                                        data-appearance-group="accent" data-appearance-value="blue">
+                                                        <span class="settings-swatch-dot" style="--swatch-light:#2563EB;--swatch-dark:#60A5FA;" aria-hidden="true"></span>
+                                                        <span>海盐蓝</span>
+                                                    </button>
+                                                    <button type="button" class="settings-swatch-btn" aria-pressed="false"
+                                                        data-appearance-group="accent" data-appearance-value="sage">
+                                                        <span class="settings-swatch-dot" style="--swatch-light:#15803D;--swatch-dark:#4ADE80;" aria-hidden="true"></span>
+                                                        <span>鼠尾草绿</span>
+                                                    </button>
+                                                    <button type="button" class="settings-swatch-btn" aria-pressed="false"
+                                                        data-appearance-group="accent" data-appearance-value="plum">
+                                                        <span class="settings-swatch-dot" style="--swatch-light:#7C3AED;--swatch-dark:#A78BFA;" aria-hidden="true"></span>
+                                                        <span>石楠紫</span>
+                                                    </button>
+                                                    <button type="button" class="settings-swatch-btn" aria-pressed="false"
+                                                        data-appearance-group="accent" data-appearance-value="slate">
+                                                        <span class="settings-swatch-dot" style="--swatch-light:#475569;--swatch-dark:#CBD5E1;" aria-hidden="true"></span>
+                                                        <span>石墨灰</span>
+                                                    </button>
+                                                </div>
+                                            </div>
+
+                                            <div class="settings-appearance-row">
+                                                <div class="settings-appearance-row-head">
+                                                    <div class="settings-pref-meta">
+                                                        <span class="settings-pref-icon" data-sm-icon="sm-draw" aria-hidden="true"></span>
+                                                        <div class="settings-pref-text">
+                                                            <span class="settings-row-title">划线颜色</span>
+                                                            <span class="settings-row-subtitle">作用于实线划线展示（不改变正文 Markdown 内容）</span>
+                                                        </div>
+                                                    </div>
+                                                    <span class="settings-appearance-current" data-appearance-active-label="drawColor">经典蓝</span>
+                                                </div>
+                                                <div class="settings-swatch-list" role="group" aria-label="划线颜色">
+                                                    <button type="button" class="settings-swatch-btn is-active" aria-pressed="true"
+                                                        data-appearance-group="drawColor" data-appearance-value="default">
+                                                        <span class="settings-swatch-dot" style="--swatch-light:#0000FF;--swatch-dark:#3B82F6;" aria-hidden="true"></span>
+                                                        <span>经典蓝（默认）</span>
+                                                    </button>
+                                                    <button type="button" class="settings-swatch-btn" aria-pressed="false"
+                                                        data-appearance-group="drawColor" data-appearance-value="cobalt">
+                                                        <span class="settings-swatch-dot" style="--swatch-light:#2563EB;--swatch-dark:#60A5FA;" aria-hidden="true"></span>
+                                                        <span>柔和钴蓝</span>
+                                                    </button>
+                                                    <button type="button" class="settings-swatch-btn" aria-pressed="false"
+                                                        data-appearance-group="drawColor" data-appearance-value="teal">
+                                                        <span class="settings-swatch-dot" style="--swatch-light:#0D9488;--swatch-dark:#2DD4BF;" aria-hidden="true"></span>
+                                                        <span>青瓷绿</span>
+                                                    </button>
+                                                    <button type="button" class="settings-swatch-btn" aria-pressed="false"
+                                                        data-appearance-group="drawColor" data-appearance-value="amber">
+                                                        <span class="settings-swatch-dot" style="--swatch-light:#D97706;--swatch-dark:#FBBF24;" aria-hidden="true"></span>
+                                                        <span>琥珀棕</span>
+                                                    </button>
+                                                    <button type="button" class="settings-swatch-btn" aria-pressed="false"
+                                                        data-appearance-group="drawColor" data-appearance-value="rose">
+                                                        <span class="settings-swatch-dot" style="--swatch-light:#E11D48;--swatch-dark:#FB7185;" aria-hidden="true"></span>
+                                                        <span>烟熏玫红</span>
+                                                    </button>
+                                                </div>
+                                            </div>
+
+                                            <div class="settings-appearance-row">
+                                                <div class="settings-appearance-row-head">
+                                                    <div class="settings-pref-meta">
+                                                        <span class="settings-pref-icon" data-sm-icon="sm-highlight" aria-hidden="true"></span>
+                                                        <div class="settings-pref-text">
+                                                            <span class="settings-row-title">高亮底色</span>
+                                                            <span class="settings-row-subtitle">作用于 ==高亮== 文本与 Thought 摘要高亮</span>
+                                                        </div>
+                                                    </div>
+                                                    <span class="settings-appearance-current" data-appearance-active-label="highlightColor">琥珀柔黄</span>
+                                                </div>
+                                                <div class="settings-swatch-list" role="group" aria-label="高亮底色">
+                                                    <button type="button" class="settings-swatch-btn is-active" aria-pressed="true"
+                                                        data-appearance-group="highlightColor" data-appearance-value="default">
+                                                        <span class="settings-swatch-dot" style="--swatch-light:#FDE68A;--swatch-dark:#B48A16;" aria-hidden="true"></span>
+                                                        <span>琥珀柔黄（默认）</span>
+                                                    </button>
+                                                    <button type="button" class="settings-swatch-btn" aria-pressed="false"
+                                                        data-appearance-group="highlightColor" data-appearance-value="mint">
+                                                        <span class="settings-swatch-dot" style="--swatch-light:#A7F3D0;--swatch-dark:#2A7B5C;" aria-hidden="true"></span>
+                                                        <span>青柠薄荷</span>
+                                                    </button>
+                                                    <button type="button" class="settings-swatch-btn" aria-pressed="false"
+                                                        data-appearance-group="highlightColor" data-appearance-value="sky">
+                                                        <span class="settings-swatch-dot" style="--swatch-light:#BAE6FD;--swatch-dark:#256B8E;" aria-hidden="true"></span>
+                                                        <span>晴空冰蓝</span>
+                                                    </button>
+                                                    <button type="button" class="settings-swatch-btn" aria-pressed="false"
+                                                        data-appearance-group="highlightColor" data-appearance-value="lavender">
+                                                        <span class="settings-swatch-dot" style="--swatch-light:#DDD6FE;--swatch-dark:#5D479C;" aria-hidden="true"></span>
+                                                        <span>柔雾浅紫</span>
+                                                    </button>
+                                                    <button type="button" class="settings-swatch-btn" aria-pressed="false"
+                                                        data-appearance-group="highlightColor" data-appearance-value="peach">
+                                                        <span class="settings-swatch-dot" style="--swatch-light:#FECDD3;--swatch-dark:#8C3B4C;" aria-hidden="true"></span>
+                                                        <span>珊瑚桃粉</span>
+                                                    </button>
+                                                </div>
+                                            </div>
+
+                                            <div class="settings-appearance-row">
+                                                <div class="settings-appearance-row-head">
+                                                    <div class="settings-pref-meta">
+                                                        <span class="settings-pref-icon" data-sm-icon="sm-annotate" aria-hidden="true"></span>
+                                                        <div class="settings-pref-text">
+                                                            <span class="settings-row-title">批注色彩</span>
+                                                            <span class="settings-row-subtitle">作用于批注波浪线与气泡徽标</span>
+                                                        </div>
+                                                    </div>
+                                                    <span class="settings-appearance-current" data-appearance-active-label="annotationColor">珊瑚红</span>
+                                                </div>
+                                                <div class="settings-swatch-list" role="group" aria-label="批注色彩">
+                                                    <button type="button" class="settings-swatch-btn is-active" aria-pressed="true"
+                                                        data-appearance-group="annotationColor" data-appearance-value="default">
+                                                        <span class="settings-swatch-dot" style="--swatch-light:#E74C3C;--swatch-dark:#E74C3C;" aria-hidden="true"></span>
+                                                        <span>珊瑚红（默认）</span>
+                                                    </button>
+                                                    <button type="button" class="settings-swatch-btn" aria-pressed="false"
+                                                        data-appearance-group="annotationColor" data-appearance-value="amber">
+                                                        <span class="settings-swatch-dot" style="--swatch-light:#EA580C;--swatch-dark:#FB923C;" aria-hidden="true"></span>
+                                                        <span>焦糖暖橙</span>
+                                                    </button>
+                                                    <button type="button" class="settings-swatch-btn" aria-pressed="false"
+                                                        data-appearance-group="annotationColor" data-appearance-value="indigo">
+                                                        <span class="settings-swatch-dot" style="--swatch-light:#4F46E5;--swatch-dark:#818CF8;" aria-hidden="true"></span>
+                                                        <span>深邃靛青</span>
+                                                    </button>
+                                                    <button type="button" class="settings-swatch-btn" aria-pressed="false"
+                                                        data-appearance-group="annotationColor" data-appearance-value="berry">
+                                                        <span class="settings-swatch-dot" style="--swatch-light:#DB2777;--swatch-dark:#F472B6;" aria-hidden="true"></span>
+                                                        <span>浆果酒红</span>
+                                                    </button>
+                                                    <button type="button" class="settings-swatch-btn" aria-pressed="false"
+                                                        data-appearance-group="annotationColor" data-appearance-value="teal">
+                                                        <span class="settings-swatch-dot" style="--swatch-light:#0F766E;--swatch-dark:#2DD4BF;" aria-hidden="true"></span>
+                                                        <span>松石青</span>
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </details>
                                 </div>
                             </div>
                         </div>

@@ -88,8 +88,8 @@ function runDomAndCssContractTests() {
     const indexHtml = fs.readFileSync(path.join(projectRoot, 'public/index.html'), 'utf8');
     const stylesCss = fs.readFileSync(path.join(projectRoot, 'public/Assets/styles.css'), 'utf8');
 
-    // Verify 4 navigation tabs and panes exist
-    for (const tab of ['overview', 'sync', 'assets', 'trash']) {
+    // Verify 5 navigation tabs and panes exist
+    for (const tab of ['overview', 'appearance', 'sync', 'assets', 'trash']) {
         assert.ok(
             indexHtml.includes(`data-settings-tab="${tab}"`),
             `index.html should contain settings tab button for "${tab}"`
@@ -170,8 +170,8 @@ function runDomAndCssContractTests() {
     );
     assert.match(
         stylesCss,
-        /@media\s*\(max-width:\s*980px\)\s*\{[\s\S]*?\.settings-nav\s*\{[\s\S]*?grid-template-columns:\s*repeat\(4,\s*minmax\(0,\s*1fr\)\);/,
-        'Mobile settings navigation should use Scheme C 4-column top segmented bar'
+        /@media\s*\(max-width:\s*980px\)\s*\{[\s\S]*?\.settings-nav\s*\{[\s\S]*?grid-template-columns:\s*repeat\(5,\s*minmax\(0,\s*1fr\)\);/,
+        'Mobile settings navigation should use Scheme C 5-column top segmented bar'
     );
     assert.match(
         stylesCss,

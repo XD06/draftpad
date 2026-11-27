@@ -8,6 +8,9 @@
 
 ### 新增 / 优化
 
+- **阅读色彩变量底座与设置中心「主题与外观」Tab**：
+  - **CSS 色彩变量底座收口**：在 `public/Assets/ios-theme.css`、 `public/Assets/styles.css` 与 `public/Assets/thoughts.css` 将划线（`--draw-color`）、高亮（`--highlight-bg` / `--highlight-preview-bg` / `--thought-highlight-bg`）、批注（`--annotation-color` / `--annotation-color-hover`）与待办方框状态色（`--task-checked-color` / `--task-doing-color`）收敛为可覆写变量，保持 `tiptap-extensions.js` 序列化内联格式与历史文档往返零迁移。
+  - **设置「主题与外观」面板**：在 `public/index.html`、`public/managers/settings.js`、`public/app.js` 与 `public/managers/appearance-presets.js`（已纳入 `public/service-worker.js` `CORE_ASSETS`）新增第 5 个设置分页「主题与外观」（移动端短标「外观」），提供顶部固定无透底的即时效果预览区、6 套亮/暗双模式预设主题搭配卡片（默认保留琥珀经典原味），以及可折叠的高级单项配色微调（划线/高亮/批注图标复用 `selection-menu-icons.js` 全局精灵）；支持实时预览、`Cancel / Esc` 自动撤回、`Save` 持久化与首帧防闪烁恢复（`dumbpad_appearance_vars_v1`），并修复 `.modal`（`1050`）与 `.floating-actions`（`1000`）同层叠遮挡问题。回归新增 `npm run test:appearance-presets` 并扩展 `npm run test:settings-modal`。
 - **移动端阅读排版、折行与布局优化**：
   - **消除标题与长行内代码/URL 异常提前换行**：`public/Assets/ios-theme.css` 移除文章标题的 `text-wrap: balance` 与正文的 `text-wrap: pretty`，消除窄屏标题只排半行即提前断行（如首行右侧大片留白）的观感割裂；在 `≤ 980px` 视口为 `:not(pre) > code:not(.hljs):not(.highlight-chroma)` 启用 `overflow-wrap: anywhere`、`word-break: break-all` 与 `box-decoration-break: clone`，让路径/接口等长行内代码紧随中文续排并在跨行两端保留完整胶囊圆角（桌面端仍保持原整词折行）；同步修复 `public/Assets/thoughts.css` `.thought-link` 误用 `display: inline-block` 导致整条链接被推到下一行的问题（改为 `display: inline` + `overflow-wrap: anywhere`）。
   - **分享页移动端换行与表格可读性**：`scripts/share-renderer.js` 在 `≤ 680px` 下对行内代码同步启用 `word-break: break-all` + `box-decoration-break: clone`，并为 `.ios-table-wrap` 补齐触控横向滚动惯性、`th { white-space: nowrap; }` 及表格单元格内 `code` 正常换行保护，防止长键名在滚动表格内被挤碎成数截。

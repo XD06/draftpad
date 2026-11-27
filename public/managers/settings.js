@@ -1,8 +1,18 @@
 /**
- * 设置面板状态与创作活跃度统计：负责读写本地偏好项（自动保存提示间隔、打印折叠开关），
+ * 设置面板状态与创作活跃度统计：负责读写本地偏好项（自动保存提示间隔、打印折叠开关、主题与阅读标记配色），
  * 并基于文章元数据的 createdAt / updatedAt / editCount / lastEditAt 纯函数汇总
  * GitHub 风格贡献热力图（按自然周 7×N 网格、月份坐标与四档热度阶梯）及核心统计指标。
  */
+
+import {
+  DEFAULT_APPEARANCE,
+  findMatchingBundleId,
+  getBundleById,
+  getBundleLabel,
+  getPresetLabel,
+  normalizeAppearanceSettings
+} from './appearance-presets.js';
+import { ensureSelectionMenuSprite, createSelectionMenuIcon } from './selection-menu-icons.js';
 
 const MONTH_SHORT_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -188,19 +198,97 @@ export default class SettingsManager {
     this.applySettings = applySettings
     this.settingsInputAutoSaveStatusInterval = document.getElementById('autosave-status-interval-input');
     this.settingsDisablePrintExpand = document.getElementById('settings-disable-print-expand');
+    this.appearanceRoot = document.getElementById('settings-appearance-section');
+    this.currentAppearance = { ...DEFAULT_APPEARANCE };
+    this.bindAppearanceControls();
   }
   
   defaultSettings() {
     return { // Add additional default settings in here:
       saveStatusMessageInterval: 0,
       disablePrintExpand: false,
+      appearance: { ...DEFAULT_APPEARANCE },
     }
+  }
+
+  bindAppearanceControls() {
+    if (!this.appearanceRoot || this.appearanceBound) return;
+    this.appearanceBound = true;
+    const doc = this.appearanceRoot.ownerDocument;
+    if (doc?.body || doc?.documentElement) {
+      ensureSelectionMenuSprite(doc);
+    }
+    this.hydrateAppearanceIcons();
+    this.appearanceRoot.addEventListener('click', (event) => {
+      const bundleBtn = event.target?.closest?.('[data-appearance-bundle]');
+      if (bundleBtn) {
+        const bundle = getBundleById(bundleBtn.dataset.appearanceBundle);
+        if (!bundle) return;
+        const nextAppearance = normalizeAppearanceSettings(bundle.appearance);
+        this.currentAppearance = nextAppearance;
+        this.syncAppearanceUI(nextAppearance);
+        this.applySettings?.(this.getInputValues(), { persistCache: false });
+        return;
+      }
+      const btn = event.target?.closest?.('[data-appearance-group][data-appearance-value]');
+      if (!btn) return;
+      const group = btn.dataset.appearanceGroup;
+      const value = btn.dataset.appearanceValue;
+      if (!group || !value) return;
+      const nextAppearance = normalizeAppearanceSettings({
+        ...this.currentAppearance,
+        [group]: value
+      });
+      this.currentAppearance = nextAppearance;
+      this.syncAppearanceUI(nextAppearance);
+      this.applySettings?.(this.getInputValues(), { persistCache: false });
+    });
+  }
+
+  hydrateAppearanceIcons() {
+    if (!this.appearanceRoot) return;
+    const doc = this.appearanceRoot.ownerDocument;
+    if (!doc) return;
+    this.appearanceRoot.querySelectorAll('[data-sm-icon]').forEach((slot) => {
+      const iconId = slot.dataset.smIcon;
+      if (!iconId) return;
+      slot.replaceChildren(createSelectionMenuIcon(iconId, doc));
+    });
+  }
+
+  syncAppearanceUI(appearance = this.currentAppearance) {
+    const norm = normalizeAppearanceSettings(appearance);
+    this.currentAppearance = norm;
+    if (!this.appearanceRoot) return;
+    const activeBundleId = findMatchingBundleId(norm);
+    this.appearanceRoot.querySelectorAll('[data-appearance-bundle]').forEach((btn) => {
+      const active = btn.dataset.appearanceBundle === activeBundleId;
+      btn.classList.toggle('is-active', active);
+      btn.setAttribute('aria-pressed', String(active));
+    });
+    const bundleLabelEl = this.appearanceRoot.querySelector('[data-appearance-bundle-status]');
+    if (bundleLabelEl) {
+      bundleLabelEl.textContent = getBundleLabel(activeBundleId);
+      bundleLabelEl.dataset.custom = String(activeBundleId === 'custom');
+    }
+    this.appearanceRoot.querySelectorAll('[data-appearance-group][data-appearance-value]').forEach((btn) => {
+      const group = btn.dataset.appearanceGroup;
+      const active = norm[group] === btn.dataset.appearanceValue;
+      btn.classList.toggle('is-active', active);
+      btn.setAttribute('aria-pressed', String(active));
+    });
+    this.appearanceRoot.querySelectorAll('[data-appearance-active-label]').forEach((labelEl) => {
+      const group = labelEl.dataset.appearanceActiveLabel;
+      if (!group) return;
+      labelEl.textContent = getPresetLabel(group, norm[group]);
+    });
   }
 
   getSettings() {
     try {
       let currentSettings = this.storageManager.load(this.SETTINGS_KEY);
       if (!currentSettings) currentSettings = this.defaultSettings();
+      currentSettings.appearance = normalizeAppearanceSettings(currentSettings.appearance);
       // console.log("Current Settings:", currentSettings);
       return currentSettings;
     } catch (err) {
@@ -212,9 +300,10 @@ export default class SettingsManager {
   saveSettings(reset) {
     try {
       const settingsToSave = reset ? this.defaultSettings() : this.getInputValues();
+      settingsToSave.appearance = normalizeAppearanceSettings(settingsToSave.appearance);
       this.storageManager.save(this.SETTINGS_KEY, settingsToSave);
       // console.log("Saved new settings:", newSettings);
-      this.applySettings(settingsToSave);
+      this.applySettings(settingsToSave, { persistCache: true });
       return settingsToSave;
     }
     catch (err) {
@@ -238,8 +327,11 @@ export default class SettingsManager {
       if (this.settingsDisablePrintExpand) {
         this.settingsDisablePrintExpand.checked = currentSettings.disablePrintExpand;
       }
+
+      appSettings.appearance = normalizeAppearanceSettings(currentSettings.appearance);
+      this.syncAppearanceUI(appSettings.appearance);
       
-      return currentSettings;
+      return appSettings;
     }
     catch (err) {
       console.error(err);
@@ -259,6 +351,8 @@ export default class SettingsManager {
     if (this.settingsDisablePrintExpand) {
       appSettings.disablePrintExpand = this.settingsDisablePrintExpand.checked;
     }
+
+    appSettings.appearance = normalizeAppearanceSettings(this.currentAppearance);
     
     return appSettings;
   }
