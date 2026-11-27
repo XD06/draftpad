@@ -323,6 +323,12 @@ async function testRendererUnitCases() {
         'share page TOC should include subtle 1px tree guide lines'
     );
     assert(
+        mixedHtml.includes('.ios-code-fold-footer')
+        && mixedHtml.includes('.ios-code-card.is-collapsed pre')
+        && mixedHtml.includes('.ios-code-card.is-wrapped pre code'),
+        'share page CSS must include long code-block fold footer and wrap toggle rules'
+    );
+    assert(
         !/\.markdown-body ul\.task-list[^}]*list-style:\s*none/.test(mixedHtml),
         'share page CSS must not suppress bullets on ul.task-list parent (breaks mixed task+bullet lists)'
     );
@@ -337,6 +343,31 @@ async function testRendererUnitCases() {
     );
     const bodyPara = mixedDoc.querySelector('#article-body > p');
     assert(bodyPara && /普通段落测试<br\s*\/?>代码块测试/.test(bodyPara.innerHTML), 'single newline inside paragraph must render as <br>');
+
+    // Long code block (>=18 lines) renders with collapsible fold chrome & interactive toggle; <18 lines stays unfolded
+    const longLinesMd = Array.from({ length: 20 }, (_, i) => `const item${i + 1} = ${i + 1};`).join('\n');
+    const shortLinesMd = 'const shortVal = 1;\nconst shortVal2 = 2;';
+    const codeHtml = renderSharePage({
+        notepad: { id: 'note-code-fold', name: '代码块折叠验证', createdAt: 0, updatedAt: 0, editCount: 1 },
+        content: ['# 代码块折叠验证', '', '```js', longLinesMd, '```', '', '```js', shortLinesMd, '```'].join('\n'),
+        marked,
+        sanitizeHtml
+    });
+    assertSecurityInvariants(codeHtml);
+    const codeDoc = new JSDOM(codeHtml, { runScripts: 'dangerously', url: 'http://127.0.0.1/s/note-code-fold?t=abc' }).window.document;
+    const codeCards = Array.from(codeDoc.querySelectorAll('#article-body .ios-code-card'));
+    assert.strictEqual(codeCards.length, 2, 'should render both long and short code cards');
+    const [longCard, shortCard] = codeCards;
+    assert(longCard.classList.contains('is-collapsible') && longCard.classList.contains('is-collapsed'), '20-line share code card must default collapsed');
+    assert(!shortCard.classList.contains('is-collapsible'), '2-line share code card must not be collapsible');
+    const foldFooter = longCard.querySelector('.ios-code-fold-footer');
+    const foldHeaderBtn = longCard.querySelector('.ios-code-fold-btn');
+    assert(foldFooter && foldFooter.textContent.includes('展开代码 · 20 行'), 'fold footer should display calm pill with line count');
+    assert(foldHeaderBtn && Boolean(foldHeaderBtn.querySelector('svg')) && foldHeaderBtn.getAttribute('aria-expanded') === 'false', 'header fold button should render icon in collapsed state');
+    foldFooter.click();
+    assert(!longCard.classList.contains('is-collapsed') && foldHeaderBtn.getAttribute('aria-expanded') === 'true' && foldFooter.textContent.includes('收起代码'), 'clicking fold footer should expand share code card and show collapse pill');
+    foldHeaderBtn.click();
+    assert(longCard.classList.contains('is-collapsed') && foldHeaderBtn.getAttribute('aria-expanded') === 'false' && foldFooter.textContent.includes('展开代码 · 20 行'), 'clicking header fold button should re-collapse share code card');
 }
 
 async function testShareRoutesHttp() {

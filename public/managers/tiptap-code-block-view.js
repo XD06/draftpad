@@ -11,6 +11,12 @@ import { openArticleLightbox } from './tiptap-image-interactions.js';
 const MERMAID_LANGUAGE = 'mermaid';
 const MERMAID_RENDER_DEBOUNCE_MS = 220;
 const MERMAID_ERROR_HINT = 'Mermaid 图表语法有误，已保留源码，不影响其他内容编辑。';
+export const LONG_CODE_LINE_THRESHOLD = 18;
+
+export function countCodeBlockLines(text) {
+    const normalized = String(text || '').replace(/\r\n?/g, '\n').replace(/\n$/, '');
+    return normalized ? normalized.split('\n').length : 0;
+}
 // 图标是纯填充路径（无描边），颜色交给 CSS 的 fill: currentColor。
 const MERMAID_FULLSCREEN_ICON_SVG = '<svg viewBox="0 0 1024 1024" aria-hidden="true"><path d="M547.4 197.4v46l200.3 0.1L546.1 444l32.4 32.6 201.9-200.7v200.9h46V197.5zM471.4 584.4l-32.6-32.6L243.6 747V547.9h-46v278.7h279v-46H275z"></path></svg>';
 
@@ -624,6 +630,18 @@ export function buildCodeBlockNodeView() {
         badge.setAttribute('aria-expanded', 'false');
         header.appendChild(badge);
 
+        const actionsGroup = document.createElement('span');
+        actionsGroup.className = 'dumbpad-code-actions';
+        actionsGroup.setAttribute('contenteditable', 'false');
+
+        const foldHeaderBtn = document.createElement('button');
+        foldHeaderBtn.type = 'button';
+        foldHeaderBtn.className = 'dumbpad-code-fold-btn';
+        foldHeaderBtn.setAttribute('contenteditable', 'false');
+        foldHeaderBtn.setAttribute('aria-expanded', 'false');
+        foldHeaderBtn.hidden = true;
+        actionsGroup.appendChild(foldHeaderBtn);
+
         const copyButton = document.createElement('button');
         copyButton.type = 'button';
         copyButton.className = 'dumbpad-code-copy';
@@ -658,18 +676,79 @@ export function buildCodeBlockNodeView() {
                 copyButton.title = '复制代码';
             }, 1200);
         });
-        header.appendChild(copyButton);
+        actionsGroup.appendChild(copyButton);
+        header.appendChild(actionsGroup);
 
         const code = document.createElement('code');
         // 命中既有 hljs 配色规则（浅色 token 走 github.min.css，暗色覆盖在 styles.css）
         code.className = 'hljs';
         pre.appendChild(header);
         pre.appendChild(code);
+
+        // 仅在阅读模式下的超长代码块底缘展示（置于 pre 外、wrapper 内，绝不进入代码文本抽样与编辑光标路径）
+        const foldFooterBtn = document.createElement('button');
+        foldFooterBtn.type = 'button';
+        foldFooterBtn.className = 'dumbpad-code-fold-footer';
+        foldFooterBtn.setAttribute('contenteditable', 'false');
+        foldFooterBtn.hidden = true;
+
         wrapper.appendChild(pre);
+        wrapper.appendChild(foldFooterBtn);
 
         let currentLanguage = null;
         let currentCodeNode = node;
+        let isCodeCollapsible = false;
+        let isCodeCollapsed = true;
         const languagePicker = createCodeLanguagePickerController();
+
+        const isReadonlyMode = () => {
+            const editable = editor ? Boolean(editor.isEditable) : Boolean(view?.editable);
+            return !editable;
+        };
+
+        const CODE_FOLD_EXPAND_ICON_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 15 5 5 5-5"></path><path d="m7 9 5-5 5 5"></path></svg>';
+        const CODE_FOLD_COLLAPSE_ICON_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 20 5-5 5 5"></path><path d="m7 4 5 5 5-5"></path></svg>';
+        const FOOTER_DOWN_ICON_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"></path></svg>';
+        const FOOTER_UP_ICON_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m18 15-6-6-6 6"></path></svg>';
+
+        const syncCollapsibleUI = () => {
+            const lang = normalizeCodeLanguage(currentCodeNode?.attrs?.language);
+            const lines = countCodeBlockLines(currentCodeNode?.textContent || '');
+            const eligible = isReadonlyMode()
+                && lang !== MERMAID_LANGUAGE
+                && lang !== 'frontmatter'
+                && lines >= LONG_CODE_LINE_THRESHOLD;
+            if (eligible && !isCodeCollapsible) {
+                isCodeCollapsed = true;
+            }
+            isCodeCollapsible = eligible;
+            wrapper.classList.toggle('is-code-collapsible', eligible);
+            wrapper.classList.toggle('is-code-collapsed', eligible && isCodeCollapsed);
+            foldHeaderBtn.hidden = !eligible;
+            foldFooterBtn.hidden = !eligible;
+            if (eligible) {
+                const headerLabel = isCodeCollapsed ? `展开全部 ${lines} 行` : '收起代码';
+                foldHeaderBtn.innerHTML = isCodeCollapsed ? CODE_FOLD_EXPAND_ICON_SVG : CODE_FOLD_COLLAPSE_ICON_SVG;
+                foldHeaderBtn.title = headerLabel;
+                foldHeaderBtn.setAttribute('aria-expanded', String(!isCodeCollapsed));
+                foldHeaderBtn.setAttribute('aria-label', headerLabel);
+                foldFooterBtn.innerHTML = `<span class="dumbpad-code-fold-pill">${isCodeCollapsed ? FOOTER_DOWN_ICON_SVG : FOOTER_UP_ICON_SVG}<span>${isCodeCollapsed ? `展开代码 · ${lines} 行` : '收起代码'}</span></span>`;
+                foldFooterBtn.setAttribute('aria-expanded', String(!isCodeCollapsed));
+                foldFooterBtn.setAttribute('aria-label', headerLabel);
+            }
+        };
+
+        const toggleCodeCollapsed = (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            if (!isCodeCollapsible) return;
+            isCodeCollapsed = !isCodeCollapsed;
+            syncCollapsibleUI();
+        };
+        foldHeaderBtn.addEventListener('mousedown', (e) => { e.preventDefault(); e.stopPropagation(); });
+        foldHeaderBtn.addEventListener('click', toggleCodeCollapsed);
+        foldFooterBtn.addEventListener('mousedown', (e) => { e.preventDefault(); e.stopPropagation(); });
+        foldFooterBtn.addEventListener('click', toggleCodeCollapsed);
 
         const isLanguagePickerEditable = () => {
             const editable = editor ? Boolean(editor.isEditable) : Boolean(view?.editable);
@@ -684,6 +763,7 @@ export function buildCodeBlockNodeView() {
             badge.disabled = readonly;
             badge.setAttribute('aria-disabled', readonly ? 'true' : 'false');
             if (readonly) languagePicker.closeForBadge(badge);
+            syncCollapsibleUI();
         };
 
         badge.addEventListener('mousedown', (event) => {

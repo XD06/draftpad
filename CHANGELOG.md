@@ -8,6 +8,9 @@
 
 ### 新增 / 优化
 
+- **阅读态与分享页长代码块智能折叠及分享页横向/换行切换**：
+  - 主编辑器只读（阅读）模式（[tiptap-code-block-view.js](public/managers/tiptap-code-block-view.js) `LONG_CODE_LINE_THRESHOLD = 18` 与 [styles.css](public/Assets/styles.css) `.typora-editor-shell.is-reading-mode` 限定规则）：仅对非编辑态且非 `mermaid`/`frontmatter` 的 `>= 18` 行长代码块默认折叠（限高 `296px` + 底部 `--code-bg` 平滑渐隐遮罩与居中圆角胶囊 `展开代码 · {N} 行` / `收起代码`，页眉配轻量展开/收起 SVG 图标）；编辑态与退回编辑时始终全量展开且零 DOM 污染。新增 `npm run test:code-block-folding` 与主应用真机折叠验证。
+  - 分享页代码块卡片（[share-renderer.js](scripts/share-renderer.js) `.ios-code-card`）：超宽代码按需显示 `换行`/`横向` 切换按钮（`.ios-code-wrap-btn`），`>= 18` 行长代码默认折叠（限高 `284px` + 同款渐隐遮罩与 `展开代码 · {N} 行` / `收起代码` 胶囊及页眉 SVG 按钮），由 `test:share-page` 与 `test:share-page-browser` 覆盖。
 - **文章与分享页目录可读性增强**：
   - 主站右栏目录头部与移动端大纲抽屉新增实时滚动阅读进度百分比胶囊（[heading-index.js](public/managers/heading-index.js) `computeReadingProgress` 夹取 `0%–100%`，单屏内短文自动隐藏），分享页 `#rail-toc-count` / `#toc-popover-count` 同步展示「`N 节 · X%`」并由 `test:share-page-browser` 覆盖。
   - 在 `public/Assets/styles.css` 与 `scripts/share-renderer.js` 为二级以下标题及区段子条目补充 `1px` 极浅竖向层级引导线（`::before`，默认仍保持全目录展开，零布局抖动）。

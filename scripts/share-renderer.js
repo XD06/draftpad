@@ -1591,7 +1591,13 @@ function renderSharePage({ notepad, content, marked, sanitizeHtml }) {
             text-transform: uppercase;
             letter-spacing: 0.04em;
         }
-        .copy-code-btn {
+        .ios-code-actions {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+        }
+        .copy-code-btn,
+        .ios-code-action-btn {
             border: 1px solid var(--border-color);
             background: var(--card-bg);
             color: var(--text-primary);
@@ -1601,12 +1607,117 @@ function renderSharePage({ notepad, content, marked, sanitizeHtml }) {
             font-size: 11.5px;
             font-weight: 500;
             cursor: pointer;
+            text-transform: none;
+            letter-spacing: 0;
+            transition: color 0.15s ease, border-color 0.15s ease, background-color 0.15s ease;
+        }
+        .ios-code-action-btn {
+            border-color: transparent;
+            background: transparent;
+            color: var(--text-muted);
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .ios-code-fold-btn {
+            width: 24px;
+            height: 24px;
+            padding: 0;
+        }
+        .ios-code-fold-btn svg {
+            width: 13px;
+            height: 13px;
+            fill: none;
+            stroke: currentColor;
+            stroke-width: 2;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+        }
+        .ios-code-action-btn:hover,
+        .ios-code-action-btn.is-active {
+            color: var(--primary);
+            border-color: color-mix(in srgb, var(--primary) 32%, transparent);
+            background: color-mix(in srgb, var(--primary) 8%, transparent);
         }
         .copy-code-btn.copied { color: var(--primary); }
         .ios-code-card pre {
             margin: 0;
             border: 0;
             border-radius: 0;
+            -webkit-overflow-scrolling: touch;
+        }
+        .ios-code-card.is-wrapped pre code {
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
+            word-break: break-word;
+        }
+        .ios-code-card.is-collapsed pre {
+            max-height: 284px;
+            overflow: hidden;
+        }
+        .ios-code-fold-footer {
+            position: relative;
+            display: none;
+            width: 100%;
+            align-items: center;
+            justify-content: center;
+            border: 0;
+            background: var(--code-bg);
+            padding: 4px 12px 10px;
+            cursor: pointer;
+        }
+        .ios-code-card.is-collapsible .ios-code-fold-footer {
+            display: flex;
+        }
+        .ios-code-card.is-collapsible:not(.is-collapsed) .ios-code-fold-footer {
+            padding: 7px 12px 9px;
+            border-top: 1px solid color-mix(in srgb, var(--border-color) 45%, transparent);
+        }
+        .ios-code-card.is-collapsible.is-collapsed .ios-code-fold-footer::before {
+            content: "";
+            position: absolute;
+            left: 0;
+            right: 0;
+            bottom: 100%;
+            height: 48px;
+            pointer-events: none;
+            background: linear-gradient(
+                180deg,
+                color-mix(in srgb, var(--code-bg) 0%, transparent) 0%,
+                color-mix(in srgb, var(--code-bg) 82%, transparent) 60%,
+                var(--code-bg) 100%
+            );
+        }
+        .ios-code-fold-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 4px 12px;
+            border-radius: 999px;
+            border: 1px solid var(--border-color);
+            background: var(--card-bg);
+            color: var(--text-muted);
+            font-family: var(--font-sans);
+            font-size: 11.5px;
+            font-weight: 500;
+            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+            transition: color 0.15s ease, border-color 0.15s ease, background-color 0.15s ease;
+        }
+        .ios-code-fold-pill svg {
+            width: 12px;
+            height: 12px;
+            flex-shrink: 0;
+            fill: none;
+            stroke: currentColor;
+            stroke-width: 2;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+        }
+        .ios-code-fold-footer:hover .ios-code-fold-pill,
+        .ios-code-fold-footer:focus-visible .ios-code-fold-pill {
+            color: var(--primary);
+            border-color: color-mix(in srgb, var(--primary) 35%, var(--border-color));
+            background: color-mix(in srgb, var(--primary) 6%, var(--card-bg));
         }
 
         /* Mermaid Diagram Cards */
@@ -2353,6 +2464,65 @@ function renderSharePage({ notepad, content, marked, sanitizeHtml }) {
                 bar.className = 'ios-code-bar';
                 var label = document.createElement('span');
                 label.textContent = lang;
+                var actions = document.createElement('div');
+                actions.className = 'ios-code-actions';
+                var rawCodeText = (codeEl ? codeEl.textContent : pre.textContent) || '';
+                var trimmedCodeText = rawCodeText.replace(/\\r\\n?/g, '\\n').replace(/\\n$/, '');
+                var lineCount = trimmedCodeText ? trimmedCodeText.split('\\n').length : 0;
+                var isLongCode = lineCount >= 18;
+
+                var wrapBtn = document.createElement('button');
+                wrapBtn.type = 'button';
+                wrapBtn.className = 'ios-code-action-btn ios-code-wrap-btn';
+                wrapBtn.textContent = '换行';
+                wrapBtn.setAttribute('aria-pressed', 'false');
+                wrapBtn.hidden = true;
+                wrapBtn.addEventListener('click', function () {
+                    var wrapped = card.classList.toggle('is-wrapped');
+                    wrapBtn.classList.toggle('is-active', wrapped);
+                    wrapBtn.setAttribute('aria-pressed', String(wrapped));
+                    wrapBtn.textContent = wrapped ? '横向' : '换行';
+                });
+                actions.appendChild(wrapBtn);
+
+                var foldBtn = null;
+                var foldFooter = null;
+                if (isLongCode) {
+                    var expandSvg = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 15 5 5 5-5"></path><path d="m7 9 5-5 5 5"></path></svg>';
+                    var collapseSvg = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 20 5-5 5 5"></path><path d="m7 4 5 5 5-5"></path></svg>';
+                    var downSvg = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"></path></svg>';
+                    var upSvg = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m18 15-6-6-6 6"></path></svg>';
+
+                    card.classList.add('is-collapsible', 'is-collapsed');
+                    foldBtn = document.createElement('button');
+                    foldBtn.type = 'button';
+                    foldBtn.className = 'ios-code-action-btn ios-code-fold-btn';
+
+                    foldFooter = document.createElement('button');
+                    foldFooter.type = 'button';
+                    foldFooter.className = 'ios-code-fold-footer';
+
+                    var syncShareFoldUi = function (collapsed) {
+                        var headerText = collapsed ? ('展开全部 ' + lineCount + ' 行') : '收起代码';
+                        foldBtn.innerHTML = collapsed ? expandSvg : collapseSvg;
+                        foldBtn.title = headerText;
+                        foldBtn.setAttribute('aria-label', headerText);
+                        foldBtn.setAttribute('aria-expanded', String(!collapsed));
+                        foldFooter.innerHTML = '<span class="ios-code-fold-pill">' + (collapsed ? downSvg : upSvg) + '<span>' + (collapsed ? ('展开代码 · ' + lineCount + ' 行') : '收起代码') + '</span></span>';
+                        foldFooter.setAttribute('aria-expanded', String(!collapsed));
+                        foldFooter.setAttribute('aria-label', headerText);
+                    };
+                    syncShareFoldUi(true);
+
+                    var toggleFold = function () {
+                        var collapsed = card.classList.toggle('is-collapsed');
+                        syncShareFoldUi(collapsed);
+                    };
+                    foldBtn.addEventListener('click', toggleFold);
+                    foldFooter.addEventListener('click', toggleFold);
+                    actions.appendChild(foldBtn);
+                }
+
                 var btn = document.createElement('button');
                 btn.type = 'button';
                 btn.className = 'copy-code-btn';
@@ -2366,9 +2536,19 @@ function renderSharePage({ notepad, content, marked, sanitizeHtml }) {
                         btn.classList.remove('copied');
                     }, 1400);
                 });
-                bar.append(label, btn);
+                actions.appendChild(btn);
+                bar.append(label, actions);
                 pre.parentNode.insertBefore(card, pre);
                 card.append(bar, pre);
+                if (foldFooter) card.appendChild(foldFooter);
+
+                if (typeof requestAnimationFrame === 'function') {
+                    requestAnimationFrame(function () {
+                        if (pre.scrollWidth > pre.clientWidth + 8) {
+                            wrapBtn.hidden = false;
+                        }
+                    });
+                }
             });
 
             renderAllMermaid();

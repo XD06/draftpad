@@ -142,6 +142,10 @@ async function bootServer() {
             'const superLongLineWithoutWrapping = "0123456789_ABCDEFGHIJKLMNOPQRSTUVWXYZ_0123456789_ABCDEFGHIJKLMNOPQRSTUVWXYZ_0123456789_ABCDEFGHIJKLMNOPQRSTUVWXYZ";',
             '```',
             '',
+            '```javascript',
+            ...Array.from({ length: 22 }, (_, i) => `const foldStep${i + 1} = ${i + 1};`),
+            '```',
+            '',
             '```mermaid',
             'flowchart TD',
             '    A[接收目标/任务] --> B[理解与规划<br/>下一步该做什么]',
@@ -376,6 +380,81 @@ async function bootServer() {
         assert.equal(atBottom.activeText, atBottom.lastText, 'Scrolling to bottom should highlight the final TOC heading');
         assert.equal(atBottom.visibleInNav, true, 'Active TOC link must auto-scroll into view inside #rail-nav');
         assert.match(atBottom.tocCountText, /节 · 100%$/, `At bottom share TOC count should show 100%, got ${atBottom.tocCountText}`);
+
+        // Verify share page horizontal wrap toggle (card #0) and long code block folding (card #1 >= 18 lines)
+        const codeCardMetrics = await page.evaluate(() => {
+            const cards = Array.from(document.querySelectorAll('.markdown-body .ios-code-card'));
+            const wideCard = cards[0];
+            const longCard = cards[1];
+            const widePre = wideCard.querySelector('pre');
+            const wideCode = wideCard.querySelector('pre code');
+            const wrapBtn = wideCard.querySelector('.ios-code-wrap-btn');
+            const longPre = longCard.querySelector('pre');
+            const foldBtn = longCard.querySelector('.ios-code-fold-btn');
+            const foldFooter = longCard.querySelector('.ios-code-fold-footer');
+            return {
+                cardCount: cards.length,
+                wideCollapsible: wideCard.classList.contains('is-collapsible'),
+                wrapBtnVisible: Boolean(wrapBtn && !wrapBtn.hidden),
+                wrapBtnTextBefore: wrapBtn?.textContent.trim() || '',
+                wideWhiteSpaceBefore: getComputedStyle(wideCode).whiteSpace,
+                wideOverflowsBefore: widePre.scrollWidth > widePre.clientWidth,
+                longCollapsible: longCard.classList.contains('is-collapsible'),
+                longCollapsedBefore: longCard.classList.contains('is-collapsed'),
+                longPreHeightBefore: Math.round(longPre.getBoundingClientRect().height),
+                foldBtnVisible: Boolean(foldBtn && !foldBtn.hidden),
+                foldFooterVisible: Boolean(foldFooter && getComputedStyle(foldFooter).display !== 'none'),
+                foldFooterText: foldFooter?.textContent.trim() || ''
+            };
+        });
+        assert.equal(codeCardMetrics.cardCount, 2, 'Expected 2 fenced code cards on share page');
+        assert.equal(codeCardMetrics.wideCollapsible, false, '1-line wide code card must not collapse');
+        assert.equal(codeCardMetrics.wrapBtnVisible, true, 'Wide overflowing code card must reveal 换行 toggle button');
+        assert.equal(codeCardMetrics.wrapBtnTextBefore, '换行');
+        assert.equal(codeCardMetrics.wideWhiteSpaceBefore, 'pre', 'Code card should preserve horizontal code layout by default');
+        assert.equal(codeCardMetrics.wideOverflowsBefore, true, 'Long line should scroll horizontally inside pre container');
+        assert.equal(codeCardMetrics.longCollapsible, true, '22-line code card must be marked collapsible');
+        assert.equal(codeCardMetrics.longCollapsedBefore, true, '22-line code card must default collapsed on share page');
+        assert(codeCardMetrics.longPreHeightBefore <= 300, `Collapsed share code card height should cap near 290px, got ${codeCardMetrics.longPreHeightBefore}`);
+        assert.equal(codeCardMetrics.foldBtnVisible, true);
+        assert.equal(codeCardMetrics.foldFooterVisible, true);
+        assert(codeCardMetrics.foldFooterText.includes('22'), `Expected line count 22 in footer, got ${codeCardMetrics.foldFooterText}`);
+
+        // Toggle wrap ON then OFF on card #0
+        await page.locator('.markdown-body .ios-code-card').nth(0).locator('.ios-code-wrap-btn').click();
+        const wrappedState = await page.evaluate(() => {
+            const card = document.querySelectorAll('.markdown-body .ios-code-card')[0];
+            return {
+                hasClass: card.classList.contains('is-wrapped'),
+                btnText: card.querySelector('.ios-code-wrap-btn').textContent.trim(),
+                whiteSpace: getComputedStyle(card.querySelector('pre code')).whiteSpace,
+                scrollDiff: card.querySelector('pre').scrollWidth - card.querySelector('pre').clientWidth
+            };
+        });
+        assert.equal(wrappedState.hasClass, true);
+        assert.equal(wrappedState.btnText, '横向');
+        assert.equal(wrappedState.whiteSpace, 'pre-wrap');
+        assert(wrappedState.scrollDiff <= 2, `Wrapped code card should fit width without horizontal overflow, got ${wrappedState.scrollDiff}`);
+        await page.locator('.markdown-body .ios-code-card').nth(0).locator('.ios-code-wrap-btn').click();
+        assert.equal(await page.evaluate(() => document.querySelectorAll('.markdown-body .ios-code-card')[0].classList.contains('is-wrapped')), false);
+
+        // Expand long card via footer, then re-collapse via header icon button
+        await page.click('.markdown-body .ios-code-card.is-collapsible .ios-code-fold-footer');
+        const expandedCard = await page.evaluate(() => {
+            const card = document.querySelector('.markdown-body .ios-code-card.is-collapsible');
+            return {
+                collapsed: card.classList.contains('is-collapsed'),
+                height: Math.round(card.querySelector('pre').getBoundingClientRect().height),
+                headerExpanded: card.querySelector('.ios-code-fold-btn').getAttribute('aria-expanded'),
+                footerText: card.querySelector('.ios-code-fold-footer').textContent.trim()
+            };
+        });
+        assert.equal(expandedCard.collapsed, false);
+        assert(expandedCard.height > 360, `Expanded 22-line share code card should grow past 360px, got ${expandedCard.height}`);
+        assert.equal(expandedCard.headerExpanded, 'true');
+        assert.equal(expandedCard.footerText, '收起代码');
+        await page.click('.markdown-body .ios-code-card.is-collapsible .ios-code-fold-btn');
+        assert.equal(await page.evaluate(() => document.querySelector('.markdown-body .ios-code-card.is-collapsible').classList.contains('is-collapsed')), true);
 
         // Toggle source view on Mermaid card and back to diagram
         await page.click('.ios-mermaid-card .ios-mermaid-tools button:first-child');

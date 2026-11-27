@@ -348,6 +348,136 @@ html[data-initial-workspace="today"] #header-title {
     stroke-linejoin: round;
 }
 
+.typora-editor-shell .vditor-reset .vditor-wysiwyg__block[data-type="code-block"] .dumbpad-code-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+}
+
+.dumbpad-code-fold-btn,
+.dumbpad-code-fold-footer {
+    display: none;
+}
+
+.typora-editor-shell.is-reading-mode .vditor-reset .vditor-wysiwyg__block[data-type="code-block"].is-code-collapsible .dumbpad-code-fold-btn:not([hidden]) {
+    display: inline-grid;
+    width: 18px;
+    height: 18px;
+    padding: 0;
+    place-items: center;
+    border: 0;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--muted-text);
+    cursor: pointer;
+    opacity: 0.78;
+    transition: background-color 0.14s ease, color 0.14s ease, opacity 0.14s ease;
+}
+
+.typora-editor-shell.is-reading-mode .vditor-reset .vditor-wysiwyg__block[data-type="code-block"].is-code-collapsible .dumbpad-code-fold-btn svg {
+    width: 12px;
+    height: 12px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+.typora-editor-shell.is-reading-mode .vditor-reset .vditor-wysiwyg__block[data-type="code-block"].is-code-collapsible .dumbpad-code-fold-btn:hover,
+.typora-editor-shell.is-reading-mode .vditor-reset .vditor-wysiwyg__block[data-type="code-block"].is-code-collapsible .dumbpad-code-fold-btn:focus-visible {
+    outline: none;
+    background: color-mix(in srgb, var(--primary-color) 12%, transparent);
+    color: var(--primary-color);
+    opacity: 1;
+}
+
+.typora-editor-shell.is-reading-mode .vditor-reset .vditor-wysiwyg__block[data-type="code-block"].is-code-collapsible > pre {
+    margin-bottom: 0 !important;
+    border-bottom: 0;
+    border-bottom-left-radius: 0;
+    border-bottom-right-radius: 0;
+}
+
+.typora-editor-shell.is-reading-mode .vditor-reset .vditor-wysiwyg__block[data-type="code-block"].is-code-collapsible.is-code-collapsed > pre {
+    max-height: 296px;
+    overflow: hidden;
+}
+
+.typora-editor-shell.is-reading-mode .vditor-reset .vditor-wysiwyg__block[data-type="code-block"].is-code-collapsible > .dumbpad-code-fold-footer:not([hidden]) {
+    position: relative;
+    display: flex;
+    width: 100%;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    padding: 4px 12px 10px;
+    margin: 0 0 1em;
+    border: 1px solid color-mix(in srgb, var(--border-color) 80%, transparent);
+    border-top: 0;
+    border-radius: 0 0 8px 8px;
+    background: var(--code-bg);
+    cursor: pointer;
+}
+
+.typora-editor-shell.is-reading-mode .vditor-reset .vditor-wysiwyg__block[data-type="code-block"].is-code-collapsible:not(.is-code-collapsed) > .dumbpad-code-fold-footer:not([hidden]) {
+    padding: 7px 12px 9px;
+    border-top: 1px solid color-mix(in srgb, var(--border-color) 42%, transparent);
+}
+
+.typora-editor-shell.is-reading-mode .vditor-reset .vditor-wysiwyg__block[data-type="code-block"].is-code-collapsible.is-code-collapsed > .dumbpad-code-fold-footer:not([hidden])::before {
+    content: "";
+    position: absolute;
+    left: 1px;
+    right: 1px;
+    bottom: 100%;
+    height: 54px;
+    pointer-events: none;
+    z-index: 2;
+    background: linear-gradient(
+        180deg,
+        color-mix(in srgb, var(--code-bg) 0%, transparent) 0%,
+        color-mix(in srgb, var(--code-bg) 82%, transparent) 58%,
+        var(--code-bg) 100%
+    );
+}
+
+.typora-editor-shell.is-reading-mode .vditor-reset .vditor-wysiwyg__block[data-type="code-block"].is-code-collapsible .dumbpad-code-fold-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 12px;
+    border-radius: 999px;
+    border: 1px solid color-mix(in srgb, var(--border-color) 85%, transparent);
+    background: var(--textarea-bg);
+    color: var(--muted-text);
+    font: 500 11.5px/1.2 var(--font-sans);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+    transition: border-color 0.16s ease, color 0.16s ease, background-color 0.16s ease;
+}
+
+.typora-editor-shell.is-reading-mode .vditor-reset .vditor-wysiwyg__block[data-type="code-block"].is-code-collapsible .dumbpad-code-fold-pill svg {
+    width: 12px;
+    height: 12px;
+    flex-shrink: 0;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+.typora-editor-shell.is-reading-mode .vditor-reset .vditor-wysiwyg__block[data-type="code-block"].is-code-collapsible > .dumbpad-code-fold-footer:hover .dumbpad-code-fold-pill,
+.typora-editor-shell.is-reading-mode .vditor-reset .vditor-wysiwyg__block[data-type="code-block"].is-code-collapsible > .dumbpad-code-fold-footer:focus-visible .dumbpad-code-fold-pill {
+    border-color: color-mix(in srgb, var(--primary-color) 38%, transparent);
+    color: var(--primary-color);
+    background: color-mix(in srgb, var(--primary-color) 6%, var(--textarea-bg));
+}
+
+.typora-editor-shell.is-reading-mode .vditor-reset .vditor-wysiwyg__block[data-type="code-block"].is-code-collapsible > .dumbpad-code-fold-footer:focus-visible {
+    outline: none;
+}
+
 .dumbpad-code-language-popover {
     position: fixed;
     z-index: 4300;
