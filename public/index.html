@@ -98,7 +98,8 @@
     <link rel="stylesheet" href="Assets/styles.css">
     <link rel="stylesheet" href="Assets/preview-styles.css">
     <!-- 方案 A 附件浮层：作用域内的 demo 样式，不改动 styles.css 的任何规则 -->
-    <link rel="stylesheet" href="Assets/attachment-viewer-modal.css">
+    <link rel="stylesheet" href="Assets/attachment-viewer-modal.css" media="print" onload="this.media='all'">
+    <noscript><link rel="stylesheet" href="Assets/attachment-viewer-modal.css"></noscript>
     <!-- 代码块浅色 token 配色（暗色覆盖在 styles.css [data-theme=dark] 规则内）。
          旧 vditor 自带该样式，切换 Tiptap 后由页面直接加载。 -->
     <link rel="stylesheet" href="/css/@highlightjs/github.min.css">
@@ -111,10 +112,16 @@
         }
     </script>
     <noscript><link rel="stylesheet" href="Assets/thoughts.css"></noscript>
-    <link rel="stylesheet" href="Assets/today-drafts.css">
+    <link id="today-drafts-stylesheet" rel="stylesheet" href="Assets/today-drafts.css" media="print" onload="this.media='all'">
+    <script>
+        if (document.documentElement.dataset.initialWorkspace === 'today') {
+            document.getElementById('today-drafts-stylesheet').media = 'all';
+        }
+    </script>
+    <noscript><link rel="stylesheet" href="Assets/today-drafts.css"></noscript>
     <link rel="stylesheet" href="Assets/ios-theme.css">
     <!-- Warm the editor engine in parallel with the CSS and app.js so the rich
-         editor is ready sooner; the app types into an instant boot editor first
+         editor is ready sooner; the app shows an isomorphic boot preview first
          and hands off seamlessly once this finishes loading. -->
     <link rel="modulepreload" href="tiptap-editor.js">
     <link rel="modulepreload" href="managers/tiptap-runtime.js">
@@ -124,12 +131,13 @@
     <link rel="modulepreload" href="managers/tiptap-file-command.js">
     <link rel="modulepreload" href="managers/tiptap-image-interactions.js">
     <link rel="preload" href="/vendor/tiptap/tiptap.bundle.js" as="script">
-    <link rel="preload" href="/vendor/vditor/index.css" as="style">
-    <!-- Preload the reading webfont so the instant boot editor and the vditor
-         surface both paint in "DumbPad Reading" from the very first frame. Without
-         this the boot textarea flashes its system fallback (which renders ~5.5%
-         wider) for ~200ms before the font swaps in, causing a visible reflow. -->
-    <link rel="preload" href="/font/changerwencai.woff2?v=2" as="font" type="font/woff2" crossorigin>
+    <link id="vditor-editor-css" rel="stylesheet" href="/vendor/vditor/index.css" media="print" onload="this.media='all';this.dataset.loaded='true'">
+    <script>
+        if (document.documentElement.dataset.initialWorkspace === 'editor') {
+            document.getElementById('vditor-editor-css').media = 'all';
+        }
+    </script>
+    <noscript><link rel="stylesheet" href="/vendor/vditor/index.css"></noscript>
     <link rel="manifest" href="Assets/manifest.json?v=3">
 </head>
 
@@ -286,15 +294,9 @@
                 </div>
                 <div id="hybrid-editor" class="hybrid-editor" role="textbox" aria-label="Markdown editor"
                     style="display:none"></div>
-                <!-- Instant boot editor: a plain textarea shown while the rich
-                     editor loads, so the user can read and type immediately. The
-                     .boot-editor rule styles it as the SAME centred white card
-                     (background/border/shadow/800px) as the live vditor surface,
-                     so the boot->vditor handoff does not change the visible
-                     article region. Inline styles are kept minimal and must NOT
-                     set background or border (an earlier background:transparent
-                       hid the card, so the 800px card appeared out of nowhere at
-                     handoff -- the "region swelling" the user reported). -->
+                <div id="boot-preview" class="boot-preview" hidden aria-hidden="true"><div id="boot-preview-scroller" class="boot-preview-scroller"><div id="boot-preview-content" class="boot-preview-content"></div></div></div>
+                <!-- Instant boot editor: fallback plain textarea used when no
+                     rendered snapshot matches or when source mode is active. -->
                 <textarea id="boot-editor" class="boot-editor" hidden aria-label="快速输入"
                     style="outline:none;resize:none;box-sizing:border-box;"
                     placeholder="开始输入…" autocomplete="off" autocapitalize="sentences" spellcheck="false"></textarea>
@@ -330,11 +332,14 @@
             </aside>
         </main>
         <script>
-            // 0ms 首帧预水合：在 app.js 及其 ES 模块图下载完成前，同步从 localStorage
-            // 恢复上次打开的文章标题与正文到 .boot-editor 纸面卡片，消除「先闪英文空状态、
-            // 再弹白卡片、标题再跳变」的启动割裂感。
+            // 0ms 首帧预水合：优先使用同构渲染态 HTML 快照（#boot-preview）直接
+            // 呈现已排版正文，彻底消除冷重启停留在 Markdown 源码态的观感；仅在无匹配
+            // 快照或处于源码模式时才回退 #boot-editor。
             (function () {
                 if (document.documentElement.dataset.initialWorkspace !== 'editor') return;
+                if ('scrollRestoration' in history) {
+                    history.scrollRestoration = 'manual';
+                }
                 try {
                     var raw = localStorage.getItem('dumbpad_startup_cache_v1');
                     if (!raw) return;
@@ -365,10 +370,91 @@
                     if (!note || typeof note.content !== 'string') return;
                     var emptyState = document.getElementById('empty-state');
                     var hybridEditor = document.getElementById('hybrid-editor');
+                    var bootPreview = document.getElementById('boot-preview');
+                    var bootPreviewScroller = document.getElementById('boot-preview-scroller');
+                    var bootPreviewContent = document.getElementById('boot-preview-content');
                     var bootEditor = document.getElementById('boot-editor');
+                    var isReadingMode = localStorage.getItem('dumbpad_reading_mode') === 'true';
+                    var isSourceMode = false;
+                    try {
+                        isSourceMode = JSON.parse(localStorage.getItem('dumbpad_source_mode') || 'false') === true;
+                    } catch (_sourceErr) {}
+                    var savedScrollTop = 0;
+                    try {
+                        var caretsRaw = localStorage.getItem('dumbpad_caret_positions_v1');
+                        if (caretsRaw) {
+                            var carets = JSON.parse(caretsRaw);
+                            var snap = carets && carets[selected.id];
+                            if (snap && Number(snap.scrollTop) > 0) savedScrollTop = Number(snap.scrollTop) || 0;
+                        }
+                    } catch (_caretErr) {}
+
+                    var computeSig = function (text) {
+                        var str = String(text || '');
+                        var h = 0x811c9dc5;
+                        for (var idx = 0; idx < str.length; idx += 1) {
+                            h ^= str.charCodeAt(idx);
+                            h = Math.imul(h, 0x01000193);
+                        }
+                        return str.length + ':' + (h >>> 0).toString(16);
+                    };
+
+                    var snapHtml = null;
+                    var expectedSig = computeSig(note.content);
+                    if (!isSourceMode && bootPreview && bootPreviewScroller && bootPreviewContent) {
+                        try {
+                            var snapRaw = localStorage.getItem('dumbpad_rendered_html_v1');
+                            if (snapRaw) {
+                                var snapStore = JSON.parse(snapRaw);
+                                var snapEntry = snapStore && snapStore.version === 1 && snapStore.entries && snapStore.entries[selected.id];
+                                if (snapEntry && snapEntry.sig === expectedSig && typeof snapEntry.html === 'string' && (note.content === '' || snapEntry.html.length > 0)) {
+                                    snapHtml = snapEntry.html;
+                                }
+                            }
+                        } catch (_snapErr) {}
+                    }
+
+                    if (snapHtml !== null) {
+                        if (isReadingMode) document.body.classList.add('reading-mode-active');
+                        if (emptyState) emptyState.style.display = 'none';
+                        if (hybridEditor) hybridEditor.style.display = 'none';
+                        if (bootEditor) bootEditor.hidden = true;
+                        bootPreview.className = 'hybrid-editor typora-editor-shell vditor boot-preview' + (isReadingMode ? ' is-reading-mode' : '');
+                        bootPreviewScroller.className = 'vditor-wysiwyg';
+                        bootPreviewContent.className = 'tiptap ProseMirror vditor-reset';
+                        bootPreviewContent.innerHTML = snapHtml.replace(/<script\b[\s\S]*?<\/script>/gi, '');
+                        bootPreviewContent.querySelectorAll('li[data-doing="true"] input[type="checkbox"]').forEach(function (cb) {
+                            if (!cb.checked) cb.indeterminate = true;
+                        });
+                        bootPreview.hidden = false;
+                        bootPreview.dataset.prehydratedNotepadId = selected.id;
+                        bootPreview.dataset.prehydratedSig = expectedSig;
+                        if (savedScrollTop > 0) {
+                            if (window.innerWidth <= 980) {
+                                document.documentElement.scrollTop = savedScrollTop;
+                                window.scrollTo(0, savedScrollTop);
+                                requestAnimationFrame(function () { window.scrollTo(0, savedScrollTop); });
+                            } else {
+                                bootPreviewScroller.scrollTop = savedScrollTop;
+                            }
+                        }
+                        if (!isReadingMode) {
+                            bootPreview.addEventListener('pointerdown', function (ev) {
+                                if (ev.button && ev.button !== 0) return;
+                                window.__dumbpadBootTap = {
+                                    notepadId: selected.id,
+                                    clientX: ev.clientX,
+                                    clientY: ev.clientY,
+                                    ts: Date.now()
+                                };
+                            }, { passive: true });
+                        }
+                        return;
+                    }
+
                     if (emptyState) emptyState.style.display = 'none';
                     if (hybridEditor) hybridEditor.style.display = 'block';
-                    if (bootEditor && localStorage.getItem('dumbpad_reading_mode') !== 'true') {
+                    if (bootEditor && !isReadingMode) {
                         bootEditor.value = note.content;
                         bootEditor.hidden = false;
                         bootEditor.dataset.prehydratedNotepadId = selected.id;
@@ -383,13 +469,8 @@
                                 delete bootEditor.dataset.overflowing;
                             }
                         }, { once: true });
-                        var caretsRaw = localStorage.getItem('dumbpad_caret_positions_v1');
-                        if (caretsRaw) {
-                            var carets = JSON.parse(caretsRaw);
-                            var snap = carets && carets[selected.id];
-                            if (snap && Number(snap.scrollTop) > 0) {
-                                bootEditor.scrollTop = Number(snap.scrollTop) || 0;
-                            }
+                        if (savedScrollTop > 0) {
+                            bootEditor.scrollTop = savedScrollTop;
                         }
                     }
                 } catch (_error) {

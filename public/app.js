@@ -42,6 +42,12 @@ import { ArticleMetaFooter } from './managers/article-meta-footer.js';
 import { collectTocSectionEntries, computeReadingProgress } from './managers/heading-index.js';
 import { applyFloatingActionsVisibility } from './managers/floating-actions-config.js';
 import { deriveArticleTitle, DEFAULT_NOTEPAD_NAME_RE } from './managers/article-title.js';
+import {
+    computeContentSignature,
+    loadRenderedSnapshot,
+    saveRenderedSnapshot,
+    removeRenderedSnapshot
+} from './managers/rendered-snapshot-cache.js';
 import { createCommandSearchManager } from './managers/command-search/command-search-manager.js';
 import { registerResultType } from './managers/command-search/result-type-registry.js';
 
@@ -170,8 +176,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     // transparently reads/writes it when the rich editor isn't ready yet, so the
     // rest of the app keeps using `editor.value` / `editor.focus()` unchanged.
     const bootEditor = document.getElementById('boot-editor');
+    const bootPreview = document.getElementById('boot-preview');
+    const bootPreviewScroller = document.getElementById('boot-preview-scroller');
+    const bootPreviewContent = document.getElementById('boot-preview-content');
     let bootEditorActive = false;
     let bootEditorWired = false;
+    let bootPreviewActive = Boolean(bootPreview && !bootPreview.hidden);
 
     // Article record watermark (创建/更新/修改次数): a detached overlay on
     // .editor-main, deliberately outside the Vditor scroll container so it can
@@ -185,6 +195,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         // 源码模式下卡片被 .is-source-mode 藏掉（rect 塌到 0），此时可见的
         // 「卡片」是同一滚动层里的源码 textarea——不切过去，水印会跳到顶部。
         getCard: () => {
+            if (bootPreviewActive && bootPreview && !bootPreview.hidden) {
+                return bootPreview.querySelector('.vditor-wysiwyg .vditor-reset') || null;
+            }
             const shell = document.getElementById('hybrid-editor');
             if (shell?.classList.contains('is-source-mode')) {
                 return shell.querySelector('.tiptap-source-textarea');
@@ -370,15 +383,93 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     }
 
-    // Reveal the editing area, choosing the instant boot editor while the rich
-    // editor is still loading and the rich editor once it is ready.
+    function deactivateBootPreview() {
+        bootPreviewActive = false;
+        if (!bootPreview) return;
+        bootPreview.hidden = true;
+        bootPreview.className = 'boot-preview';
+        if (bootPreviewScroller) bootPreviewScroller.className = 'boot-preview-scroller';
+        if (bootPreviewContent) {
+            bootPreviewContent.className = 'boot-preview-content';
+            bootPreviewContent.innerHTML = '';
+        }
+        delete bootPreview.dataset.prehydratedNotepadId;
+        delete bootPreview.dataset.prehydratedSig;
+    }
+
+    function activateBootPreview(notepadId, content) {
+        if (!bootPreview || !bootPreviewScroller || !bootPreviewContent || editorInstance) return false;
+        if (storageManager.load(SOURCE_MODE_KEY) === true) return false;
+        const expectedSig = computeContentSignature(content || '');
+        const reading = Boolean(isReadingMode || localStorage.getItem('dumbpad_reading_mode') === 'true');
+        if (!bootPreview.hidden
+            && bootPreview.dataset.prehydratedNotepadId === notepadId
+            && bootPreview.dataset.prehydratedSig === expectedSig) {
+            bootPreviewActive = true;
+            bootPreview.className = `hybrid-editor typora-editor-shell vditor boot-preview${reading ? ' is-reading-mode' : ''}`;
+            bootPreviewScroller.className = 'vditor-wysiwyg';
+            bootPreviewContent.className = 'tiptap ProseMirror vditor-reset';
+            if (bootEditor) bootEditor.hidden = true;
+            bootEditorActive = false;
+            if (window.matchMedia?.('(max-width: 980px)')?.matches && window.scrollY < 2) {
+                const savedScrollTop = Number(loadCaretPositions()[notepadId]?.scrollTop) || 0;
+                if (savedScrollTop > 0) window.scrollTo(0, savedScrollTop);
+            }
+            return true;
+        }
+        const snap = loadRenderedSnapshot(notepadId, content || '');
+        if (!snap || (content && !snap.html)) return false;
+        bootPreview.className = `hybrid-editor typora-editor-shell vditor boot-preview${reading ? ' is-reading-mode' : ''}`;
+        bootPreviewScroller.className = 'vditor-wysiwyg';
+        bootPreviewContent.className = 'tiptap ProseMirror vditor-reset';
+        bootPreviewContent.innerHTML = snap.html.replace(/<script\b[\s\S]*?<\/script>/gi, '');
+        bootPreviewContent.querySelectorAll('li[data-doing="true"] input[type="checkbox"]').forEach((cb) => {
+            if (!cb.checked) cb.indeterminate = true;
+        });
+        bootPreview.hidden = false;
+        bootPreview.dataset.prehydratedNotepadId = notepadId;
+        bootPreview.dataset.prehydratedSig = snap.sig;
+        bootPreviewActive = true;
+        deactivateBootEditor();
+        const savedCaret = loadCaretPositions()[notepadId];
+        const savedScrollTop = Number(savedCaret?.scrollTop) || 0;
+        if (savedScrollTop > 0) {
+            if (window.matchMedia?.('(max-width: 980px)')?.matches) {
+                requestAnimationFrame(() => window.scrollTo(0, savedScrollTop));
+            } else {
+                bootPreviewScroller.scrollTop = savedScrollTop;
+            }
+        }
+        return true;
+    }
+
+    function persistCurrentRenderedSnapshot() {
+        if (!editorInstance || editorInstance.sourceMode) return false;
+        if (!currentNotepadId || renderedEditorNotepadId !== currentNotepadId) return false;
+        const root = editorInstance.editor?.view?.dom;
+        if (!root) return false;
+        return saveRenderedSnapshot(currentNotepadId, editor.value, root);
+    }
+
+    // Reveal the editing area, preferring the isomorphic rendered preview while
+    // the rich editor loads, falling back to the boot textarea when needed.
     function showEditingSurface() {
         const emptyState = document.getElementById('empty-state');
         const hybridEditor = document.getElementById('hybrid-editor');
         if (emptyState) emptyState.style.display = 'none';
+        if (editorInstance) {
+            deactivateBootPreview();
+            deactivateBootEditor();
+            if (hybridEditor) hybridEditor.style.display = 'block';
+            return;
+        }
+        if (activateBootPreview(currentNotepadId, pendingEditorValue)) {
+            if (hybridEditor) hybridEditor.style.display = 'none';
+            return;
+        }
+        deactivateBootPreview();
         if (hybridEditor) hybridEditor.style.display = 'block';
-        if (editorInstance) deactivateBootEditor();
-        else activateBootEditor();
+        activateBootEditor();
     }
 
     const themeToggle = document.getElementById('theme-toggle');
@@ -622,6 +713,43 @@ document.addEventListener('DOMContentLoaded', async () => {
         } catch (_error) {
             // Caret recovery is best effort and must never interrupt editing.
         }
+    }
+
+    function updateSavedScrollTop(notepadId, scrollTop) {
+        if (!notepadId || !Number.isFinite(Number(scrollTop))) return;
+        try {
+            const positions = loadCaretPositions();
+            const existing = positions[notepadId] && typeof positions[notepadId] === 'object'
+                ? positions[notepadId]
+                : {};
+            positions[notepadId] = {
+                mode: existing.mode === 'source' ? 'source' : 'wysiwyg',
+                offset: Math.max(0, Number(existing.offset) || 0),
+                visibleOffset: Math.max(0, Number(existing.visibleOffset) || 0),
+                scrollTop: Math.max(0, Math.round(Number(scrollTop))),
+                updatedAt: Date.now()
+            };
+            localStorage.setItem(CARET_POSITIONS_KEY, JSON.stringify(positions));
+        } catch (_error) {
+            // Caret recovery is best effort and must never interrupt editing.
+        }
+    }
+
+    function persistCurrentEditorScroll(notepadId = currentNotepadId) {
+        if (!notepadId) return;
+        if (editorInstance) {
+            saveEditorCaretForNotepad(notepadId, editorInstance.getPersistentCaretSnapshot?.());
+            return;
+        }
+        let scrollTop = null;
+        if (bootPreviewActive && bootPreview && !bootPreview.hidden) {
+            scrollTop = window.matchMedia?.('(max-width: 980px)')?.matches
+                ? (window.scrollY || document.documentElement.scrollTop || 0)
+                : (bootPreviewScroller?.scrollTop || 0);
+        } else if (bootEditorActive && bootEditor && !bootEditor.hidden) {
+            scrollTop = bootEditor.scrollTop || 0;
+        }
+        if (scrollTop !== null) updateSavedScrollTop(notepadId, scrollTop);
     }
 
     function restoreEditorCaretForNotepad(notepadId) {
@@ -2348,6 +2476,13 @@ document.addEventListener('DOMContentLoaded', async () => {
                 setCurrentNoteVersion(notepadId, data.version);
                 cacheSyncedNote(notepadId, data.content || '', { version: data.version });
                 setStartupSyncStatus('synced', '已同步');
+                if (editorInstance && !editorInstance.sourceMode && notepadId === currentNotepadId && typeof scheduleIdleTask === 'function') {
+                    scheduleIdleTask(() => {
+                        if (currentNotepadId === notepadId && typeof persistCurrentRenderedSnapshot === 'function') {
+                            persistCurrentRenderedSnapshot();
+                        }
+                    });
+                }
 
                 if (!renderedFromCache) {
                     const currentNotepad = currentNotepads.find(n => n.id === notepadId);
@@ -2591,7 +2726,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     // focusing, otherwise focus() pulls the viewport back to the old caret
     // position and the jump appears to land at the top of the document.
     function focusEditorHeading(headingId, lineIndex) {
-        const root = document.querySelector('.vditor-wysiwyg .vditor-reset');
+        const root = document.querySelector('#hybrid-editor .vditor-wysiwyg .vditor-reset');
         let heading = headingId && root ? root.querySelector(`#${CSS.escape(headingId)}`) : null;
         if (!heading && root) {
             const tocIndex = lastGeneratedToc.findIndex(item => item.id === headingId);
@@ -2650,7 +2785,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (progressEl.textContent) progressEl.textContent = '';
             return;
         }
-        const scroller = document.querySelector('.vditor-wysiwyg');
+        const scroller = document.querySelector('#hybrid-editor .vditor-wysiwyg');
         const isPageScroll = window.matchMedia?.('(max-width: 980px)')?.matches
             || !scroller
             || scroller.scrollHeight <= scroller.clientHeight + 4;
@@ -2685,7 +2820,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     let tocMarkRefs = [];
     function setupTocScrollSync() {
         if (tocScrollSyncBound) return;
-        const scroller = document.querySelector('.vditor-wysiwyg');
+        const scroller = document.querySelector('#hybrid-editor .vditor-wysiwyg');
         if (!scroller) return;
         tocScrollSyncBound = true;
         let frame = 0;
@@ -2706,7 +2841,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     function updateActiveTocItem() {
         const tocList = document.getElementById('article-toc-list');
-        const scroller = document.querySelector('.vditor-wysiwyg');
+        const scroller = document.querySelector('#hybrid-editor .vditor-wysiwyg');
         const root = scroller?.querySelector('.vditor-reset');
         if (!tocList || !root) return;
         const items = Array.from(tocList.querySelectorAll('.toc-item'));
@@ -2780,21 +2915,28 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     function loadStylesheetOnce(id, href) {
-        // Only treat an *applied* stylesheet as "already loaded". We must NOT match a
-        // `<link rel="preload">` here: index.html preloads /vendor/vditor/index.css to warm
-        // the cache, and matching that preload would make us skip creating the real
-        // stylesheet — leaving vditor's base CSS unapplied (and tripping Chrome's
-        // "preloaded but not used" warning). Requiring rel="stylesheet" lets the preload
-        // simply feed the cache while this creates the actual applied stylesheet.
         const existing = document.getElementById(id) || document.querySelector(`link[rel="stylesheet"][href="${href}"]`);
-        if (existing) return Promise.resolve(existing);
+        if (existing) {
+            if (existing.media && existing.media !== 'all') existing.media = 'all';
+            if (existing.sheet || existing.dataset.loaded === 'true') return Promise.resolve(existing);
+            return new Promise((resolve, reject) => {
+                existing.addEventListener('load', () => {
+                    existing.dataset.loaded = 'true';
+                    resolve(existing);
+                }, { once: true });
+                existing.addEventListener('error', () => reject(new Error(`Failed to load stylesheet: ${href}`)), { once: true });
+            });
+        }
 
         return new Promise((resolve, reject) => {
             const link = document.createElement('link');
             link.id = id;
             link.rel = 'stylesheet';
             link.href = href;
-            link.onload = () => resolve(link);
+            link.onload = () => {
+                link.dataset.loaded = 'true';
+                resolve(link);
+            };
             link.onerror = () => reject(new Error(`Failed to load stylesheet: ${href}`));
             document.head.appendChild(link);
         });
@@ -2892,7 +3034,25 @@ document.addEventListener('DOMContentLoaded', async () => {
                 const [{ HybridMarkdownEditor }] = await Promise.all([
                     import('./tiptap-editor.js')
                 ]);
-                editorInstance = new HybridMarkdownEditor(document.getElementById('hybrid-editor'), {
+                const hybridEditorEl = document.getElementById('hybrid-editor');
+                const previewWasActive = bootPreviewActive && bootPreview && !bootPreview.hidden;
+                const isMobileViewport = Boolean(window.matchMedia?.('(max-width: 980px)')?.matches);
+                const livePreviewScrollTop = previewWasActive
+                    ? (isMobileViewport
+                        ? (window.scrollY || document.documentElement.scrollTop || 0)
+                        : (bootPreviewScroller?.scrollTop || 0))
+                    : null;
+                const bootTap = (previewWasActive && window.__dumbpadBootTap?.notepadId === currentNotepadId)
+                    ? window.__dumbpadBootTap
+                    : null;
+                window.__dumbpadBootTap = null;
+
+                // 同构原子交接（零 await）：先恢复 #hybrid-editor 并同步卸载 #boot-preview，
+                // 避免双层同时占流或 .tiptap 查询撞到占位节点。
+                if (hybridEditorEl) hybridEditorEl.style.display = 'block';
+                if (previewWasActive) deactivateBootPreview();
+
+                editorInstance = new HybridMarkdownEditor(hybridEditorEl, {
                     performanceMonitor: editorPerformanceMonitor.enabled ? editorPerformanceMonitor : null,
                     onCaretChange: snapshot => {
                         if (activeNotepadLoaded) saveEditorCaretForNotepad(currentNotepadId, snapshot);
@@ -2927,7 +3087,27 @@ document.addEventListener('DOMContentLoaded', async () => {
                     renderedEditorContent = pendingEditorValue;
                 }
                 editorInstance.setReadingMode(isReadingMode);
-                if (pendingCaretRestoreNotepadId) restoreEditorCaretForNotepad(pendingCaretRestoreNotepadId);
+                if (previewWasActive && livePreviewScrollTop !== null && !bootTap) {
+                    updateSavedScrollTop(currentNotepadId, livePreviewScrollTop);
+                }
+                if (bootTap && !isReadingMode && storageManager.load(SOURCE_MODE_KEY) !== true) {
+                    pendingCaretRestoreNotepadId = null;
+                    const view = editorInstance.editor?.view;
+                    const hit = view?.posAtCoords?.({ left: bootTap.clientX, top: bootTap.clientY });
+                    if (hit && Number.isFinite(hit.pos)) {
+                        editorInstance.editor?.commands?.setTextSelection?.(hit.pos);
+                    }
+                    editorInstance.focus({ preventScroll: true });
+                } else if (pendingCaretRestoreNotepadId) {
+                    restoreEditorCaretForNotepad(pendingCaretRestoreNotepadId);
+                }
+                if (previewWasActive && livePreviewScrollTop !== null) {
+                    if (isMobileViewport) {
+                        window.scrollTo(0, livePreviewScrollTop);
+                    } else if (editorInstance.scroller) {
+                        editorInstance.scroller.scrollTop = livePreviewScrollTop;
+                    }
+                }
                 if (bootWasActive) {
                     // The opaque boot textarea covers the rich editor while it mounts.
                     // Vditor renders its content asynchronously (in its `after` hook), so
@@ -2976,6 +3156,16 @@ document.addEventListener('DOMContentLoaded', async () => {
                     // 「刷新即源码」这形态的第一跳，而那正是用户最常复现的一条。
                     installCaretTraceIfEnabled(editorInstance);
                     restoreSourceModeIfRequested();
+                    if (previewWasActive && !editorInstance.sourceMode && livePreviewScrollTop !== null && !bootTap) {
+                        if (isMobileViewport) {
+                            window.scrollTo(0, livePreviewScrollTop);
+                        } else if (editorInstance.scroller) {
+                            editorInstance.scroller.scrollTop = livePreviewScrollTop;
+                        }
+                    }
+                    scheduleIdleTask(() => {
+                        persistCurrentRenderedSnapshot();
+                    });
                 }, () => {});
                 return editorInstance;
             })().catch(error => {
@@ -3354,6 +3544,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (savedContentStillCurrent) {
                 hasUnsavedChanges = false;
                 cacheSyncedNote(targetNotepadId, content, { version: result.version });
+                persistCurrentRenderedSnapshot();
                 setStartupSyncStatus('synced', '已同步');
                 dirtyConflictNotepadIds.delete(targetNotepadId);
                 hideNoteConflictToast();
@@ -3919,6 +4110,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 throw new Error(payload?.error || 'Error deleting notepad');
             }
             if (notepad) wsClient.sendUpdate('notepad_change', { action: 'delete', notepadId: id, notepadName: notepad.name });
+            removeRenderedSnapshot(id);
             toaster.show('已移入垃圾桶');
         } catch (err) {
             console.error('Error deleting notepad:', err);
@@ -4140,7 +4332,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         // targetNotepadId, so once currentNotepadId changes the pending save
         // would be skipped — leaving the old notepad with unsynced content.
         flushPendingNoteSave();
-        saveEditorCaretForNotepad(currentNotepadId, editorInstance?.getPersistentCaretSnapshot?.());
+        if (activeNotepadLoaded) {
+            persistCurrentRenderedSnapshot();
+            saveEditorCaretForNotepad(currentNotepadId, editorInstance?.getPersistentCaretSnapshot?.());
+        }
         currentNotepadId = selectedNotepad.id;
         cacheNotepads(null, currentNotepadId, { deferPersist: true });
         activeNotepadLoaded = false;
@@ -4154,6 +4349,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             const hybridEditor = document.getElementById('hybrid-editor');
             emptyState.style.display = 'flex';
             hybridEditor.style.display = 'none';
+            deactivateBootPreview();
             deactivateBootEditor();
             // No valid notepad selected — avoid any further loading/rendering
             return;
@@ -4565,6 +4761,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             } else {
                 document.body.classList.remove('reading-mode-active');
             }
+            if (bootPreviewActive && bootPreview) {
+                bootPreview.classList.toggle('is-reading-mode', isReadingMode);
+            }
             readingHeadroom.reset();
             applyCurrentNotepadTitle();
 
@@ -4653,7 +4852,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
 
         window.addEventListener('pagehide', () => {
-            saveEditorCaretForNotepad(currentNotepadId, editorInstance?.getPersistentCaretSnapshot?.());
+            persistCurrentRenderedSnapshot();
+            if (editorInstance) saveEditorCaretForNotepad(currentNotepadId, editorInstance.getPersistentCaretSnapshot?.());
+            else persistCurrentEditorScroll(currentNotepadId);
             noteSyncController.flushPendingCacheWrite();
             // 防抖加长后，关闭/切后台时把还在窗口内的输入立即送出
             // （keepalive 让请求在页面卸载后仍能完成；失败由本地脏缓存
@@ -4663,6 +4864,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         document.addEventListener('visibilitychange', () => {
             if (document.visibilityState === 'hidden') {
+                persistCurrentRenderedSnapshot();
+                persistCurrentEditorScroll(currentNotepadId);
                 noteSyncController.flushPendingCacheWrite();
                 flushPendingNoteSave();
                 return;
@@ -4775,6 +4978,19 @@ document.addEventListener('DOMContentLoaded', async () => {
         // Scroll Helper Logic
         // Icon follows scroll direction: scrolling down → ↓↓, scrolling up → ↑↑
         let scrollDir = 'down';
+        let scrollPositionSaveTimeout = null;
+        const scheduleScrollPositionSave = () => {
+            if (!(activeNotepadLoaded || bootPreviewActive)) return;
+            if ((workspaceRouter?.activeWorkspace ?? 'editor') !== 'editor') return;
+            if (!currentNotepadId) return;
+            clearTimeout(scrollPositionSaveTimeout);
+            scrollPositionSaveTimeout = setTimeout(() => {
+                scrollPositionSaveTimeout = null;
+                if (!(activeNotepadLoaded || bootPreviewActive)) return;
+                if ((workspaceRouter?.activeWorkspace ?? 'editor') !== 'editor') return;
+                persistCurrentEditorScroll(currentNotepadId);
+            }, 180);
+        };
 
         if (scrollBtn) {
             const scrollStateByTarget = new WeakMap();
@@ -4782,7 +4998,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                 const sourceEditor = document.querySelector('.typora-editor-shell.is-source-mode .typora-source-editor');
                 if (sourceEditor && sourceEditor.scrollHeight > sourceEditor.clientHeight + 2) return sourceEditor;
 
-                const wysiwyg = document.querySelector('.typora-editor-shell .vditor-wysiwyg');
+                const wysiwyg = document.querySelector('#hybrid-editor .vditor-wysiwyg')
+                    || document.querySelector('#boot-preview:not([hidden]) .vditor-wysiwyg');
                 if (wysiwyg && wysiwyg.scrollHeight > wysiwyg.clientHeight + 2) return wysiwyg;
 
                 const thoughtsArea = document.querySelector('.thoughts-scroll-area');
@@ -4839,6 +5056,11 @@ document.addEventListener('DOMContentLoaded', async () => {
                 }
                 updateScrollDirection(target);
                 readingHeadroom.sync(target);
+                if (target.matches('.vditor-wysiwyg, .typora-source-editor')
+                    || target === document.scrollingElement
+                    || target === document.documentElement) {
+                    scheduleScrollPositionSave();
+                }
             };
 
             // Scroll does not bubble, but capture sees scrolls from nested
@@ -4848,6 +5070,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 const docEl = document.scrollingElement || document.documentElement;
                 updateScrollDirection(docEl);
                 readingHeadroom.sync(docEl);
+                scheduleScrollPositionSave();
             }, { passive: true });
             window.addEventListener('resize', () => {
                 if (window.innerWidth > 980) readingHeadroom.reset();
@@ -5027,6 +5250,19 @@ document.addEventListener('DOMContentLoaded', async () => {
                     }
                 });
             });
+            const warmRuntime = () => {
+                const target = navigator.serviceWorker.controller || registration.active;
+                target?.postMessage({
+                    type: 'WARM_RUNTIME_URLS',
+                    urls: ['/vendor/tiptap/tiptap.bundle.js', '/vendor/vditor/index.css']
+                });
+            };
+            if (navigator.serviceWorker.controller || registration.active) {
+                scheduleIdleTask(warmRuntime);
+            }
+            navigator.serviceWorker.addEventListener('controllerchange', () => {
+                scheduleIdleTask(warmRuntime);
+            });
         } catch (error) {
             console.warn('Service worker registration failed:', error);
         }
@@ -5117,13 +5353,13 @@ document.addEventListener('DOMContentLoaded', async () => {
                 ensureInstantDraftsManager().catch(() => {});
             });
         }
+        registerServiceWorker().catch(() => {});
         loadAppConfig();
         await loadNotepads({ loadCurrentNote: startsInEditor });
         document.documentElement.dataset.appReady = 'true';
         if (startsInEditor) await syncCurrentDirtyNote();
         if (startsInEditor) void reconcileCurrentNote('startup');
         applySettings(appSettings, { persistCache: true });
-        registerServiceWorker().catch(() => {});
         await router.init();
         isInitialLoad = false;
     };

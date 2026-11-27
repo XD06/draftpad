@@ -140,6 +140,8 @@
     "test:agent": "npm run test:agent-contracts && npm run test:agent-storage && npm run test:agent-context && npm run test:agent-model && npm run test:agent-events && npm run test:agent-run && npm run test:agent-frontend && npm run test:agent-routes",
     "test:agent-skill": "node test/test_dumbpad_api_skill.js",
     "test:pwa-cache": "node test/test_pwa_cache_regression.js",
+    "test:cold-start": "node test/test_rendered_snapshot_and_versioning.js",
+    "test:cold-start-browser": "node test/browser/pwa-cold-start.js",
     "test:editor-performance": "node test/test_editor_performance.js",
     "test:startup-performance": "node test/test_startup_performance.js && node test/test_editor_performance.js",
     "test:heading-index": "node test/test_heading_index.js",

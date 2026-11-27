@@ -2398,6 +2398,18 @@ html:not([data-app-ready]) .empty-state-container::before {
     display: none;
 }
 
+.boot-preview[hidden] {
+    display: none !important;
+}
+
+.boot-preview {
+    cursor: text;
+}
+
+.boot-preview.is-reading-mode {
+    cursor: default;
+}
+
 .boot-editor[data-overflowing="true"] {
     bottom: 0;
     border-bottom: none;

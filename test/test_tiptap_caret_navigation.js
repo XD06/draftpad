@@ -199,6 +199,62 @@ async function main() {
     check('setSelectionRange(offset) 按 Markdown 偏移精确定位（不再忽略参数跳回开头）',
         textAround === '目标词', { textAround, targetOffset, from: selAfterBoot.from });
 
+    // 9. 阅读模式与非空选区下也必须持久保存/恢复滚动位置，且显式 scrollTop=0 时禁止 scrollIntoView 把视线拽回文中
+    editor.setValue('# 一级标题\n\n第一段\n\n第二段目标词在这里\n\n第三段', false);
+    {
+        const { state, view } = editor.editor;
+        let targetPos = null;
+        state.doc.descendants((node, pos) => {
+            if (targetPos === null && node.isText && node.text.includes('目标词')) {
+                targetPos = pos + node.text.indexOf('目标词');
+            }
+            return targetPos === null;
+        });
+        view.dispatch(state.tr.setSelection(TextSelection.create(state.doc, targetPos, targetPos + 3)));
+        pageScroller.scrollTop = 480;
+        const nonEmptySnap = editor.getPersistentCaretSnapshot();
+        check('non-empty selection: snapshot retains current scrollTop & offset',
+            nonEmptySnap && nonEmptySnap.mode === 'wysiwyg' && nonEmptySnap.scrollTop === 480 && nonEmptySnap.offset > 0,
+            nonEmptySnap);
+
+        editor.setReadingMode(true);
+        pageScroller.scrollTop = 0;
+        const readingTopSnap = editor.getPersistentCaretSnapshot();
+        check('reading mode: snapshot retains scrollTop=0 (never returns null)',
+            readingTopSnap && readingTopSnap.mode === 'wysiwyg' && readingTopSnap.scrollTop === 0,
+            readingTopSnap);
+
+        pageScroller.scrollTop = 360;
+        editor.restorePersistentCaret({ mode: 'wysiwyg', offset: 0, visibleOffset: 0, scrollTop: 220 });
+        await sleep(30);
+        check('reading mode: restorePersistentCaret applies saved scrollTop',
+            pageScroller.scrollTop === 220, pageScroller.scrollTop);
+        editor.setReadingMode(false);
+
+        const origDispatch = view.dispatch.bind(view);
+        let sawScrollIntoView = false;
+        view.dispatch = (tr) => {
+            if (tr?.scrolledIntoView) sawScrollIntoView = true;
+            return origDispatch(tr);
+        };
+        try {
+            pageScroller.scrollTop = 340;
+            const targetVisOffset = nonEmptySnap.visibleOffset;
+            editor.restorePersistentCaret({
+                mode: 'wysiwyg',
+                offset: targetVisOffset,
+                visibleOffset: targetVisOffset,
+                scrollTop: 0,
+            });
+            await sleep(30);
+            check('restorePersistentCaret with scrollTop=0 restores caret without scrollIntoView spike',
+                pageScroller.scrollTop === 0 && !sawScrollIntoView,
+                { scrollTop: pageScroller.scrollTop, sawScrollIntoView });
+        } finally {
+            view.dispatch = origDispatch;
+        }
+    }
+
     if (failures) {
         console.error(`\n${failures} check(s) failed`);
         process.exit(1);

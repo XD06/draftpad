@@ -5,7 +5,8 @@ function registerStaticRoutes(app, context) {
     const {
         publicDir,
         assetsDir,
-        buildVersion
+        buildVersion,
+        assetVersioning = null
     } = context;
 
     app.get('/service-worker.js', async (req, res) => {
@@ -15,6 +16,9 @@ function registerStaticRoutes(app, context) {
         res.setHeader('Expires', '0');
 
         try {
+            if (assetVersioning) {
+                return res.send(assetVersioning.renderServiceWorker(buildVersion));
+            }
             let swContent = await fs.readFile(path.join(publicDir, 'service-worker.js'), 'utf8');
             swContent = swContent.replace(
                 /let APP_VERSION = ".*?";/,

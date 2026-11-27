@@ -25,6 +25,7 @@ function registerAuthRoutes(app, context) {
         nodeEnv: NODE_ENV,
         siteTitle: SITE_TITLE,
         buildVersion: BUILD_VERSION,
+        assetVersioning = null,
         highlightLanguages: HIGHLIGHT_LANGUAGES,
         assetMaxFileBytes: ASSET_MAX_FILE_BYTES = 20 * 1024 * 1024,
         hiddenFloatingActions: HIDDEN_FLOATING_ACTIONS = [],
@@ -180,21 +181,33 @@ function registerAuthRoutes(app, context) {
         }
     }, 60000).unref();
 
-    app.get('/', originValidationMiddleware, async (req, res) => {
+    function sendAppShellHtml(res) {
+        res.setHeader('Cache-Control', 'no-cache');
+        if (assetVersioning) {
+            res.setHeader('Content-Type', 'text/html; charset=utf-8');
+            return res.send(assetVersioning.renderIndexHtml());
+        }
+        return res.sendFile(path.join(publicDir, 'index.html'));
+    }
+
+    async function serveProtectedAppShell(req, res) {
         if (v2Enabled) {
             try {
                 await browserSession(req);
-                return res.sendFile(path.join(publicDir, 'index.html'));
+                return sendAppShellHtml(res);
             } catch {
                 return res.redirect(`/login?redirect=${encodeURIComponent(req.originalUrl)}`);
             }
         }
-        if (!PIN || !isValidPin(PIN)) return res.sendFile(path.join(publicDir, 'index.html'));
+        if (!PIN || !isValidPin(PIN)) return sendAppShellHtml(res);
         if (!secureCompare(req.cookies?.[COOKIE_NAME], PIN)) {
             return res.redirect(`/login?redirect=${encodeURIComponent(req.originalUrl)}`);
         }
-        return res.sendFile(path.join(publicDir, 'index.html'));
-    });
+        return sendAppShellHtml(res);
+    }
+
+    app.get('/', originValidationMiddleware, serveProtectedAppShell);
+    app.get('/index.html', originValidationMiddleware, serveProtectedAppShell);
 
     app.get('/login', async (req, res) => {
         if (v2Enabled) {

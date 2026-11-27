@@ -1122,14 +1122,21 @@ export class HybridMarkdownEditor {
         return Math.max(0, Math.min(mappedPos, this.editor.state.doc.content.size));
     }
 
-    setCaretAtVisibleOffset(target) {
+    setCaretAtVisibleOffset(target, { scrollIntoView = true } = {}) {
         const TextSelection = globalThis.DumbPadTiptap.PM.state.TextSelection;
-        const maxPos = this.editor.state.doc.content.size;
+        const { doc } = this.editor.state;
+        const maxPos = doc.content.size;
         const pos = Math.max(0, Math.min(this.mapVisibleOffsetToPos(Math.max(0, Number(target) || 0)), maxPos));
-        const tr = this.editor.state.tr.setSelection(TextSelection.create(this.editor.state.doc, pos));
+        let selection;
+        try {
+            selection = TextSelection.create(doc, pos);
+        } catch (_error) {
+            selection = TextSelection.near(doc.resolve(pos), -1);
+        }
+        const tr = this.editor.state.tr.setSelection(selection);
         // jsdom 等无布局环境没有 Range.getClientRects，滚动定位直接跳过。
         const hasLayout = typeof document.createRange().getClientRects === 'function';
-        this.editor.view.dispatch(hasLayout ? tr.scrollIntoView() : tr);
+        this.editor.view.dispatch(scrollIntoView && hasLayout ? tr.scrollIntoView() : tr);
     }
 
     /* ---------------- 持久化光标（对应旧 getPersistentCaretSnapshot 契约） ---------------- */
@@ -1146,23 +1153,29 @@ export class HybridMarkdownEditor {
                 scrollTop: Number(this.getScrollContainer()?.scrollTop || 0),
             };
         }
-        if (this.isReadingMode) return null;
-        const snapshot = this.getInlineCaretSnapshot();
-        if (snapshot === null) return null;
+        if (!this.editor || this.editor.isDestroyed) return null;
+        // 阅读模式或存在非空选区时同样需要保留当前滚动偏移，否则 pagehide /
+        // visibilitychange 写不进最新的 scrollTop: 0，下次刷新会被旧快照拉回文中间。
+        const offset = this.countVisibleTextBefore(this.editor.state.selection.from);
         return {
             mode: 'wysiwyg',
-            offset: snapshot,
-            visibleOffset: snapshot,
-            scrollTop: Number(this.scroller.scrollTop || 0),
+            offset,
+            visibleOffset: offset,
+            scrollTop: Number(this.getScrollContainer()?.scrollTop || 0),
         };
     }
 
     restorePersistentCaret(snapshot = {}) {
-        if (!snapshot || this.isReadingMode) return false;
+        if (!snapshot) return false;
         if (!this.ready) {
             this.whenReady().then(() => this.restorePersistentCaret(snapshot)).catch(() => {});
             return true;
         }
+        const hasSavedScrollTop = snapshot.scrollTop !== null
+            && snapshot.scrollTop !== undefined
+            && snapshot.scrollTop !== ''
+            && Number.isFinite(Number(snapshot.scrollTop));
+        const targetScrollTop = hasSavedScrollTop ? Math.max(0, Number(snapshot.scrollTop)) : null;
         if (snapshot.mode === 'source' && this.sourceMode) {
             const textarea = this.getSourceTextarea();
             if (!textarea) return false;
@@ -1173,8 +1186,8 @@ export class HybridMarkdownEditor {
                 // 与快照同一容器。旧实现写 textarea.scrollTop（textarea 不自滚，
                 // 等于没恢复），切文/刷新后源码模式的阅读位置永远回到顶部。
                 const scroller = this.getScrollContainer();
-                if (scroller && Number.isFinite(Number(snapshot.scrollTop))) {
-                    scroller.scrollTop = Number(snapshot.scrollTop);
+                if (scroller && targetScrollTop !== null) {
+                    scroller.scrollTop = targetScrollTop;
                 }
             };
             requestAnimationFrame(apply);
@@ -1182,13 +1195,17 @@ export class HybridMarkdownEditor {
         }
         const offset = Math.max(0, Number(snapshot.visibleOffset ?? snapshot.offset) || 0);
         requestAnimationFrame(() => {
-            try {
-                this.setCaretAtVisibleOffset(offset);
-            } catch (_error) {
-                // 光标恢复是尽力而为，绝不打断编辑。
+            if (!this.isReadingMode && !this.sourceMode) {
+                try {
+                    // 已持有显式 scrollTop（含 0）时禁止 tr.scrollIntoView() 把视口拉向旧光标。
+                    this.setCaretAtVisibleOffset(offset, { scrollIntoView: !hasSavedScrollTop });
+                } catch (_error) {
+                    // 光标恢复是尽力而为，绝不打断编辑。
+                }
             }
-            if (this.scroller && Number.isFinite(Number(snapshot.scrollTop))) {
-                this.scroller.scrollTop = Number(snapshot.scrollTop);
+            if (targetScrollTop !== null) {
+                const scroller = this.getScrollContainer();
+                if (scroller) scroller.scrollTop = targetScrollTop;
             }
         });
         return true;

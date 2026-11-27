@@ -10,6 +10,7 @@ const crypto = require('crypto');
 const cookieParser = require('cookie-parser');
 const { generatePWAManifest } = require("./scripts/pwa-manifest-generator")
 const { getBuildVersion } = require('./scripts/build-version')
+const { createAssetVersioning } = require('./scripts/asset-versioning')
 const { originValidationMiddleware, getCorsOptions, validateOrigin } = require('./scripts/cors');
 const { 
     sanitizeFilename, 
@@ -77,6 +78,11 @@ const NODE_ENV = process.env.NODE_ENV || 'development'
 const DATA_DIR = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.join(__dirname, 'data');
 const PUBLIC_DIR = path.join(__dirname, "public");
 const ASSETS_DIR = path.join(PUBLIC_DIR, "Assets");
+const assetVersioning = createAssetVersioning({
+    rootDir: __dirname,
+    publicDir: PUBLIC_DIR,
+    nodeEnv: NODE_ENV
+});
 const NOTEPADS_FILE = path.join(DATA_DIR, 'notepads.json');
 const THOUGHTS_FILE = path.join(DATA_DIR, 'thoughts.json');
 const SITE_TITLE = process.env.SITE_TITLE || 'DumbPad';
@@ -226,7 +232,8 @@ app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ limit: '1mb', extended: true }));
 app.use(cookieParser());
 
-// Serve static files
+// Serve static files (content-hashed ?v=<hash> matches get long-lived immutable caching)
+app.use(assetVersioning.immutableStaticMiddleware);
 app.use('/js/marked', express.static(
     path.join(__dirname, 'node_modules/marked/lib')
 ));
@@ -299,7 +306,8 @@ app.use((req, res, next) => {
 registerStaticRoutes(app, {
     publicDir: PUBLIC_DIR,
     assetsDir: ASSETS_DIR,
-    buildVersion: BUILD_VERSION
+    buildVersion: BUILD_VERSION,
+    assetVersioning
 });
 
 app.use(express.static(path.join(__dirname, 'public'), {
@@ -335,6 +343,7 @@ registerAuthRoutes(app, {
     nodeEnv: NODE_ENV,
     siteTitle: SITE_TITLE,
     buildVersion: BUILD_VERSION,
+    assetVersioning,
     highlightLanguages: HIGHLIGHT_LANGUAGES,
     assetMaxFileBytes: ASSET_MAX_FILE_BYTES,
     hiddenFloatingActions: HIDDEN_FLOATING_ACTIONS

@@ -8,6 +8,12 @@
 
 ### 新增 / 优化
 
+- **PWA 冷重启秒开与 0ms 同构渲染快照（根治“显示源码、加载渲染慢”）**：
+  - **零构建静态资源内容哈希与 `Import Map` 注入**：`scripts/build-version.js` 改用文件内容 SHA-1（含 `font/`）计算 `BUILD_VERSION`，消除 Docker 重建或 git 检出变更 `mtime` 误杀全量客户端缓存；新增 `scripts/asset-versioning.js` 在 `routes/auth-routes.js`（`/` 与 `/index.html`）与 `routes/static-routes.js`（`/service-worker.js`）响应期自动注入 `<script type="importmap">`、扁平化 `<link rel="modulepreload">` 与 `?v=<hash>` 链接，并对匹配哈希的静态请求下发 `Cache-Control: public, max-age=31536000, immutable`（保留 `/vendor/tiptap/tiptap.bundle.js` 与品牌图标 URL 稳定，改由 `RUNTIME_FINGERPRINT` 守护跨版继承一致性）。
+  - **Service Worker 冷启动 0ms 缓存直出**：`public/service-worker.js` 对带 `?v=<hash>` 的应用 JS/CSS 启用 `0ms cacheFirst`（消灭 50+ 次 `no-cache` 公网协商与多波 450ms 超时等待），对已缓存 App Shell（`/`、`/index.html`）的非显式强制刷新导航启用 Stale-While-Revalidate 秒开 + 后台重验（会话失效重定向时自动清缓存；显式强制刷新保留 600ms `networkFirst`），并支持 `WARM_RUNTIME_URLS` 空闲预热编辑器内核与样式。
+  - **0ms 同构渲染快照 `#boot-preview` 替代裸源码闪屏**：新增 `public/managers/rendered-snapshot-cache.js`（独立 `localStorage` 键 `dumbpad_rendered_html_v1`，LRU 3 篇，绝不触碰存储/同步链路），在 `public/index.html` 与 `public/app.js` 实现签名一致校验下的首帧富文本直接渲染（含三态待办、阅读/桌面移动端滚动恢复、启动窗口期点按落焦）与单 JS turn 原子无跳动交接（署名不匹配或源码模式下安全回退 `#boot-editor`），同步将 `today-drafts.css`、`attachment-viewer-modal.css` 改为非阻塞加载并移除 `<head>` 对 1.95 MB 字体的阻塞预载。
+  - **回归**：新增 `npm run test:cold-start`（`test/test_rendered_snapshot_and_versioning.js`）与真机浏览器回归 `npm run test:cold-start-browser`（`test/browser/pwa-cold-start.js`）。
+
 - **主题与外观排版定制及阅读灰阶/间距优化**：
   - 在设置中心「主题与外观」面板的 `推荐主题搭配` 与 `自定义单项配色（高级）` 之间新增 `排版与提示块样式`（[appearance-presets.js](public/managers/appearance-presets.js)、[settings.js](public/managers/settings.js)、[index.html](public/index.html)），均默认保持原样零改动，支持实时预览、`Cancel` 撤回、`Save` 持久化及 `<head>` 首屏防闪烁恢复，切换推荐配色搭配时自动保留所选排版样式：
     - **提示块样式（`calloutStyle`）**：`雾底左浮标（默认）`、`纸面圆徽风`、`无底引号轻角标` 3 档（含暗色实心圆徽对比适配，普通 `>` 引用不受影响）；

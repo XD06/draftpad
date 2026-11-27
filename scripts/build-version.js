@@ -1,6 +1,8 @@
-// 计算 BUILD_VERSION：把 public/ 全目录（路径:size:mtime）与 package.json /
-// package-lock.json 的 sha1 前 10 位当作 Service Worker 的缓存名指纹。
-// 启动时被重写的生成产物必须排除在指纹之外，否则每次服务重启都会换缓存名。
+/**
+ * 计算 BUILD_VERSION：基于文件内容 SHA-1（public/、font/ 与 package*.json）生成
+ * 10 位稳定指纹作为 Service Worker 缓存名。使用内容哈希而非 mtime，避免 Docker
+ * 重建或 git 检出刷新时间戳时误作废全部客户端缓存；启动重写文件仍排除在外。
+ */
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
@@ -14,36 +16,43 @@ const GENERATED_ASSET_PATHS = new Set([
     'Assets/asset-manifest.json',
 ]);
 
-function collectPublicAssetStats(dir, baseDir = dir, stats = []) {
+function hashFileContent(filePath) {
+    return crypto
+        .createHash('sha1')
+        .update(fs.readFileSync(filePath))
+        .digest('hex')
+        .slice(0, 12);
+}
+
+function collectDirectoryContentStats(dir, baseDir = dir, prefix = '', stats = []) {
+    if (!fs.existsSync(dir)) return stats;
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
         const fullPath = path.join(dir, entry.name);
         if (entry.isDirectory()) {
-            collectPublicAssetStats(fullPath, baseDir, stats);
+            collectDirectoryContentStats(fullPath, baseDir, prefix, stats);
             continue;
         }
         const relativePath = path.relative(baseDir, fullPath).replace(/\\/g, '/');
-        if (GENERATED_ASSET_PATHS.has(relativePath)) continue;
-        const stat = fs.statSync(fullPath);
+        if (!prefix && GENERATED_ASSET_PATHS.has(relativePath)) continue;
         stats.push([
-            relativePath,
-            stat.size,
-            Math.floor(stat.mtimeMs),
+            prefix ? `${prefix}${relativePath}` : relativePath,
+            hashFileContent(fullPath),
         ].join(':'));
     }
     return stats;
 }
 
 function collectBuildFingerprintStats(publicDir) {
-    const stats = collectPublicAssetStats(publicDir);
+    const stats = collectDirectoryContentStats(publicDir);
     const rootDir = path.join(__dirname, '..');
+    const fontDir = path.join(rootDir, 'font');
+    collectDirectoryContentStats(fontDir, fontDir, 'font/', stats);
     for (const fileName of ['package.json', 'package-lock.json']) {
         const filePath = path.join(rootDir, fileName);
         if (!fs.existsSync(filePath)) continue;
-        const stat = fs.statSync(filePath);
         stats.push([
             fileName,
-            stat.size,
-            Math.floor(stat.mtimeMs),
+            hashFileContent(filePath),
         ].join(':'));
     }
     return stats;
