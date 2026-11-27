@@ -8,6 +8,8 @@
 
 ### 新增 / 优化
 
+- **默认划线色柔化与分享页列表标记降饱和**：
+  - 将 `public/Assets/ios-theme.css` 默认划线令牌 `--draw-color` 从纯 `blue` 柔化为静谧蓝（亮色 `#2563EB` / 暗色 `#60A5FA`），同步更新 `appearance-presets.js` 与设置界面「静谧蓝（默认）」圆点及「深海蓝」区分色阶，保持序列化内联格式零改动；将 `scripts/share-renderer.js` 分享页 `.markdown-body li::marker` 改为 `color-mix(in srgb, var(--primary) 58%, var(--text-muted))` 弱化长列表刺眼感，并通过 `test:tiptap-underline-annotation-browser` 与 `test:share-page-browser` 亮/暗计算色校验。
 - **阅读色彩变量底座与设置中心「主题与外观」Tab**：
   - **CSS 色彩变量底座收口**：在 `public/Assets/ios-theme.css`、 `public/Assets/styles.css` 与 `public/Assets/thoughts.css` 将划线（`--draw-color`）、高亮（`--highlight-bg` / `--highlight-preview-bg` / `--thought-highlight-bg`）、批注（`--annotation-color` / `--annotation-color-hover`）与待办方框状态色（`--task-checked-color` / `--task-doing-color`）收敛为可覆写变量，保持 `tiptap-extensions.js` 序列化内联格式与历史文档往返零迁移。
   - **设置「主题与外观」面板**：在 `public/index.html`、`public/managers/settings.js`、`public/app.js` 与 `public/managers/appearance-presets.js`（已纳入 `public/service-worker.js` `CORE_ASSETS`）新增第 5 个设置分页「主题与外观」（移动端短标「外观」），提供顶部固定无透底的即时效果预览区、6 套亮/暗双模式预设主题搭配卡片（默认保留琥珀经典原味），以及可折叠的高级单项配色微调（划线/高亮/批注图标复用 `selection-menu-icons.js` 全局精灵）；支持实时预览、`Cancel / Esc` 自动撤回、`Save` 持久化与首帧防闪烁恢复（`dumbpad_appearance_vars_v1`），并修复 `.modal`（`1050`）与 `.floating-actions`（`1000`）同层叠遮挡问题。回归新增 `npm run test:appearance-presets` 并扩展 `npm run test:settings-modal`。

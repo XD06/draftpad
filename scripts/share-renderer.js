@@ -1324,7 +1324,7 @@ function renderSharePage({ notepad, content, marked, sanitizeHtml }) {
             margin-bottom: 0.15em;
         }
         .markdown-body li::marker {
-            color: var(--primary);
+            color: color-mix(in srgb, var(--primary) 58%, var(--text-muted));
             font-weight: 600;
             font-size: 0.94em;
         }

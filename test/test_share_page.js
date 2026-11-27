@@ -315,6 +315,10 @@ async function testRendererUnitCases() {
         'share page CSS must style ordered list markers explicitly'
     );
     assert(
+        mixedHtml.includes('color-mix(in srgb, var(--primary) 58%, var(--text-muted))'),
+        'share page list markers should use softened mixed tone instead of raw primary neon'
+    );
+    assert(
         !/\.markdown-body ul\.task-list[^}]*list-style:\s*none/.test(mixedHtml),
         'share page CSS must not suppress bullets on ul.task-list parent (breaks mixed task+bullet lists)'
     );

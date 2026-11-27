@@ -56,17 +56,17 @@ export const ACCENT_PRESETS = Object.freeze({
 export const DRAW_PRESETS = Object.freeze({
     default: Object.freeze({
         id: 'default',
-        label: '经典蓝',
-        swatchLight: '#0000FF',
-        swatchDark: '#3B82F6'
+        label: '静谧蓝',
+        swatchLight: '#2563EB',
+        swatchDark: '#60A5FA'
     }),
     cobalt: Object.freeze({
         id: 'cobalt',
-        label: '柔和钴蓝',
-        swatchLight: '#2563EB',
-        swatchDark: '#60A5FA',
-        light: '#2563EB',
-        dark: '#60A5FA'
+        label: '深海蓝',
+        swatchLight: '#1D4ED8',
+        swatchDark: '#38BDF8',
+        light: '#1D4ED8',
+        dark: '#38BDF8'
     }),
     teal: Object.freeze({
         id: 'teal',

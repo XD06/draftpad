@@ -188,7 +188,7 @@ function runDomAndSettingsManagerTests() {
         '海盐研读'
     );
     assert.equal(dom.window.document.documentElement.style.getPropertyValue('--primary-color'), '#2563EB');
-    assert.equal(dom.window.document.documentElement.style.getPropertyValue('--draw-color'), '#2563EB');
+    assert.equal(dom.window.document.documentElement.style.getPropertyValue('--draw-color'), '#1D4ED8');
 
     // Tweaking single swatch inside advanced switches bundle badge to 自定义微调
     const roseBtn = dom.window.document.querySelector('[data-appearance-group="drawColor"][data-appearance-value="rose"]');
@@ -269,7 +269,7 @@ function runDomAndSettingsManagerTests() {
     );
     assert.equal(
         foucDom.window.document.documentElement.style.getPropertyValue('--draw-color'),
-        '#60A5FA',
+        '#38BDF8',
         'head FOUC initializer applies cached dark draw color pre-paint'
     );
 

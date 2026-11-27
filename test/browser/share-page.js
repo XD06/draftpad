@@ -248,6 +248,7 @@ async function bootServer() {
                     mixedBulletMarker: mixedBulletMarker.content,
                     olMarkerTabular: olMarker.fontVariantNumeric,
                     olMarkerContent: olMarker.content,
+                    olMarkerColor: olMarker.color,
                     olToUlGap: Math.round((ul.getBoundingClientRect().top - ol.getBoundingClientRect().bottom) * 10) / 10,
                     softBreakRendered: Array.from(body.querySelectorAll('p')).some((p) => /第一行换行测试<br\s*\/?>第二行换行测试/.test(p.innerHTML))
                 };
@@ -336,6 +337,11 @@ async function bootServer() {
         assert(desktop.listMetrics.mixedBulletMarker.includes('•'), `Mixed bullet marker must render bullet, got ${desktop.listMetrics.mixedBulletMarker}`);
         assert.equal(desktop.listMetrics.olMarkerTabular, 'tabular-nums', 'Share ol marker must use tabular-nums');
         assert(desktop.listMetrics.olMarkerContent.includes('counter(list-item)'), `Share ol marker unexpected: ${desktop.listMetrics.olMarkerContent}`);
+        assert.notEqual(
+            desktop.listMetrics.olMarkerColor,
+            'rgb(229, 161, 0)',
+            'Light mode share list marker should be softened, not saturated amber'
+        );
         assert(desktop.listMetrics.olToUlGap > 0 && desktop.listMetrics.olToUlGap <= 8, `Adjacent list gap should stay compact (<=8px), got ${desktop.listMetrics.olToUlGap}`);
         assert.equal(desktop.listMetrics.softBreakRendered, true, 'Single newline inside share paragraph must render as <br>');
         assert(!desktop.tocItems.some((item) => item.includes('dumbpad-api')), 'Frontmatter must never leak into TOC');
@@ -424,12 +430,18 @@ async function bootServer() {
             attr: document.documentElement.getAttribute('data-theme'),
             bodyBg: getComputedStyle(document.body).backgroundColor,
             sheetBg: getComputedStyle(document.querySelector('.ios-sheet')).backgroundColor,
+            olMarkerColor: getComputedStyle(document.querySelector('.markdown-body ol > li'), '::marker').color,
             codeKwColor: getComputedStyle(document.querySelector('.markdown-body .ios-code-card pre code.hljs .hljs-keyword')).color,
             codeStrColor: getComputedStyle(document.querySelector('.markdown-body .ios-code-card pre code.hljs .hljs-string')).color
         }));
         assert.equal(darkState.attr, 'dark');
         assert.equal(darkState.bodyBg, 'rgb(28, 28, 30)');
         assert.equal(darkState.sheetBg, 'rgb(44, 44, 46)');
+        assert.notEqual(
+            darkState.olMarkerColor,
+            'rgb(255, 214, 10)',
+            'Dark mode share list marker should be softened, not bright yellow'
+        );
         assert.equal(darkState.codeKwColor, 'rgb(255, 123, 114)', 'Dark mode code keyword should use GitHub dark coral');
         assert.equal(darkState.codeStrColor, 'rgb(165, 214, 255)', 'Dark mode code string should use GitHub dark sky blue');
 

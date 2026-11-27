@@ -2687,7 +2687,7 @@ html:not([data-app-ready]) .empty-state-container::before {
 .typora-editor-shell .tiptap span[data-draw],
 .vditor-reset span[data-draw],
 #preview-pane span[data-draw] {
-    text-decoration-color: var(--draw-color, blue) !important;
+    text-decoration-color: var(--draw-color, #2563EB) !important;
 }
 
 .typora-editor-shell .tiptap .article-search-hit {
@@ -4449,7 +4449,7 @@ html:not([data-app-ready]) .empty-state-container::before {
 .settings-appearance-preview span[data-draw] {
     text-decoration: underline;
     text-decoration-thickness: 2px;
-    text-decoration-color: var(--draw-color, blue) !important;
+    text-decoration-color: var(--draw-color, #2563EB) !important;
     text-underline-offset: 2px;
 }
 
