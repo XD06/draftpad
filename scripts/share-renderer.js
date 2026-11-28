@@ -1070,13 +1070,12 @@ function renderSharePage({ notepad, content, marked, sanitizeHtml }) {
         }
         .rail-nav a {
             position: relative;
-            --share-toc-guide: color-mix(in srgb, var(--border-color) 92%, transparent);
             display: flex;
             align-items: flex-start;
             gap: 7px;
-            padding: 5.5px 8px 5.5px 10px;
+            padding: 5.5px 9px 5.5px 10px;
             box-shadow: inset 2px 0 0 transparent;
-            border-radius: 0 8px 8px 0;
+            border-radius: 8px;
             color: var(--text-muted);
             text-decoration: none;
             font-size: 13px;
@@ -1085,33 +1084,15 @@ function renderSharePage({ notepad, content, marked, sanitizeHtml }) {
         }
         .rail-nav a[data-depth="0"] {
             padding-left: 10px;
+            margin-top: 3px;
             font-size: 13px;
-            font-weight: 560;
+            font-weight: 580;
             color: var(--text-body);
         }
         .rail-nav a[data-depth="1"] { padding-left: 20px; font-size: 12.5px; }
         .rail-nav a[data-depth="2"] { padding-left: 30px; font-size: 12px; }
         .rail-nav a[data-depth="3"] { padding-left: 38px; font-size: 11.5px; color: var(--text-faint); }
         .rail-nav a[data-depth="4"] { padding-left: 46px; font-size: 11.5px; color: var(--text-faint); }
-        .rail-nav a[data-depth="1"]::before,
-        .rail-nav a[data-depth="2"]::before,
-        .rail-nav a[data-depth="3"]::before,
-        .rail-nav a[data-depth="4"]::before {
-            content: '';
-            position: absolute;
-            left: 12px;
-            top: 2px;
-            bottom: 2px;
-            width: 1px;
-            background: var(--share-toc-guide);
-            pointer-events: none;
-        }
-        .rail-nav a[data-depth="2"]::before { box-shadow: 10px 0 0 var(--share-toc-guide); }
-        .rail-nav a[data-depth="3"]::before { box-shadow: 10px 0 0 var(--share-toc-guide), 19px 0 0 var(--share-toc-guide); }
-        .rail-nav a[data-depth="4"]::before { box-shadow: 10px 0 0 var(--share-toc-guide), 19px 0 0 var(--share-toc-guide), 27px 0 0 var(--share-toc-guide); }
-        .rail-nav a.active {
-            --share-toc-guide: color-mix(in srgb, var(--primary) 36%, transparent);
-        }
         .rail-nav a:hover {
             color: var(--text-primary);
             background: color-mix(in srgb, var(--text-primary) 4%, transparent);
@@ -1997,12 +1978,20 @@ function renderSharePage({ notepad, content, marked, sanitizeHtml }) {
         .markdown-body th, .markdown-body td {
             padding: 10px 14px;
             text-align: left;
-            border-bottom: 1px solid var(--separator);
+            border-bottom: 1px solid color-mix(in srgb, var(--text-primary) 10%, var(--separator));
         }
         .markdown-body th {
             background: var(--surface-subtle);
             font-weight: 650;
             color: var(--text-primary);
+        }
+        .markdown-body tbody tr:nth-child(even) td {
+            background: color-mix(in srgb, var(--text-primary) 2.2%, transparent);
+        }
+        @media (hover: hover) and (pointer: fine) {
+            .markdown-body tbody tr:hover td {
+                background: color-mix(in srgb, var(--primary) 4%, transparent);
+            }
         }
         .markdown-body tr:last-child td { border-bottom: none; }
 

@@ -7606,14 +7606,15 @@ body.reading-mode-active .editor-main {
 }
 
 .article-toc-list .toc-item {
+    position: relative;
     display: flex;
     align-items: flex-start;
     gap: 8px;
     font-size: 13px;
     line-height: 1.45;
     color: var(--muted-text);
-    padding: 5px 8px;
-    border-radius: 7px;
+    padding: 5.5px 10px;
+    border-radius: 8px;
     /* 左侧栏目录 tab 的裸 .toc-item（1735 行）带 white-space:nowrap，选择器
        同样命中本文目录的行并继承给 .toc-item-text——必须就地翻回 normal，
        否则折行永远不发生。 */
@@ -7624,106 +7625,79 @@ body.reading-mode-active .editor-main {
        「长文章目录文字压扁、短文章正常」的根因）。行必须拒绝收缩，溢出
        交给容器的 overflow-y 滚动。 */
     flex-shrink: 0;
+    transition: background-color 0.14s ease, color 0.14s ease;
 }
 
 .article-toc-list .toc-item.h1 {
-    padding-left: 8px;
+    padding-left: 10px;
+}
+
+.article-toc-list .toc-item.h1:not(:first-child) {
+    margin-top: 5px;
 }
 
 .article-toc-list .toc-item.h2 {
-    padding-left: 26px;
+    padding-left: 20px;
+    margin-top: 3px;
 }
 
 .article-toc-list .toc-item.h3 {
-    padding-left: 44px;
+    padding-left: 32px;
 }
 
 .article-toc-list .toc-item.h4,
 .article-toc-list .toc-item.h5,
 .article-toc-list .toc-item.h6 {
-    padding-left: 62px;
+    padding-left: 42px;
+    font-size: 12.2px;
 }
 
-/* 加粗/划线/高亮/批注子条目：比所属标题再低一级，徽标用类型色区分。 */
+/* 加粗/划线/高亮/批注/列表子条目：干净步进缩进 + 轻字阶，去掉杂乱多轨竖状引导线。 */
 .article-toc-list .toc-item.mark-entry {
-    padding-left: 46px;
-    font-size: 12.5px;
-}
-
-/* 子层级极浅 1px 竖向引导线（不改动缩进与文本排版，零额外 DOM） */
-.article-toc-list .toc-item {
-    --toc-guide-color: color-mix(in srgb, var(--border-color) 90%, transparent);
-}
-
-.article-toc-list .toc-item:hover,
-.article-toc-list .toc-item.active {
-    --toc-guide-color: rgba(var(--primary-rgb), 0.34);
-}
-
-.article-toc-list .toc-item.h2::before,
-.article-toc-list .toc-item.h3::before,
-.article-toc-list .toc-item.h4::before,
-.article-toc-list .toc-item.h5::before,
-.article-toc-list .toc-item.h6::before,
-.article-toc-list .toc-item.mark-entry::before {
-    content: '';
-    position: absolute;
-    left: 16px;
-    top: 2px;
-    bottom: 2px;
-    width: 1px;
-    background: var(--toc-guide-color);
-    pointer-events: none;
-    transition: background-color 0.16s ease;
-}
-
-.article-toc-list .toc-item.h3::before,
-.article-toc-list .toc-item.mark-entry::before {
-    box-shadow: 18px 0 0 var(--toc-guide-color);
-}
-
-.article-toc-list .toc-item.h4::before,
-.article-toc-list .toc-item.h5::before,
-.article-toc-list .toc-item.h6::before {
-    box-shadow:
-        18px 0 0 var(--toc-guide-color),
-        36px 0 0 var(--toc-guide-color);
+    padding: 4px 10px 4px 34px;
+    gap: 6px;
+    font-size: 12.3px;
+    color: color-mix(in srgb, var(--muted-text) 90%, transparent);
 }
 
 .article-toc-list .toc-item.mark-entry .mark-badge {
-    min-width: 18px;
-    font-size: 9px;
+    min-width: 16px;
+    font-size: 9.5px;
 }
 
 .article-toc-list .toc-item.type-bold .mark-badge {
     color: var(--text-color);
-    background: color-mix(in srgb, var(--muted-text) 22%, transparent);
+    background: color-mix(in srgb, var(--muted-text) 16%, transparent);
 }
 
 .article-toc-list .toc-item.type-underline .mark-badge {
     color: #2f7dd1;
-    background: rgba(47, 125, 209, 0.14);
+    background: rgba(47, 125, 209, 0.11);
 }
 
 .article-toc-list .toc-item.type-highlight .mark-badge {
     color: #b07d10;
-    background: rgba(214, 158, 46, 0.18);
+    background: rgba(214, 158, 46, 0.14);
 }
 
 .article-toc-list .toc-item.type-note .mark-badge {
     color: #cf5b52;
-    background: rgba(207, 91, 82, 0.14);
+    background: rgba(207, 91, 82, 0.11);
 }
 
-/* 列表条目徽标的绿系专属色：与标记的 N/H/U 三色区分，无序/有序/待办同族。 */
+/* 列表条目徽标的绿系专属字形：日常条目去方块底色保持轻盈，摘要折叠行保留极浅底强调可展开。 */
 .article-toc-list .toc-item.list-entry .mark-badge {
     color: #2f855a;
-    background: rgba(47, 133, 90, 0.14);
+    background: transparent;
+}
+
+.article-toc-list .toc-item.list-entry.list-summary .mark-badge {
+    background: rgba(47, 133, 90, 0.11);
 }
 
 .toc-level-badge {
     flex: 0 0 auto;
-    min-width: 22px;
+    min-width: 21px;
     text-align: center;
     font-family: var(--font-code);
     font-size: 9.5px;
@@ -7731,26 +7705,26 @@ body.reading-mode-active .editor-main {
     line-height: 1;
     padding: 3px 0;
     margin-top: 2px;
-    border-radius: 4px;
-    color: color-mix(in srgb, var(--text-color) 60%, var(--muted-text));
-    background: color-mix(in srgb, var(--muted-text) 14%, transparent);
+    border-radius: 5px;
+    color: color-mix(in srgb, var(--text-color) 52%, var(--muted-text));
+    background: transparent;
 }
 
 .article-toc-list .toc-item.h1 .toc-level-badge {
     color: var(--primary-color);
-    background: rgba(var(--primary-rgb), 0.14);
+    background: rgba(var(--primary-rgb), 0.12);
 }
 
 /* 标题徽标的层级色阶：H1 primary 最醒目（上），H2 次、H3 再次，H4–H6 保持
-   中性灰——同一色相内浓淡分层，层级一眼可辨又不会五颜六色。 */
+   中性微灰——同一色相内浓淡分层，层级一眼可辨又不会五颜六色或喧宾夺主。 */
 .article-toc-list .toc-item.h2 .toc-level-badge {
     color: color-mix(in srgb, var(--primary-color) 72%, var(--muted-text));
-    background: rgba(var(--primary-rgb), 0.08);
+    background: rgba(var(--primary-rgb), 0.07);
 }
 
 .article-toc-list .toc-item.h3 .toc-level-badge {
     color: color-mix(in srgb, var(--primary-color) 45%, var(--muted-text));
-    background: rgba(var(--primary-rgb), 0.05);
+    background: rgba(var(--primary-rgb), 0.04);
 }
 
 /* 长标题折行最多 2 行（约 25–28 个汉字可见，超出在第二行截断），短条目
@@ -7767,27 +7741,39 @@ body.reading-mode-active .editor-main {
 }
 
 .article-toc-list .toc-item.h1 .toc-item-text {
-    font-weight: 600;
+    font-weight: 620;
     color: var(--text-color);
 }
 
 .article-toc-list .toc-item.h2 .toc-item-text {
-    font-weight: 500;
+    font-weight: 520;
     color: color-mix(in srgb, var(--text-color) 88%, var(--muted-text));
 }
 
 .article-toc-list .toc-item.h3 .toc-item-text {
-    color: color-mix(in srgb, var(--text-color) 74%, var(--muted-text));
+    color: color-mix(in srgb, var(--text-color) 76%, var(--muted-text));
 }
 
 .article-toc-list .toc-item:hover {
-    color: var(--primary-color);
-    background: rgba(var(--primary-rgb), 0.06);
+    color: var(--text-color);
+    background: color-mix(in srgb, var(--text-color) 4%, transparent);
 }
 
 .article-toc-list .toc-item.active {
     color: var(--primary-color);
-    background: rgba(var(--primary-rgb), 0.1);
+    background: rgba(var(--primary-rgb), 0.085);
+}
+
+.article-toc-list .toc-item.active:not(.mark-more)::after {
+    content: '';
+    position: absolute;
+    left: 2px;
+    top: 5px;
+    bottom: 5px;
+    width: 2.5px;
+    border-radius: 99px;
+    background: var(--primary-color);
+    pointer-events: none;
 }
 
 .article-toc-list .toc-item.active .toc-item-text {
@@ -9478,42 +9464,51 @@ html[data-heading-style="underline"] .typora-editor-shell .vditor-wysiwyg > .vdi
     transform: translateX(-50%);
 }
 
-/* 聚焦标题块级居中切换轻浮标 */
+/* 聚焦标题块级居中切换轻浮标（纯图标轻量玻璃态，严格停留在纸面内容区内） */
 .dumbpad-heading-align-btn {
     position: fixed;
     z-index: 4100;
     display: inline-flex;
     align-items: center;
-    gap: 5px;
+    justify-content: center;
+    width: 26px;
     height: 26px;
-    padding: 0 9px;
-    border: 1px solid color-mix(in srgb, var(--border-color) 86%, transparent);
-    border-radius: 999px;
-    background: color-mix(in srgb, var(--modal-bg, #ffffff) 92%, transparent);
+    padding: 0;
+    border: 1px solid color-mix(in srgb, var(--border-color) 62%, transparent);
+    border-radius: 7px;
+    background: color-mix(in srgb, var(--textarea-bg, var(--modal-bg, #ffffff)) 86%, transparent);
     backdrop-filter: blur(8px);
     -webkit-backdrop-filter: blur(8px);
     color: var(--muted-text);
-    font: 550 11.5px/1 var(--font-system, var(--font-sans));
-    box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08);
+    opacity: 0.78;
+    box-shadow: 0 2px 6px rgba(15, 23, 42, 0.045);
     cursor: pointer;
     touch-action: manipulation;
-    transition: border-color 0.14s ease, color 0.14s ease, background-color 0.14s ease;
+    transition: opacity 0.14s ease, border-color 0.14s ease, color 0.14s ease, background-color 0.14s ease, box-shadow 0.14s ease;
 }
 
 .dumbpad-heading-align-btn[hidden] {
     display: none;
 }
 
-.dumbpad-heading-align-btn:hover,
-.dumbpad-heading-align-btn.is-active {
+.dumbpad-heading-align-btn:hover {
+    opacity: 1;
     color: var(--primary-color);
-    border-color: color-mix(in srgb, var(--primary-color) 46%, var(--border-color));
-    background: color-mix(in srgb, var(--primary-color) 11%, var(--modal-bg, #ffffff));
+    border-color: color-mix(in srgb, var(--primary-color) 30%, var(--border-color));
+    background: color-mix(in srgb, var(--primary-color) 6%, var(--textarea-bg, #ffffff));
+}
+
+.dumbpad-heading-align-btn.is-active {
+    opacity: 0.94;
+    color: var(--primary-color);
+    border-color: color-mix(in srgb, var(--primary-color) 28%, transparent);
+    background: color-mix(in srgb, var(--primary-color) 9%, var(--textarea-bg, #ffffff));
 }
 
 .dumbpad-heading-align-icon {
     display: inline-flex;
     align-items: center;
+    justify-content: center;
 }
 
 .typora-editor-shell .vditor-tip {
@@ -10098,6 +10093,28 @@ body.article-image-lightbox-open {
     vertical-align: middle;
 }
 
+/* 正文数据行：清晰 1px 行分割线 + 隔行极浅柔染 + 桌面悬停微高亮（用 linear-gradient 兼容移动端冻结首列不透底） */
+.typora-editor-shell .tiptap table tbody tr:not(:last-child) td {
+    border-bottom: 1px solid color-mix(in srgb, var(--text-color) 10%, var(--border-color));
+}
+
+.typora-editor-shell .tiptap table:not(:has(td.dumbpad-stacked-cell)):has(> tbody > tr:first-child > th) tbody tr:nth-child(odd) > td,
+.typora-editor-shell .tiptap table:not(:has(td.dumbpad-stacked-cell)):not(:has(> tbody > tr:first-child > th)) tbody tr:nth-child(even) > td {
+    background-image: linear-gradient(
+        color-mix(in srgb, var(--text-color) 2.2%, transparent),
+        color-mix(in srgb, var(--text-color) 2.2%, transparent)
+    );
+}
+
+@media (hover: hover) and (pointer: fine) {
+    .typora-editor-shell .tiptap table:not(:has(td.dumbpad-stacked-cell)) tbody tr:hover > td {
+        background-image: linear-gradient(
+            color-mix(in srgb, var(--primary-color) 4%, transparent),
+            color-mix(in srgb, var(--primary-color) 4%, transparent)
+        );
+    }
+}
+
 /* 底线 */
 .typora-editor-shell .tiptap table tr:last-child td {
     border-bottom: 1.5px solid color-mix(in srgb, var(--text-color) 52%, transparent);
@@ -10257,15 +10274,15 @@ body.article-image-lightbox-open {
     z-index: 4100;
     display: inline-flex;
     align-items: center;
-    gap: 2px;
+    gap: 1px;
     max-width: calc(100vw - 20px);
-    padding: 3px 5px;
-    border: 1px solid color-mix(in srgb, var(--border-color) 90%, transparent);
-    border-radius: 10px;
-    background: color-mix(in srgb, var(--modal-bg, #ffffff) 94%, transparent);
+    padding: 2px 4px;
+    border: 1px solid color-mix(in srgb, var(--border-color) 88%, transparent);
+    border-radius: 9px;
+    background: color-mix(in srgb, var(--modal-bg, #ffffff) 95%, transparent);
     backdrop-filter: blur(10px);
     -webkit-backdrop-filter: blur(10px);
-    box-shadow: 0 8px 22px rgba(15, 23, 42, 0.12);
+    box-shadow: 0 4px 14px rgba(15, 23, 42, 0.08);
     overflow-x: auto;
     scrollbar-width: none;
 }
@@ -10283,13 +10300,13 @@ body.article-image-lightbox-open {
     display: inline-flex;
     align-items: center;
     gap: 3px;
-    height: 24px;
-    padding: 0 6px;
+    height: 22px;
+    padding: 0 5px;
     border: 0;
     border-radius: 6px;
     background: transparent;
     color: var(--text-color);
-    font: 550 11.5px/1 var(--font-system, var(--font-sans));
+    font: 540 11px/1 var(--font-system, var(--font-sans));
     white-space: nowrap;
     cursor: pointer;
     touch-action: manipulation;

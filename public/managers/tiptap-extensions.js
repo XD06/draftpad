@@ -2872,13 +2872,11 @@ class HeadingAlignControlView {
         this.button.type = 'button';
         this.button.className = 'dumbpad-heading-align-btn';
         this.button.hidden = true;
-        this.button.setAttribute('aria-label', '切换当前标题居中');
-        this.button.setAttribute('title', '标题居中 / 左对齐 (Ctrl+Shift+E)');
+        this.button.setAttribute('aria-label', '居中当前标题 (Ctrl+Shift+E)');
+        this.button.setAttribute('title', '居中当前标题 (Ctrl+Shift+E)');
         this.iconSpan = document.createElement('span');
         this.iconSpan.className = 'dumbpad-heading-align-icon';
-        this.labelSpan = document.createElement('span');
-        this.labelSpan.className = 'dumbpad-heading-align-label';
-        this.button.append(this.iconSpan, this.labelSpan);
+        this.button.append(this.iconSpan);
         document.body.appendChild(this.button);
 
         this.onPointerDown = (event) => {
@@ -2938,10 +2936,12 @@ class HeadingAlignControlView {
             return;
         }
         const centered = active.node.attrs?.align === 'center';
+        const tip = centered ? '恢复标题左对齐 (Ctrl+Shift+E)' : '居中当前标题 (Ctrl+Shift+E)';
         this.button.classList.toggle('is-active', centered);
         this.button.setAttribute('aria-pressed', String(centered));
+        this.button.setAttribute('aria-label', tip);
+        this.button.setAttribute('title', tip);
         this.iconSpan.innerHTML = centered ? HEADING_ALIGN_ICON_LEFT : HEADING_ALIGN_ICON_CENTER;
-        this.labelSpan.textContent = centered ? '已居中' : '居中';
         this.button.hidden = false;
         this.visible = true;
         this.position(active.pos);
@@ -2965,17 +2965,58 @@ class HeadingAlignControlView {
         const rect = dom?.getBoundingClientRect?.();
         if (!rect || (rect.width === 0 && rect.height === 0)) return;
         const card = this.view.dom.getBoundingClientRect();
-        const anchorRight = card.width > 0 ? card.right - 12 : rect.right;
-        const btnRect = this.button.getBoundingClientRect();
-        const btnW = btnRect.width || 60;
-        const btnH = btnRect.height || 26;
-        const minTop = (window.visualViewport?.offsetTop || 0) + 58;
-        const maxTop = (window.visualViewport?.offsetTop || 0) + (window.visualViewport?.height || window.innerHeight || 800) - btnH - 8;
-        let top = rect.top - btnH - 4;
-        if (top < minTop) {
-            top = Math.min(Math.max(rect.top + 2, minTop), maxTop);
+        const scroller = this.view.dom.closest('.vditor-wysiwyg') || this.view.dom.closest('.typora-editor-shell');
+        const visRect = scroller?.getBoundingClientRect?.() || card;
+        const vvTop = window.visualViewport?.offsetTop || 0;
+        const vvHeight = window.visualViewport?.height || window.innerHeight || 800;
+        const vvWidth = window.visualViewport?.width || window.innerWidth || 1200;
+
+        const boundTop = Math.max(vvTop + 56, Math.max(card.top, visRect.top) + 10);
+        const boundBottom = Math.min(vvTop + vvHeight - 8, Math.min(card.bottom, visRect.bottom) - 10);
+        if (rect.bottom <= boundTop - 2 || rect.top >= boundBottom + 2) {
+            this.button.hidden = true;
+            return;
         }
-        const left = Math.max(12, Math.min(anchorRight - btnW, (window.innerWidth || 1200) - btnW - 10));
+        this.button.hidden = false;
+
+        const cs = window.getComputedStyle(this.view.dom);
+        const padLeft = Math.max(12, parseFloat(cs.paddingLeft) || 40);
+        const padRight = Math.max(14, parseFloat(cs.paddingRight) || 40);
+        const proseLeft = card.left + Math.min(padLeft, 24);
+        const proseRight = Math.min(card.right - Math.min(padRight, 26), visRect.right - 14, vvWidth - 12);
+
+        const btnRect = this.button.getBoundingClientRect();
+        const btnW = btnRect.width || 26;
+        const btnH = btnRect.height || 26;
+
+        let left = proseRight - btnW;
+        // 避免和右侧垂直悬浮工具条重叠
+        const fabRect = document.querySelector('#floating-actions:not([hidden]), .floating-actions-bar:not([hidden])')?.getBoundingClientRect?.();
+        if (fabRect && left + btnW > fabRect.left - 6 && left < fabRect.right + 6) {
+            const shifted = fabRect.left - btnW - 8;
+            if (shifted >= proseLeft) left = shifted;
+        }
+        left = Math.max(proseLeft, Math.min(left, Math.max(proseLeft, proseRight - btnW)));
+
+        // 默认对齐标题首行中线（轻量融入行右端，不再飞出白纸右上圆角外）；若左对齐超长文字占满行宽则顺滑上/下让位。
+        const hStyle = window.getComputedStyle(dom);
+        const lineH = Math.min(rect.height, parseFloat(hStyle.lineHeight) || rect.height || 30);
+        let textEndRight = rect.right;
+        if (dom.firstChild && typeof document.createRange === 'function') {
+            try {
+                const range = document.createRange();
+                range.selectNodeContents(dom);
+                const tRect = range.getBoundingClientRect();
+                if (tRect && tRect.width > 0) textEndRight = tRect.right;
+            } catch (_) {}
+        }
+
+        let top = rect.top + (lineH - btnH) / 2;
+        if (textEndRight > left - 8) {
+            const above = rect.top - btnH - 4;
+            top = above >= boundTop ? above : Math.min(rect.bottom + 4, boundBottom - btnH);
+        }
+        top = Math.max(boundTop, Math.min(top, Math.max(boundTop, boundBottom - btnH)));
         this.button.style.left = `${Math.round(left)}px`;
         this.button.style.top = `${Math.round(top)}px`;
     }

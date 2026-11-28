@@ -319,8 +319,13 @@ async function testRendererUnitCases() {
         'share page list markers should use softened mixed tone instead of raw primary neon'
     );
     assert(
-        mixedHtml.includes('.rail-nav a[data-depth="1"]::before'),
-        'share page TOC should include subtle 1px tree guide lines'
+        !mixedHtml.includes('.rail-nav a[data-depth="1"]::before')
+        && mixedHtml.includes('.rail-nav a[data-depth="1"]'),
+        'share page TOC should use clean stepped indent without multi-track tree guide lines'
+    );
+    assert(
+        mixedHtml.includes('.markdown-body tbody tr:nth-child(even) td'),
+        'share page tables should include subtle alternating row separation'
     );
     assert(
         mixedHtml.includes('.ios-code-fold-footer')

@@ -328,6 +328,10 @@
   color: var(--text-color);
 }
 
+#preview-pane table tbody tr:nth-child(even) {
+  background-color: rgba(15, 23, 42, 0.018);
+}
+
 #preview-pane table tbody tr:hover {
   background-color: rgba(var(--primary-color), 0.05);
 }

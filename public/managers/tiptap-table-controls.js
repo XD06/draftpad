@@ -488,11 +488,11 @@ class TableControlsView {
 
         this.toolbar.hidden = false;
         const barRect = this.toolbar.getBoundingClientRect();
-        const barW = barRect.width || 290;
-        const barH = barRect.height || 30;
-        // 骑跨表格上边框悬停：既留在 .tableWrapper 约 18px 上边距内、不遮挡上方标题/段落，也不盖住表头文字。
-        const topOffset = Math.min(Math.round(barH * 0.5), 16);
-        const top = Math.max(vvTop + 56, Math.min(wRect.top - topOffset, vvTop + vvHeight - barH - 8));
+        const barW = barRect.width || 275;
+        const barH = barRect.height || 28;
+        // 紧贴表格顶线上缘（bottom 落在 wRect.top - 3px），既不遮挡表头与首线，也保留细微呼吸缝。
+        const tableTop = tRect?.top ?? wRect.top;
+        const top = Math.max(vvTop + 56, Math.min(tableTop - barH - 3, vvTop + vvHeight - barH - 8));
         // 靠表右上缘对齐：避免左对齐遮挡正上方紧邻的标题或首列文字。
         const preferredLeft = wRect.width >= barW ? (wRect.right - barW) : wRect.left;
         const left = Math.max(10, Math.min(preferredLeft, vvWidth - barW - 10));
