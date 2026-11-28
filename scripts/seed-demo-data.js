@@ -47,33 +47,72 @@ function demoThought(id, text, options = {}) {
 }
 
 const NOTES = [
-    demoNote('default', '欢迎使用 DumbPad', `# 欢迎使用 DumbPad
+    demoNote('default', '欢迎使用 DumbPad', `---
+title: 欢迎使用 DumbPad
+tags: [demo, markdown]
+---
 
-这是一份可重复生成的演示数据。它既用于体验产品，也用于验证常用编辑、搜索、同步和 API 路径。
+# <center>欢迎使用 DumbPad</center>
+
+这是一份兼具产品引导与全样式示例的演示文档：支持**加粗**、*斜体*、~~删除线~~、<u>纯下划线</u>、\`行内代码\` 与带矢量链环的 [DumbPad 项目仓库](https://github.com/XD06/draftpad)，还支持 <mark>重点高亮</mark>、<span data-draw style="text-decoration:underline blue;text-decoration-thickness:2px;">蓝色划线</span> 与 <span data-note="点击可弹出轻浮窗编辑或删除批注" style="text-decoration:underline wavy #e74c3c;text-decoration-thickness:2.5px;">波浪批注</span><sub data-note-label style="color:#e74c3c;font-size:0.65em;margin-left:2px;">（点击可弹出轻浮窗编辑或删除批注）</sub>。
 
 ## 从这里开始
 
 1. 点击正文进入混合编辑；点击空白区域回到阅读状态。
-2. 使用左侧搜索“乐观并发”“上传进度”或“可信设备”，验证文章名搜索、正文定位与高亮。
+2. 在左侧搜索“乐观并发”“上传进度”或“可信设备”，验证标题搜索、正文定位与高亮。
 3. 切到 Thoughts，查看置顶、标签、子任务、附件、关联和完成状态。
 
-## 时间图标
+### 三态待办与层级列表
 
-在编辑器输入 \`/time\` 后按 Enter，会插入当前时间图标。下面是已经写入文档的示例：
+- [ ] 未开始：输入 \`- [ ]\` 或 \`/todo\` 快速创建待办
+- [~] 进行中：输入 \`- [~]\` 或 \`/doing\` 标记进行中，单击复选框循环切换三态
+- [x] 已完成：已勾选条目自动带柔和完成态划线
 
-创建记录 [[time:create:2026-07-15 09:00:00]]
+- 一级无序列表（可在设置切换柔点 / 方菱 / 引导线样式）
+  - 二级嵌套子项：支持 \`Tab\` / \`Shift-Tab\` 缩进与回退
 
-更新时间 [[time:update@2:2026-07-15 09:08:00]]
+1. 有序列表一：Notepad 正文通过 \`baseVersion\` 乐观并发保存（冲突返回 \`409\`）
+2. 有序列表二：Thought 优先更新界面并后台同步，离线暂存本地 outbox
 
-在可视编辑模式中可以拖动时间图标；拖动时会显示落点光标。跨段落、列表和普通文本拖动时，请在目标文本附近松开。
+## 时间标记、引用与提示块
 
-## 数据与同步
+行内输入 \`/time\` 插入可拖拽时间图标：创建记录 [[time:create:2026-07-15 09:00:00]] ，进度更新 [[time:update@2:2026-07-15 09:08:00]] 。
 
-- Notepad 正文通过 \`baseVersion\` 使用乐观并发保存。
-- Thought 保存会先更新界面，并在后台同步；离线时会进入本地 outbox，恢复网络后重试。
-- AI、S3 和关系计算是后台能力；未配置时不妨碍写作和待办保存。
+> 普通 Markdown 引用：保持细灰竖线与柔和墨色，适合日常摘录，不会与提示块混淆。
 
-继续阅读“文件、图片与代码块”“数据安全与个人模式”“开发者 API 指南”“skill.md”和“发布前手动回归清单”，可以覆盖完整演示流程。`, 0),
+> [!NOTE]
+> 备注提示块（\`/note\`）：可在右上角「设置 → 主题与外观」一键套用推荐主题搭配，自动联动配色与排版预设。
+
+> [!TIP]
+> 技巧提示块（\`/tip\`）：输入 \`/\` 呼出斜杠菜单；聚焦标题可点击右端图标或按 \`Ctrl+Shift+E\` 居中标题；输入 \`/file\` 可上传图片、音视频内嵌播放或附件卡片。
+
+> [!WARNING]
+> 注意警告块（\`/warning\`）：AI、S3 与关系计算均为后台或可选能力，未配置时不阻塞本地写作与离线保存。
+
+## 表格、代码与 Mermaid 图表
+
+| 样式功能 | 快捷入口 | 交互与效果说明 |
+| --- | --- | --- |
+| 单标题居中 | \`Ctrl+Shift+E\` / \`/center\` | 仅当前标题居中并完整保留加粗、链接等行内语法 |
+| 表格整体操控 | 悬停或聚焦表格 | 顶栏支持整表选中、复制 MD、\`+行\`/\`+列\` 与删表 |
+| 划词标注 | 选中正文任意文字 | 一键添加重点高亮、蓝色划线、波浪批注或链接 |
+
+\`\`\`javascript
+// 代码块支持语言切换与一键复制，阅读态超长代码会自动折叠预览
+const dumbpad = { editor: 'Tiptap', sync: 'WebSocket', storage: ['local', 's3'] };
+console.log(dumbpad);
+\`\`\`
+
+\`\`\`mermaid
+flowchart LR
+    A[混合编辑] --> B[大纲目录定位]
+    B --> C[Thought 关联]
+    C --> D[轻量安全分享]
+\`\`\`
+
+---
+
+继续阅读“文件、图片与代码块”“数据安全与个人模式”“开发者 API 指南”“skill.md”和“发布前手动回归清单”，可体验完整演示流程。`, 0),
     demoNote('demo-hybrid-editor', '混合编辑与时间图标', `# 混合编辑与时间图标
 
 ## 编辑方式
