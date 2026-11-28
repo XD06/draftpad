@@ -7,6 +7,12 @@
 import { findCodeLanguageSuggestions, getCodeLanguageIconPath, resolveCodeLanguage } from './code-language-catalog.js';
 import { renderMermaidSvg } from './mermaid-render.js';
 import { openArticleLightbox } from './tiptap-image-interactions.js';
+import {
+    clearTouchPointerActivity,
+    isTouchInteraction,
+    markTouchPointerActivity,
+    releaseEditorFocus,
+} from './tiptap-pointer-focus.js';
 
 const MERMAID_LANGUAGE = 'mermaid';
 const MERMAID_RENDER_DEBOUNCE_MS = 220;
@@ -653,6 +659,16 @@ export function buildCodeBlockNodeView() {
         // 颜色随 .is-copied 的主色调走。
         const CODE_COPIED_ICON_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6 9 17l-5-5"></path></svg>';
         copyButton.innerHTML = CODE_COPY_ICON_SVG;
+        copyButton.addEventListener('pointerdown', (event) => {
+            if (event.pointerType === 'mouse') {
+                clearTouchPointerActivity();
+                return;
+            }
+            if (event.pointerType) {
+                markTouchPointerActivity();
+                releaseEditorFocus(view);
+            }
+        });
         copyButton.addEventListener('mousedown', (event) => {
             event.preventDefault();
             event.stopPropagation();
@@ -660,6 +676,9 @@ export function buildCodeBlockNodeView() {
         copyButton.addEventListener('click', async (event) => {
             event.preventDefault();
             event.stopPropagation();
+            if (isTouchInteraction(view, event)) {
+                releaseEditorFocus(view);
+            }
             try {
                 await navigator.clipboard.writeText(currentCodeNode?.textContent || '');
             } catch (_error) {
@@ -876,6 +895,8 @@ export function buildCodeBlockNodeView() {
             button.setAttribute('contenteditable', 'false');
             button.innerHTML = MERMAID_FULLSCREEN_ICON_SVG;
             button.addEventListener('pointerdown', (event) => {
+                if (event.pointerType === 'mouse') clearTouchPointerActivity();
+                else if (event.pointerType) markTouchPointerActivity();
                 event.stopPropagation();
             });
             button.addEventListener('mousedown', (event) => {
@@ -885,6 +906,9 @@ export function buildCodeBlockNodeView() {
             button.addEventListener('click', (event) => {
                 event.preventDefault();
                 event.stopPropagation();
+                if (isTouchInteraction(view, event)) {
+                    releaseEditorFocus(view);
+                }
                 const svg = mermaidRenderEl?.querySelector('svg');
                 if (!svg) return;
                 openArticleLightbox({

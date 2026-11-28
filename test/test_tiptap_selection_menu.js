@@ -17,7 +17,7 @@ global.Node = dom.window.Node;
 global.NodeFilter = dom.window.NodeFilter;
 global.DocumentFragment = dom.window.DocumentFragment;
 global.MutationObserver = dom.window.MutationObserver;
-global.navigator = dom.window.navigator;
+Object.defineProperty(global, 'navigator', { value: dom.window.navigator, configurable: true });
 global.getSelection = dom.window.getSelection.bind(dom.window);
 global.Element = dom.window.Element;
 global.HTMLElement = dom.window.HTMLElement;
@@ -655,6 +655,151 @@ async function main() {
             renderedSpans.length === 1 && renderedBadges.length === 1,
             { spans: renderedSpans.length, badges: renderedBadges.length, html: syncContainer.querySelector('.tiptap')?.innerHTML });
         syncContainer.remove();
+    }
+
+    // 22. 「剪切」按钮与移动端点击功能/标记不夺焦、二次轻点编辑标记正文
+    {
+        const { _resetPointerFocusStateForTests } = await import('../public/managers/tiptap-pointer-focus.js');
+        const cutBtn = [...menuRoot().querySelectorAll('button')].find(b => b.textContent === '剪切');
+        check('cut button exists with sm-cut icon',
+            Boolean(cutBtn) && cutBtn.getAttribute('aria-label') === '剪切'
+            && cutBtn.querySelector('svg use')?.getAttribute('href') === '#sm-cut');
+
+        // 22a) 剪贴板可用时：剪切复制全文、删除选区、折叠/失焦、发成功提示且可撤销
+        const clipDescriptor = Object.getOwnPropertyDescriptor(dom.window.navigator, 'clipboard');
+        let clipboardText = '';
+        let clipShouldFail = false;
+        Object.defineProperty(dom.window.navigator, 'clipboard', {
+            value: {
+                writeText: async (text) => {
+                    if (clipShouldFail) throw new Error('clipboard denied');
+                    clipboardText = text;
+                },
+            },
+            configurable: true,
+        });
+        const origExecCommand = document.execCommand;
+        document.execCommand = () => false;
+
+        try {
+            await setValueAndSelect('甲剪切正文乙', 2, 6);
+            await new Promise((resolve) => setTimeout(resolve, 600));
+            cutBtn.click();
+            await new Promise((resolve) => setTimeout(resolve, 40));
+            check('cut writes selected text to clipboard', clipboardText === '剪切正文', clipboardText);
+            check('cut deletes selected range from document', editor.getValue() === '甲乙', editor.getValue());
+            check('cut hides menu and notifies success',
+                menuRoot().style.display === 'none' && toastCalls.at(-1)?.message === '已剪切');
+            editor.editor.commands.undo();
+            check('cut action is undoable', editor.getValue() === '甲剪切正文乙', editor.getValue());
+
+            // 22b) 剪贴板不可用时：绝不删除正文，并明确提示错误
+            clipShouldFail = true;
+            await setValueAndSelect('保留全文不被误删', 1, 5);
+            cutBtn.click();
+            await new Promise((resolve) => setTimeout(resolve, 40));
+            check('failed cut preserves selected text', editor.getValue() === '保留全文不被误删', editor.getValue());
+            check('failed cut surfaces error toast',
+                toastCalls.at(-1)?.type === 'error' && toastCalls.at(-1)?.message.includes('未删除'),
+                toastCalls.at(-1));
+        } finally {
+            document.execCommand = origExecCommand;
+            if (clipDescriptor) Object.defineProperty(dom.window.navigator, 'clipboard', clipDescriptor);
+            else delete dom.window.navigator.clipboard;
+            clipShouldFail = false;
+        }
+
+        // 22c) 移动端触屏：划词菜单按钮、时间标记、批注徽标、取消高亮完成后必须释放焦点并锁定 inputmode="none"；
+        //      已高亮正文气泡开启时二次轻点标记 data-allow-edit-tap 并收起气泡允许编辑
+        const pointerEvent = (type, props = {}) => {
+            const event = new dom.window.MouseEvent(type, {
+                bubbles: true, cancelable: true, view: dom.window, ...props,
+            });
+            Object.defineProperty(event, 'pointerId', { value: props.pointerId ?? 1 });
+            Object.defineProperty(event, 'pointerType', { value: props.pointerType ?? 'touch' });
+            return event;
+        };
+        const origMatchMedia = dom.window.matchMedia;
+        try {
+            _resetPointerFocusStateForTests();
+            dom.window.matchMedia = (q) => ({
+                matches: q === '(pointer: coarse)' || q === '(hover: none)',
+                media: q,
+                addListener() {},
+                removeListener() {},
+            });
+
+            // 高亮按钮在移动端执行完必须 blur + inputmode="none"
+            const rootEl = container.querySelector('.tiptap');
+            await setValueAndSelect('触屏高亮测试段', 1, 5);
+            rootEl.focus();
+            check('focused before touch mark action', document.activeElement === rootEl);
+            const hlBtn = [...menuRoot().querySelectorAll('button')].find(b => b.textContent === '高亮');
+            hlBtn.dispatchEvent(pointerEvent('pointerdown', { pointerType: 'touch' }));
+            hlBtn.dispatchEvent(pointerEvent('click', { pointerType: 'touch' }));
+            await new Promise((resolve) => setTimeout(resolve, 40));
+            check('touch mark action releases focus and sets inputmode=none',
+                document.activeElement !== rootEl && rootEl.getAttribute('inputmode') === 'none',
+                { activeTag: document.activeElement?.tagName, inputmode: rootEl.getAttribute('inputmode') });
+
+            // 时间标记触屏点按 + 更新：不夺焦、不留焦点
+            editor.setValue('前 [[time:create:2026-01-01 00:00:00]] 后', false);
+            await new Promise((resolve) => setTimeout(resolve, 30));
+            rootEl.focus();
+            const tm = container.querySelector('.md-time-marker');
+            tm.dispatchEvent(pointerEvent('pointerdown', { clientX: 10, clientY: 10, pointerType: 'touch' }));
+            tm.dispatchEvent(pointerEvent('pointerup', { clientX: 10, clientY: 10, pointerType: 'touch' }));
+            await new Promise((resolve) => setTimeout(resolve, 30));
+            const tmMenu = document.body.querySelector('.time-marker-menu');
+            check('touch tap opens time marker menu without focusing editor',
+                tmMenu && tmMenu.style.display === 'flex' && document.activeElement !== rootEl);
+            const tmUpdateBtn = tmMenu.querySelector('[data-time-action="update"]');
+            tmUpdateBtn.dispatchEvent(pointerEvent('click', { pointerType: 'touch' }));
+            await new Promise((resolve) => setTimeout(resolve, 30));
+            check('time update on mobile stays unfocused with inputmode=none',
+                document.activeElement !== rootEl && rootEl.getAttribute('inputmode') === 'none');
+
+            // 批注徽标触屏点按只读卡：不夺焦
+            editor.setValue('<span data-note="只读卡片" style="text-decoration:underline wavy #e74c3c;">批注块</span>', false);
+            await new Promise((resolve) => setTimeout(resolve, 30));
+            rootEl.focus();
+            const badgeEl = container.querySelector('.annotation-badge');
+            badgeEl.dispatchEvent(pointerEvent('pointerdown', { clientX: 5, clientY: 5, pointerType: 'touch' }));
+            badgeEl.dispatchEvent(pointerEvent('pointerup', { clientX: 5, clientY: 5, pointerType: 'touch' }));
+            await new Promise((resolve) => setTimeout(resolve, 30));
+            const cardPop = document.body.querySelector('.mark-popover');
+            check('touch badge tap opens readonly card and releases focus',
+                cardPop.classList.contains('comment-only-popover')
+                && cardPop.style.display === 'block'
+                && document.activeElement !== rootEl);
+            document.body.dispatchEvent(pointerEvent('pointerdown', { pointerType: 'touch' }));
+            await new Promise((resolve) => setTimeout(resolve, 20));
+            check('touch outside pointerdown closes mark popover', cardPop.style.display === 'none');
+
+            // 已高亮正文：首次轻点弹取消气泡且释放焦点；气泡在场时二次轻点授权进入编辑（不重弹）
+            editor.setValue('前 <mark>重点段落</mark> 后', false);
+            await new Promise((resolve) => setTimeout(resolve, 30));
+            const markNode = container.querySelector('mark.md-mark');
+            rootEl.focus();
+            markNode.dispatchEvent(pointerEvent('pointerdown', { clientX: 10, clientY: 10, pointerType: 'touch' }));
+            markNode.dispatchEvent(pointerEvent('pointerup', { clientX: 10, clientY: 10, pointerType: 'touch' }));
+            markNode.dispatchEvent(pointerEvent('click', { clientX: 10, clientY: 10, pointerType: 'touch' }));
+            await new Promise((resolve) => setTimeout(resolve, 30));
+            check('first touch tap on highlighted text opens cancel popover and blurs',
+                cardPop.style.display === 'flex' && document.activeElement !== rootEl);
+
+            markNode.dispatchEvent(pointerEvent('pointerdown', { clientX: 10, clientY: 10, pointerType: 'touch' }));
+            check('second touch tap on active popover mark authorizes edit and closes popover',
+                markNode.getAttribute('data-allow-edit-tap') === 'true' && cardPop.style.display === 'none');
+            markNode.dispatchEvent(pointerEvent('pointerup', { clientX: 10, clientY: 10, pointerType: 'touch' }));
+            markNode.dispatchEvent(pointerEvent('click', { clientX: 10, clientY: 10, pointerType: 'touch' }));
+            await new Promise((resolve) => setTimeout(resolve, 30));
+            check('second touch tap does not reopen popover and cleans attribute',
+                cardPop.style.display === 'none' && !markNode.hasAttribute('data-allow-edit-tap'));
+        } finally {
+            _resetPointerFocusStateForTests();
+            dom.window.matchMedia = origMatchMedia;
+        }
     }
 
     console.log('');

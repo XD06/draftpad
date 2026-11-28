@@ -1,5 +1,5 @@
 /**
- * Tiptap 编辑器浮动菜单：选区菜单（画线/高亮/批注/加粗/复制）、标记取消
+ * Tiptap 编辑器浮动菜单：选区菜单（画线/高亮/批注/加粗/复制/剪切）、标记取消
  * popover 与时间标记更新/删除菜单。作为 Extension 的 ProseMirror 插件
  * 挂载，插件 view 负责菜单 DOM 的创建与销毁，动作全部走框架命令
  * （mark 命令 / toggleMark / setNodeMarkup / delete），事务进撤销历史并自然
@@ -13,6 +13,14 @@ import { Extension, getMarkRange, PM } from './tiptap-runtime.js';
 import { buildUpdatedTimeMarker, parseTimeMarkerText } from './time-command.js';
 import { ANNOTATION_BADGE_SVG } from './tiptap-extensions.js';
 import { createSelectionMenuIcon, ensureSelectionMenuSprite } from './selection-menu-icons.js';
+import {
+    clearTouchPointerActivity,
+    isTouchInteraction,
+    markTouchPointerActivity,
+    preserveViewportScroll,
+    releaseEditorFocus,
+    settleEditorFocusAfterAction,
+} from './tiptap-pointer-focus.js';
 
 const { Plugin, PluginKey, TextSelection } = PM.state;
 
@@ -26,6 +34,8 @@ const PROTECTED_NODE_TYPES = ['codeBlock', 'timeMarker', 'image'];
 // 已落标记的渲染元素：点击弹出「取消」popover（与旧
 // showAnnotationPopover / removeInlineMark 行为对齐）。
 const MARKED_ELEMENT_SELECTOR = '.has-annotation, [data-draw], mark.md-mark';
+const TOUCH_TAP_MOVE_THRESHOLD_PX = 10;
+const TOUCH_CLICK_GUARD_MS = 450;
 
 export const selectionMenuPluginKey = new PluginKey('dumbpadSelectionMenu');
 
@@ -65,10 +75,11 @@ export const TiptapSelectionMenu = Extension.create({
             new Plugin({
                 key: selectionMenuPluginKey,
                 props: {
-                    // 鼠标按下进入拖拽态：拖拽选字过程中不显示菜单，
-                    // 释放鼠标（mouseup）后才允许出现（与旧编辑器一致）。
+                    // 桌面鼠标按下进入拖拽态：拖拽选字过程中不显示菜单，
+                    // 释放鼠标（mouseup）后才允许出现；触屏走系统选区手柄，不拦 update()。
                     handleDOMEvents: {
                         mousedown: (view, event) => {
+                            if (isTouchInteraction(view, event)) return false;
                             if (menuView && !menuView.root.contains(event.target)) {
                                 menuView.dragging = true;
                             }
@@ -113,13 +124,19 @@ class SelectionMenuView {
         this.visible = false;
         this.annotationInputOpen = false;
         this.dragging = false;
+        this.touchTap = null;
+        this.lastTouchTapAt = 0;
+        this.lastDownMeta = null;
+        this.allowEditMarkedElement = null;
+        this.popoverCloseCleanup = null;
+        this.timeMarkerMenuCloseCleanup = null;
 
         this.root = document.createElement('div');
         this.root.className = 'selection-menu typora-selection-menu tiptap-selection-menu';
         this.root.style.display = 'none';
 
         // iOS 风格图标条：按钮只有图标，文字标签作为可访问名称保留（视觉隐藏）。
-        // 分组之间插分隔线（demo 的分组：标记 / 文字样式 / 复制）。
+        // 分组之间插分隔线（标记 / 文字样式 / 复制与剪切）。
         ensureSelectionMenuSprite(document);
         this.btnGroup = document.createElement('div');
         this.btnGroup.className = 'menu-btn-group';
@@ -135,6 +152,7 @@ class SelectionMenuView {
             this.makeButton('加粗', () => this.toggleBold(), 'sm-bold'),
             this.makeDivider(),
             this.makeButton('复制', () => this.copySelection(), 'sm-copy'),
+            this.makeButton('剪切', () => this.cutSelection(), 'sm-cut'),
         );
 
         this.inputGroup = document.createElement('div');
@@ -157,13 +175,22 @@ class SelectionMenuView {
                 this.saveAnnotation();
             }
             if (event.key === 'Escape') {
+                this.annoInput.blur?.();
                 this.closeAnnotationInput();
                 this.hide();
+                if (isTouchInteraction(this.view, event)) {
+                    releaseEditorFocus(this.view, { clearDomSelection: true });
+                }
             }
         });
         // 批注输入框点击不能冒泡回编辑器：ProseMirror 会因焦点离开
         // 而把选区折叠（blur → selection 重置），批注对象随之丢失。
         this.annoInput.addEventListener('mousedown', (event) => event.stopPropagation());
+        this.annoInput.addEventListener('pointerdown', (event) => {
+            if (event.pointerType === 'mouse') clearTouchPointerActivity();
+            else if (event.pointerType) markTouchPointerActivity();
+            event.stopPropagation();
+        });
 
         this.inputGroup.append(this.annoInput, saveBtn);
         this.root.append(this.btnGroup, this.inputGroup);
@@ -176,14 +203,110 @@ class SelectionMenuView {
         document.body.appendChild(this.popover);
 
         this.handleBlur = this.handleBlur.bind(this);
+        this.handleWindowPointerUp = () => {
+            this.dragging = false;
+        };
+
+        // 触屏点按捕获：时间标记与批注徽标不夺焦不弹键盘；已标记正文首次点按不夺焦、
+        // 同元素展开动作气泡时二次轻点标记 data-allow-edit-tap 允许落光标编辑。
+        this.handleEditorPointerDown = (event) => {
+            this.lastDownMeta = {
+                x: Number(event.clientX || 0),
+                y: Number(event.clientY || 0),
+                time: Date.now(),
+            };
+            if (event.pointerType === 'mouse') {
+                clearTouchPointerActivity();
+                this.clearAllowedEditMarked();
+                return;
+            }
+            if (!event.pointerType) return;
+            markTouchPointerActivity();
+
+            const marker = event.target?.closest?.('.md-time-marker');
+            if (marker && this.view.dom.contains(marker)) {
+                this.clearAllowedEditMarked();
+                event.preventDefault();
+                releaseEditorFocus(this.view);
+                this.touchTap = {
+                    kind: 'timeMarker',
+                    element: marker,
+                    pointerId: event.pointerId ?? 0,
+                    startX: Number(event.clientX || 0),
+                    startY: Number(event.clientY || 0),
+                };
+                return;
+            }
+
+            const marked = event.target?.closest?.(MARKED_ELEMENT_SELECTOR);
+            const badge = event.target?.closest?.('.annotation-badge');
+            if (badge && marked && this.view.dom.contains(marked)) {
+                this.clearAllowedEditMarked();
+                event.preventDefault();
+                releaseEditorFocus(this.view);
+                this.touchTap = {
+                    kind: 'badge',
+                    element: marked,
+                    pointerId: event.pointerId ?? 0,
+                    startX: Number(event.clientX || 0),
+                    startY: Number(event.clientY || 0),
+                };
+                return;
+            }
+
+            if (marked && this.view.dom.contains(marked)) {
+                if (this.popover.style.display !== 'none'
+                    && !this.popoverReadonly
+                    && this.popoverAnchor === marked) {
+                    this.clearAllowedEditMarked(marked);
+                    marked.setAttribute('data-allow-edit-tap', 'true');
+                    this.allowEditMarkedElement = marked;
+                    this.hideMarkPopover();
+                    return;
+                }
+                this.clearAllowedEditMarked();
+                return;
+            }
+
+            this.clearAllowedEditMarked();
+        };
+
+        this.handleEditorPointerUp = (event) => {
+            const tap = this.touchTap;
+            if (!tap || tap.pointerId !== (event.pointerId ?? 0)) return;
+            this.touchTap = null;
+            if (event.type === 'pointercancel') return;
+            const moved = Math.hypot(
+                Number(event.clientX || 0) - tap.startX,
+                Number(event.clientY || 0) - tap.startY,
+            ) > TOUCH_TAP_MOVE_THRESHOLD_PX;
+            if (moved) return;
+            event.preventDefault();
+            event.stopPropagation();
+            this.lastTouchTapAt = Date.now();
+            releaseEditorFocus(this.view);
+            if (tap.kind === 'timeMarker') {
+                this.showTimeMarkerMenu(tap.element);
+            } else if (tap.kind === 'badge') {
+                this.showAnnotationContent(tap.element);
+            }
+        };
+
         // 点击已标记/时间标记文字弹对应菜单：直接在编辑器 DOM 上挂
         // click 监听（与旧 bindAnnotationPopover / bindTimeMarkerPopover
         // 同机制）。不走 PM 的 handleClick——它依赖 PM 鼠标管线
         // （posAtCoords / view.mouseDown 状态机），无布局环境不可靠，
         // 且这是纯 DOM 关注点、不涉事务。
         this.handleEditorClick = (event) => {
+            const down = this.lastDownMeta;
+            this.lastDownMeta = null;
+            const recentlyTouchHandled = Date.now() - this.lastTouchTapAt < TOUCH_CLICK_GUARD_MS;
             const marker = event.target?.closest?.('.md-time-marker');
             if (marker && view.dom.contains(marker)) {
+                if (recentlyTouchHandled) return;
+                if (isTouchInteraction(this.view, event)) {
+                    releaseEditorFocus(this.view);
+                }
                 this.showTimeMarkerMenu(marker);
                 return;
             }
@@ -193,14 +316,43 @@ class SelectionMenuView {
             // 分支）；点正文 = 编辑/取消动作。徽标没有自己的可点区域可区分（它是
             // 渲染层节点），靠 closest 判定即可。
             if (event.target?.closest?.('.annotation-badge')) {
+                if (recentlyTouchHandled) return;
                 event.preventDefault();
                 event.stopPropagation();
+                if (isTouchInteraction(this.view, event)) {
+                    releaseEditorFocus(this.view);
+                }
                 this.showAnnotationContent(marked);
                 return;
             }
+            if (marked === this.allowEditMarkedElement) {
+                this.clearAllowedEditMarked();
+                return;
+            }
+            const domSel = window.getSelection?.();
+            if (down) {
+                const moved = Math.hypot(
+                    Number(event.clientX || 0) - down.x,
+                    Number(event.clientY || 0) - down.y,
+                ) > 6;
+                const heldLongWithSelection = (Date.now() - down.time >= 320)
+                    && domSel && !domSel.isCollapsed && view.dom.contains(domSel.anchorNode);
+                if (moved || heldLongWithSelection) {
+                    return;
+                }
+            }
+            if (isTouchInteraction(this.view, event)) {
+                releaseEditorFocus(this.view, { clearDomSelection: true });
+            }
             this.showMarkPopover(marked);
         };
+
+        view.dom.addEventListener('pointerdown', this.handleEditorPointerDown, true);
+        view.dom.addEventListener('pointerup', this.handleEditorPointerUp, true);
+        view.dom.addEventListener('pointercancel', this.handleEditorPointerUp, true);
         view.dom.addEventListener('click', this.handleEditorClick);
+        window.addEventListener('pointerup', this.handleWindowPointerUp, true);
+        window.addEventListener('pointercancel', this.handleWindowPointerUp, true);
         // 浮层是 position:absolute + 页面坐标，窗口尺寸变化后原坐标就偏了；
         // 编辑器滚动（桌面在 .vditor-wysiwyg 内滚、移动端整页滚）同理。
         // 两处都必须重算，否则菜单会停在旧位置、与选区/标记脱开。
@@ -209,10 +361,27 @@ class SelectionMenuView {
         window.addEventListener('resize', this.handleResize);
         window.addEventListener('scroll', this.handleScroll, { capture: true, passive: true });
         this.root.addEventListener('mousedown', (event) => event.stopPropagation());
+        this.root.addEventListener('pointerdown', (event) => {
+            if (event.pointerType === 'mouse') clearTouchPointerActivity();
+            else if (event.pointerType) markTouchPointerActivity();
+            event.stopPropagation();
+        });
         this.popover.addEventListener('mousedown', (event) => event.stopPropagation());
+        this.popover.addEventListener('pointerdown', (event) => {
+            if (event.pointerType === 'mouse') clearTouchPointerActivity();
+            else if (event.pointerType) markTouchPointerActivity();
+            event.stopPropagation();
+        });
         // 点编辑器外（其他面板/正文）收起菜单：PM 的 blur 捕获即可，
         // 不需要 document 级 mousedown 监听。
         view.dom.addEventListener('blur', this.handleBlur, true);
+    }
+
+    clearAllowedEditMarked(exceptEl = null) {
+        if (this.allowEditMarkedElement && this.allowEditMarkedElement !== exceptEl) {
+            this.allowEditMarkedElement.removeAttribute('data-allow-edit-tap');
+            this.allowEditMarkedElement = null;
+        }
     }
 
     /** 跟随窗口尺寸/滚动重算所有可见浮层的位置（不可见的一律跳过）。 */
@@ -241,13 +410,23 @@ class SelectionMenuView {
         text.className = 'sm-label';
         text.textContent = label;
         btn.append(text);
-        // 阻止 mousedown 默认行为：否则点击按钮会把编辑器焦点/选区
-        // 抢走（浏览器把焦点移到按钮），PM 选区折叠、动作落空。
-        btn.addEventListener('mousedown', (event) => {
+        // 阻止 pointerdown/mousedown 默认行为：防止点击按钮把编辑器焦点/选区
+        // 抢走，导致选区提前折叠、动作落空或弹出软键盘。
+        const keepSelectionOnButtonDown = (event) => {
+            if (event.type === 'pointerdown') {
+                if (event.pointerType === 'mouse') clearTouchPointerActivity();
+                else if (event.pointerType) markTouchPointerActivity();
+            }
             event.preventDefault();
             event.stopPropagation();
+        };
+        btn.addEventListener('pointerdown', keepSelectionOnButtonDown);
+        btn.addEventListener('mousedown', keepSelectionOnButtonDown);
+        btn.addEventListener('click', (event) => {
+            if (event.pointerType === 'mouse') clearTouchPointerActivity();
+            else if (event.pointerType) markTouchPointerActivity();
+            action(event);
         });
-        btn.addEventListener('click', () => action());
         return btn;
     }
 
@@ -351,16 +530,26 @@ class SelectionMenuView {
         const isMobile = window.matchMedia?.('(max-width: 720px)').matches;
         const scrollX = window.scrollX || 0;
         const scrollY = window.scrollY || 0;
-        let menuLeft = rect.left + rect.width / 2 - menuRect.width / 2;
+        const vv = window.visualViewport;
+        const viewWidth = Number(vv?.width || window.innerWidth || 0);
+        const viewHeight = Number(vv?.height || window.innerHeight || 0);
+        const vvTop = Number(vv?.offsetTop || 0);
+        const vvLeft = Number(vv?.offsetLeft || 0);
+
+        let menuLeft = rect.left + scrollX + rect.width / 2 - menuRect.width / 2;
         let menuTop = isMobile
             ? rect.bottom + scrollY + 10
             : rect.top + scrollY - menuRect.height - 10;
-        if (isMobile && menuTop + menuRect.height > scrollY + window.innerHeight - 12) {
+        const minTop = scrollY + vvTop + 10;
+        const maxBottom = scrollY + vvTop + viewHeight - 12;
+        if (isMobile && menuTop + menuRect.height > maxBottom) {
             menuTop = rect.top + scrollY - menuRect.height - 10;
         }
-        if (!isMobile && menuTop < scrollY + 10) menuTop = rect.bottom + scrollY + 10;
-        menuTop = Math.max(menuTop, scrollY + 10);
-        menuLeft = Math.min(Math.max(menuLeft, 10), window.innerWidth - menuRect.width - 10);
+        if (!isMobile && menuTop < minTop) menuTop = rect.bottom + scrollY + 10;
+        menuTop = Math.max(minTop, Math.min(menuTop, Math.max(minTop, maxBottom - menuRect.height)));
+        const minLeft = scrollX + vvLeft + 10;
+        const maxLeft = Math.max(minLeft, scrollX + vvLeft + viewWidth - menuRect.width - 10);
+        menuLeft = Math.min(Math.max(menuLeft, minLeft), maxLeft);
         this.root.style.left = `${menuLeft}px`;
         this.root.style.top = `${menuTop}px`;
         // 菜单在选区下方时（移动端默认、桌面顶到视口上缘翻转）：尖角移到顶边，
@@ -368,7 +557,7 @@ class SelectionMenuView {
         const isBelow = menuTop > rect.bottom + scrollY;
         this.root.classList.toggle('sm-below', isBelow);
         // 尖角必须继续指向选区中心：菜单被视口夹住后不能再用写死的 50%。
-        const tailX = rect.left + rect.width / 2 - menuLeft - 6;
+        const tailX = rect.left + scrollX + rect.width / 2 - menuLeft - 6;
         const clampedTail = Math.max(10, Math.min(tailX, menuRect.width - 16));
         this.root.style.setProperty('--sm-tail-x', `${clampedTail}px`);
     }
@@ -383,6 +572,7 @@ class SelectionMenuView {
         const type = comment || isAnnotation ? 'annotation' : (isMark ? 'highlight' : (isDraw ? 'draw' : null));
         if (!type) return;
 
+        this.hideTimeMarkerMenu();
         this.popover.className = 'mark-popover';
         this.popoverReadonly = false;
         this.popover.innerHTML = '';
@@ -430,10 +620,11 @@ class SelectionMenuView {
         const comment = element.getAttribute('data-note') || element.getAttribute('data-comment') || '';
         if (!comment) return;
         this.hide();
+        this.hideTimeMarkerMenu();
         this.popover.innerHTML = '';
         this.popover.className = 'mark-popover comment-only-popover';
         // 只读展示卡要在编辑器 blur 后仍然存活（徽标在 contenteditable 内部），
-        // 收起只交给下面的 document mousedown，与旧实现一致。
+        // 收起只交给下面的 document mousedown/pointerdown，与旧实现一致。
         this.popoverReadonly = true;
 
         const content = document.createElement('div');
@@ -453,19 +644,28 @@ class SelectionMenuView {
         this.installPopoverCloseHandler();
     }
 
+    clearPopoverCloseHandler() {
+        clearTimeout(this.popoverCloseTimer);
+        this.popoverCloseCleanup?.();
+        this.popoverCloseCleanup = null;
+    }
+
     /** 点其他位置收起 popover（延迟挂载避免吞掉当前点击）。 */
     installPopoverCloseHandler() {
-        clearTimeout(this.popoverCloseTimer);
+        this.clearPopoverCloseHandler();
         this.popoverCloseTimer = setTimeout(() => {
             const close = (event) => {
+                if (event.type === 'pointerdown' && event.pointerType === 'mouse') return;
                 if (!this.popover.contains(event.target)) {
-                    this.popover.style.display = 'none';
-                    this.popoverReadonly = false;
-                    this.popoverAnchor = null;
-                    document.removeEventListener('mousedown', close);
+                    this.hideMarkPopover();
                 }
             };
             document.addEventListener('mousedown', close);
+            document.addEventListener('pointerdown', close);
+            this.popoverCloseCleanup = () => {
+                document.removeEventListener('mousedown', close);
+                document.removeEventListener('pointerdown', close);
+            };
         }, 0);
     }
 
@@ -480,17 +680,24 @@ class SelectionMenuView {
             }
             const popRect = this.popover.getBoundingClientRect();
             const scrollY = window.scrollY || 0;
+            const vv = window.visualViewport;
+            const viewWidth = Number(vv?.width || window.innerWidth || 0);
+            const vvLeft = Number(vv?.offsetLeft || 0);
             let left = rect.left + rect.width / 2 - popRect.width / 2;
             let top = rect.top + scrollY - popRect.height - 12;
-            if (top < scrollY + 10) top = rect.bottom + scrollY + 12;
-            left = Math.min(Math.max(left, 10), window.innerWidth - popRect.width - 10);
+            if (top < scrollY + (vv?.offsetTop || 0) + 10) top = rect.bottom + scrollY + 12;
+            const minLeft = vvLeft + 10;
+            const maxLeft = Math.max(minLeft, vvLeft + viewWidth - popRect.width - 10);
+            left = Math.min(Math.max(left, minLeft), maxLeft);
             this.popover.style.left = `${left}px`;
             this.popover.style.top = `${top}px`;
         });
     }
 
     hideMarkPopover() {
+        this.clearPopoverCloseHandler();
         this.popover.style.display = 'none';
+        this.popoverReadonly = false;
         this.popoverAnchor = null;
     }
 
@@ -522,15 +729,17 @@ class SelectionMenuView {
     /** 取消标记：框架 removeMark 命令（可撤销），与旧 removeInlineMark 对齐。 */
     removeMarked(element, type) {
         const range = this.posRangeForElement(element);
-        this.popover.style.display = 'none';
+        this.hideMarkPopover();
         if (!range) return;
         const schema = this.view.state.schema;
         const markType = type === 'highlight'
             ? schema.marks.mdHighlight
             : (type === 'draw' ? schema.marks.draw : schema.marks.annotation);
         if (!markType) return;
-        this.view.dispatch(this.view.state.tr.removeMark(range.from, range.to, markType));
-        this.view.focus();
+        preserveViewportScroll(this.view, () => {
+            this.view.dispatch(this.view.state.tr.removeMark(range.from, range.to, markType));
+        });
+        settleEditorFocusAfterAction(this.view, { keepFocusOnDesktop: true, clearDomSelection: true });
         notify(type === 'highlight' ? '已取消高亮' : (type === 'draw' ? '已取消画线' : '已取消批注'), 'info');
     }
 
@@ -538,7 +747,7 @@ class SelectionMenuView {
     editAnnotationComment(element, comment) {
         const range = this.posRangeForElement(element);
         if (!range) {
-            this.popover.style.display = 'none';
+            this.hideMarkPopover();
             return;
         }
 
@@ -571,24 +780,33 @@ class SelectionMenuView {
 
         // 避免点击输入框触发编辑器失焦折叠选区
         input.addEventListener('mousedown', (e) => e.stopPropagation());
+        input.addEventListener('pointerdown', (e) => {
+            if (e.pointerType === 'mouse') clearTouchPointerActivity();
+            else if (e.pointerType) markTouchPointerActivity();
+            e.stopPropagation();
+        });
 
         const handleSave = () => {
             const next = input.value.trim();
             if (!next) return;
+            input.blur?.();
             const annotationType = this.view.state.schema.marks.annotation;
             if (annotationType && next !== comment) {
-                const tr = this.view.state.tr;
-                tr.removeMark(range.from, range.to, annotationType);
-                tr.addMark(range.from, range.to, annotationType.create({ note: next }));
-                this.view.dispatch(tr);
+                preserveViewportScroll(this.view, () => {
+                    const tr = this.view.state.tr;
+                    tr.removeMark(range.from, range.to, annotationType);
+                    tr.addMark(range.from, range.to, annotationType.create({ note: next }));
+                    this.view.dispatch(tr);
+                });
             }
-            this.popover.style.display = 'none';
-            this.view.focus();
+            this.hideMarkPopover();
+            settleEditorFocusAfterAction(this.view, { keepFocusOnDesktop: true, clearDomSelection: true });
         };
 
         const handleCancel = () => {
-            this.popover.style.display = 'none';
-            this.view.focus();
+            input.blur?.();
+            this.hideMarkPopover();
+            settleEditorFocusAfterAction(this.view, { keepFocusOnDesktop: true, clearDomSelection: true });
         };
 
         saveBtn.addEventListener('click', handleSave);
@@ -605,13 +823,19 @@ class SelectionMenuView {
         });
 
         requestAnimationFrame(() => {
-            input.focus();
+            input.focus({ preventScroll: true });
             input.setSelectionRange(input.value.length, input.value.length);
         });
     }
 
 
     /* ------- 时间标记菜单（更新/删除，对应旧 showTimeMarkerMenu） ------- */
+
+    clearTimeMarkerCloseHandler() {
+        clearTimeout(this.timeMarkerMenuCloseTimer);
+        this.timeMarkerMenuCloseCleanup?.();
+        this.timeMarkerMenuCloseCleanup = null;
+    }
 
     showTimeMarkerMenu(element) {
         const source = element.getAttribute('data-time-source') || '';
@@ -623,15 +847,20 @@ class SelectionMenuView {
         menu.style.display = 'flex';
         this.positionTimeMarkerMenu(element);
         // 点其他位置收起（延迟挂载避免吞掉当前点击）。
-        clearTimeout(this.timeMarkerMenuCloseTimer);
+        this.clearTimeMarkerCloseHandler();
         this.timeMarkerMenuCloseTimer = setTimeout(() => {
             const close = (event) => {
+                if (event.type === 'pointerdown' && event.pointerType === 'mouse') return;
                 if (!menu.contains(event.target) && !event.target.closest?.('.md-time-marker')) {
                     this.hideTimeMarkerMenu();
-                    document.removeEventListener('mousedown', close);
                 }
             };
             document.addEventListener('mousedown', close);
+            document.addEventListener('pointerdown', close);
+            this.timeMarkerMenuCloseCleanup = () => {
+                document.removeEventListener('mousedown', close);
+                document.removeEventListener('pointerdown', close);
+            };
         }, 0);
     }
 
@@ -652,13 +881,21 @@ class SelectionMenuView {
                 </button>
             </div>
         `;
-        menu.addEventListener('mousedown', (event) => {
+        const stopMenuDown = (event) => {
+            if (event.type === 'pointerdown') {
+                if (event.pointerType === 'mouse') clearTouchPointerActivity();
+                else if (event.pointerType) markTouchPointerActivity();
+            }
             event.preventDefault();
             event.stopPropagation();
-        });
+        };
+        menu.addEventListener('pointerdown', stopMenuDown);
+        menu.addEventListener('mousedown', stopMenuDown);
         menu.addEventListener('click', (event) => {
             const button = event.target.closest('[data-time-action]');
             if (!button) return;
+            if (event.pointerType === 'mouse') clearTouchPointerActivity();
+            else if (event.pointerType) markTouchPointerActivity();
             event.preventDefault();
             event.stopPropagation();
             this.applyTimeMarkerAction(button.dataset.timeAction);
@@ -679,16 +916,22 @@ class SelectionMenuView {
             }
             const menuRect = this.timeMarkerMenu.getBoundingClientRect();
             const scrollY = window.scrollY || 0;
+            const vv = window.visualViewport;
+            const viewWidth = Number(vv?.width || window.innerWidth || 0);
+            const vvLeft = Number(vv?.offsetLeft || 0);
             let left = rect.left + rect.width / 2 - menuRect.width / 2;
             let top = rect.top + scrollY - menuRect.height - 10;
-            if (top < scrollY + 10) top = rect.bottom + scrollY + 10;
-            left = Math.min(Math.max(left, 10), window.innerWidth - menuRect.width - 10);
+            if (top < scrollY + (vv?.offsetTop || 0) + 10) top = rect.bottom + scrollY + 10;
+            const minLeft = vvLeft + 10;
+            const maxLeft = Math.max(minLeft, vvLeft + viewWidth - menuRect.width - 10);
+            left = Math.min(Math.max(left, minLeft), maxLeft);
             this.timeMarkerMenu.style.left = `${left}px`;
             this.timeMarkerMenu.style.top = `${top}px`;
         });
     }
 
     hideTimeMarkerMenu() {
+        this.clearTimeMarkerCloseHandler();
         if (this.timeMarkerMenu) this.timeMarkerMenu.style.display = 'none';
         this.activeTimeMarkerElement = null;
     }
@@ -738,8 +981,10 @@ class SelectionMenuView {
                 label: parsed.label,
             });
         }
-        this.view.dispatch(tr);
-        this.view.focus();
+        preserveViewportScroll(this.view, () => {
+            this.view.dispatch(tr);
+        });
+        settleEditorFocusAfterAction(this.view, { keepFocusOnDesktop: true, clearDomSelection: true });
         notify(action === 'delete' ? '已删除时间标记' : '已更新为当前时间', action === 'delete' ? 'info' : 'success');
     }
 
@@ -748,7 +993,7 @@ class SelectionMenuView {
         this.btnGroup.style.display = 'none';
         this.inputGroup.style.display = 'flex';
         this.annoInput.value = '';
-        this.annoInput.focus();
+        this.annoInput.focus({ preventScroll: true });
         this.position();
     }
 
@@ -760,20 +1005,28 @@ class SelectionMenuView {
 
     saveAnnotation() {
         const comment = this.annoInput.value.trim();
+        this.annoInput.blur?.();
         this.closeAnnotationInput();
-        if (comment) this.applyMark('annotation', { note: comment });
-        else this.hide();
+        if (comment) {
+            this.applyMark('annotation', { note: comment });
+        } else {
+            this.hide();
+            if (isTouchInteraction(this.view)) {
+                releaseEditorFocus(this.view, { clearDomSelection: true });
+            }
+        }
     }
 
     applyMark(markName, attrs = {}) {
         const { from, to } = this.pendingSelection || this.view.state.selection;
         // 选区尾端可能是段首/块边界，落 mark 前收缩到实际文本范围内，
         // 避免 mark 泄到相邻块（与旧 occurrence 校验等价的框架级防线）。
-        const tr = this.view.state.tr.addMark(from, to, this.view.state.schema.marks[markName].create(attrs));
-        this.view.dispatch(tr);
+        preserveViewportScroll(this.view, () => {
+            const tr = this.view.state.tr.addMark(from, to, this.view.state.schema.marks[markName].create(attrs));
+            this.view.dispatch(tr);
+        });
         this.hide();
-        // 落标记后退出选中状态：光标折叠到标记起点（与旧编辑器一致，
-        // 选区仍罩在高亮/划线上会显得"没有退出选中"）。
+        // 落标记后退出选中状态：桌面将光标折叠到标记起点，移动端取消光标压住键盘。
         this.collapseTo(from);
         notify(markName === 'draw' ? '已画线' : (markName === 'mdHighlight' ? '已高亮' : '已添加批注'));
     }
@@ -800,41 +1053,93 @@ class SelectionMenuView {
         // 整段已加粗 → 这次是取消，否则是加粗。提示文案要跟着变，否则
         // 「已加粗」出现在取消动作上就是错的。
         const wasBold = this.view.state.doc.rangeHasMark(from, to, boldType);
-        this.view.dispatch(this.view.state.tr);
-        PM.commands.toggleMark(boldType)(this.view.state, this.view.dispatch, this.view);
+        preserveViewportScroll(this.view, () => {
+            this.view.dispatch(this.view.state.tr);
+            PM.commands.toggleMark(boldType)(this.view.state, this.view.dispatch, this.view);
+        });
         this.hide();
         this.collapseTo(from);
         notify(wasBold ? '已取消加粗' : '已加粗', wasBold ? 'info' : 'success');
     }
 
-    /** 动作完成后退出选中状态：光标折叠到标记起点（与旧编辑器一致）。 */
+    /** 动作完成后退出选中状态：桌面光标折叠到标记起点；触屏释放焦点并清选区。 */
     collapseTo(pos) {
         const clamped = Math.max(0, Math.min(pos, this.view.state.doc.content.size));
         const $from = this.view.state.doc.resolve(clamped);
         const collapsed = TextSelection.near($from, -1);
-        this.view.dispatch(this.view.state.tr.setSelection(collapsed));
-        this.view.focus();
+        preserveViewportScroll(this.view, () => {
+            this.view.dispatch(this.view.state.tr.setSelection(collapsed));
+        });
+        settleEditorFocusAfterAction(this.view, { keepFocusOnDesktop: true, clearDomSelection: true });
+    }
+
+    async writeClipboardText(text) {
+        if (!text) return false;
+        try {
+            if (navigator.clipboard?.writeText) {
+                await navigator.clipboard.writeText(text);
+                return true;
+            }
+        } catch (_error) {
+            // Fall through to execCommand fallback for non-secure contexts
+        }
+        try {
+            const ta = document.createElement('textarea');
+            ta.value = text;
+            ta.setAttribute('readonly', '');
+            ta.style.cssText = 'position:fixed;top:-9999px;left:-9999px;opacity:0;';
+            document.body.appendChild(ta);
+            ta.focus({ preventScroll: true });
+            ta.select();
+            const ok = typeof document.execCommand === 'function' ? document.execCommand('copy') : false;
+            ta.remove();
+            return Boolean(ok);
+        } catch (_error) {
+            return false;
+        }
     }
 
     async copySelection() {
         const { from, to } = this.pendingSelection || this.view.state.selection;
         const text = this.view.state.doc.textBetween(from, to, '\n');
-        let copied = false;
-        if (text) {
-            try {
-                await navigator.clipboard.writeText(text);
-                copied = true;
-            } catch (_error) {
-                // 无剪贴板权限（非安全上下文、用户拒绝授权）：明确告知失败，
-                // 不要静默——旧实现是静默尽力而为，用户以为复制成功了。
-                copied = false;
-            }
-        }
+        const copied = text ? await this.writeClipboardText(text) : false;
         this.hide();
         // 复制后同样退出选中状态。
         this.collapseTo(from);
         if (!text) return;
         notify(copied ? '已复制' : '复制失败：剪贴板不可用', copied ? 'success' : 'error', copied ? 1400 : 2600);
+    }
+
+    async cutSelection() {
+        if (!this.view.editable) {
+            this.hide();
+            return;
+        }
+        const { from, to } = this.pendingSelection || this.view.state.selection;
+        if (!(to > from)) {
+            this.hide();
+            return;
+        }
+        const text = this.view.state.doc.textBetween(from, to, '\n');
+        const copied = text ? await this.writeClipboardText(text) : false;
+        if (!copied) {
+            this.hide();
+            this.collapseTo(from);
+            if (!text) return;
+            notify('剪切失败：剪贴板不可用（内容未删除）', 'error', 2600);
+            return;
+        }
+        const maxPos = this.view.state.doc.content.size;
+        const clampedFrom = Math.max(0, Math.min(from, maxPos));
+        const clampedTo = Math.max(clampedFrom, Math.min(to, maxPos));
+        if (clampedTo > clampedFrom) {
+            preserveViewportScroll(this.view, () => {
+                this.view.dispatch(this.view.state.tr.delete(clampedFrom, clampedTo));
+            });
+        }
+        this.hide();
+        this.collapseTo(clampedFrom);
+        notify('已剪切', 'success');
     }
 
     handleBlur() {
@@ -847,9 +1152,17 @@ class SelectionMenuView {
     }
 
     destroy() {
+        this.clearPopoverCloseHandler();
+        this.clearTimeMarkerCloseHandler();
+        this.clearAllowedEditMarked();
         window.removeEventListener('resize', this.handleResize);
         window.removeEventListener('scroll', this.handleScroll, { capture: true });
+        window.removeEventListener('pointerup', this.handleWindowPointerUp, true);
+        window.removeEventListener('pointercancel', this.handleWindowPointerUp, true);
         this.view.dom.removeEventListener('blur', this.handleBlur, true);
+        this.view.dom.removeEventListener('pointerdown', this.handleEditorPointerDown, true);
+        this.view.dom.removeEventListener('pointerup', this.handleEditorPointerUp, true);
+        this.view.dom.removeEventListener('pointercancel', this.handleEditorPointerUp, true);
         this.view.dom.removeEventListener('click', this.handleEditorClick);
         this.root.remove();
         this.popover.remove();

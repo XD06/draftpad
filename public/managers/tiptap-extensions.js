@@ -13,6 +13,11 @@ import {
     reconcileCodeBlockDOM,
 } from './tiptap-code-block-view.js';
 import { buildTaskItemNodeView } from './tiptap-task-item-view.js';
+import {
+    clearTouchPointerActivity,
+    markTouchPointerActivity,
+    settleEditorFocusAfterAction,
+} from './tiptap-pointer-focus.js';
 
 const { Plugin, PluginKey, TextSelection } = PM.state;
 const { Decoration, DecorationSet } = PM.view;
@@ -2880,6 +2885,10 @@ class HeadingAlignControlView {
         document.body.appendChild(this.button);
 
         this.onPointerDown = (event) => {
+            if (event.type === 'pointerdown') {
+                if (event.pointerType === 'mouse') clearTouchPointerActivity();
+                else if (event.pointerType) markTouchPointerActivity();
+            }
             event.preventDefault();
             event.stopPropagation();
         };
@@ -2887,7 +2896,7 @@ class HeadingAlignControlView {
             event.preventDefault();
             event.stopPropagation();
             this.editor.commands.toggleHeadingCenter();
-            this.editor.view.focus();
+            settleEditorFocusAfterAction(this.view, { keepFocusOnDesktop: true, event });
             this.sync();
         };
         this.onScroll = () => this.schedulePosition();

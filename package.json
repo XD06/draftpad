@@ -77,6 +77,7 @@
     "test:tiptap-image-menu": "node test/test_tiptap_image_menu.js",
     "test:tiptap-image-paste": "node test/test_tiptap_image_paste.js",
     "test:tiptap-pointer-focus": "node test/test_tiptap_pointer_focus.js",
+    "test:mobile-focus-guard-browser": "node test/browser/mobile-focus-guard.js",
     "test:toaster": "node test/test_toaster.js",
     "test:tiptap-soft-enter-link": "node test/test_tiptap_soft_enter_link.js",
     "test:tiptap-soft-enter-block-rules": "node test/test_tiptap_soft_enter_block_rules.js",

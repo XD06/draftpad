@@ -19,6 +19,13 @@ import {
 import { AssetApiClient } from './asset-api-client.js';
 import { openAttachmentRenamePopover } from './attachment-rename-dialog.js';
 import { getFileCategory, getFileIconSvg } from './file-type-icons.js';
+import {
+    clearTouchPointerActivity,
+    markTouchPointerActivity,
+    preserveViewportScroll,
+    releaseEditorFocus,
+    settleEditorFocusAfterAction,
+} from './tiptap-pointer-focus.js';
 
 /** 节点 src（/api/assets/<id>/original|preview）→ 资产 id；非资产 src 返回空。 */
 function mediaAssetIdFromSource(source) {
@@ -157,12 +164,14 @@ function buildMediaNodeView({ node, editor, view, getPos }) {
             const prefix = latestInfo.kind === 'audio' ? ARTICLE_AUDIO_TITLE_PREFIX : ARTICLE_VIDEO_TITLE_PREFIX;
             const nextTitle = `${prefix};size=${Math.max(0, Number(latestInfo.size) || 0)};type=${encodeURIComponent(String(finalType).trim().slice(0, 120))};name=${encodeURIComponent(String(finalName).trim().slice(0, 120))}`;
             if (liveNode.attrs.title !== nextTitle) {
-                view.dispatch(view.state.tr.setNodeMarkup(latestPos, undefined, {
-                    ...liveNode.attrs,
-                    title: nextTitle,
-                }));
+                preserveViewportScroll(view, () => {
+                    view.dispatch(view.state.tr.setNodeMarkup(latestPos, undefined, {
+                        ...liveNode.attrs,
+                        title: nextTitle,
+                    }));
+                });
             }
-            view.focus();
+            settleEditorFocusAfterAction(view, { keepFocusOnDesktop: true });
         });
         meta.append(renameButton);
 
@@ -192,8 +201,10 @@ function buildMediaNodeView({ node, editor, view, getPos }) {
             if (pos === null || typeof pos !== 'number') return;
             const size = view.state.doc.nodeAt(pos)?.nodeSize;
             if (!size) return;
-            view.dispatch(view.state.tr.delete(pos, pos + size));
-            view.focus();
+            preserveViewportScroll(view, () => {
+                view.dispatch(view.state.tr.delete(pos, pos + size));
+            });
+            settleEditorFocusAfterAction(view, { keepFocusOnDesktop: true, event });
         });
         meta.append(deleteButton);
 
@@ -208,11 +219,19 @@ function buildMediaNodeView({ node, editor, view, getPos }) {
     }
 
     // 触屏点按媒体元素时，浏览器会把焦点交给 contenteditable 弹出软键盘。
-    // 只拦「触屏补发的兼容 mousedown」的默认行为（阻止焦点但不产生点击副作用，
-    // 原生播放控件响应 click / pointer 事件不受影响）；桌面鼠标保持原样。
+    // 触屏 pointerdown 立即释放旧焦点并写回 inputmode="none"，兼容 mousedown
+    // 一并阻止夺焦；桌面鼠标保持原样，原生播放控件响应 click / pointer 事件不受影响。
     let lastTouchPointerDownAt = 0;
     wrapper.addEventListener('pointerdown', (event) => {
-        if (event.pointerType && event.pointerType !== 'mouse') lastTouchPointerDownAt = Date.now();
+        if (event.pointerType === 'mouse') {
+            clearTouchPointerActivity();
+            return;
+        }
+        if (event.pointerType) {
+            lastTouchPointerDownAt = Date.now();
+            markTouchPointerActivity();
+            releaseEditorFocus(view);
+        }
     }, true);
     wrapper.addEventListener('mousedown', (event) => {
         if (Date.now() - lastTouchPointerDownAt < 700) event.preventDefault();

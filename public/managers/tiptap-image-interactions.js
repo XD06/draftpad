@@ -13,6 +13,14 @@ import {
 import { AssetApiClient } from './asset-api-client.js';
 import { openAttachmentRenamePopover } from './attachment-rename-dialog.js';
 import { getFileCategory, FILE_CATEGORIES } from './file-type-icons.js';
+import {
+    clearTouchPointerActivity,
+    isTouchInteraction,
+    markTouchPointerActivity,
+    preserveViewportScroll,
+    releaseEditorFocus,
+    settleEditorFocusAfterAction,
+} from './tiptap-pointer-focus.js';
 
 const { Plugin, PluginKey } = PM.state;
 const { Decoration, DecorationSet } = PM.view;
@@ -297,8 +305,10 @@ class ArticleImageInteractionView {
         this.activeFileLink = null;
         this.drag = null;
         this.tap = null;
+        this.fileTap = null;
         this.lastDragAt = 0;
         this.lastTapAt = 0;
+        this.lastFileTapAt = 0;
 
         this.sizeMenu = this.buildSizeMenu();
         this.lightbox = this.buildLightbox();
@@ -354,6 +364,20 @@ class ArticleImageInteractionView {
                 this.hideFileMenu();
             }
         };
+        this.handleDocumentPointerDown = (event) => {
+            if (event.pointerType === 'mouse' || !event.pointerType) return;
+            markTouchPointerActivity();
+            if (!this.sizeMenu.hidden
+                && !this.sizeMenu.contains(event.target)
+                && event.target !== this.activeImage) {
+                this.hideSizeMenu();
+            }
+            if (!this.fileMenu.hidden
+                && !this.fileMenu.contains(event.target)
+                && event.target !== this.activeFileLink) {
+                this.hideFileMenu();
+            }
+        };
         this.handleDocumentKeydown = (event) => {
             if (event.key !== 'Escape') return;
             if (!this.lightbox.hidden) {
@@ -390,6 +414,7 @@ class ArticleImageInteractionView {
         view.dom.addEventListener('dragstart', this.handleDragStart);
         document.addEventListener('keydown', this.handleDocumentKeydown);
         document.addEventListener('mousedown', this.handleDocumentMousedown);
+        document.addEventListener('pointerdown', this.handleDocumentPointerDown);
     }
 
     /** 源码模式：编辑器 DOM 仍在（只是 display:none），菜单必须自己收起。 */
@@ -432,9 +457,15 @@ class ArticleImageInteractionView {
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"></path><path d="M8 6V4h8v2"></path><path d="M19 6l-1 14H6L5 6"></path><path d="M10 11v5"></path><path d="M14 11v5"></path></svg>
             </button>
         `;
-        // 菜单内的按下不能让编辑器失焦（否则选区/图片节点状态丢失）。
+        // 菜单内的按下不能让编辑器失焦（否则桌面选区/图片节点状态丢失）。
+        menu.addEventListener('pointerdown', (event) => {
+            if (event.pointerType === 'mouse') clearTouchPointerActivity();
+            else if (event.pointerType) markTouchPointerActivity();
+        });
         menu.addEventListener('mousedown', (event) => event.preventDefault());
         menu.addEventListener('click', (event) => {
+            if (event.pointerType === 'mouse') clearTouchPointerActivity();
+            else if (event.pointerType) markTouchPointerActivity();
             if (event.target.closest('[data-image-fullscreen]')) {
                 const image = this.activeImage;
                 if (!image) return;
@@ -526,8 +557,14 @@ class ArticleImageInteractionView {
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"></path><path d="M8 6V4h8v2"></path><path d="M19 6l-1 14H6L5 6"></path><path d="M10 11v5"></path><path d="M14 11v5"></path></svg>
             </button>
         `;
+        menu.addEventListener('pointerdown', (event) => {
+            if (event.pointerType === 'mouse') clearTouchPointerActivity();
+            else if (event.pointerType) markTouchPointerActivity();
+        });
         menu.addEventListener('mousedown', (event) => event.preventDefault());
         menu.addEventListener('click', (event) => {
+            if (event.pointerType === 'mouse') clearTouchPointerActivity();
+            else if (event.pointerType) markTouchPointerActivity();
             if (event.target.closest('[data-file-view]')) {
                 const link = this.activeFileLink;
                 if (link && typeof window.openAttachmentViewer === 'function') {
@@ -540,7 +577,7 @@ class ArticleImageInteractionView {
                 return;
             }
             if (!event.target.closest('[data-file-delete]')) return;
-            this.deleteFileLink();
+            this.deleteFileLink(event);
         });
         document.body.appendChild(menu);
         return menu;
@@ -703,7 +740,12 @@ class ArticleImageInteractionView {
             ? Math.min(Math.max(MIN_IMAGE_WIDTH, requestedWidth), maxWidth)
             : 0;
         const attrs = { ...node.attrs, title: width ? `dumbpad-width=${width}` : null };
-        this.view.dispatch(this.view.state.tr.setNodeMarkup(pos, undefined, attrs));
+        preserveViewportScroll(this.view, () => {
+            this.view.dispatch(this.view.state.tr.setNodeMarkup(pos, undefined, attrs));
+        });
+        if (isTouchInteraction(this.view)) {
+            releaseEditorFocus(this.view);
+        }
     }
 
     deleteImage() {
@@ -713,8 +755,10 @@ class ArticleImageInteractionView {
         if (pos === null) return;
         const node = this.view.state.doc.nodeAt(pos);
         if (!node) return;
-        this.view.dispatch(this.view.state.tr.delete(pos, pos + node.nodeSize));
-        this.view.focus();
+        preserveViewportScroll(this.view, () => {
+            this.view.dispatch(this.view.state.tr.delete(pos, pos + node.nodeSize));
+        });
+        settleEditorFocusAfterAction(this.view, { keepFocusOnDesktop: true, clearDomSelection: true });
     }
 
     async renameImage() {
@@ -774,12 +818,14 @@ class ArticleImageInteractionView {
             }
         }
         if (targetNode && targetNode.attrs.alt !== nextName) {
-            this.view.dispatch(this.view.state.tr.setNodeMarkup(targetPos, undefined, {
-                ...targetNode.attrs,
-                alt: nextName,
-            }));
+            preserveViewportScroll(this.view, () => {
+                this.view.dispatch(this.view.state.tr.setNodeMarkup(targetPos, undefined, {
+                    ...targetNode.attrs,
+                    alt: nextName,
+                }));
+            });
         }
-        this.view.focus();
+        settleEditorFocusAfterAction(this.view, { keepFocusOnDesktop: true, clearDomSelection: true });
     }
 
     /* ---------------- 阅读模式 lightbox ---------------- */
@@ -1047,7 +1093,9 @@ class ArticleImageInteractionView {
         this.lightboxSvgBox = null;
         this.lightboxDrag = null;
         this.lightbox.querySelector('.article-image-lightbox-canvas').replaceChildren();
-        this.lightboxTrigger?.focus?.({ preventScroll: true });
+        if (!isTouchInteraction(this.view) || !this.view.dom.contains(this.lightboxTrigger)) {
+            this.lightboxTrigger?.focus?.({ preventScroll: true });
+        }
         this.lightboxTrigger = null;
     }
 
@@ -1069,14 +1117,16 @@ class ArticleImageInteractionView {
         this.activeFileLink = null;
     }
 
-    deleteFileLink() {
+    deleteFileLink(event = null) {
         const link = this.activeFileLink;
         const range = link?.isConnected ? this.linkRange(link) : null;
         // 菜单先收起：链接已被重绘/切走时范围反查会失败，早退不能把浮层留在屏幕上。
         this.hideFileMenu();
         if (!range) return;
-        this.view.dispatch(this.view.state.tr.delete(range.from, range.to));
-        this.view.focus();
+        preserveViewportScroll(this.view, () => {
+            this.view.dispatch(this.view.state.tr.delete(range.from, range.to));
+        });
+        settleEditorFocusAfterAction(this.view, { keepFocusOnDesktop: true, clearDomSelection: true, event });
     }
 
     async renameFileLink() {
@@ -1167,15 +1217,17 @@ class ArticleImageInteractionView {
             });
             const currentText = state.doc.textBetween(targetRange.from, targetRange.to);
             if (currentText !== nextLabel || existingMark.attrs.title !== nextTitle) {
-                const tr = state.tr.replaceWith(
-                    targetRange.from,
-                    targetRange.to,
-                    state.schema.text(nextLabel, [nextMark])
-                );
-                this.view.dispatch(tr);
+                preserveViewportScroll(this.view, () => {
+                    const tr = state.tr.replaceWith(
+                        targetRange.from,
+                        targetRange.to,
+                        state.schema.text(nextLabel, [nextMark])
+                    );
+                    this.view.dispatch(tr);
+                });
             }
         }
-        this.view.focus();
+        settleEditorFocusAfterAction(this.view, { keepFocusOnDesktop: true, clearDomSelection: true });
     }
 
     /* ---------------- 定位 ---------------- */
@@ -1241,6 +1293,7 @@ class ArticleImageInteractionView {
                 event.preventDefault();
                 event.stopPropagation();
                 event.stopImmediatePropagation?.();
+                if (Date.now() - this.lastFileTapAt < TAP_CLICK_GUARD_MS) return;
                 this.hideSizeMenu();
                 this.openFileMenu(link);
                 return;
@@ -1267,7 +1320,21 @@ class ArticleImageInteractionView {
 
     onPointerDown(event) {
         if (!this.view.editable) return;
-        if (event.pointerType === 'mouse' && event.button !== 0) return;
+        if (event.pointerType === 'mouse') {
+            clearTouchPointerActivity();
+            if (event.button !== 0) return;
+        } else if (event.pointerType) {
+            markTouchPointerActivity();
+        }
+        const fileLink = event.target?.closest?.('a[href]');
+        if (fileLink && this.view.dom.contains(fileLink) && isArticleFileLink(fileLink)) {
+            if (event.pointerType && event.pointerType !== 'mouse') {
+                event.preventDefault();
+                releaseEditorFocus(this.view);
+                this.fileTap = { link: fileLink, pointerId: event.pointerId };
+            }
+            return;
+        }
         const image = event.target?.closest?.('img');
         if (!image || !this.view.dom.contains(image)) return;
         if (!isArticleAssetImageSource(image.getAttribute('src'))) return;
@@ -1276,14 +1343,16 @@ class ArticleImageInteractionView {
         // 触屏按下 contenteditable 内的元素会让浏览器移动选区并弹出键盘，
         // 即使用户只想调尺寸/拖拽（与旧 bindArticleImageDragging 一致）。
         // 所有资产图片都要拦——嵌套在列表里的图片点它同样不能把焦点交给
-        // 编辑器。preventDefault 压掉兼容 mouse 事件（不产生 click），触屏
-        // 点按的菜单统一由 pointerup 的点按路径打开。
-        if (event.pointerType !== 'mouse') event.preventDefault();
+        // 编辑器，并立即释放此前保留的旧焦点（防止长文末尾点图拉回文首旧光标）。
+        if (event.pointerType !== 'mouse') {
+            event.preventDefault();
+            releaseEditorFocus(this.view);
+        }
         if (!standalone) {
             // 非顶层独立图片（列表/引用内）不参与拖拽，但触屏点按仍要在
             // pointerup 弹尺寸菜单，记一个轻量点按状态。
             if (event.pointerType !== 'mouse') {
-                this.tap = { image, pointerId: event.pointerId, hadEditorFocus: this.view.hasFocus() };
+                this.tap = { image, pointerId: event.pointerId };
                 image.setPointerCapture?.(event.pointerId);
             }
             return;
@@ -1292,7 +1361,6 @@ class ArticleImageInteractionView {
             image,
             pointerId: event.pointerId,
             pointerType: event.pointerType,
-            hadEditorFocus: this.view.hasFocus(),
             startX: event.clientX,
             startY: event.clientY,
             active: false,
@@ -1322,6 +1390,18 @@ class ArticleImageInteractionView {
     }
 
     onPointerUp(event) {
+        const fileTap = this.fileTap;
+        if (fileTap && fileTap.pointerId === event.pointerId) {
+            this.fileTap = null;
+            if (event.type === 'pointercancel') return;
+            event.preventDefault();
+            event.stopPropagation();
+            this.lastFileTapAt = Date.now();
+            releaseEditorFocus(this.view);
+            this.hideSizeMenu();
+            this.openFileMenu(fileTap.link);
+            return;
+        }
         const drag = this.drag;
         if (!drag) {
             // 嵌套图片的触屏点按（无拖拽状态）：与顶层独立图片同为
@@ -1334,7 +1414,7 @@ class ArticleImageInteractionView {
             event.preventDefault();
             event.stopPropagation();
             this.lastTapAt = Date.now();
-            this.releaseStolenFocus(tap.hadEditorFocus);
+            this.releaseStolenFocus();
             this.openSizeMenu(tap.image);
             return;
         }
@@ -1349,7 +1429,7 @@ class ArticleImageInteractionView {
                 event.preventDefault();
                 event.stopPropagation();
                 this.lastTapAt = Date.now();
-                this.releaseStolenFocus(drag.hadEditorFocus);
+                this.releaseStolenFocus();
                 this.openSizeMenu(drag.image);
             }
             return;
@@ -1360,16 +1440,16 @@ class ArticleImageInteractionView {
     }
 
     /**
-     * 真机夺焦兜底：pointerdown 已 preventDefault，桌面 Chromium 不会聚焦；
-     * 但个别移动浏览器的触摸默认行为仍可能把焦点交给编辑器（真机复现过、
-     * 桌面仿真证不了）——键盘弹出，尺寸菜单被顶到键盘后面。「按下时没焦点、
-     * 抬起时有焦点」只可能是这次点按偷来的，还回去；本来就聚焦（用户正在
-     * 打字）时不动，不收用户的键盘。
+     * 触屏点按图片统一释放编辑器焦点（包含「之前停在顶部编辑、滑下来点图」的
+     * 既有焦点与触屏默认行为偷来的焦点），防止键盘弹出或把视线拽回旧光标。
      */
-    releaseStolenFocus(hadEditorFocus) {
-        if (hadEditorFocus) return;
-        if (!this.view.hasFocus()) return;
-        this.view.dom.blur();
+    releaseStolenFocus() {
+        releaseEditorFocus(this.view);
+        setTimeout(() => {
+            if (this.view.hasFocus() && isTouchInteraction(this.view)) {
+                releaseEditorFocus(this.view);
+            }
+        }, 0);
     }
 
     cancelDrag() {
@@ -1439,6 +1519,7 @@ class ArticleImageInteractionView {
         this.view.dom.removeEventListener('pointercancel', this.handlePointerUp);
         document.removeEventListener('keydown', this.handleDocumentKeydown);
         document.removeEventListener('mousedown', this.handleDocumentMousedown);
+        document.removeEventListener('pointerdown', this.handleDocumentPointerDown);
         window.visualViewport?.removeEventListener('resize', this.handleViewportResize);
         document.body.classList.remove('article-image-lightbox-open');
         this.sizeMenu.remove();

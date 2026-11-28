@@ -4,6 +4,7 @@
  * 与 `DumbPadTableStack` 窄屏折卡/首列冻结横滑完全兼容，仅编辑态按需出现、阅读态零打扰。
  */
 import { Extension, PM } from './tiptap-runtime.js';
+import { settleEditorFocusAfterAction } from './tiptap-pointer-focus.js';
 
 const { Plugin, PluginKey, TextSelection } = PM.state;
 const { Decoration, DecorationSet } = PM.view;
@@ -400,7 +401,7 @@ class TableControlsView {
             this.hoveredTablePos = null;
             this.setDangerPreview(null);
             deleteTableAtPos(this.editor, ctx.pos);
-            this.editor.view.focus();
+            settleEditorFocusAfterAction(this.view, { keepFocusOnDesktop: true });
             notify('已删除表格', 'info');
             return;
         }

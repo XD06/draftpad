@@ -64,7 +64,15 @@ function check(name, condition, detail) {
 
 async function main() {
     const { HybridMarkdownEditor } = await import('../public/tiptap-editor.js');
-    const { isChromePointerTarget } = await import('../public/managers/tiptap-pointer-focus.js');
+    const {
+        _resetPointerFocusStateForTests,
+        focusEditorWithoutScroll,
+        isChromePointerTarget,
+        isTouchNoKeyboardTarget,
+        isTouchOrMobileViewport,
+        releaseEditorFocus,
+        settleEditorFocusAfterAction,
+    } = await import('../public/managers/tiptap-pointer-focus.js');
 
     const container = document.createElement('div');
     document.body.appendChild(container);
@@ -142,6 +150,123 @@ async function main() {
     });
     rightImg.dispatchEvent(rightEvent);
     check('right button mousedown is not guarded', rightEvent.defaultPrevented === false);
+
+    /* ---- 9. 时间标记与批注徽标同样被桌面 mousedown 守卫拦截（不夺焦/不滚旧光标） ---- */
+    editor.setValue('[[time:create:2026-01-01 00:00:00]] 正文 <span data-note="笔记" style="text-decoration:underline wavy #e74c3c;">批注段落</span>', false);
+    const timeMarker = root.querySelector('.md-time-marker');
+    const badge = root.querySelector('.annotation-badge');
+    check('time marker is a chrome pointer target', Boolean(timeMarker) && isChromePointerTarget(timeMarker) === true);
+    check('time marker mousedown is default-prevented', Boolean(timeMarker) && mousedownOn(timeMarker).defaultPrevented === true);
+    check('annotation badge is a chrome pointer target', Boolean(badge) && isChromePointerTarget(badge) === true);
+    check('annotation badge mousedown is default-prevented', Boolean(badge) && mousedownOn(badge).defaultPrevented === true);
+    // 桌面下编辑器绝不写入 inputmode="none"
+    check('desktop editor never sets inputmode=none', root.getAttribute('inputmode') === null, root.getAttribute('inputmode'));
+
+    /* ---- 10. 移动端 Scheme B（inputmode="none" 状态机与触屏焦点释放） ---- */
+    const pointerEvent = (type, props = {}) => {
+        const event = new dom.window.MouseEvent(type, {
+            bubbles: true, cancelable: true, view: dom.window, ...props,
+        });
+        Object.defineProperty(event, 'pointerId', { value: props.pointerId ?? 1 });
+        Object.defineProperty(event, 'pointerType', { value: props.pointerType ?? 'touch' });
+        return event;
+    };
+    const origMatchMedia = dom.window.matchMedia;
+    const origMaxTouchPointsDescriptor = Object.getOwnPropertyDescriptor(dom.window.navigator, 'maxTouchPoints');
+    const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+    try {
+        _resetPointerFocusStateForTests();
+        dom.window.matchMedia = (query) => ({
+            matches: query === '(pointer: coarse)' || query === '(hover: none)',
+            media: query,
+            addListener() {},
+            removeListener() {},
+        });
+        Object.defineProperty(dom.window.navigator, 'maxTouchPoints', { value: 5, configurable: true });
+        check('isTouchOrMobileViewport detects coarse touch environment', isTouchOrMobileViewport() === true);
+
+        const mobileContainer = document.createElement('div');
+        document.body.appendChild(mobileContainer);
+        const mobileEditor = new HybridMarkdownEditor(mobileContainer, {});
+        await mobileEditor.whenReady();
+        const mobileView = mobileEditor.editor.view;
+        const mobileRoot = mobileContainer.querySelector('.tiptap');
+
+        check('mobile editor initializes unfocused with inputmode=none',
+            mobileRoot.getAttribute('inputmode') === 'none', mobileRoot.getAttribute('inputmode'));
+
+        mobileEditor.setValue('第一段普通正文\n\n- [ ] 待办任务条目\n\n[[time:create:2026-01-01 00:00:00]]\n\n<mark>高亮句子</mark>', false);
+        const plainPara = mobileRoot.querySelector('p');
+        const taskLabel = mobileRoot.querySelector('ul[data-type="taskList"] li > label');
+        const markEl = mobileRoot.querySelector('mark.md-mark');
+
+        check('marked text is flagged as no-keyboard target by default', isTouchNoKeyboardTarget(markEl) === true);
+        check('checkbox label is flagged as no-keyboard target', isTouchNoKeyboardTarget(taskLabel) === true);
+
+        // 10a) 单指快速轻点普通正文：pointerdown 阶段保持 none，pointerup 短按无拖选才放开 inputmode
+        plainPara.dispatchEvent(pointerEvent('pointerdown', { clientX: 20, clientY: 20, pointerType: 'touch' }));
+        check('plain text pointerdown keeps inputmode=none until quick tap release',
+            mobileRoot.getAttribute('inputmode') === 'none');
+        plainPara.dispatchEvent(pointerEvent('pointerup', { clientX: 21, clientY: 20, pointerType: 'touch' }));
+        check('quick tap on plain text removes inputmode=none to allow typing',
+            mobileRoot.getAttribute('inputmode') === null, mobileRoot.getAttribute('inputmode'));
+
+        // blur 后立即锁回 inputmode="none"
+        mobileRoot.focus();
+        mobileRoot.dispatchEvent(new dom.window.FocusEvent('blur', { bubbles: true }));
+        check('blur restores inputmode=none on mobile',
+            mobileRoot.getAttribute('inputmode') === 'none', mobileRoot.getAttribute('inputmode'));
+
+        // 10b) 滑动或长按保持 inputmode="none"
+        plainPara.dispatchEvent(pointerEvent('pointerdown', { clientX: 20, clientY: 20, pointerType: 'touch' }));
+        plainPara.dispatchEvent(pointerEvent('pointermove', { clientX: 20, clientY: 55, pointerType: 'touch' }));
+        plainPara.dispatchEvent(pointerEvent('pointerup', { clientX: 20, clientY: 55, pointerType: 'touch' }));
+        check('touch drag / scroll keeps inputmode=none', mobileRoot.getAttribute('inputmode') === 'none');
+
+        plainPara.dispatchEvent(pointerEvent('pointerdown', { clientX: 20, clientY: 20, pointerType: 'touch' }));
+        await wait(340);
+        plainPara.dispatchEvent(pointerEvent('pointerup', { clientX: 20, clientY: 20, pointerType: 'touch' }));
+        check('long press (>= 320ms) keeps inputmode=none', mobileRoot.getAttribute('inputmode') === 'none');
+
+        // 10c) 点待办复选框标签 & releaseEditorFocus：即使先聚焦也立即失焦并保持 inputmode=none
+        mobileRoot.focus();
+        check('mobile editor focused before checkbox tap', document.activeElement === mobileRoot);
+        taskLabel.dispatchEvent(pointerEvent('pointerdown', { clientX: 8, clientY: 8, pointerType: 'touch' }));
+        check('checkbox touch pointerdown releases editor focus and locks inputmode=none',
+            document.activeElement !== mobileRoot && mobileRoot.getAttribute('inputmode') === 'none');
+
+        // 10d) focusEditorWithoutScroll 移除 inputmode="none"；settleEditorFocusAfterAction 在移动端释放而在鼠标交互保持焦点
+        focusEditorWithoutScroll(mobileView);
+        check('focusEditorWithoutScroll clears inputmode=none and focuses editor',
+            mobileRoot.getAttribute('inputmode') === null && document.activeElement === mobileRoot);
+        settleEditorFocusAfterAction(mobileView, { keepFocusOnDesktop: true });
+        check('settleEditorFocusAfterAction blurs and locks inputmode=none on mobile',
+            document.activeElement !== mobileRoot && mobileRoot.getAttribute('inputmode') === 'none');
+
+        // 切换回到真实鼠标：不再误判为触屏（即便在 1280px 触控屏设备/Playwright hasTouch 下也不影响）
+        mobileRoot.dispatchEvent(pointerEvent('pointerdown', { pointerType: 'mouse' }));
+        settleEditorFocusAfterAction(mobileView, { keepFocusOnDesktop: true });
+        check('recent mouse pointerdown overrides coarse-viewport fallback even without event arg',
+            document.activeElement === mobileRoot && mobileRoot.getAttribute('inputmode') === null);
+        dom.window.matchMedia = () => ({ matches: false, media: '', addListener() {}, removeListener() {} });
+        Object.defineProperty(dom.window.navigator, 'maxTouchPoints', { value: 0, configurable: true });
+        settleEditorFocusAfterAction(mobileView, {
+            keepFocusOnDesktop: true,
+            event: pointerEvent('click', { pointerType: 'mouse' }),
+        });
+        check('desktop mouse settle keeps focus without inputmode=none',
+            document.activeElement === mobileRoot && mobileRoot.getAttribute('inputmode') === null);
+
+        mobileEditor.editor.destroy();
+        mobileContainer.remove();
+    } finally {
+        _resetPointerFocusStateForTests();
+        dom.window.matchMedia = origMatchMedia;
+        if (origMaxTouchPointsDescriptor) {
+            Object.defineProperty(dom.window.navigator, 'maxTouchPoints', origMaxTouchPointsDescriptor);
+        }
+    }
 
     console.log('');
     if (failures > 0) {

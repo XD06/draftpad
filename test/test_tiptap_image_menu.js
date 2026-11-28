@@ -523,15 +523,10 @@ async function main() {
     await wait(30);
     check('nested image touch tap opens size menu via pointerup', sizeMenu().hidden === false);
 
-    /* ---- 10c. 真机夺焦兜底：按下时无焦点、抬起前焦点被偷（个别移动浏览器的
-       触摸默认行为，桌面 Chromium 的 preventDefault 仿真不出这条路）→ 抬起时
-       把焦点还回去（真机=键盘收起、菜单不被顶到键盘后），菜单照开；
-       按下时就聚焦（用户正打字）→ 不动焦点，不收用户的键盘 ---- */
+    /* ---- 10c. 触屏点按图片统一释放焦点（即使此前曾聚焦停过旧光标，也不能弹键盘或拽回视线） ---- */
     document.body.dispatchEvent(new dom.window.MouseEvent('mousedown', { bubbles: true }));
     await wait(20);
     check('menu closed before stolen-focus tap', sizeMenu().hidden === true);
-    // 前面小节的 click/undo 会让 PM 顺手聚焦编辑器；这里清掉，模拟「键盘收起、
-    // 用户没在打字」的点按起点。
     if (document.activeElement && document.activeElement !== document.body && document.activeElement.blur) {
         document.activeElement.blur();
     }
@@ -545,14 +540,35 @@ async function main() {
     check('stolen focus is released after tap', editor.editor.view.hasFocus() === false);
     check('size menu still opens when focus was stolen', sizeMenu().hidden === false);
 
+    // 此前编辑过正文（view.hasFocus() 为 true），滑下来触屏点图片：同样取消旧光标释放焦点、收起键盘
     document.body.dispatchEvent(new dom.window.MouseEvent('mousedown', { bubbles: true }));
     await wait(20);
     contentRoot().focus();
+    check('editor previously focused while reading lower down', editor.editor.view.hasFocus() === true);
     imageEl().dispatchEvent(pointerEvent('pointerdown', { clientX: 5, clientY: 5, pointerType: 'touch' }));
     imageEl().dispatchEvent(pointerEvent('pointerup', { clientX: 5, clientY: 5, pointerType: 'touch' }));
     await wait(30);
-    check('existing focus is kept while typing', editor.editor.view.hasFocus() === true);
-    check('size menu opens while editor focused', sizeMenu().hidden === false);
+    check('touch tap on image releases pre-existing editor focus', editor.editor.view.hasFocus() === false);
+    check('size menu opens cleanly after releasing focus', sizeMenu().hidden === false);
+
+    // 10c-2. 附件胶囊触屏点按：释放已有焦点、不弹键盘并打开附件菜单
+    document.body.dispatchEvent(new dom.window.MouseEvent('mousedown', { bubbles: true }));
+    await wait(20);
+    editor.setValue(FILE_ONLY, false);
+    await wait(20);
+    const capsuleEl = contentRoot().querySelector('a.dumbpad-article-file');
+    contentRoot().focus();
+    check('editor focused before attachment touch tap', editor.editor.view.hasFocus() === true);
+    const capsuleDown = pointerEvent('pointerdown', { clientX: 5, clientY: 5, pointerType: 'touch' });
+    capsuleEl.dispatchEvent(capsuleDown);
+    capsuleEl.dispatchEvent(pointerEvent('pointerup', { clientX: 5, clientY: 5, pointerType: 'touch' }));
+    await wait(30);
+    check('attachment touch tap releases focus and prevents default',
+        capsuleDown.defaultPrevented === true && editor.editor.view.hasFocus() === false);
+    check('attachment touch tap opens file menu', fileMenu().hidden === false);
+    document.body.dispatchEvent(new dom.window.MouseEvent('mousedown', { bubbles: true }));
+    editor.setValue(IMAGE_ONLY, false);
+    await wait(20);
 
     /* ---- 10d. 菜单按 visualViewport 夹取：软键盘只缩 vv（iOS 的 innerHeight
        不随键盘变），菜单必须落在可见区内；键盘开合（vv resize）按锚元素重夹 ---- */    document.body.dispatchEvent(new dom.window.MouseEvent('mousedown', { bubbles: true }));

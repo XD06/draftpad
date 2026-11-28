@@ -11,6 +11,14 @@
  * nodeView 管理。复选框语义与内核保持一致（勾 = 已完成、取消勾 = 未完成），
  * 不把勾选改成三态循环：那样会让「取消勾选」在浏览器里行为反直觉。
  */
+import {
+    clearTouchPointerActivity,
+    isTouchInteraction,
+    markTouchPointerActivity,
+    preserveViewportScroll,
+    releaseEditorFocus,
+} from './tiptap-pointer-focus.js';
+
 export function buildTaskItemNodeView() {
     return ({ node, view }) => {
         const listItem = document.createElement('li');
@@ -18,6 +26,7 @@ export function buildTaskItemNodeView() {
         const checkboxStyler = document.createElement('span');
         const checkbox = document.createElement('input');
         const content = document.createElement('div');
+        let lastTouchAt = 0;
 
         /** 三态归一化：DOM 上只有 checked / indeterminate 两个布尔。 */
         const syncState = (targetNode) => {
@@ -32,8 +41,28 @@ export function buildTaskItemNodeView() {
         checkbox.type = 'checkbox';
         checkbox.setAttribute('aria-label', `Task item checkbox for ${node.textContent || 'empty task item'}`);
         checkboxWrapper.contentEditable = 'false';
-        checkbox.addEventListener('mousedown', (event) => event.preventDefault());
+        const preventMouseFocus = (event) => event.preventDefault();
+        checkbox.addEventListener('mousedown', preventMouseFocus);
+        checkboxWrapper.addEventListener('mousedown', preventMouseFocus);
+        // 触屏点按复选框不拦 pointerdown 默认行为（否则移动端不会切换 checked），
+        // 仅在按下瞬间先释放编辑器旧焦点，避免勾选时视线跳回旧光标或弹出键盘。
+        checkboxWrapper.addEventListener('pointerdown', (event) => {
+            if (event.pointerType === 'mouse') {
+                clearTouchPointerActivity();
+                return;
+            }
+            if (event.pointerType) {
+                lastTouchAt = Date.now();
+                markTouchPointerActivity();
+                releaseEditorFocus(view);
+            }
+        });
         checkbox.addEventListener('change', () => {
+            const isTouch = (Date.now() - lastTouchAt < 1000) || isTouchInteraction(view);
+            if (isTouch) {
+                releaseEditorFocus(view);
+                checkbox.blur?.();
+            }
             // 节点视图可能因文档重建导致位置闭包失效，从当前 DOM 反查
             // taskItem 的活文档位置再 setNodeMarkup，保证勾选写入文档。
             const $pos = view.state.doc.resolve(view.posAtDOM(listItem, 0));
@@ -49,11 +78,19 @@ export function buildTaskItemNodeView() {
             if (!currentNode || currentNode.type.name !== 'taskItem') return;
             // 与内核复选框正交：勾上 = 已完成；从已完成 / 进行中取消勾 = 回未完成
             // （浏览器把 indeterminate 的勾去掉后是未勾选，不去猜「回进行中」）。
-            view.dispatch(view.state.tr.setNodeMarkup(taskItemPos, null, {
-                ...currentNode.attrs,
-                checked: checkbox.checked,
-                doing: false,
-            }));
+            preserveViewportScroll(view, () => {
+                view.dispatch(view.state.tr.setNodeMarkup(taskItemPos, null, {
+                    ...currentNode.attrs,
+                    checked: checkbox.checked,
+                    doing: false,
+                }));
+            });
+            if (isTouch) {
+                setTimeout(() => {
+                    releaseEditorFocus(view);
+                    checkbox.blur?.();
+                }, 0);
+            }
         });
 
         syncState(node);

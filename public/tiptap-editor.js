@@ -1007,6 +1007,7 @@ export class HybridMarkdownEditor {
         // 并叠加 scrollIntoView()，把页面顶缘/光标怼飞（见 setCaretAtMarkdownOffset 注释）。
         const dom = this.editor?.view?.dom;
         if (dom && typeof dom.focus === 'function') {
+            dom.removeAttribute?.('inputmode');
             dom.focus({ preventScroll });
         } else {
             this.editor?.commands?.focus?.();

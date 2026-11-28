@@ -8,6 +8,12 @@
 
 ### 新增 / 优化
 
+- **移动端 / PWA 编辑态防回跳、防误弹软键盘与划词「剪切」按钮**：
+  - **触屏防夺焦与视口保位统一守卫**：在 [tiptap-pointer-focus.js](public/managers/tiptap-pointer-focus.js) 新增移动端 Scheme B 键盘状态机（非输入 browsing 态及长按划词期间维护 `inputmode="none"`，仅对普通正文的短促单指轻点放行键盘）以及共享焦点/视口工具函数（`releaseEditorFocus`、`settleEditorFocusAfterAction`、`preserveViewportScroll`、`focusEditorWithoutScroll`），桌面端 `CHROME_SELECTOR` 同步补入 `.md-time-marker`、`.annotation-badge` 与 `.dumbpad-mermaid-fullscreen`。
+  - **全量非输入功能控件接入取消光标/不拽回视线**：覆盖待办复选框（[tiptap-task-item-view.js](public/managers/tiptap-task-item-view.js)）、图片尺寸菜单/删除/重命名与附件胶囊菜单（[tiptap-image-interactions.js](public/managers/tiptap-image-interactions.js)）、`/time` 时间菜单更新/删除与批注徽标只读卡及高亮/画线取消气泡（[tiptap-selection-menu.js](public/managers/tiptap-selection-menu.js)，气泡在场时二次轻点标记正文授权进入编辑）、内联音视频卡片（[tiptap-media.js](public/managers/tiptap-media.js)）、代码块复制/Mermaid 全屏（[tiptap-code-block-view.js](public/managers/tiptap-code-block-view.js)）、标题居中浮标（[tiptap-extensions.js](public/managers/tiptap-extensions.js)）、整表删除（[tiptap-table-controls.js](public/managers/tiptap-table-controls.js)）以及移动端编辑态文章目录跳转（[app.js](public/app.js) `focusEditorHeading` 不再强弹软键盘，桌面端改用 `preventScroll: true`）。
+  - **划词菜单新增「剪切」按钮**：在 [selection-menu-icons.js](public/managers/selection-menu-icons.js) 新增归一化 `sm-cut` 剪刀矢量图标，在 [tiptap-selection-menu.js](public/managers/tiptap-selection-menu.js) 新增「剪切」按钮（先写入剪贴板、失败不删字并提示；成功后可撤销删除选区并退出光标/压住键盘），配合移动端零键盘打扰的阅读批注与正文裁切。
+  - **回归**：扩展 `npm run test:tiptap-pointer-focus`、`npm run test:tiptap-selection-menu`、`npm run test:tiptap-image-menu`，新增真实 Chrome 触屏回归 `npm run test:mobile-focus-guard-browser`（`test/browser/mobile-focus-guard.js`）。
+
 - **新建文章即写同步冲突根治与存储链路提速**：
   - **统一单笔记串行变异队列与元数据版本号联动**：在 [app.js](public/app.js) 中复用 `saveNotesInFlight` 作为单笔记串行队列（`enqueueNotepadMutation`），将新建（`POST /api/notepads`）、自动命名（`600ms` `PUT`）、手动重命名、置顶（`PATCH`）与正文自动保存（`POST /api/notes/:id`）严格串行；新增 `advanceLocalNotepadVersion`，在重命名/自动标题/置顶成功后同步推进 `currentNoteVersion` 与本地缓存版本号，彻底消除“新建后自动命名升版 → 随后自动保存带旧 `baseVersion: 1` 触发假 `409` 冲突”的问题。
   - **新建并发保护与持续输入态 `409` 恢复修复**：`createNotepad` 在 `POST` 往返期间保留用户已输入的正文并纳入 `notepadCreationsInFlight` 防止被并发 `loadNotepads` 刷掉；`performSaveNotes` 的 `409` 恢复改为在拉取远端正文后再读取实时 `editor.value`（不再因用户打字慢一拍而放弃三路合并并锁死后续自动同步），`loadNotes` 同步识别“仅元数据改版、正文基线未变”及可安全三路合并的远端更新，不再误弹红条提示。

@@ -2819,10 +2819,25 @@ document.addEventListener('DOMContentLoaded', async () => {
     // managers/heading-index.js 的 collectTocSectionEntries（纯 DOM 扫描，可单测）。
     // 加粗不进目录（用户要求）。
 
-    // Edit-mode TOC jump: place the caret at the target heading before
-    // focusing, otherwise focus() pulls the viewport back to the old caret
-    // position and the jump appears to land at the top of the document.
+    // Edit-mode TOC jump: desktop places caret before focus (preventScroll) so
+    // viewport never snaps back to old caret; mobile keeps caret released so
+    // tapping TOC never pulls open the soft keyboard or delays scrolling.
     function focusEditorHeading(headingId, lineIndex) {
+        const isMobile = window.matchMedia('(max-width: 980px)').matches;
+        const scrollToHeading = () => {
+            if (!editorInstance.scrollToHeadingId(headingId || '', { flash: true })) {
+                editorInstance.scrollToLine(lineIndex, undefined, { flash: true });
+            }
+        };
+        if (isMobile) {
+            const active = document.activeElement;
+            const editorRoot = document.getElementById('hybrid-editor');
+            if (active && editorRoot?.contains(active)) {
+                active.blur?.();
+            }
+            scrollToHeading();
+            return;
+        }
         const root = document.querySelector('#hybrid-editor .vditor-wysiwyg .vditor-reset');
         let heading = headingId && root ? root.querySelector(`#${CSS.escape(headingId)}`) : null;
         if (!heading && root) {
@@ -2842,23 +2857,12 @@ document.addEventListener('DOMContentLoaded', async () => {
                 // Caret placement is best-effort; scrolling still applies.
             }
         }
-        editorInstance.focus();
+        editorInstance.focus({ preventScroll: true });
         // 目录跳转不走搜索命中管线：旧实现把标题文字当关键词传给
         // scrollToLine → jumpToKeyword，高亮会落在该词在全文第一次出现的
         // 位置（常常不是被点击的标题），还会闪 4 秒搜索式黄块。这里只做
         // 定位 + 落点闪光（JumpTargetHighlight，PM Decoration）。
-        const scrollToHeading = () => {
-            if (!editorInstance.scrollToHeadingId(headingId || '', { flash: true })) {
-                editorInstance.scrollToLine(lineIndex, undefined, { flash: true });
-            }
-        };
-        if (window.matchMedia('(max-width: 980px)').matches) {
-            // Mobile: focusing opens the keyboard and the viewport reflows;
-            // wait one beat so the jump lands on the settled layout.
-            setTimeout(scrollToHeading, 300);
-        } else {
-            scrollToHeading();
-        }
+        scrollToHeading();
     }
 
     // 目录条目点击跳转后的文字闪光：行底色与数字徽标已有高亮，正文文字补一个
