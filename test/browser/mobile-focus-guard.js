@@ -81,6 +81,7 @@ module.exports = async function testMobileFocusGuard(browser) {
             activeIsEditor: document.activeElement === rootEl || Boolean(rootEl?.contains(document.activeElement)),
             activeTag: document.activeElement?.tagName || null,
             inputmode: rootEl?.getAttribute('inputmode') ?? null,
+            virtualKeyboardPolicy: rootEl?.getAttribute('virtualkeyboardpolicy') ?? null,
             value: editor.getValue(),
         };
     });
@@ -127,10 +128,11 @@ module.exports = async function testMobileFocusGuard(browser) {
             await new Promise(resolve => setTimeout(resolve, 300));
         }, FIXTURE);
 
-        // 1) 初始未聚焦状态：inputmode="none"，不拿焦点
+        // 1) 初始未聚焦状态：inputmode="none" & virtualkeyboardpolicy="manual"，不拿焦点
         const initial = await readFocusState();
         assert.equal(initial.activeIsEditor, false, `initial state must not focus editor: ${JSON.stringify(initial)}`);
         assert.equal(initial.inputmode, 'none', `mobile editor must initialize with inputmode=none: ${JSON.stringify(initial)}`);
+        assert.equal(initial.virtualKeyboardPolicy, 'manual', `mobile editor must initialize with virtualkeyboardpolicy=manual: ${JSON.stringify(initial)}`);
 
         // 2) 单指轻点顶部段落：放开 inputmode、拿焦点并可打字
         await tapElementCenter('#editor .tiptap p');
@@ -138,6 +140,7 @@ module.exports = async function testMobileFocusGuard(browser) {
         const afterTopTap = await readFocusState();
         assert.equal(afterTopTap.activeIsEditor, true, 'quick tap on plain text focuses editor');
         assert.equal(afterTopTap.inputmode, null, 'quick tap on plain text clears inputmode=none');
+        assert.equal(afterTopTap.virtualKeyboardPolicy, null, 'quick tap on plain text clears virtualkeyboardpolicy');
         await page.keyboard.type('OK');
         await page.waitForTimeout(250);
         assert((await readFocusState()).value.includes('OK顶部起始编辑段落') || (await readFocusState()).value.includes('顶部起始编辑段落。OK'),
@@ -158,6 +161,7 @@ module.exports = async function testMobileFocusGuard(browser) {
         assert(afterTodo.value.includes('- [x] 底部待办任务条目'), 'tapping task checkbox marks item done');
         assert.equal(afterTodo.activeIsEditor, false, 'task checkbox tap blurs editor');
         assert.equal(afterTodo.inputmode, 'none', 'task checkbox tap locks inputmode=none');
+        assert.equal(afterTodo.virtualKeyboardPolicy, 'manual', 'task checkbox tap locks virtualkeyboardpolicy=manual');
         assert(Math.abs(afterTodo.scrollY - scrolledY) <= 4,
             `task checkbox must not jump viewport (${scrolledY} -> ${afterTodo.scrollY})`);
 
@@ -170,6 +174,7 @@ module.exports = async function testMobileFocusGuard(browser) {
         assert.equal(sizeMenuOpen, true, 'touch tap on image opens size menu');
         assert.equal(afterImgTap.activeIsEditor, false, 'touch tap on image releases editor focus');
         assert.equal(afterImgTap.inputmode, 'none', 'touch tap on image keeps inputmode=none');
+        assert.equal(afterImgTap.virtualKeyboardPolicy, 'manual', 'touch tap on image keeps virtualkeyboardpolicy=manual');
         assert(Math.abs(afterImgTap.scrollY - scrolledY) <= 4,
             `image tap must not jump viewport (${scrolledY} -> ${afterImgTap.scrollY})`);
 
@@ -180,6 +185,7 @@ module.exports = async function testMobileFocusGuard(browser) {
             `size menu applies width preset (got ${afterWidth.value.slice(-120)})`);
         assert.equal(afterWidth.activeIsEditor, false, 'size menu action keeps editor unfocused');
         assert.equal(afterWidth.inputmode, 'none', 'size menu action locks inputmode=none');
+        assert.equal(afterWidth.virtualKeyboardPolicy, 'manual', 'size menu action locks virtualkeyboardpolicy=manual');
         assert(Math.abs(afterWidth.scrollY - scrolledY) <= 4,
             `image resize must not jump viewport (${scrolledY} -> ${afterWidth.scrollY})`);
 
@@ -192,6 +198,7 @@ module.exports = async function testMobileFocusGuard(browser) {
         assert.equal(timeMenuOpen, true, 'touch tap opens time marker menu');
         assert.equal(afterTimeTap.activeIsEditor, false, 'time marker tap releases editor focus');
         assert.equal(afterTimeTap.inputmode, 'none', 'time marker tap keeps inputmode=none');
+        assert.equal(afterTimeTap.virtualKeyboardPolicy, 'manual', 'time marker tap keeps virtualkeyboardpolicy=manual');
         assert(Math.abs(afterTimeTap.scrollY - scrolledY) <= 4,
             `time marker tap must not jump viewport (${scrolledY} -> ${afterTimeTap.scrollY})`);
 
@@ -201,6 +208,7 @@ module.exports = async function testMobileFocusGuard(browser) {
         assert(/\[\[time:update:/.test(afterTimeUpdate.value), 'time marker updates to update stamp');
         assert.equal(afterTimeUpdate.activeIsEditor, false, 'time marker update keeps editor unfocused');
         assert.equal(afterTimeUpdate.inputmode, 'none', 'time marker update locks inputmode=none');
+        assert.equal(afterTimeUpdate.virtualKeyboardPolicy, 'manual', 'time marker update locks virtualkeyboardpolicy=manual');
         assert(Math.abs(afterTimeUpdate.scrollY - scrolledY) <= 4,
             `time marker update must not jump viewport (${scrolledY} -> ${afterTimeUpdate.scrollY})`);
 
@@ -222,6 +230,7 @@ module.exports = async function testMobileFocusGuard(browser) {
         assert.equal(badgePopoverInfo.text, '底部批注详情');
         assert.equal(afterBadgeTap.activeIsEditor, false, 'badge tap releases editor focus');
         assert.equal(afterBadgeTap.inputmode, 'none', 'badge tap locks inputmode=none');
+        assert.equal(afterBadgeTap.virtualKeyboardPolicy, 'manual', 'badge tap locks virtualkeyboardpolicy=manual');
         assert(Math.abs(afterBadgeTap.scrollY - scrolledY) <= 4,
             `badge tap must not jump viewport (${scrolledY} -> ${afterBadgeTap.scrollY})`);
 
@@ -239,6 +248,7 @@ module.exports = async function testMobileFocusGuard(browser) {
         assert.equal(cancelBtnVisible, true, 'tapping highlighted text opens cancel popover');
         assert.equal(afterHighlightTap.activeIsEditor, false, 'highlight tap releases editor focus');
         assert.equal(afterHighlightTap.inputmode, 'none', 'highlight tap keeps inputmode=none');
+        assert.equal(afterHighlightTap.virtualKeyboardPolicy, 'manual', 'highlight tap keeps virtualkeyboardpolicy=manual');
         assert(Math.abs(afterHighlightTap.scrollY - scrolledY) <= 4,
             `highlight tap must not jump viewport (${scrolledY} -> ${afterHighlightTap.scrollY})`);
 
@@ -248,6 +258,7 @@ module.exports = async function testMobileFocusGuard(browser) {
         assert.equal(afterCancelHighlight.value.includes('<mark>'), false, 'cancel button removes highlight mark');
         assert.equal(afterCancelHighlight.activeIsEditor, false, 'cancel highlight keeps editor unfocused');
         assert.equal(afterCancelHighlight.inputmode, 'none', 'cancel highlight locks inputmode=none');
+        assert.equal(afterCancelHighlight.virtualKeyboardPolicy, 'manual', 'cancel highlight locks virtualkeyboardpolicy=manual');
         assert(Math.abs(afterCancelHighlight.scrollY - scrolledY) <= 4,
             `cancel highlight must not jump viewport (${scrolledY} -> ${afterCancelHighlight.scrollY})`);
 
@@ -318,10 +329,40 @@ module.exports = async function testMobileFocusGuard(browser) {
         assert.equal(afterCut.value.includes('剪切选区'), false, 'cut deleted selected text from article');
         assert.equal(afterCut.activeIsEditor, false, 'touch cut releases editor focus');
         assert.equal(afterCut.inputmode, 'none', 'touch cut locks inputmode=none');
+        assert.equal(afterCut.virtualKeyboardPolicy, 'manual', 'touch cut locks virtualkeyboardpolicy=manual');
         assert(Math.abs(afterCut.scrollY - expectedCutScrollY) <= 4,
             `cut action must not jump viewport (${expectedCutScrollY} -> ${afterCut.scrollY})`);
 
-        // 5) 最后验证：单指轻点底部普通正文，可立刻移除 inputmode="none" 恢复聚焦与输入
+        // 4b) 处于划词选区时点按普通正文取消选中：不弹键盘、释放焦点且视口不跳动
+        const dismissTapCoords = await page.evaluate(() => {
+            const rootEl = editor.container.querySelector('.tiptap');
+            const p = [...rootEl.querySelectorAll('p')]
+                .find(el => el.textContent.includes('末尾待点选的普通正文段落'));
+            const from = editor.editor.view.posAtDOM(p.firstChild, 0);
+            const to = from + 4;
+            const TextSelection = globalThis.DumbPadTiptap.PM.state.TextSelection;
+            editor.editor.view.dispatch(
+                editor.editor.state.tr.setSelection(TextSelection.create(editor.editor.state.doc, from, to))
+            );
+            const domRange = document.createRange();
+            domRange.setStart(p.firstChild, 0);
+            domRange.setEnd(p.firstChild, 4);
+            const domSel = window.getSelection();
+            domSel.removeAllRanges();
+            domSel.addRange(domRange);
+            const r = p.getBoundingClientRect();
+            return { x: r.left + r.width * 0.75, y: r.top + r.height / 2 };
+        });
+        await page.touchscreen.tap(dismissTapCoords.x, dismissTapCoords.y);
+        await page.waitForTimeout(220);
+        const afterDismissTap = await readFocusState();
+        assert.equal(afterDismissTap.inputmode, 'none', 'tapping plain text to dismiss selection locks inputmode=none');
+        assert.equal(afterDismissTap.virtualKeyboardPolicy, 'manual', 'tapping plain text to dismiss selection locks virtualkeyboardpolicy=manual');
+        assert.equal(afterDismissTap.activeIsEditor, false, 'tapping plain text to dismiss selection releases focus');
+        assert(Math.abs(afterDismissTap.scrollY - expectedCutScrollY) <= 8,
+            `dismissing selection tap must not jump viewport (${expectedCutScrollY} -> ${afterDismissTap.scrollY})`);
+
+        // 5) 最后验证：单指轻点底部普通正文，可立刻移除 inputmode="none" 与 virtualkeyboardpolicy="manual" 恢复聚焦与输入
         const plainTapCoords = await page.evaluate(() => {
             const p = [...editor.container.querySelectorAll('.tiptap p')]
                 .find(el => el.textContent.includes('末尾待点选的普通正文段落'));
@@ -332,6 +373,7 @@ module.exports = async function testMobileFocusGuard(browser) {
         await page.waitForTimeout(220);
         const afterPlainTap = await readFocusState();
         assert.equal(afterPlainTap.inputmode, null, 'tapping plain text removes inputmode=none');
+        assert.equal(afterPlainTap.virtualKeyboardPolicy, null, 'tapping plain text removes virtualkeyboardpolicy');
         assert.equal(afterPlainTap.activeIsEditor, true, 'tapping plain text focuses editor');
         assert(afterPlainTap.scrollY > 1000, `plain tap stays at scrolled bottom (${afterPlainTap.scrollY})`);
         await page.keyboard.type('TEST');

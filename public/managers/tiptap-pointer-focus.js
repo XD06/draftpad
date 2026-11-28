@@ -46,6 +46,8 @@ const TOUCH_ACTIVITY_WINDOW_MS = 1000;
 const MOUSE_ACTIVITY_WINDOW_MS = 10000;
 const PLAIN_TAP_MAX_DURATION_MS = 320;
 const PLAIN_TAP_MAX_MOVE_PX = 10;
+const KEYBOARD_OPEN_MIN_DELTA_PX = 120;
+const KEYBOARD_CLOSE_THRESHOLD_PX = 80;
 
 let lastTouchPointerAt = 0;
 let lastMousePointerAt = 0;
@@ -107,13 +109,49 @@ export function isTouchNoKeyboardTarget(target) {
     return false;
 }
 
+function lockMobileInputMode(dom) {
+    if (!dom) return;
+    dom.setAttribute?.('inputmode', 'none');
+    dom.setAttribute?.('virtualkeyboardpolicy', 'manual');
+}
+
+function unlockMobileInputMode(dom) {
+    if (!dom) return;
+    if (dom.getAttribute?.('inputmode') === 'none') {
+        dom.removeAttribute?.('inputmode');
+    }
+    if (dom.getAttribute?.('virtualkeyboardpolicy') === 'manual') {
+        dom.removeAttribute?.('virtualkeyboardpolicy');
+    }
+}
+
+function hideVirtualKeyboardIfSupported() {
+    try {
+        const nav = (typeof window !== 'undefined' && window.navigator) || globalThis.navigator;
+        nav?.virtualKeyboard?.hide?.();
+    } catch (_error) {
+        // Ignore virtualKeyboard API failures on unsupported platforms
+    }
+}
+
+function domHasRangeSelection(dom) {
+    if (!dom || typeof window === 'undefined' || typeof window.getSelection !== 'function') return false;
+    try {
+        const sel = window.getSelection();
+        if (!sel || sel.isCollapsed || sel.rangeCount === 0) return false;
+        const anchor = sel.anchorNode;
+        const focus = sel.focusNode;
+        return Boolean((anchor && dom.contains(anchor)) || (focus && dom.contains(focus)));
+    } catch (_error) {
+        return false;
+    }
+}
+
 /** 在不将旧光标拖进视野的前提下聚焦编辑器（同时移除 inputmode="none"）。 */
 export function focusEditorWithoutScroll(view) {
     const dom = view?.dom;
     if (!dom) return;
-    if (dom.getAttribute?.('inputmode') === 'none') {
-        dom.removeAttribute('inputmode');
-    }
+    unlockMobileInputMode(dom);
     try {
         if (typeof dom.focus === 'function') {
             dom.focus({ preventScroll: true });
@@ -152,7 +190,8 @@ export function releaseEditorFocus(view, { clearDomSelection = false } = {}) {
         dom.blur?.();
     }
     if (dom && view?.editable && shouldLockMobileInputMode()) {
-        dom.setAttribute('inputmode', 'none');
+        lockMobileInputMode(dom);
+        hideVirtualKeyboardIfSupported();
     }
 }
 
@@ -222,18 +261,21 @@ class PointerFocusGuardView {
         this.wasEditable = Boolean(editorView.editable);
         this.pendingPlainTextTap = null;
         this.lastLongPressAt = 0;
+        this.lastSelectionDismissAt = 0;
+        this.keyboardOpen = false;
+        const vv = typeof window !== 'undefined' ? window.visualViewport : null;
+        this.baselineViewportHeight = Number(vv?.height || (typeof window !== 'undefined' ? window.innerHeight : 0) || 0);
+        this.lastViewportWidth = Number(vv?.width || (typeof window !== 'undefined' ? window.innerWidth : 0) || 0);
 
         if (isTouchOrMobileViewport() && editorView.editable && !editorView.hasFocus()) {
-            editorView.dom.setAttribute('inputmode', 'none');
+            lockMobileInputMode(editorView.dom);
         }
 
         this.onPointerDown = (event) => {
             if (event.pointerType === 'mouse') {
                 clearTouchPointerActivity();
                 this.pendingPlainTextTap = null;
-                if (editorView.dom.getAttribute('inputmode') === 'none') {
-                    editorView.dom.removeAttribute('inputmode');
-                }
+                unlockMobileInputMode(editorView.dom);
                 return;
             }
             markTouchPointerActivity();
@@ -243,9 +285,20 @@ class PointerFocusGuardView {
             }
             if (isTouchNoKeyboardTarget(event.target)) {
                 this.pendingPlainTextTap = null;
-                editorView.dom.setAttribute('inputmode', 'none');
+                lockMobileInputMode(editorView.dom);
                 return;
             }
+            if (domHasRangeSelection(editorView.dom)) {
+                this.pendingPlainTextTap = null;
+                this.lastSelectionDismissAt = Date.now();
+                lockMobileInputMode(editorView.dom);
+                hideVirtualKeyboardIfSupported();
+                return;
+            }
+            if (!this.keyboardOpen || !editorView.hasFocus()) {
+                lockMobileInputMode(editorView.dom);
+            }
+            this.lastSelectionDismissAt = 0;
             // 普通文字区域或二次轻点编辑已标记文字：按下时不移除 inputmode="none"，
             // 保证长按划词期间不弹软键盘，只有短促单指轻点抬起才放开键盘。
             this.pendingPlainTextTap = {
@@ -273,12 +326,16 @@ class PointerFocusGuardView {
             this.pendingPlainTextTap = null;
             if (!editorView.editable) return;
             const duration = Date.now() - tap.startTime;
-            if (tap.moved || duration >= PLAIN_TAP_MAX_DURATION_MS) return;
-            const sel = typeof window !== 'undefined' ? window.getSelection?.() : null;
-            const hasRangeSelection = Boolean(sel && !sel.isCollapsed);
-            if (!hasRangeSelection) {
-                editorView.dom.removeAttribute('inputmode');
+            const hasRangeSelection = domHasRangeSelection(editorView.dom);
+            if (tap.moved || duration >= PLAIN_TAP_MAX_DURATION_MS || hasRangeSelection) {
+                if (duration >= PLAIN_TAP_MAX_DURATION_MS || hasRangeSelection) {
+                    this.lastLongPressAt = Date.now();
+                    lockMobileInputMode(editorView.dom);
+                    hideVirtualKeyboardIfSupported();
+                }
+                return;
             }
+            unlockMobileInputMode(editorView.dom);
         };
 
         this.onPointerCancel = () => {
@@ -290,25 +347,85 @@ class PointerFocusGuardView {
             if (isTouchInteraction(editorView, event)) {
                 this.lastLongPressAt = Date.now();
                 this.pendingPlainTextTap = null;
+                lockMobileInputMode(editorView.dom);
+                hideVirtualKeyboardIfSupported();
             }
         };
 
         this.onClick = (event) => {
             if (!editorView.editable || !isTouchInteraction(editorView, event)) return;
             if (isTouchNoKeyboardTarget(event.target)) return;
+            if (Date.now() - this.lastSelectionDismissAt < 800) {
+                this.lastSelectionDismissAt = 0;
+                lockMobileInputMode(editorView.dom);
+                if (!domHasRangeSelection(editorView.dom)) {
+                    releaseEditorFocus(editorView);
+                }
+                return;
+            }
             if (Date.now() - this.lastLongPressAt < 800) return;
-            if (editorView.dom.getAttribute('inputmode') !== 'none') return;
-            const sel = typeof window !== 'undefined' ? window.getSelection?.() : null;
-            const hasRangeSelection = Boolean(sel && !sel.isCollapsed);
-            if (!hasRangeSelection) {
-                editorView.dom.removeAttribute('inputmode');
+            if (
+                editorView.dom.getAttribute('inputmode') !== 'none'
+                && editorView.dom.getAttribute('virtualkeyboardpolicy') !== 'manual'
+            ) {
+                return;
+            }
+            if (!domHasRangeSelection(editorView.dom)) {
+                unlockMobileInputMode(editorView.dom);
+            }
+        };
+
+        this.onFocus = () => {
+            if (!editorView.editable || editorView.composing) return;
+            if (!shouldLockMobileInputMode()) return;
+            if (domHasRangeSelection(editorView.dom)) {
+                lockMobileInputMode(editorView.dom);
+                hideVirtualKeyboardIfSupported();
+            }
+        };
+
+        this.onSelectionChange = () => {
+            if (!editorView.editable || editorView.composing) return;
+            if (!shouldLockMobileInputMode()) return;
+            if (domHasRangeSelection(editorView.dom)) {
+                this.pendingPlainTextTap = null;
+                this.lastLongPressAt = Date.now();
+                lockMobileInputMode(editorView.dom);
+                hideVirtualKeyboardIfSupported();
+            }
+        };
+
+        this.onVisualViewportResize = () => {
+            const vvCurrent = typeof window !== 'undefined' ? window.visualViewport : null;
+            const curH = Number(vvCurrent?.height || 0);
+            const curW = Number(vvCurrent?.width || (typeof window !== 'undefined' ? window.innerWidth : 0) || 0);
+            if (!curH) return;
+            if (this.lastViewportWidth && Math.abs(curW - this.lastViewportWidth) > 50) {
+                this.baselineViewportHeight = Math.max(curH, Number((typeof window !== 'undefined' ? window.innerHeight : 0) || 0));
+                this.lastViewportWidth = curW;
+                this.keyboardOpen = false;
+                return;
+            }
+            this.lastViewportWidth = curW;
+            if (curH > this.baselineViewportHeight) {
+                this.baselineViewportHeight = curH;
+            }
+            const delta = this.baselineViewportHeight - curH;
+            if (delta >= KEYBOARD_OPEN_MIN_DELTA_PX) {
+                this.keyboardOpen = true;
+            } else if (this.keyboardOpen && delta <= KEYBOARD_CLOSE_THRESHOLD_PX) {
+                this.keyboardOpen = false;
+                if (editorView.editable && shouldLockMobileInputMode()) {
+                    lockMobileInputMode(editorView.dom);
+                }
             }
         };
 
         this.onBlur = () => {
             this.pendingPlainTextTap = null;
+            this.keyboardOpen = false;
             if (editorView.editable && shouldLockMobileInputMode()) {
-                editorView.dom.setAttribute('inputmode', 'none');
+                lockMobileInputMode(editorView.dom);
             }
         };
 
@@ -319,19 +436,26 @@ class PointerFocusGuardView {
         dom.addEventListener('pointercancel', this.onPointerCancel, true);
         dom.addEventListener('contextmenu', this.onContextMenu, true);
         dom.addEventListener('click', this.onClick, true);
+        dom.addEventListener('focus', this.onFocus, true);
         dom.addEventListener('blur', this.onBlur, true);
+        if (typeof document !== 'undefined') {
+            document.addEventListener('selectionchange', this.onSelectionChange);
+        }
+        if (typeof window !== 'undefined') {
+            window.visualViewport?.addEventListener?.('resize', this.onVisualViewportResize);
+        }
     }
 
     update(view) {
         if (!view.editable) {
             this.wasEditable = false;
-            view.dom.removeAttribute('inputmode');
+            unlockMobileInputMode(view.dom);
             return;
         }
         if (!this.wasEditable) {
             this.wasEditable = true;
             if (isTouchOrMobileViewport() && !view.hasFocus()) {
-                view.dom.setAttribute('inputmode', 'none');
+                lockMobileInputMode(view.dom);
             }
         }
     }
@@ -344,8 +468,15 @@ class PointerFocusGuardView {
         dom.removeEventListener('pointercancel', this.onPointerCancel, true);
         dom.removeEventListener('contextmenu', this.onContextMenu, true);
         dom.removeEventListener('click', this.onClick, true);
+        dom.removeEventListener('focus', this.onFocus, true);
         dom.removeEventListener('blur', this.onBlur, true);
-        dom.removeAttribute('inputmode');
+        if (typeof document !== 'undefined') {
+            document.removeEventListener('selectionchange', this.onSelectionChange);
+        }
+        if (typeof window !== 'undefined') {
+            window.visualViewport?.removeEventListener?.('resize', this.onVisualViewportResize);
+        }
+        unlockMobileInputMode(dom);
     }
 }
 

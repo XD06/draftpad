@@ -1008,6 +1008,7 @@ export class HybridMarkdownEditor {
         const dom = this.editor?.view?.dom;
         if (dom && typeof dom.focus === 'function') {
             dom.removeAttribute?.('inputmode');
+            dom.removeAttribute?.('virtualkeyboardpolicy');
             dom.focus({ preventScroll });
         } else {
             this.editor?.commands?.focus?.();

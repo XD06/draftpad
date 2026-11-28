@@ -159,8 +159,10 @@ async function main() {
     check('time marker mousedown is default-prevented', Boolean(timeMarker) && mousedownOn(timeMarker).defaultPrevented === true);
     check('annotation badge is a chrome pointer target', Boolean(badge) && isChromePointerTarget(badge) === true);
     check('annotation badge mousedown is default-prevented', Boolean(badge) && mousedownOn(badge).defaultPrevented === true);
-    // 桌面下编辑器绝不写入 inputmode="none"
+    // 桌面下编辑器绝不写入 inputmode="none" 或 virtualkeyboardpolicy
     check('desktop editor never sets inputmode=none', root.getAttribute('inputmode') === null, root.getAttribute('inputmode'));
+    check('desktop editor never sets virtualkeyboardpolicy',
+        root.getAttribute('virtualkeyboardpolicy') === null, root.getAttribute('virtualkeyboardpolicy'));
 
     /* ---- 10. 移动端 Scheme B（inputmode="none" 状态机与触屏焦点释放） ---- */
     const pointerEvent = (type, props = {}) => {
@@ -193,8 +195,10 @@ async function main() {
         const mobileView = mobileEditor.editor.view;
         const mobileRoot = mobileContainer.querySelector('.tiptap');
 
-        check('mobile editor initializes unfocused with inputmode=none',
-            mobileRoot.getAttribute('inputmode') === 'none', mobileRoot.getAttribute('inputmode'));
+        check('mobile editor initializes unfocused with inputmode=none and virtualkeyboardpolicy=manual',
+            mobileRoot.getAttribute('inputmode') === 'none'
+            && mobileRoot.getAttribute('virtualkeyboardpolicy') === 'manual',
+            `${mobileRoot.getAttribute('inputmode')} / ${mobileRoot.getAttribute('virtualkeyboardpolicy')}`);
 
         mobileEditor.setValue('第一段普通正文\n\n- [ ] 待办任务条目\n\n[[time:create:2026-01-01 00:00:00]]\n\n<mark>高亮句子</mark>', false);
         const plainPara = mobileRoot.querySelector('p');
@@ -209,14 +213,16 @@ async function main() {
         check('plain text pointerdown keeps inputmode=none until quick tap release',
             mobileRoot.getAttribute('inputmode') === 'none');
         plainPara.dispatchEvent(pointerEvent('pointerup', { clientX: 21, clientY: 20, pointerType: 'touch' }));
-        check('quick tap on plain text removes inputmode=none to allow typing',
-            mobileRoot.getAttribute('inputmode') === null, mobileRoot.getAttribute('inputmode'));
+        check('quick tap on plain text removes inputmode=none and virtualkeyboardpolicy',
+            mobileRoot.getAttribute('inputmode') === null && mobileRoot.getAttribute('virtualkeyboardpolicy') === null,
+            `${mobileRoot.getAttribute('inputmode')} / ${mobileRoot.getAttribute('virtualkeyboardpolicy')}`);
 
-        // blur 后立即锁回 inputmode="none"
+        // blur 后立即锁回 inputmode="none" + virtualkeyboardpolicy="manual"
         mobileRoot.focus();
         mobileRoot.dispatchEvent(new dom.window.FocusEvent('blur', { bubbles: true }));
-        check('blur restores inputmode=none on mobile',
-            mobileRoot.getAttribute('inputmode') === 'none', mobileRoot.getAttribute('inputmode'));
+        check('blur restores inputmode=none and virtualkeyboardpolicy=manual on mobile',
+            mobileRoot.getAttribute('inputmode') === 'none' && mobileRoot.getAttribute('virtualkeyboardpolicy') === 'manual',
+            `${mobileRoot.getAttribute('inputmode')} / ${mobileRoot.getAttribute('virtualkeyboardpolicy')}`);
 
         // 10b) 滑动或长按保持 inputmode="none"
         plainPara.dispatchEvent(pointerEvent('pointerdown', { clientX: 20, clientY: 20, pointerType: 'touch' }));
@@ -229,20 +235,163 @@ async function main() {
         plainPara.dispatchEvent(pointerEvent('pointerup', { clientX: 20, clientY: 20, pointerType: 'touch' }));
         check('long press (>= 320ms) keeps inputmode=none', mobileRoot.getAttribute('inputmode') === 'none');
 
-        // 10c) 点待办复选框标签 & releaseEditorFocus：即使先聚焦也立即失焦并保持 inputmode=none
+        // 10c) 点待办复选框标签 & releaseEditorFocus：即使先聚焦也立即失焦并保持锁定
         mobileRoot.focus();
         check('mobile editor focused before checkbox tap', document.activeElement === mobileRoot);
         taskLabel.dispatchEvent(pointerEvent('pointerdown', { clientX: 8, clientY: 8, pointerType: 'touch' }));
         check('checkbox touch pointerdown releases editor focus and locks inputmode=none',
             document.activeElement !== mobileRoot && mobileRoot.getAttribute('inputmode') === 'none');
 
-        // 10d) focusEditorWithoutScroll 移除 inputmode="none"；settleEditorFocusAfterAction 在移动端释放而在鼠标交互保持焦点
+        // 10d) focusEditorWithoutScroll 移除锁定；settleEditorFocusAfterAction 在移动端释放而在鼠标交互保持焦点
         focusEditorWithoutScroll(mobileView);
-        check('focusEditorWithoutScroll clears inputmode=none and focuses editor',
-            mobileRoot.getAttribute('inputmode') === null && document.activeElement === mobileRoot);
+        check('focusEditorWithoutScroll clears locks and focuses editor',
+            mobileRoot.getAttribute('inputmode') === null
+            && mobileRoot.getAttribute('virtualkeyboardpolicy') === null
+            && document.activeElement === mobileRoot);
         settleEditorFocusAfterAction(mobileView, { keepFocusOnDesktop: true });
         check('settleEditorFocusAfterAction blurs and locks inputmode=none on mobile',
-            document.activeElement !== mobileRoot && mobileRoot.getAttribute('inputmode') === 'none');
+            document.activeElement !== mobileRoot
+            && mobileRoot.getAttribute('inputmode') === 'none'
+            && mobileRoot.getAttribute('virtualkeyboardpolicy') === 'manual');
+
+        // 10e) 存在 DOM 非折叠划词选区时点按普通正文：锁住键盘、释放焦点，下一拍无选区轻点再解锁
+        plainPara.dispatchEvent(pointerEvent('pointerdown', { clientX: 20, clientY: 20, pointerType: 'touch' }));
+        plainPara.dispatchEvent(pointerEvent('pointerup', { clientX: 21, clientY: 20, pointerType: 'touch' }));
+        check('10e unlocked before active selection dismiss test', mobileRoot.getAttribute('inputmode') === null);
+        mobileRoot.focus();
+        const sel = dom.window.getSelection();
+        const range = document.createRange();
+        range.setStart(plainPara.firstChild, 0);
+        range.setEnd(plainPara.firstChild, 3);
+        sel.removeAllRanges();
+        sel.addRange(range);
+        plainPara.dispatchEvent(pointerEvent('pointerdown', { clientX: 22, clientY: 20, pointerType: 'touch' }));
+        sel.removeAllRanges();
+        plainPara.dispatchEvent(pointerEvent('pointerup', { clientX: 22, clientY: 20, pointerType: 'touch' }));
+        plainPara.dispatchEvent(pointerEvent('click', { clientX: 22, clientY: 20, pointerType: 'touch' }));
+        check('tapping plain text to dismiss range selection keeps lock and blurs editor',
+            mobileRoot.getAttribute('inputmode') === 'none'
+            && mobileRoot.getAttribute('virtualkeyboardpolicy') === 'manual'
+            && document.activeElement !== mobileRoot);
+        plainPara.dispatchEvent(pointerEvent('pointerdown', { clientX: 22, clientY: 20, pointerType: 'touch' }));
+        plainPara.dispatchEvent(pointerEvent('pointerup', { clientX: 22, clientY: 20, pointerType: 'touch' }));
+        check('next quick tap after dismissing selection unlocks inputmode and virtualkeyboardpolicy',
+            mobileRoot.getAttribute('inputmode') === null
+            && mobileRoot.getAttribute('virtualkeyboardpolicy') === null);
+
+        // 10f) selectionchange 自动重锁与 navigator.virtualKeyboard.hide()（IME composing 期间不干预）
+        let vkHideCalls = 0;
+        const origVirtualKeyboardDescriptor = Object.getOwnPropertyDescriptor(dom.window.navigator, 'virtualKeyboard');
+        Object.defineProperty(dom.window.navigator, 'virtualKeyboard', {
+            value: { hide() { vkHideCalls += 1; } },
+            configurable: true,
+        });
+        try {
+            plainPara.dispatchEvent(pointerEvent('pointerdown', { clientX: 20, clientY: 20, pointerType: 'touch' }));
+            plainPara.dispatchEvent(pointerEvent('pointerup', { clientX: 21, clientY: 20, pointerType: 'touch' }));
+            check('10f unlocked before selectionchange', mobileRoot.getAttribute('inputmode') === null);
+
+            const r1 = document.createRange();
+            r1.setStart(plainPara.firstChild, 0);
+            r1.setEnd(plainPara.firstChild, 4);
+            sel.removeAllRanges();
+            sel.addRange(r1);
+            document.dispatchEvent(new dom.window.Event('selectionchange'));
+            check('selectionchange re-locks inputmode=none and virtualkeyboardpolicy=manual',
+                mobileRoot.getAttribute('inputmode') === 'none'
+                && mobileRoot.getAttribute('virtualkeyboardpolicy') === 'manual');
+            check('selectionchange invokes navigator.virtualKeyboard.hide()', vkHideCalls >= 1, `vkHideCalls=${vkHideCalls}`);
+
+            sel.removeAllRanges();
+            plainPara.dispatchEvent(pointerEvent('pointerdown', { clientX: 20, clientY: 20, pointerType: 'touch' }));
+            plainPara.dispatchEvent(pointerEvent('pointerup', { clientX: 21, clientY: 20, pointerType: 'touch' }));
+            check('10f unlocked before composing check', mobileRoot.getAttribute('inputmode') === null);
+
+            const origComposingDesc = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(mobileView), 'composing')
+                || Object.getOwnPropertyDescriptor(mobileView, 'composing');
+            Object.defineProperty(mobileView, 'composing', { value: true, configurable: true });
+            const vkHideBeforeComposing = vkHideCalls;
+            const r2 = document.createRange();
+            r2.setStart(plainPara.firstChild, 0);
+            r2.setEnd(plainPara.firstChild, 2);
+            sel.removeAllRanges();
+            sel.addRange(r2);
+            document.dispatchEvent(new dom.window.Event('selectionchange'));
+            check('selectionchange does not lock or hide keyboard while IME composing',
+                mobileRoot.getAttribute('inputmode') === null && vkHideCalls === vkHideBeforeComposing);
+            if (origComposingDesc) Object.defineProperty(mobileView, 'composing', origComposingDesc);
+            else delete mobileView.composing;
+            sel.removeAllRanges();
+        } finally {
+            if (origVirtualKeyboardDescriptor) {
+                Object.defineProperty(dom.window.navigator, 'virtualKeyboard', origVirtualKeyboardDescriptor);
+            } else {
+                delete dom.window.navigator.virtualKeyboard;
+            }
+        }
+
+        // 10g) 长按 (>= 320ms) 后系统补发 click 仍保持上锁
+        plainPara.dispatchEvent(pointerEvent('pointerdown', { clientX: 20, clientY: 20, pointerType: 'touch' }));
+        await wait(340);
+        plainPara.dispatchEvent(pointerEvent('pointerup', { clientX: 20, clientY: 20, pointerType: 'touch' }));
+        plainPara.dispatchEvent(pointerEvent('click', { clientX: 20, clientY: 20, pointerType: 'touch' }));
+        check('long press followed by trailing click keeps inputmode=none and virtualkeyboardpolicy=manual',
+            mobileRoot.getAttribute('inputmode') === 'none'
+            && mobileRoot.getAttribute('virtualkeyboardpolicy') === 'manual');
+
+        // 10h) visualViewport 键盘弹起期间允许重放光标；系统收起键盘且未触发 blur 时自动回锁
+        const origVisualViewportDesc = Object.getOwnPropertyDescriptor(dom.window, 'visualViewport');
+        const vvListeners = new Map();
+        const mockVv = {
+            width: 390,
+            height: 844,
+            addEventListener(type, fn) {
+                if (!vvListeners.has(type)) vvListeners.set(type, new Set());
+                vvListeners.get(type).add(fn);
+            },
+            removeEventListener(type, fn) {
+                vvListeners.get(type)?.delete(fn);
+            },
+            dispatchResize() {
+                for (const fn of (vvListeners.get('resize') || [])) fn({ target: mockVv });
+            },
+        };
+        Object.defineProperty(dom.window, 'visualViewport', { value: mockVv, configurable: true });
+        const vvContainer = document.createElement('div');
+        document.body.appendChild(vvContainer);
+        const vvEditor = new HybridMarkdownEditor(vvContainer, {});
+        await vvEditor.whenReady();
+        const vvRoot = vvContainer.querySelector('.tiptap');
+        vvEditor.setValue('视口监听测试段落', false);
+        const vvPara = vvRoot.querySelector('p');
+        try {
+            vvPara.dispatchEvent(pointerEvent('pointerdown', { clientX: 16, clientY: 16, pointerType: 'touch' }));
+            vvPara.dispatchEvent(pointerEvent('pointerup', { clientX: 16, clientY: 16, pointerType: 'touch' }));
+            vvRoot.focus();
+            check('10h quick tap unlocks before keyboard opens',
+                vvRoot.getAttribute('inputmode') === null && document.activeElement === vvRoot);
+
+            mockVv.height = 500;
+            mockVv.dispatchResize();
+            vvPara.dispatchEvent(pointerEvent('pointerdown', { clientX: 20, clientY: 16, pointerType: 'touch' }));
+            vvPara.dispatchEvent(pointerEvent('pointerup', { clientX: 20, clientY: 16, pointerType: 'touch' }));
+            check('while soft keyboard is open, pointerdown does not re-lock inputmode',
+                vvRoot.getAttribute('inputmode') === null);
+
+            mockVv.height = 844;
+            mockVv.dispatchResize();
+            check('closing keyboard via visualViewport without blur re-locks inputmode and virtualkeyboardpolicy',
+                vvRoot.getAttribute('inputmode') === 'none'
+                && vvRoot.getAttribute('virtualkeyboardpolicy') === 'manual');
+        } finally {
+            vvEditor.editor.destroy();
+            vvContainer.remove();
+            if (origVisualViewportDesc) {
+                Object.defineProperty(dom.window, 'visualViewport', origVisualViewportDesc);
+            } else {
+                delete dom.window.visualViewport;
+            }
+        }
 
         // 切换回到真实鼠标：不再误判为触屏（即便在 1280px 触控屏设备/Playwright hasTouch 下也不影响）
         mobileRoot.dispatchEvent(pointerEvent('pointerdown', { pointerType: 'mouse' }));
