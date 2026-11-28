@@ -93,7 +93,7 @@ function registerNoteRoutes(app, context) {
             const contentHash = hashContent(content);
 
             const result = await storage.withNotepadWriteLock(async () => {
-                const { notepad } = await findNotepadById(id);
+                const { data, notepad } = await findNotepadById(id);
 
                 if (notepad) {
                     const currentContent = await storage.readNoteContent(notepad);
@@ -116,8 +116,7 @@ function registerNoteRoutes(app, context) {
                     await storage.writeNoteContent(notepad, req.body.content);
                 }
 
-                const data = await storage.readNotepadsMeta();
-                const targetNotepad = data.notepads.find(n => n.id === id);
+                const targetNotepad = data?.notepads?.find(n => n.id === id) || notepad;
                 let version = targetNotepad?.version || 1;
                 let editStats = getNoteEditStats(targetNotepad);
                 if (targetNotepad) {
@@ -163,7 +162,7 @@ function registerNoteRoutes(app, context) {
             const senderId = userId || 'api';
 
             const result = await storage.withNotepadWriteLock(async () => {
-                const { notepad } = await findNotepadById(id);
+                const { data, notepad } = await findNotepadById(id);
                 if (!notepad) {
                     return { errorStatus: 404, error: 'Notepad not found' };
                 }
@@ -197,8 +196,7 @@ function registerNoteRoutes(app, context) {
 
                 await storage.writeNoteContent(notepad, edit.content);
 
-                const data = await storage.readNotepadsMeta();
-                const targetNotepad = data.notepads.find(n => n.id === id);
+                const targetNotepad = data?.notepads?.find(n => n.id === id) || notepad;
                 let savedVersion = notepad.version || 1;
                 let editStats = getNoteEditStats(notepad);
                 if (targetNotepad) {
@@ -256,7 +254,7 @@ function registerNoteRoutes(app, context) {
             const senderId = userId || 'api';
 
             const result = await storage.withNotepadWriteLock(async () => {
-                const { notepad } = await findNotepadById(id);
+                const { data, notepad } = await findNotepadById(id);
                 if (!notepad) {
                     return { errorStatus: 404, error: 'Notepad not found' };
                 }
@@ -287,8 +285,7 @@ function registerNoteRoutes(app, context) {
 
                 await storage.writeNoteContent(notepad, batch.content);
 
-                const data = await storage.readNotepadsMeta();
-                const targetNotepad = data.notepads.find(n => n.id === id);
+                const targetNotepad = data?.notepads?.find(n => n.id === id) || notepad;
                 let savedVersion = notepad.version || 1;
                 let editStats = getNoteEditStats(notepad);
                 if (targetNotepad) {

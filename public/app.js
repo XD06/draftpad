@@ -594,7 +594,38 @@ document.addEventListener('DOMContentLoaded', async () => {
     // after the editor has changed.
     let editorRevision = 0;
     const saveNotesInFlight = new Map();
+    const notepadCreationsInFlight = new Map();
     const pendingNoteSaveIds = new Set();
+
+    function enqueueNotepadMutation(notepadId, task) {
+        const queueKey = isValidNotepadId(notepadId) ? notepadId : currentNotepadId;
+        const previous = saveNotesInFlight.get(queueKey) || Promise.resolve();
+        const queued = previous.catch(() => undefined).then(() => task());
+        saveNotesInFlight.set(queueKey, queued);
+        queued.finally(() => {
+            if (saveNotesInFlight.get(queueKey) === queued) {
+                saveNotesInFlight.delete(queueKey);
+            }
+        });
+        return queued;
+    }
+
+    function advanceLocalNotepadVersion(notepadId, version) {
+        const nextVersion = Number(version);
+        if (!isValidNotepadId(notepadId) || !Number.isFinite(nextVersion) || nextVersion < 1) return;
+        confirmRemoteNoteVersion(notepadId, nextVersion);
+        setCurrentNoteVersion(notepadId, nextVersion);
+        const cached = getCachedNote(notepadId);
+        if (!cached || cached.conflict || dirtyConflictNotepadIds.has(notepadId)) return;
+        if (cached.dirty) {
+            cacheDirtyNote(notepadId, cached.content || '', {
+                version: nextVersion,
+                baseContent: cached.baseContent
+            });
+        } else {
+            cacheSyncedNote(notepadId, cached.content || '', { version: nextVersion });
+        }
+    }
     let noteConflictToastEl = null;
     let lastSaveTime = Date.now();
     const SAVE_INTERVAL = 2000;
@@ -2332,7 +2363,16 @@ document.addEventListener('DOMContentLoaded', async () => {
             const response = await fetchWithPin('/api/notepads', { cache: 'no-store' }, { silent });
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
             const data = await response.json();
-            currentNotepads = Array.isArray(data.notepads_list) ? data.notepads_list : [];
+            const serverNotepads = Array.isArray(data.notepads_list) ? data.notepads_list : [];
+            const serverIds = new Set(serverNotepads.map(notepad => notepad.id));
+            const pendingCreations = [];
+            for (const pendingId of notepadCreationsInFlight.keys()) {
+                if (!serverIds.has(pendingId)) {
+                    const localEntry = currentNotepads.find(notepad => notepad.id === pendingId);
+                    if (localEntry) pendingCreations.push(localEntry);
+                }
+            }
+            currentNotepads = [...pendingCreations, ...serverNotepads];
             currentNotepads.forEach(notepad => confirmRemoteNoteVersion(notepad.id, notepad.version));
             renderSidebar(currentNotepads, currentNotepadId, selectNotepad, deleteNotepadById, renameNotepadById, toggleNotepadPin, directorySearchQuery);
             updateArticleMeta();
@@ -2422,6 +2462,63 @@ document.addEventListener('DOMContentLoaded', async () => {
                             hideNoteConflictToast();
                             setStartupSyncStatus('synced', '已同步');
                             return true;
+                        }
+                        if (typeof cachedNote.baseContent === 'string' && (data.content || '') === cachedNote.baseContent) {
+                            dirtyConflictNotepadIds.delete(notepadId);
+                            cacheDirtyNote(notepadId, cachedNote.content || '', {
+                                version: data.version,
+                                baseContent: cachedNote.baseContent
+                            });
+                            setCurrentNoteVersion(notepadId, data.version);
+                            hideNoteConflictToast();
+                            setStartupSyncStatus('cached', '本地未同步');
+                            return true;
+                        }
+                        if (typeof noteSyncController !== 'undefined'
+                            && typeof noteSyncController?.mergeContents === 'function'
+                            && typeof cachedNote.baseContent === 'string') {
+                            const remoteText = data.content || '';
+                            const localText = cachedNote.content || '';
+                            const merge = noteSyncController.mergeContents({
+                                base: cachedNote.baseContent,
+                                local: localText,
+                                remote: remoteText
+                            });
+                            if (merge.ok) {
+                                setCurrentNoteVersion(notepadId, data.version);
+                                dirtyConflictNotepadIds.delete(notepadId);
+                                hideNoteConflictToast();
+                                if (merge.content === remoteText) {
+                                    isApplyingRemoteUpdate = true;
+                                    editor.applyRemoteValue(merge.content);
+                                    isApplyingRemoteUpdate = false;
+                                    hasUnsavedChanges = false;
+                                    cacheSyncedNote(notepadId, merge.content, { version: data.version });
+                                    setStartupSyncStatus('synced', '已同步');
+                                    debouncedUpdateToC();
+                                    return true;
+                                }
+                                if (merge.content !== localText && typeof editor.applyRemoteValue === 'function') {
+                                    isApplyingRemoteUpdate = true;
+                                    editor.applyRemoteValue(merge.content);
+                                    isApplyingRemoteUpdate = false;
+                                    debouncedUpdateToC();
+                                }
+                                hasUnsavedChanges = true;
+                                cacheDirtyNote(notepadId, merge.content, {
+                                    version: data.version,
+                                    baseContent: remoteText
+                                });
+                                setStartupSyncStatus('syncing', '已自动合并，正在同步');
+                                if (typeof saveNotes === 'function') {
+                                    editorRevision += 1;
+                                    const mergedRevision = editorRevision;
+                                    setTimeout(() => {
+                                        saveNotes(merge.content, true, false, 0, notepadId, mergedRevision);
+                                    }, 0);
+                                }
+                                return true;
+                            }
                         }
                         cacheConflictNote(notepadId, cachedNote.content || '', {
                             localVersion: cachedNote.version,
@@ -3206,34 +3303,88 @@ document.addEventListener('DOMContentLoaded', async () => {
         renderCachedNotepad(optimisticNotepad.id, initialContent);
 
         try {
-            const response = await fetchWithPin('/api/notepads', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ id: optimisticNotepad.id, name: optimisticNotepad.name, content: initialContent })
+            const createPromise = enqueueNotepadMutation(optimisticNotepad.id, async () => {
+                const response = await fetchWithPin('/api/notepads', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ id: optimisticNotepad.id, name: optimisticNotepad.name, content: initialContent })
+                });
+                if (!response) throw new Error('Network error');
+                const payload = await response.json().catch(() => ({}));
+                if (!response.ok) {
+                    const msg = payload?.error || 'Error creating new notepad';
+                    throw new Error(msg);
+                }
+                const newNotepad = payload;
+                if (!newNotepad?.id) {
+                    throw new Error(payload?.error || 'Create notepad succeeded but missing id');
+                }
+                const isStillActive = currentNotepadId === optimisticNotepad.id || currentNotepadId === newNotepad.id;
+                const liveContent = isStillActive
+                    ? editor.value
+                    : (getCachedNote(optimisticNotepad.id)?.content ?? initialContent);
+                const userEditedDuringCreate = liveContent !== initialContent
+                    || Boolean(getCachedNote(optimisticNotepad.id)?.dirty);
+
+                if (newNotepad.id !== optimisticNotepad.id && autoTitleNames.has(optimisticNotepad.id)) {
+                    autoTitleNames.set(newNotepad.id, autoTitleNames.get(optimisticNotepad.id));
+                    autoTitleNames.delete(optimisticNotepad.id);
+                }
+                const existingLocal = currentNotepads.find(
+                    note => note.id === optimisticNotepad.id || note.id === newNotepad.id
+                );
+                const mergedNotepad = {
+                    ...optimisticNotepad,
+                    ...newNotepad,
+                    name: existingLocal && existingLocal.name !== optimisticNotepad.name
+                        ? existingLocal.name
+                        : newNotepad.name
+                };
+                currentNotepads = [
+                    mergedNotepad,
+                    ...currentNotepads.filter(note => note.id !== optimisticNotepad.id && note.id !== newNotepad.id)
+                ];
+
+                const serverVersion = Number(newNotepad.version || 1);
+                if (isStillActive) {
+                    currentNotepadId = newNotepad.id;
+                    renderedEditorNotepadId = newNotepad.id;
+                }
+                setCurrentNoteVersion(newNotepad.id, serverVersion);
+                confirmRemoteNoteVersion(newNotepad.id, serverVersion);
+
+                if (userEditedDuringCreate) {
+                    cacheDirtyNote(newNotepad.id, liveContent, {
+                        version: serverVersion,
+                        baseContent: initialContent
+                    });
+                    renderNotepadLists(isStillActive ? newNotepad.id : currentNotepadId);
+                    if (isStillActive) {
+                        replaceUrlWithNotepad(getCurrentNotepadName());
+                        applyCurrentNotepadTitle();
+                        updateArticleMeta();
+                        if (!saveTimeout) debouncedSave(liveContent);
+                        if (!autoTitleTimeout) scheduleAutoTitle(newNotepad.id, liveContent);
+                    }
+                } else {
+                    cacheSyncedNote(newNotepad.id, initialContent, { version: serverVersion });
+                    renderNotepadLists(isStillActive ? newNotepad.id : currentNotepadId);
+                    if (isStillActive) {
+                        if (renderedEditorNotepadId !== newNotepad.id || editor.value !== initialContent) {
+                            renderCachedNotepad(newNotepad.id, initialContent);
+                        } else {
+                            updateUrlWithNotepad(getCurrentNotepadName());
+                            applyCurrentNotepadTitle();
+                            updateArticleMeta();
+                        }
+                        setCurrentNoteVersion(newNotepad.id, serverVersion);
+                    }
+                }
+                toaster.show(`New notepad: ${mergedNotepad.name}`, 'success');
+                return mergedNotepad;
             });
-            if (!response) throw new Error('Network error');
-            const payload = await response.json().catch(() => ({}));
-            if (!response.ok) {
-                const msg = payload?.error || 'Error creating new notepad';
-                throw new Error(msg);
-            }
-            const newNotepad = payload;
-            if (!newNotepad?.id) {
-                throw new Error(payload?.error || 'Create notepad succeeded but missing id');
-            }
-            currentNotepads = [
-                { ...optimisticNotepad, ...newNotepad },
-                ...currentNotepads.filter(note => note.id !== optimisticNotepad.id && note.id !== newNotepad.id)
-            ];
-            cacheSyncedNote(newNotepad.id, initialContent, { version: newNotepad.version || 1 });
-            renderNotepadLists(newNotepad.id);
-            if (currentNotepadId === optimisticNotepad.id || currentNotepadId === newNotepad.id) {
-                renderCachedNotepad(newNotepad.id, initialContent);
-                setCurrentNoteVersion(newNotepad.id, newNotepad.version || 1);
-            }
-            confirmRemoteNoteVersion(newNotepad.id, newNotepad.version || 1);
-            toaster.show(`New notepad: ${newNotepad.name}`, 'success');
-            return newNotepad;
+            notepadCreationsInFlight.set(optimisticNotepad.id, createPromise);
+            return await createPromise;
         } catch (err) {
             console.error('Error creating notepad:', err);
             currentNotepads = previousNotepads;
@@ -3244,6 +3395,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             toaster.show(err?.message || 'Error creating notepad', 'error', true);
             if (throwOnError) throw err;
             return null;
+        } finally {
+            notepadCreationsInFlight.delete(optimisticNotepad.id);
         }
     }
 
@@ -3268,11 +3421,15 @@ document.addEventListener('DOMContentLoaded', async () => {
         const id = notepadIdToRename;
         const notepad = currentNotepads.find(n => n.id === id);
         if (!notepad) return;
-        const previousNotepad = { ...notepad };
+        const previousName = notepad.name;
+        const previousUpdatedAt = notepad.updatedAt;
+        // Cancel any pending auto-title so manual naming takes immediate priority.
+        clearTimeout(autoTitleTimeout);
+        autoTitleTimeout = null;
+        autoTitleNames.delete(id);
         Object.assign(notepad, {
             name: newName,
-            updatedAt: Date.now(),
-            version: (notepad.version || 1) + 1
+            updatedAt: Date.now()
         });
         renderNotepadLists(currentNotepadId);
         if (currentNotepadId === id) {
@@ -3282,35 +3439,57 @@ document.addEventListener('DOMContentLoaded', async () => {
         hideModal(renameModal);
 
         try {
-            const response = await fetchWithPin(`/api/notepads/${id}`, {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name: newName, baseVersion: previousNotepad.version }),
-            });
-            const result = await response.json();
-            if (!response.ok) {
-                throw Object.assign(new Error(result?.error || 'Error renaming notepad'), {
-                    status: response.status,
-                    payload: result
+            await enqueueNotepadMutation(id, async () => {
+                const live = currentNotepads.find(n => n.id === id);
+                if (!live) return;
+                const reqBaseVersion = id === currentNotepadId && Number.isFinite(currentNoteVersion)
+                    ? currentNoteVersion
+                    : (Number.isFinite(Number(live.version)) ? Number(live.version) : 1);
+                let response = await fetchWithPin(`/api/notepads/${id}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: newName, baseVersion: reqBaseVersion }),
                 });
-            }
-            Object.assign(notepad, result);
-            confirmRemoteNoteVersion(id, result.version);
-            // 手动重命名后标题不再自动跟随内容（无论新名与推导结果是否巧合一致）。
-            autoTitleNames.delete(id);
-            renderNotepadLists(currentNotepadId);
-            if (currentNotepadId === id) {
-                updateUrlWithNotepad(result.name);
-                applyCurrentNotepadTitle();
-            }
-            wsClient.sendUpdate('notepad_change', { action: 'rename', notepadId: id, newName: result.name });
-            toaster.show('Renamed notepad');
+                let result = await response.json().catch(() => ({}));
+                if (response?.status === 409 && Number.isFinite(Number(result?.currentVersion))) {
+                    const freshMeta = await fetchNotepadMeta(id, { silent: true }).catch(() => null);
+                    if (freshMeta && Number.isFinite(Number(freshMeta.version))) {
+                        response = await fetchWithPin(`/api/notepads/${id}`, {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ name: newName, baseVersion: Number(freshMeta.version) }),
+                        });
+                        result = await response.json().catch(() => ({}));
+                    }
+                }
+                if (!response?.ok) {
+                    throw Object.assign(new Error(result?.error || 'Error renaming notepad'), {
+                        status: response?.status,
+                        payload: result
+                    });
+                }
+                Object.assign(live, result);
+                advanceLocalNotepadVersion(id, result.version);
+                // 手动重命名后标题不再自动跟随内容（无论新名与推导结果是否巧合一致）。
+                autoTitleNames.delete(id);
+                renderNotepadLists(currentNotepadId);
+                if (currentNotepadId === id) {
+                    updateUrlWithNotepad(result.name);
+                    applyCurrentNotepadTitle();
+                }
+                wsClient.sendUpdate('notepad_change', { action: 'rename', notepadId: id, newName: result.name });
+                toaster.show('Renamed notepad');
+            });
         } catch (err) {
             console.error('Error renaming notepad:', err);
-            Object.assign(notepad, previousNotepad);
+            const live = currentNotepads.find(n => n.id === id);
+            if (live) {
+                live.name = previousName;
+                live.updatedAt = previousUpdatedAt;
+            }
             renderNotepadLists(currentNotepadId);
             if (currentNotepadId === id) {
-                updateUrlWithNotepad(previousNotepad.name);
+                updateUrlWithNotepad(previousName);
                 applyCurrentNotepadTitle();
             }
             const message = err?.status === 409
@@ -3356,10 +3535,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (!notepad) return;
         const nextName = deriveArticleTitle(content);
         if (!nextName || nextName === String(notepad.name || '')) return;
-        const previous = { name: notepad.name, version: notepad.version };
+        const previousName = notepad.name;
+        const previousUpdatedAt = notepad.updatedAt;
         notepad.name = nextName;
         notepad.updatedAt = Date.now();
-        notepad.version = (notepad.version || 1) + 1;
         autoTitleNames.set(notepadId, nextName);
         renderNotepadLists(notepadId);
         if (notepadId === currentNotepadId) {
@@ -3367,32 +3546,52 @@ document.addEventListener('DOMContentLoaded', async () => {
             applyCurrentNotepadTitle();
         }
         try {
-            const response = await fetchWithPin(`/api/notepads/${notepadId}`, {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name: nextName, baseVersion: previous.version }),
-            }, { silent: true });
-            const result = await response.json().catch(() => ({}));
-            if (!response.ok) throw Object.assign(new Error(result?.error || 'Auto rename failed'), { status: response.status });
-            Object.assign(notepad, result);
-            autoTitleNames.set(notepadId, result.name || nextName);
-            confirmRemoteNoteVersion(notepadId, result.version);
-            renderNotepadLists(notepadId);
-            if (notepadId === currentNotepadId) {
-                replaceUrlWithNotepad(result.name || nextName);
-                applyCurrentNotepadTitle();
-            }
-            wsClient.sendUpdate('notepad_change', { action: 'rename', notepadId, newName: result.name || nextName });
+            await enqueueNotepadMutation(notepadId, async () => {
+                const live = findNotepadByIdOrName(currentNotepads, notepadId);
+                if (!live || String(live.name || '') !== nextName) return;
+                const reqBaseVersion = notepadId === currentNotepadId && Number.isFinite(currentNoteVersion)
+                    ? currentNoteVersion
+                    : (Number.isFinite(Number(live.version)) ? Number(live.version) : 1);
+                let response = await fetchWithPin(`/api/notepads/${notepadId}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: nextName, baseVersion: reqBaseVersion }),
+                }, { silent: true });
+                let result = await response.json().catch(() => ({}));
+                if (response?.status === 409 && Number.isFinite(Number(result?.currentVersion))) {
+                    response = await fetchWithPin(`/api/notepads/${notepadId}`, {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ name: nextName, baseVersion: Number(result.currentVersion) }),
+                    }, { silent: true });
+                    result = await response.json().catch(() => ({}));
+                }
+                if (!response?.ok) {
+                    throw Object.assign(new Error(result?.error || 'Auto rename failed'), { status: response?.status });
+                }
+                Object.assign(live, result);
+                autoTitleNames.set(notepadId, result.name || nextName);
+                advanceLocalNotepadVersion(notepadId, result.version);
+                renderNotepadLists(currentNotepadId);
+                if (notepadId === currentNotepadId) {
+                    replaceUrlWithNotepad(result.name || nextName);
+                    applyCurrentNotepadTitle();
+                }
+                wsClient.sendUpdate('notepad_change', { action: 'rename', notepadId, newName: result.name || nextName });
+            });
         } catch (err) {
             console.warn('Auto title rename skipped:', err);
-            // 静默回滚（版本冲突/离线都很常见），下次输入会带新版本再试。
-            notepad.name = previous.name;
-            notepad.version = previous.version;
-            autoTitleNames.set(notepadId, previous.name);
-            renderNotepadLists(notepadId);
-            if (notepadId === currentNotepadId) {
-                replaceUrlWithNotepad(previous.name);
-                applyCurrentNotepadTitle();
+            // 静默回滚名称（不倒退 version），下次输入会带最新 version 再试。
+            const live = findNotepadByIdOrName(currentNotepads, notepadId);
+            if (live && String(live.name || '') === nextName) {
+                live.name = previousName;
+                live.updatedAt = previousUpdatedAt;
+                autoTitleNames.set(notepadId, previousName);
+                renderNotepadLists(currentNotepadId);
+                if (notepadId === currentNotepadId) {
+                    replaceUrlWithNotepad(previousName);
+                    applyCurrentNotepadTitle();
+                }
             }
         }
     }
@@ -3421,37 +3620,51 @@ document.addEventListener('DOMContentLoaded', async () => {
         const notepad = currentNotepads.find(item => item.id === id);
         if (!notepad || typeof pinned !== 'boolean') return;
 
-        const previousNotepad = { ...notepad };
+        const previousPinned = notepad.pinned;
+        const hasPreviousPinnedAt = Object.prototype.hasOwnProperty.call(notepad, 'pinnedAt');
+        const previousPinnedAt = notepad.pinnedAt;
+        const previousUpdatedAt = notepad.updatedAt;
         const now = Date.now();
         notepad.pinned = pinned;
         if (pinned) notepad.pinnedAt = now;
         else delete notepad.pinnedAt;
         notepad.updatedAt = now;
-        notepad.version = (notepad.version || 1) + 1;
         renderNotepadLists(currentNotepadId);
 
         try {
-            const response = await fetchWithPin(`/api/notepads/${encodeURIComponent(id)}`, {
-                method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ pinned, baseVersion: previousNotepad.version })
-            });
-            const result = await response.json().catch(() => ({}));
-            if (!response.ok) {
-                throw Object.assign(new Error(result?.error || 'Failed to update notepad pin'), {
-                    status: response.status
+            await enqueueNotepadMutation(id, async () => {
+                const live = currentNotepads.find(item => item.id === id);
+                if (!live) return;
+                const reqBaseVersion = id === currentNotepadId && Number.isFinite(currentNoteVersion)
+                    ? currentNoteVersion
+                    : (Number.isFinite(Number(live.version)) ? Number(live.version) : 1);
+                const response = await fetchWithPin(`/api/notepads/${encodeURIComponent(id)}`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ pinned, baseVersion: reqBaseVersion })
                 });
-            }
-            Object.assign(notepad, result);
-            confirmRemoteNoteVersion(id, result.version);
-            if (!result.pinned) delete notepad.pinnedAt;
-            renderNotepadLists(currentNotepadId);
-            wsClient.sendUpdate('notepad_change', { action: 'pin', notepadId: id, pinned: result.pinned === true });
-            toaster.show(result.pinned ? '文章已置顶' : '已取消置顶');
+                const result = await response.json().catch(() => ({}));
+                if (!response?.ok) {
+                    throw Object.assign(new Error(result?.error || 'Failed to update notepad pin'), {
+                        status: response?.status
+                    });
+                }
+                Object.assign(live, result);
+                advanceLocalNotepadVersion(id, result.version);
+                if (!result.pinned) delete live.pinnedAt;
+                renderNotepadLists(currentNotepadId);
+                wsClient.sendUpdate('notepad_change', { action: 'pin', notepadId: id, pinned: result.pinned === true });
+                toaster.show(result.pinned ? '文章已置顶' : '已取消置顶');
+            });
         } catch (error) {
             console.error('Error updating notepad pin:', error);
-            Object.assign(notepad, previousNotepad);
-            if (!Object.prototype.hasOwnProperty.call(previousNotepad, 'pinnedAt')) delete notepad.pinnedAt;
+            const live = currentNotepads.find(item => item.id === id);
+            if (live) {
+                live.pinned = previousPinned;
+                if (hasPreviousPinnedAt) live.pinnedAt = previousPinnedAt;
+                else delete live.pinnedAt;
+                live.updatedAt = previousUpdatedAt;
+            }
             renderNotepadLists(currentNotepadId);
             const message = error?.status === 409
                 ? '该 Notepad 已在其他设备更新，请刷新后再置顶'
@@ -3462,24 +3675,15 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     async function saveNotes(content, isAutoSave, showStatus = true, retryCount = 0, targetNotepadId = currentNotepadId, expectedRevision = null, options = null) {
         const queueKey = isValidNotepadId(targetNotepadId) ? targetNotepadId : currentNotepadId;
-        const cachedEdit = getCachedNote(queueKey);
-        const saveOptions = {
-            ...options,
-            editSessionId: cachedEdit?.editSessionId,
-            previousEditSessionId: cachedEdit?.previousEditSessionId
-        };
-        const previousSave = saveNotesInFlight.get(queueKey) || Promise.resolve();
-        const queuedSave = previousSave
-            .catch(() => undefined)
-            .then(() => performSaveNotes(content, isAutoSave, showStatus, retryCount, targetNotepadId, expectedRevision, saveOptions));
-        saveNotesInFlight.set(queueKey, queuedSave);
-        try {
-            return await queuedSave;
-        } finally {
-            if (saveNotesInFlight.get(queueKey) === queuedSave) {
-                saveNotesInFlight.delete(queueKey);
-            }
-        }
+        return enqueueNotepadMutation(queueKey, () => {
+            const cachedEdit = getCachedNote(queueKey);
+            const saveOptions = {
+                ...options,
+                editSessionId: options?.editSessionId || cachedEdit?.editSessionId,
+                previousEditSessionId: options?.previousEditSessionId || cachedEdit?.previousEditSessionId
+            };
+            return performSaveNotes(content, isAutoSave, showStatus, retryCount, targetNotepadId, expectedRevision, saveOptions);
+        });
     }
 
     async function performSaveNotes(content, isAutoSave, showStatus = true, retryCount = 0, targetNotepadId = currentNotepadId, expectedRevision = null, options = {}) {
@@ -3495,9 +3699,12 @@ document.addEventListener('DOMContentLoaded', async () => {
                 setStartupSyncStatus('error', '保存失败，本地已保留');
                 return false;
             }
-            baseVersion = targetNotepadId === currentNotepadId
+            const latestCachedForSave = getCachedNote(targetNotepadId);
+            baseVersion = targetNotepadId === currentNotepadId && Number.isFinite(currentNoteVersion)
                 ? currentNoteVersion
-                : currentNotepads.find(n => n.id === targetNotepadId)?.version;
+                : (Number.isFinite(Number(latestCachedForSave?.version))
+                    ? Number(latestCachedForSave.version)
+                    : currentNotepads.find(n => n.id === targetNotepadId)?.version);
             saveId = createSaveId();
             pendingNoteSaveIds.add(saveId);
             const payload = {
@@ -3562,41 +3769,53 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (err?.status === 409) {
                 const remoteVersion = Number(err?.payload?.currentVersion);
                 confirmRemoteNoteVersion(targetNotepadId, remoteVersion);
-                const currentContent = currentNotepadId === targetNotepadId ? editor.value : content;
-                const cachedNote = getCachedNote(targetNotepadId);
                 try {
                     const remoteNote = await fetchNoteData(targetNotepadId);
+                    // Read live editor text AFTER the RTT so continuous typing during
+                    // 409 recovery never trips an outdated currentContent equality guard.
+                    const latestLocal = currentNotepadId === targetNotepadId ? editor.value : content;
+                    const latestCached = getCachedNote(targetNotepadId);
+                    const remoteText = remoteNote.content || '';
+                    const effectiveBase = typeof latestCached?.baseContent === 'string'
+                        ? latestCached.baseContent
+                        : (remoteText === '' ? '' : undefined);
                     const merge = noteSyncController.mergeContents({
-                        base: cachedNote?.baseContent,
-                        local: currentContent,
-                        remote: remoteNote.content || ''
+                        base: effectiveBase,
+                        local: latestLocal,
+                        remote: remoteText
                     });
-                    if (merge.ok && currentNotepadId === targetNotepadId && editor.value === currentContent) {
+                    if (merge.ok) {
                         const nextVersion = Number(remoteNote.version);
                         setCurrentNoteVersion(targetNotepadId, nextVersion);
-                        touchNotepadUpdatedAt(targetNotepadId);
+                        touchNotepadUpdatedAt(targetNotepadId, remoteNote.updatedAt);
                         dirtyConflictNotepadIds.delete(targetNotepadId);
                         hideNoteConflictToast();
 
-                        if (merge.content === (remoteNote.content || '')) {
-                            isApplyingRemoteUpdate = true;
-                            editor.applyRemoteValue(merge.content);
-                            isApplyingRemoteUpdate = false;
-                            hasUnsavedChanges = false;
+                        if (merge.content === remoteText) {
+                            if (currentNotepadId === targetNotepadId && editor.value !== merge.content) {
+                                isApplyingRemoteUpdate = true;
+                                editor.applyRemoteValue(merge.content);
+                                isApplyingRemoteUpdate = false;
+                            }
+                            if (currentNotepadId === targetNotepadId) {
+                                hasUnsavedChanges = false;
+                                setStartupSyncStatus('synced', '已同步');
+                            }
                             cacheSyncedNote(targetNotepadId, merge.content, { version: nextVersion });
-                            setStartupSyncStatus('synced', '已同步');
                             return true;
                         }
 
+                        if (currentNotepadId === targetNotepadId && editor.value !== merge.content) {
+                            isApplyingRemoteUpdate = true;
+                            editor.applyRemoteValue(merge.content);
+                            isApplyingRemoteUpdate = false;
+                        }
                         editorRevision += 1;
                         const mergedRevision = editorRevision;
-                        isApplyingRemoteUpdate = true;
-                        editor.applyRemoteValue(merge.content);
-                        isApplyingRemoteUpdate = false;
-                        hasUnsavedChanges = true;
+                        hasUnsavedChanges = currentNotepadId === targetNotepadId;
                         cacheDirtyNote(targetNotepadId, merge.content, {
                             version: nextVersion,
-                            baseContent: remoteNote.content || ''
+                            baseContent: remoteText
                         });
                         setStartupSyncStatus('syncing', '已自动合并，正在同步');
                         setTimeout(() => {
@@ -3608,8 +3827,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                     console.warn('Failed to resolve note conflict automatically:', mergeError);
                 }
 
+                const fallbackContent = currentNotepadId === targetNotepadId ? editor.value : content;
                 dirtyConflictNotepadIds.add(targetNotepadId);
-                cacheConflictNote(targetNotepadId, currentContent, {
+                cacheConflictNote(targetNotepadId, fallbackContent, {
                     localVersion: baseVersion,
                     remoteVersion: Number.isFinite(remoteVersion) ? remoteVersion : undefined
                 });

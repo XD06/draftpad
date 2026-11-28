@@ -8,6 +8,12 @@
 
 ### 新增 / 优化
 
+- **新建文章即写同步冲突根治与存储链路提速**：
+  - **统一单笔记串行变异队列与元数据版本号联动**：在 [app.js](public/app.js) 中复用 `saveNotesInFlight` 作为单笔记串行队列（`enqueueNotepadMutation`），将新建（`POST /api/notepads`）、自动命名（`600ms` `PUT`）、手动重命名、置顶（`PATCH`）与正文自动保存（`POST /api/notes/:id`）严格串行；新增 `advanceLocalNotepadVersion`，在重命名/自动标题/置顶成功后同步推进 `currentNoteVersion` 与本地缓存版本号，彻底消除“新建后自动命名升版 → 随后自动保存带旧 `baseVersion: 1` 触发假 `409` 冲突”的问题。
+  - **新建并发保护与持续输入态 `409` 恢复修复**：`createNotepad` 在 `POST` 往返期间保留用户已输入的正文并纳入 `notepadCreationsInFlight` 防止被并发 `loadNotepads` 刷掉；`performSaveNotes` 的 `409` 恢复改为在拉取远端正文后再读取实时 `editor.value`（不再因用户打字慢一拍而放弃三路合并并锁死后续自动同步），`loadNotes` 同步识别“仅元数据改版、正文基线未变”及可安全三路合并的远端更新，不再误弹红条提示。
+  - **服务端元数据冗余读取消除、S3 键缓存与文件名防撞**：在 [note-routes.js](routes/note-routes.js) 复用锁内已读取的 `notepads.json` 元数据，消除每次保存/局部编辑重复读全量元数据；在 [storage.js](scripts/storage.js) 写入/重命名后更新 `s3NotepadKeyCache`，省去多余的 S3 `HeadObject` 探测；在 [server.js](server.js) `generateUniqueName` 增加 `sanitizeFilename` 归一化防重校验，避免不同标点标题落盘撞车。
+  - **回归**：新增 `npm run test:create-sync`（`test/test_create_and_type_sync.js`）覆盖慢网络建文即写、连续输入遇到跨端 `409`、仅元数据改版免冲突、同名归一化及单次元数据读取计数断言。
+
 - **主题预设联动排版、单标题块级居中、链接链环样式与表格整体操控**：
   - **推荐主题搭配联动排版**：在 [appearance-presets.js](public/managers/appearance-presets.js) 与 [settings.js](public/managers/settings.js) 中为 6 套预设主题卡片补齐专属的 `calloutStyle` / `headingStyle` / `listStyle` 搭配（`琥珀经典` 维持默认、`海盐研读` 配 `纸面圆徽+书签色楔+嵌套引导线`、`鼠尾草护眼` 配 `纸面圆徽+短杠底线+主色柔点`、`落日暖茶` 配 `无底引号+章节印记+主色柔点`、`柔雾暮紫` 配 `无底引号+几何微标+主色柔点`、`极简水墨` 配 `雾底左浮标+短杠底线+几何方菱`），一键套用主题即可同步到位；`findMatchingBundleId` 扩展为 7 键协同匹配。
   - **单标题块级居中**：在 [tiptap-extensions.js](public/managers/tiptap-extensions.js) 新增 `DumbPadHeading`（整块属性 `align: 'center' | null`、`Mod-Shift-E` 快捷键）与纯图标轻量化浮标 `HeadingAlignControl`（`.dumbpad-heading-align-btn`，固定停留在纸面 prose 栏内并与标题首行中线对齐，不溢出圆角卡片），并在 [tiptap-slash-menu.js](public/managers/tiptap-slash-menu.js) 增加标题上下文 `/center`（`/居中`）命令；持久化采用标准 ATX 嵌套 `# <center>标题</center>` 形态以完整保留加粗/高亮/批注/链接等行内语法与分享页渲染，[heading-index.js](public/managers/heading-index.js) 与 [article-title.js](public/managers/article-title.js) 同步剥离包装标签，5 套 `headingStyle` 居中时装饰跟随文字协同对齐。

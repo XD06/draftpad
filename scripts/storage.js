@@ -1416,6 +1416,9 @@ async function writeNoteContent(notepad, content) {
     if (isS3Backend()) {
         const key = await getS3NotepadKey(notepad);
         await s3.putObject(s3Key(key), safeContent, 'text/plain; charset=utf-8');
+        if (notepad?.id && notepad.id !== 'default') {
+            s3NotepadKeyCache.set(`${activeS3Prefix}:${notepad.id}:${notepad.name || ''}`, key);
+        }
         return;
     }
 
@@ -1704,6 +1707,13 @@ async function renameNoteContent(oldNotepad, newNotepad) {
         if (await s3PathExists(oldKey)) {
             await s3.copyObject(s3Key(oldKey), s3Key(newKey));
             await s3.deleteObject(s3Key(oldKey));
+        }
+        const targetId = newNotepad?.id || oldNotepad?.id || '';
+        if (oldNotepad?.id) {
+            s3NotepadKeyCache.delete(`${activeS3Prefix}:${oldNotepad.id}:${oldNotepad.name || ''}`);
+        }
+        if (targetId && targetId !== 'default') {
+            s3NotepadKeyCache.set(`${activeS3Prefix}:${targetId}:${newNotepad?.name || ''}`, newKey);
         }
         return;
     }

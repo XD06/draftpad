@@ -538,16 +538,28 @@ async function getNotepadsFromDir() {
 
 // Helper function to generate unique notepad name
 function generateUniqueName(desiredName, existingNotepads) {
-    let uniqueName = desiredName;
+    const baseName = sanitizeFilename(String(desiredName || '')).length > 0
+        ? String(desiredName)
+        : 'Untitled';
+    let uniqueName = baseName;
     let counter = 1;
-    
-    // Check if name already exists or if sanitized name would conflict with default.txt
-    while (existingNotepads.some(notepad => notepad.name === uniqueName) || 
-           sanitizeFilename(uniqueName).toLowerCase() === 'default') {
-        uniqueName = `${desiredName}-${counter}`;
+
+    const hasCollision = (candidate) => {
+        const candidateSanitized = sanitizeFilename(candidate).toLowerCase();
+        if (!candidateSanitized || candidateSanitized === 'default') return true;
+        return existingNotepads.some(notepad => (
+            notepad.name === candidate
+            || sanitizeFilename(String(notepad.name || '')).toLowerCase() === candidateSanitized
+        ));
+    };
+
+    // Check both display-name equality and sanitized filename collisions so two
+    // distinct titles (e.g. "A:B" vs "A/B") never map to the same storage file.
+    while (hasCollision(uniqueName)) {
+        uniqueName = `${baseName}-${counter}`;
         counter++;
     }
-    
+
     return uniqueName;
 }
 
