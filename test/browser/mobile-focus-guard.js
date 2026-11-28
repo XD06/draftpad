@@ -82,6 +82,9 @@ module.exports = async function testMobileFocusGuard(browser) {
             activeTag: document.activeElement?.tagName || null,
             inputmode: rootEl?.getAttribute('inputmode') ?? null,
             virtualKeyboardPolicy: rootEl?.getAttribute('virtualkeyboardpolicy') ?? null,
+            menuVisible: document.querySelector('.tiptap-selection-menu')?.style.display === 'flex',
+            pmSelectionEmpty: editor.editor.state.selection.empty,
+            domSelectionCollapsed: Boolean(window.getSelection()?.isCollapsed ?? true),
             value: editor.getValue(),
         };
     });
@@ -333,8 +336,9 @@ module.exports = async function testMobileFocusGuard(browser) {
         assert(Math.abs(afterCut.scrollY - expectedCutScrollY) <= 4,
             `cut action must not jump viewport (${expectedCutScrollY} -> ${afterCut.scrollY})`);
 
-        // 4b) 处于划词选区时点按普通正文取消选中：不弹键盘、释放焦点且视口不跳动
-        const dismissTapCoords = await page.evaluate(() => {
+        // 4b) 处于划词选区时点按编辑器外空白/段内空白取消选中：
+        //     选区菜单关闭、PM 与 DOM 选区折叠、保持失焦，且再点空白不会重新选中旧文字
+        const armBottomSelection = () => page.evaluate(() => {
             const rootEl = editor.container.querySelector('.tiptap');
             const p = [...rootEl.querySelectorAll('p')]
                 .find(el => el.textContent.includes('末尾待点选的普通正文段落'));
@@ -350,12 +354,44 @@ module.exports = async function testMobileFocusGuard(browser) {
             const domSel = window.getSelection();
             domSel.removeAllRanges();
             domSel.addRange(domRange);
-            const r = p.getBoundingClientRect();
-            return { x: r.left + r.width * 0.75, y: r.top + r.height / 2 };
+            const pRect = p.getBoundingClientRect();
+            const rootRect = rootEl.getBoundingClientRect();
+            return {
+                insideX: pRect.left + pRect.width * 0.75,
+                insideY: pRect.top + pRect.height / 2,
+                outsideX: Math.max(2, rootRect.left - 4),
+                outsideY: pRect.top + pRect.height / 2,
+            };
         });
-        await page.touchscreen.tap(dismissTapCoords.x, dismissTapCoords.y);
+
+        // 4b-1) 点按编辑器外侧空白处（body margin）
+        const outsideCoords = await armBottomSelection();
+        await page.waitForTimeout(150);
+        assert.equal((await readFocusState()).menuVisible, true, 'selection menu visible before outside tap');
+        await page.touchscreen.tap(outsideCoords.outsideX, outsideCoords.outsideY);
+        await page.waitForTimeout(220);
+        const afterOutsideDismiss = await readFocusState();
+        assert.equal(afterOutsideDismiss.menuVisible, false, 'tapping outside blank hides selection menu');
+        assert.equal(afterOutsideDismiss.pmSelectionEmpty, true, 'tapping outside blank collapses PM selection');
+        assert.equal(afterOutsideDismiss.domSelectionCollapsed, true, 'tapping outside blank collapses DOM selection');
+        assert.equal(afterOutsideDismiss.activeIsEditor, false, 'tapping outside blank keeps editor blurred');
+        assert.equal(afterOutsideDismiss.inputmode, 'none', 'tapping outside blank keeps inputmode=none');
+        await page.touchscreen.tap(outsideCoords.outsideX, outsideCoords.outsideY);
+        await page.waitForTimeout(180);
+        const afterOutsideRetap = await readFocusState();
+        assert.equal(afterOutsideRetap.menuVisible, false, 're-tapping outside blank must not reopen menu');
+        assert.equal(afterOutsideRetap.pmSelectionEmpty, true, 're-tapping outside blank must not re-select text');
+
+        // 4b-2) 点按编辑器内空白处（同段末尾非选中区域），再轻点正文进入输入时也不会复选旧文字
+        const insideCoords = await armBottomSelection();
+        await page.waitForTimeout(150);
+        assert.equal((await readFocusState()).menuVisible, true, 'selection menu visible before inside tap');
+        await page.touchscreen.tap(insideCoords.insideX, insideCoords.insideY);
         await page.waitForTimeout(220);
         const afterDismissTap = await readFocusState();
+        assert.equal(afterDismissTap.menuVisible, false, 'tapping plain text to dismiss selection hides menu');
+        assert.equal(afterDismissTap.pmSelectionEmpty, true, 'tapping plain text to dismiss selection collapses PM selection');
+        assert.equal(afterDismissTap.domSelectionCollapsed, true, 'tapping plain text to dismiss selection collapses DOM selection');
         assert.equal(afterDismissTap.inputmode, 'none', 'tapping plain text to dismiss selection locks inputmode=none');
         assert.equal(afterDismissTap.virtualKeyboardPolicy, 'manual', 'tapping plain text to dismiss selection locks virtualkeyboardpolicy=manual');
         assert.equal(afterDismissTap.activeIsEditor, false, 'tapping plain text to dismiss selection releases focus');
@@ -372,6 +408,8 @@ module.exports = async function testMobileFocusGuard(browser) {
         await page.touchscreen.tap(plainTapCoords.x, plainTapCoords.y);
         await page.waitForTimeout(220);
         const afterPlainTap = await readFocusState();
+        assert.equal(afterPlainTap.menuVisible, false, 'tapping plain text after dismiss must not re-open menu');
+        assert.equal(afterPlainTap.pmSelectionEmpty, true, 'tapping plain text after dismiss must not re-select old range');
         assert.equal(afterPlainTap.inputmode, null, 'tapping plain text removes inputmode=none');
         assert.equal(afterPlainTap.virtualKeyboardPolicy, null, 'tapping plain text removes virtualkeyboardpolicy');
         assert.equal(afterPlainTap.activeIsEditor, true, 'tapping plain text focuses editor');

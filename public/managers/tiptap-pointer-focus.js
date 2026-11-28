@@ -134,7 +134,7 @@ function hideVirtualKeyboardIfSupported() {
     }
 }
 
-function domHasRangeSelection(dom) {
+export function domHasRangeSelection(dom) {
     if (!dom || typeof window === 'undefined' || typeof window.getSelection !== 'function') return false;
     try {
         const sel = window.getSelection();
@@ -145,6 +145,20 @@ function domHasRangeSelection(dom) {
     } catch (_error) {
         return false;
     }
+}
+
+/** 将残留的非空 ProseMirror TextSelection 折叠为起点空选区（不滚动、不夺焦）。 */
+export function collapseEditorTextSelection(view) {
+    if (!view?.state?.selection || !view?.dispatch) return false;
+    const { selection, doc } = view.state;
+    if (selection.empty) return false;
+    if (!(selection instanceof PM.state.TextSelection)) return false;
+    const clamped = Math.max(0, Math.min(selection.from, doc.content.size));
+    const collapsed = PM.state.TextSelection.near(doc.resolve(clamped), -1);
+    preserveViewportScroll(view, () => {
+        view.dispatch(view.state.tr.setSelection(collapsed).setMeta('addToHistory', false));
+    });
+    return true;
 }
 
 /** 在不将旧光标拖进视野的前提下聚焦编辑器（同时移除 inputmode="none"）。 */
@@ -260,6 +274,7 @@ class PointerFocusGuardView {
         this.view = editorView;
         this.wasEditable = Boolean(editorView.editable);
         this.pendingPlainTextTap = null;
+        this.pendingSelectionDismiss = null;
         this.lastLongPressAt = 0;
         this.lastSelectionDismissAt = 0;
         this.keyboardOpen = false;
@@ -275,26 +290,37 @@ class PointerFocusGuardView {
             if (event.pointerType === 'mouse') {
                 clearTouchPointerActivity();
                 this.pendingPlainTextTap = null;
+                this.pendingSelectionDismiss = null;
                 unlockMobileInputMode(editorView.dom);
                 return;
             }
             markTouchPointerActivity();
             if (!editorView.editable) {
                 this.pendingPlainTextTap = null;
+                this.pendingSelectionDismiss = null;
                 return;
             }
             if (isTouchNoKeyboardTarget(event.target)) {
                 this.pendingPlainTextTap = null;
+                this.pendingSelectionDismiss = null;
                 lockMobileInputMode(editorView.dom);
                 return;
             }
-            if (domHasRangeSelection(editorView.dom)) {
+            const hasTextSelection = domHasRangeSelection(editorView.dom)
+                || (editorView.state.selection instanceof PM.state.TextSelection && !editorView.state.selection.empty);
+            if (hasTextSelection) {
                 this.pendingPlainTextTap = null;
-                this.lastSelectionDismissAt = Date.now();
+                this.pendingSelectionDismiss = {
+                    pointerId: event.pointerId ?? 0,
+                    startX: Number(event.clientX || 0),
+                    startY: Number(event.clientY || 0),
+                    moved: false,
+                };
                 lockMobileInputMode(editorView.dom);
                 hideVirtualKeyboardIfSupported();
                 return;
             }
+            this.pendingSelectionDismiss = null;
             if (!this.keyboardOpen || !editorView.hasFocus()) {
                 lockMobileInputMode(editorView.dom);
             }
@@ -311,8 +337,17 @@ class PointerFocusGuardView {
         };
 
         this.onPointerMove = (event) => {
+            const pointerId = event.pointerId ?? 0;
+            const dismiss = this.pendingSelectionDismiss;
+            if (dismiss && dismiss.pointerId === pointerId) {
+                const dx = Number(event.clientX || 0) - dismiss.startX;
+                const dy = Number(event.clientY || 0) - dismiss.startY;
+                if (Math.hypot(dx, dy) > PLAIN_TAP_MAX_MOVE_PX) {
+                    dismiss.moved = true;
+                }
+            }
             const tap = this.pendingPlainTextTap;
-            if (!tap || tap.pointerId !== (event.pointerId ?? 0)) return;
+            if (!tap || tap.pointerId !== pointerId) return;
             const dx = Number(event.clientX || 0) - tap.startX;
             const dy = Number(event.clientY || 0) - tap.startY;
             if (Math.hypot(dx, dy) > PLAIN_TAP_MAX_MOVE_PX) {
@@ -321,8 +356,19 @@ class PointerFocusGuardView {
         };
 
         this.onPointerUp = (event) => {
+            const pointerId = event.pointerId ?? 0;
+            const dismiss = this.pendingSelectionDismiss;
+            if (dismiss && dismiss.pointerId === pointerId) {
+                this.pendingSelectionDismiss = null;
+                if (!dismiss.moved) {
+                    this.lastSelectionDismissAt = Date.now();
+                    collapseEditorTextSelection(editorView);
+                    releaseEditorFocus(editorView, { clearDomSelection: true });
+                }
+                return;
+            }
             const tap = this.pendingPlainTextTap;
-            if (!tap || tap.pointerId !== (event.pointerId ?? 0)) return;
+            if (!tap || tap.pointerId !== pointerId) return;
             this.pendingPlainTextTap = null;
             if (!editorView.editable) return;
             const duration = Date.now() - tap.startTime;
@@ -340,6 +386,7 @@ class PointerFocusGuardView {
 
         this.onPointerCancel = () => {
             this.pendingPlainTextTap = null;
+            this.pendingSelectionDismiss = null;
             this.lastLongPressAt = Date.now();
         };
 
@@ -359,7 +406,8 @@ class PointerFocusGuardView {
                 this.lastSelectionDismissAt = 0;
                 lockMobileInputMode(editorView.dom);
                 if (!domHasRangeSelection(editorView.dom)) {
-                    releaseEditorFocus(editorView);
+                    collapseEditorTextSelection(editorView);
+                    releaseEditorFocus(editorView, { clearDomSelection: true });
                 }
                 return;
             }
@@ -423,6 +471,7 @@ class PointerFocusGuardView {
 
         this.onBlur = () => {
             this.pendingPlainTextTap = null;
+            this.pendingSelectionDismiss = null;
             this.keyboardOpen = false;
             if (editorView.editable && shouldLockMobileInputMode()) {
                 lockMobileInputMode(editorView.dom);

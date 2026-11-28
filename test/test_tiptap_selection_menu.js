@@ -796,6 +796,63 @@ async function main() {
             await new Promise((resolve) => setTimeout(resolve, 30));
             check('second touch tap does not reopen popover and cleans attribute',
                 cardPop.style.display === 'none' && !markNode.hasAttribute('data-allow-edit-tap'));
+
+            // 触屏划词后点按编辑器外空白：菜单关闭、PM 选区折叠并释放焦点（拖拽/滑动外区保持选区）
+            await setValueAndSelect('触屏空白取消选区测试', 1, 5);
+            rootEl.focus();
+            document.body.dispatchEvent(pointerEvent('pointerdown', { clientX: 4, clientY: 4, pointerType: 'touch' }));
+            document.body.dispatchEvent(pointerEvent('pointermove', { clientX: 4, clientY: 36, pointerType: 'touch' }));
+            document.body.dispatchEvent(pointerEvent('pointerup', { clientX: 4, clientY: 36, pointerType: 'touch' }));
+            check('dragging outside editor does not dismiss selection menu',
+                menuRoot().style.display === 'flex' && editor.editor.state.selection.empty === false);
+
+            document.body.dispatchEvent(pointerEvent('pointerdown', { clientX: 4, clientY: 4, pointerType: 'touch' }));
+            document.body.dispatchEvent(pointerEvent('pointerup', { clientX: 4, clientY: 4, pointerType: 'touch' }));
+            await new Promise((resolve) => setTimeout(resolve, 30));
+            check('tapping outside blank hides menu, collapses PM selection, and blurs editor',
+                menuRoot().style.display === 'none'
+                && editor.editor.state.selection.empty === true
+                && document.activeElement !== rootEl
+                && rootEl.getAttribute('inputmode') === 'none');
+
+            // 触屏在编辑器内点按取消选区：伴随补发 mouseup/click 也不会通过 mouseup 定时器把菜单复活
+            await setValueAndSelect('触屏段内空白取消选区', 1, 5);
+            const dismissP = rootEl.querySelector('p');
+            const sel = dom.window.getSelection();
+            const rKeep = document.createRange();
+            rKeep.setStart(dismissP.firstChild, 0);
+            rKeep.setEnd(dismissP.firstChild, 4);
+            sel.removeAllRanges();
+            sel.addRange(rKeep);
+            rootEl.focus();
+            dismissP.dispatchEvent(pointerEvent('pointerdown', { clientX: 120, clientY: 10, pointerType: 'touch' }));
+            sel.removeAllRanges();
+            dismissP.dispatchEvent(pointerEvent('pointerup', { clientX: 120, clientY: 10, pointerType: 'touch' }));
+            rootEl.dispatchEvent(new dom.window.MouseEvent('mouseup', { bubbles: true, cancelable: true, view: dom.window }));
+            dismissP.dispatchEvent(pointerEvent('click', { clientX: 120, clientY: 10, pointerType: 'touch' }));
+            await new Promise((resolve) => setTimeout(resolve, 35));
+            check('inside touch dismiss collapses PM selection and does not resurrect menu on mouseup',
+                menuRoot().style.display === 'none'
+                && editor.editor.state.selection.empty === true
+                && document.activeElement !== rootEl);
+
+            // 触屏 selectionchange 收起 DOM 选区时，下一帧同步收起菜单并折叠 PM 选区
+            await setValueAndSelect('系统折叠选区同步', 1, 5);
+            const syncP = rootEl.querySelector('p');
+            const rSync = document.createRange();
+            rSync.setStart(syncP.firstChild, 0);
+            rSync.setEnd(syncP.firstChild, 4);
+            sel.removeAllRanges();
+            sel.addRange(rSync);
+            document.dispatchEvent(new dom.window.Event('selectionchange'));
+            await new Promise((resolve) => setTimeout(resolve, 35));
+            check('selectionchange with active DOM range keeps menu visible',
+                menuRoot().style.display === 'flex');
+            sel.removeAllRanges();
+            document.dispatchEvent(new dom.window.Event('selectionchange'));
+            await new Promise((resolve) => setTimeout(resolve, 35));
+            check('touch selectionchange collapsing DOM selection hides menu and collapses PM selection',
+                menuRoot().style.display === 'none' && editor.editor.state.selection.empty === true);
         } finally {
             _resetPointerFocusStateForTests();
             dom.window.matchMedia = origMatchMedia;

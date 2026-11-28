@@ -254,23 +254,36 @@ async function main() {
             && mobileRoot.getAttribute('inputmode') === 'none'
             && mobileRoot.getAttribute('virtualkeyboardpolicy') === 'manual');
 
-        // 10e) 存在 DOM 非折叠划词选区时点按普通正文：锁住键盘、释放焦点，下一拍无选区轻点再解锁
+        // 10e) 存在 DOM/PM 非折叠划词选区时：滑动拖拽保留选区，轻点空白折叠 PM/DOM 选区并释放焦点
         plainPara.dispatchEvent(pointerEvent('pointerdown', { clientX: 20, clientY: 20, pointerType: 'touch' }));
         plainPara.dispatchEvent(pointerEvent('pointerup', { clientX: 21, clientY: 20, pointerType: 'touch' }));
         check('10e unlocked before active selection dismiss test', mobileRoot.getAttribute('inputmode') === null);
         mobileRoot.focus();
         const sel = dom.window.getSelection();
-        const range = document.createRange();
-        range.setStart(plainPara.firstChild, 0);
-        range.setEnd(plainPara.firstChild, 3);
-        sel.removeAllRanges();
-        sel.addRange(range);
+        const { TextSelection } = global.DumbPadTiptap.PM.state;
+        const setActiveRange = () => {
+            mobileView.dispatch(mobileView.state.tr.setSelection(TextSelection.create(mobileView.state.doc, 1, 4)));
+            const range = document.createRange();
+            range.setStart(plainPara.firstChild, 0);
+            range.setEnd(plainPara.firstChild, 3);
+            sel.removeAllRanges();
+            sel.addRange(range);
+        };
+        setActiveRange();
+        plainPara.dispatchEvent(pointerEvent('pointerdown', { clientX: 22, clientY: 20, pointerType: 'touch' }));
+        plainPara.dispatchEvent(pointerEvent('pointermove', { clientX: 22, clientY: 55, pointerType: 'touch' }));
+        plainPara.dispatchEvent(pointerEvent('pointerup', { clientX: 22, clientY: 55, pointerType: 'touch' }));
+        check('scrolling/dragging while selected does not collapse PM selection',
+            mobileView.state.selection.empty === false);
+
+        setActiveRange();
         plainPara.dispatchEvent(pointerEvent('pointerdown', { clientX: 22, clientY: 20, pointerType: 'touch' }));
         sel.removeAllRanges();
         plainPara.dispatchEvent(pointerEvent('pointerup', { clientX: 22, clientY: 20, pointerType: 'touch' }));
-        plainPara.dispatchEvent(pointerEvent('click', { clientX: 22, clientY: 20, pointerType: 'touch' }));
-        check('tapping plain text to dismiss range selection keeps lock and blurs editor',
-            mobileRoot.getAttribute('inputmode') === 'none'
+        check('tapping plain text collapses PM & DOM selection, keeps lock, and blurs on pointerup',
+            mobileView.state.selection.empty === true
+            && sel.isCollapsed === true
+            && mobileRoot.getAttribute('inputmode') === 'none'
             && mobileRoot.getAttribute('virtualkeyboardpolicy') === 'manual'
             && document.activeElement !== mobileRoot);
         plainPara.dispatchEvent(pointerEvent('pointerdown', { clientX: 22, clientY: 20, pointerType: 'touch' }));

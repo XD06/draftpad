@@ -15,6 +15,8 @@ import { ANNOTATION_BADGE_SVG } from './tiptap-extensions.js';
 import { createSelectionMenuIcon, ensureSelectionMenuSprite } from './selection-menu-icons.js';
 import {
     clearTouchPointerActivity,
+    collapseEditorTextSelection,
+    domHasRangeSelection,
     isTouchInteraction,
     markTouchPointerActivity,
     preserveViewportScroll,
@@ -85,9 +87,10 @@ export const TiptapSelectionMenu = Extension.create({
                             }
                             return false;
                         },
-                        mouseup: (view) => {
+                        mouseup: (view, event) => {
                             if (!menuView) return false;
                             menuView.dragging = false;
+                            if (isTouchInteraction(view, event)) return false;
                             // 拖拽期间 update() 被拖拽态拦住，mouseup 后不再有
                             // 选区事务——这里主动补一次显示判断（等价旧实现的
                             // mouseup → setTimeout(handleSelectionChange, 20)；
@@ -130,6 +133,8 @@ class SelectionMenuView {
         this.allowEditMarkedElement = null;
         this.popoverCloseCleanup = null;
         this.timeMarkerMenuCloseCleanup = null;
+        this.outsideDismissTap = null;
+        this.selectionSyncRaf = null;
 
         this.root = document.createElement('div');
         this.root.className = 'selection-menu typora-selection-menu tiptap-selection-menu';
@@ -178,6 +183,7 @@ class SelectionMenuView {
                 this.annoInput.blur?.();
                 this.closeAnnotationInput();
                 this.hide();
+                collapseEditorTextSelection(this.view);
                 if (isTouchInteraction(this.view, event)) {
                     releaseEditorFocus(this.view, { clearDomSelection: true });
                 }
@@ -353,6 +359,72 @@ class SelectionMenuView {
         view.dom.addEventListener('click', this.handleEditorClick);
         window.addEventListener('pointerup', this.handleWindowPointerUp, true);
         window.addEventListener('pointercancel', this.handleWindowPointerUp, true);
+
+        // 点击编辑器外空白区域取消选中并收起菜单；滑动/滚动手势不误取消。
+        this.handleDocumentPointerDown = (event) => {
+            if (!this.visible || this.annotationInputOpen) return;
+            const target = event.target;
+            if (target && (
+                this.root.contains(target)
+                || this.popover.contains(target)
+                || this.timeMarkerMenu?.contains(target)
+                || this.view.dom.contains(target)
+            )) {
+                return;
+            }
+            this.outsideDismissTap = {
+                pointerId: event.pointerId ?? 0,
+                startX: Number(event.clientX || 0),
+                startY: Number(event.clientY || 0),
+                moved: false,
+            };
+        };
+        this.handleDocumentPointerMove = (event) => {
+            const tap = this.outsideDismissTap;
+            if (!tap || tap.pointerId !== (event.pointerId ?? 0)) return;
+            const moved = Math.hypot(
+                Number(event.clientX || 0) - tap.startX,
+                Number(event.clientY || 0) - tap.startY,
+            ) > TOUCH_TAP_MOVE_THRESHOLD_PX;
+            if (moved) tap.moved = true;
+        };
+        this.handleDocumentPointerUp = (event) => {
+            const tap = this.outsideDismissTap;
+            if (!tap || tap.pointerId !== (event.pointerId ?? 0)) return;
+            this.outsideDismissTap = null;
+            if (event.type === 'pointercancel' || tap.moved) return;
+            if (!this.visible || this.annotationInputOpen) return;
+            if (event.target && this.root.contains(event.target)) return;
+            this.hide();
+            collapseEditorTextSelection(this.view);
+            if (isTouchInteraction(this.view, event)) {
+                releaseEditorFocus(this.view, { clearDomSelection: true });
+            }
+        };
+        this.handleDocumentSelectionChange = () => {
+            if (!this.visible || this.annotationInputOpen || this.dragging) return;
+            if (!isTouchInteraction(this.view)) return;
+            if (!domHasRangeSelection(this.view.dom)) {
+                if (this.selectionSyncRaf !== null) {
+                    globalThis.cancelAnimationFrame?.(this.selectionSyncRaf);
+                }
+                const seq = (this.selectionSyncSeq = (this.selectionSyncSeq || 0) + 1);
+                this.selectionSyncRaf = requestAnimationFrame(() => {
+                    if (seq !== this.selectionSyncSeq) return;
+                    this.selectionSyncRaf = null;
+                    if (!this.visible || this.annotationInputOpen || this.dragging) return;
+                    if (!domHasRangeSelection(this.view.dom)) {
+                        this.hide();
+                        collapseEditorTextSelection(this.view);
+                    }
+                });
+            }
+        };
+        document.addEventListener('pointerdown', this.handleDocumentPointerDown);
+        document.addEventListener('pointermove', this.handleDocumentPointerMove);
+        document.addEventListener('pointerup', this.handleDocumentPointerUp);
+        document.addEventListener('pointercancel', this.handleDocumentPointerUp);
+        document.addEventListener('selectionchange', this.handleDocumentSelectionChange);
         // 浮层是 position:absolute + 页面坐标，窗口尺寸变化后原坐标就偏了；
         // 编辑器滚动（桌面在 .vditor-wysiwyg 内滚、移动端整页滚）同理。
         // 两处都必须重算，否则菜单会停在旧位置、与选区/标记脱开。
@@ -1011,6 +1083,7 @@ class SelectionMenuView {
             this.applyMark('annotation', { note: comment });
         } else {
             this.hide();
+            collapseEditorTextSelection(this.view);
             if (isTouchInteraction(this.view)) {
                 releaseEditorFocus(this.view, { clearDomSelection: true });
             }
@@ -1155,10 +1228,20 @@ class SelectionMenuView {
         this.clearPopoverCloseHandler();
         this.clearTimeMarkerCloseHandler();
         this.clearAllowedEditMarked();
+        this.selectionSyncSeq = (this.selectionSyncSeq || 0) + 1;
+        if (this.selectionSyncRaf !== null) {
+            globalThis.cancelAnimationFrame?.(this.selectionSyncRaf);
+            this.selectionSyncRaf = null;
+        }
         window.removeEventListener('resize', this.handleResize);
         window.removeEventListener('scroll', this.handleScroll, { capture: true });
         window.removeEventListener('pointerup', this.handleWindowPointerUp, true);
         window.removeEventListener('pointercancel', this.handleWindowPointerUp, true);
+        document.removeEventListener('pointerdown', this.handleDocumentPointerDown);
+        document.removeEventListener('pointermove', this.handleDocumentPointerMove);
+        document.removeEventListener('pointerup', this.handleDocumentPointerUp);
+        document.removeEventListener('pointercancel', this.handleDocumentPointerUp);
+        document.removeEventListener('selectionchange', this.handleDocumentSelectionChange);
         this.view.dom.removeEventListener('blur', this.handleBlur, true);
         this.view.dom.removeEventListener('pointerdown', this.handleEditorPointerDown, true);
         this.view.dom.removeEventListener('pointerup', this.handleEditorPointerUp, true);
