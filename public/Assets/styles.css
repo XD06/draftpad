@@ -7467,15 +7467,13 @@ img.annotation-badge:hover {
 
 /* Hover-based Annotation Tooltip is managed by JS now, removing CSS after/before hacks */
 
-/* Reading Mode Layout */
+/* Reading Mode Layout — keep .editor-main padding unchanged between editing
+   and reading modes so #hybrid-editor, .boot-preview and the article card stay
+   locked at the exact same offset below .header-top on desktop and mobile. */
 body.reading-mode-active .three-column-layout {
     background: transparent;
     border: none;
     box-shadow: none;
-}
-
-body.reading-mode-active .editor-main {
-    padding: 10px 0;
 }
 
 /* The right sidebar hosts the in-article heading TOC (文章内目录), which is

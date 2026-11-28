@@ -449,8 +449,33 @@ function waitForServer(port, timeoutMs = 20000) {
             const readPage = await readCtx.newPage();
             await readPage.goto(skillUrl, { waitUntil: 'networkidle' });
             await readPage.waitForSelector('#hybrid-editor .tiptap h1');
+            const editGap = await readPage.evaluate(() => {
+                const hdr = document.querySelector('header')?.getBoundingClientRect();
+                const shell = document.getElementById('hybrid-editor')?.getBoundingClientRect();
+                const card = document.querySelector('#hybrid-editor .tiptap')?.getBoundingClientRect();
+                return {
+                    shellTop: shell ? +shell.top.toFixed(1) : null,
+                    cardTop: card ? +card.top.toFixed(1) : null,
+                    gap: hdr && card ? +(card.top - hdr.bottom).toFixed(1) : null,
+                };
+            });
             await readPage.click('#toggle-reading-mode');
             await readPage.waitForTimeout(100);
+            const readGap = await readPage.evaluate(() => {
+                const hdr = document.querySelector('header')?.getBoundingClientRect();
+                const shell = document.getElementById('hybrid-editor')?.getBoundingClientRect();
+                const card = document.querySelector('#hybrid-editor .tiptap')?.getBoundingClientRect();
+                return {
+                    shellTop: shell ? +shell.top.toFixed(1) : null,
+                    cardTop: card ? +card.top.toFixed(1) : null,
+                    gap: hdr && card ? +(card.top - hdr.bottom).toFixed(1) : null,
+                };
+            });
+            check(`${mode.name}: toggling reading mode preserves #hybrid-editor & header gap`,
+                Math.abs((editGap.shellTop ?? 0) - (readGap.shellTop ?? -99)) <= 1
+                    && Math.abs((editGap.cardTop ?? 0) - (readGap.cardTop ?? -99)) <= 1
+                    && Math.abs((editGap.gap ?? 0) - (readGap.gap ?? -99)) <= 1,
+                { editGap, readGap });
             await readPage.evaluate((isMobile) => {
                 if (isMobile) window.scrollTo(0, 220);
                 else {

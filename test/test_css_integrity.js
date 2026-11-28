@@ -187,11 +187,23 @@ function checkHoverRadiusFit() {
         !/mark-popover-actions'[\s\S]{0,160}cssText/.test(menuJs), 'found a cssText assignment near mark-popover-actions');
 }
 
+function checkReadingModeLayoutRules() {
+    for (const file of ['styles.css', 'ios-theme.css']) {
+        const css = stripCssNoise(fs.readFileSync(path.join(ASSETS, file), 'utf8'));
+        const matches = [...css.matchAll(/body\.reading-mode-active[^{]*\.editor-main\s*\{([^}]*)\}/g)];
+        const hasVerticalShift = matches.some((m) => /\b(padding|margin)(-(top|bottom))?\s*:/i.test(m[1]));
+        check(`${file}: body.reading-mode-active does not shift .editor-main with padding/margin`,
+            !hasVerticalShift,
+            matches.map(m => m[0]));
+    }
+}
+
 async function main() {
     checkCssBalance();
     checkBlockquoteRules();
     checkInstantDraftsWritingAreaRules();
     checkHoverRadiusFit();
+    checkReadingModeLayoutRules();
     await checkEditorContentClasses();
     if (failures) {
         console.error(`\n${failures} check(s) failed`);
