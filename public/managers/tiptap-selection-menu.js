@@ -291,6 +291,8 @@ class SelectionMenuView {
         // 源码模式下编辑器 DOM 被隐藏，菜单没有意义。
         const root = view.dom.closest('.typora-editor-shell');
         if (root?.classList.contains('is-source-mode')) return false;
+        // 表格跨格 / 整表选区由表格工具条接管，避免选区文字菜单叠压冲突。
+        if ('$anchorCell' in view.state.selection) return false;
         return !selectionHasProtectedNode(view.state);
     }
 

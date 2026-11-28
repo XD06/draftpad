@@ -40,6 +40,8 @@ import {
     DumbPadDoingTaskItem,
     HeadingAnchor,
     headingAnchorPluginKey,
+    DumbPadHeading,
+    HeadingAlignControl,
     CalloutDecorator,
     TimeCommandShortcut,
     TimeMarkerNode,
@@ -64,6 +66,7 @@ import {
 } from './managers/tiptap-image-interactions.js';
 import { TiptapImagePaste } from './managers/tiptap-image-paste.js';
 import { DumbPadTableStack } from './managers/tiptap-table-stack.js';
+import { DumbPadTableControls } from './managers/tiptap-table-controls.js';
 import { TiptapPointerFocusGuard } from './managers/tiptap-pointer-focus.js';
 import { DumbPadMedia } from './managers/tiptap-media.js';
 import { buildMarkdownHeadingIndex } from './managers/heading-index.js';
@@ -309,6 +312,7 @@ export class HybridMarkdownEditor {
                 DumbPadFrontmatterParseRule,
                 StarterKit.configure({
                     hardBreak: false,
+                    heading: false,
                     // 代码块交给官方 CodeBlockLowlight（PM Decoration 高亮）
                     codeBlock: false,
                     // 下划线交给 DumbPadUnderline：上游 parseHTML 用 value.includes('underline')
@@ -341,7 +345,9 @@ export class HybridMarkdownEditor {
                 DividerInputShortcut,
                 // 文章最开头打 --- 当场转正为 frontmatter 块（与粘贴 / setValue 同形态）
                 FrontmatterLeadInputShortcut,
+                DumbPadHeading,
                 HeadingAnchor,
+                HeadingAlignControl,
                 // GFM Alert 提示块装饰（NOTE / TIP / WARNING，PM Decoration 渲染）
                 CalloutDecorator,
                 // 全局搜索跳转的词级 + 块级命中高亮（PM Decoration，见 tiptap-extensions.js）
@@ -382,6 +388,7 @@ export class HybridMarkdownEditor {
                 // 窄屏表格折卡：自然宽放不下时把每行折成一张卡（Decoration，
                 // 不改 DOM），见 managers/tiptap-table-stack.js
                 DumbPadTableStack,
+                DumbPadTableControls,
                 // 粘贴/拖入图片一律走资产上传（否则内核把 Base64 直接写进正文，
                 // 且没有 dumbpad-width，渲染按原宽铺满纸面）。见 tiptap-image-paste.js
                 TiptapImagePaste.configure({ getAdapter: () => this }),

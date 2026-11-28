@@ -9081,21 +9081,49 @@ body.reading-mode-active .editor-main {
     }
 }
 
-/* Links in the article editor — Lute already renders bare URLs (GFM
-   autolink) and authored [text](url) as real <a> elements; give them the
-   same highlighted, clickable affordance as Thoughts and Instant Drafts. */
+/* 文章内普通链接：取消下划线、改用前置矢量链环标（mask-image 继承主题高亮色，明暗与跨端外观统一）；
+   附件胶囊（.dumbpad-article-file）、图片链接等装饰元素排除在外。 */
 .vditor-reset a[href] {
     color: var(--primary-color);
-    text-decoration: underline;
-    text-decoration-color: color-mix(in srgb, var(--primary-color) 45%, transparent);
-    text-underline-offset: 3px;
+    text-decoration: none;
     word-break: break-all;
 }
 
-.vditor-reset a[href]:hover {
-    text-decoration-color: var(--primary-color);
-    background: color-mix(in srgb, var(--primary-color) 10%, transparent);
+.vditor-reset a[href]:not(.dumbpad-article-file) {
+    padding: 0 2px;
+    margin: 0 -1px;
     border-radius: 3px;
+    transition: background-color 0.16s ease, color 0.16s ease;
+}
+
+.vditor-reset a[href]:not(.dumbpad-article-file):not(:has(> img)):not(:empty)::before {
+    content: "";
+    display: inline-block;
+    width: 0.84em;
+    height: 0.84em;
+    margin-right: 0.22em;
+    vertical-align: -0.11em;
+    background-color: currentColor;
+    opacity: 0.84;
+    pointer-events: none;
+    -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71'/%3E%3Cpath d='M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71'/%3E%3C/svg%3E");
+    mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71'/%3E%3Cpath d='M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71'/%3E%3C/svg%3E");
+    -webkit-mask-repeat: no-repeat;
+    mask-repeat: no-repeat;
+    -webkit-mask-position: center;
+    mask-position: center;
+    -webkit-mask-size: contain;
+    mask-size: contain;
+}
+
+.vditor-reset a[href]:hover {
+    text-decoration: none;
+    background: color-mix(in srgb, var(--primary-color) 11%, transparent);
+    border-radius: 3px;
+}
+
+.vditor-reset a[href]:not(.dumbpad-article-file):hover::before {
+    opacity: 1;
 }
 
 .vditor-reset a.dumbpad-article-file {
@@ -9420,6 +9448,72 @@ html[data-heading-style="diamond"] .typora-editor-shell .vditor-wysiwyg > .vdito
     background: transparent;
     opacity: 0.9;
     transition: none;
+}
+
+/* 单标题居中样式与 5 套 headingStyle 协同 */
+.typora-editor-shell .vditor-wysiwyg > .vditor-reset > :is(h1, h2, h3, h4, h5, h6)[data-align="center"] {
+    text-align: center;
+}
+
+html:not([data-heading-style]) .typora-editor-shell .vditor-wysiwyg > .vditor-reset > :is(h1, h2, h3, h4, h5, h6)[data-align="center"]:not(.article-jump-target)::before,
+html[data-heading-style="default"] .typora-editor-shell .vditor-wysiwyg > .vditor-reset > :is(h1, h2, h3, h4, h5, h6)[data-align="center"]:not(.article-jump-target)::before,
+html[data-heading-style="underline"] .typora-editor-shell .vditor-wysiwyg > .vditor-reset > :is(h1, h2, h3, h4, h5, h6)[data-align="center"]:not(.article-jump-target)::before,
+.typora-editor-shell .vditor-wysiwyg > .vditor-reset > :is(h4, h5, h6)[data-align="center"]:not(.article-jump-target)::before {
+    display: none;
+}
+
+html[data-heading-style="bookmark"] .typora-editor-shell .vditor-wysiwyg > .vditor-reset > :is(h1, h2, h3)[data-align="center"],
+html[data-heading-style="section"] .typora-editor-shell .vditor-wysiwyg > .vditor-reset > :is(h1, h2, h3)[data-align="center"],
+html[data-heading-style="diamond"] .typora-editor-shell .vditor-wysiwyg > .vditor-reset > :is(h1, h2, h3)[data-align="center"] {
+    width: fit-content;
+    min-width: 72px;
+    max-width: 100%;
+    margin-left: auto;
+    margin-right: auto;
+    padding-right: 12px;
+}
+
+html[data-heading-style="underline"] .typora-editor-shell .vditor-wysiwyg > .vditor-reset > :is(h1, h2)[data-align="center"]:not(:empty)::after {
+    left: 50%;
+    transform: translateX(-50%);
+}
+
+/* 聚焦标题块级居中切换轻浮标 */
+.dumbpad-heading-align-btn {
+    position: fixed;
+    z-index: 4100;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    height: 26px;
+    padding: 0 9px;
+    border: 1px solid color-mix(in srgb, var(--border-color) 86%, transparent);
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--modal-bg, #ffffff) 92%, transparent);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    color: var(--muted-text);
+    font: 550 11.5px/1 var(--font-system, var(--font-sans));
+    box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08);
+    cursor: pointer;
+    touch-action: manipulation;
+    transition: border-color 0.14s ease, color 0.14s ease, background-color 0.14s ease;
+}
+
+.dumbpad-heading-align-btn[hidden] {
+    display: none;
+}
+
+.dumbpad-heading-align-btn:hover,
+.dumbpad-heading-align-btn.is-active {
+    color: var(--primary-color);
+    border-color: color-mix(in srgb, var(--primary-color) 46%, var(--border-color));
+    background: color-mix(in srgb, var(--primary-color) 11%, var(--modal-bg, #ffffff));
+}
+
+.dumbpad-heading-align-icon {
+    display: inline-flex;
+    align-items: center;
 }
 
 .typora-editor-shell .vditor-tip {
@@ -10133,4 +10227,129 @@ body.article-image-lightbox-open {
     .typora-editor-shell .tiptap table:has(td.dumbpad-stacked-cell) tbody td:first-child::before {
         display: none;
     }
+}
+
+/* 表格整体操控胶囊工具条、整表选中/危险预览框与桌面端边缘「+」轨道 */
+.typora-editor-shell .tiptap .tableWrapper:has(td.dumbpad-table-selected-cell, th.dumbpad-table-selected-cell) {
+    outline: 2px solid color-mix(in srgb, var(--primary-color) 72%, transparent);
+    outline-offset: 2px;
+    border-radius: 6px;
+}
+
+.typora-editor-shell .tiptap table td.dumbpad-table-selected-cell,
+.typora-editor-shell .tiptap table th.dumbpad-table-selected-cell {
+    background: color-mix(in srgb, var(--primary-color) 6%, transparent);
+}
+
+.typora-editor-shell .tiptap .tableWrapper:has(td.dumbpad-table-danger-cell, th.dumbpad-table-danger-cell) {
+    outline: 2px solid color-mix(in srgb, var(--danger-color, #ef4444) 76%, transparent);
+    outline-offset: 2px;
+    border-radius: 6px;
+}
+
+.typora-editor-shell .tiptap table td.dumbpad-table-danger-cell,
+.typora-editor-shell .tiptap table th.dumbpad-table-danger-cell {
+    background: color-mix(in srgb, var(--danger-color, #ef4444) 7%, transparent);
+}
+
+.dumbpad-table-toolbar {
+    position: fixed;
+    z-index: 4100;
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    max-width: calc(100vw - 20px);
+    padding: 3px 5px;
+    border: 1px solid color-mix(in srgb, var(--border-color) 90%, transparent);
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--modal-bg, #ffffff) 94%, transparent);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    box-shadow: 0 8px 22px rgba(15, 23, 42, 0.12);
+    overflow-x: auto;
+    scrollbar-width: none;
+}
+
+.dumbpad-table-toolbar::-webkit-scrollbar {
+    display: none;
+}
+
+.dumbpad-table-toolbar[hidden],
+.dumbpad-table-edge-btn[hidden] {
+    display: none;
+}
+
+.dumbpad-table-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    height: 24px;
+    padding: 0 6px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-color);
+    font: 550 11.5px/1 var(--font-system, var(--font-sans));
+    white-space: nowrap;
+    cursor: pointer;
+    touch-action: manipulation;
+    transition: background-color 0.14s ease, color 0.14s ease, opacity 0.14s ease;
+}
+
+.dumbpad-table-btn:hover:not(:disabled),
+.dumbpad-table-btn.is-active {
+    background: color-mix(in srgb, var(--primary-color) 13%, transparent);
+    color: var(--primary-color);
+}
+
+.dumbpad-table-btn.is-danger:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--danger-color, #ef4444) 13%, transparent);
+    color: var(--danger-color, #ef4444);
+}
+
+.dumbpad-table-btn:disabled {
+    opacity: 0.36;
+    cursor: not-allowed;
+}
+
+.dumbpad-table-sep {
+    width: 1px;
+    height: 14px;
+    margin: 0 2px;
+    background: color-mix(in srgb, var(--border-color) 90%, transparent);
+    flex-shrink: 0;
+}
+
+.dumbpad-table-edge-btn {
+    position: fixed;
+    z-index: 4050;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    border: 1px dashed color-mix(in srgb, var(--border-color) 90%, transparent);
+    border-radius: 6px;
+    background: color-mix(in srgb, var(--modal-bg, #ffffff) 82%, transparent);
+    color: var(--muted-text);
+    font: 500 11px/1 var(--font-system, var(--font-sans));
+    cursor: pointer;
+    opacity: 0.78;
+    transition: opacity 0.14s ease, border-color 0.14s ease, color 0.14s ease, background-color 0.14s ease;
+}
+
+.dumbpad-table-edge-btn.is-bottom {
+    height: 17px;
+}
+
+.dumbpad-table-edge-btn.is-right {
+    width: 17px;
+    padding: 0;
+}
+
+.dumbpad-table-edge-btn:hover {
+    opacity: 1;
+    border-style: solid;
+    border-color: color-mix(in srgb, var(--primary-color) 48%, var(--border-color));
+    background: color-mix(in srgb, var(--primary-color) 10%, var(--modal-bg, #ffffff));
+    color: var(--primary-color);
 }

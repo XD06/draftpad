@@ -89,6 +89,7 @@
     "test:tiptap-task-states": "node test/test_tiptap_task_states.js",
     "test:tiptap-underline-annotation": "node test/test_tiptap_underline_annotation.js",
     "test:tiptap-blockquote-input": "node test/test_tiptap_blockquote_input.js",
+    "test:tiptap-heading-table": "node test/test_tiptap_heading_center_and_table_controls.js",
     "test:toc-jump-highlight": "node test/test_toc_jump_highlight.js",
     "test:css-integrity": "node test/test_css_integrity.js",
     "test:markdown-sanitizer": "node test/test_markdown_html_sanitizer.js",

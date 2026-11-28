@@ -4,7 +4,7 @@
  * restoreAllRenderedMarks / renderInlineMarks 与 time-command.js），
  * roundtrip 兼容由 test/test_tiptap_roundtrip.js 固化，改动前先读它。
  */
-import { Mark, Node, Extension, TaskList, TaskItem, InputRule, findParentNode, CodeBlockLowlight, Underline, PM, getMarkdownSpec } from './tiptap-runtime.js';
+import { Mark, Node, Extension, StarterKit, TaskList, TaskItem, InputRule, findParentNode, CodeBlockLowlight, Underline, PM, getMarkdownSpec } from './tiptap-runtime.js';
 import { TIME_COMMAND, parseTimeMarkerText, buildTimeMarker } from './time-command.js';
 import {
     buildCodeBlockNodeView,
@@ -2734,6 +2734,287 @@ export const CalloutDecorator = Extension.create({
                         return true;
                     },
                 },
+            }),
+        ];
+    },
+});
+
+/**
+ * 单独控制某一个标题居中（整块节点属性 align: 'center' | null）：
+ * - Markdown 持久化形态为 `# <center>文本</center>`，兼容 CommonMark 行内标记
+ *   （加粗/高亮/批注/链接均可嵌套），目录与自动标题剥离包装标签，分享页与刷新后一致；
+ * - 解析期将仅含 `<center>` 包裹层的标题还原为原生节点属性 `data-align="center"`，
+ *   编辑器内无冗余 `<center>` DOM；支持 `Mod-Shift-E` 与块级命令切换。
+ */
+export function unwrapCenteredHeadings(element) {
+    if (!element?.querySelectorAll) return element;
+    element.querySelectorAll('h1, h2, h3, h4, h5, h6').forEach((heading) => {
+        const rawAlign = heading.getAttribute('data-align')
+            || heading.getAttribute('align')
+            || heading.style?.textAlign
+            || '';
+        if (String(rawAlign).trim().toLowerCase() === 'center') {
+            heading.setAttribute('data-align', 'center');
+        }
+        const nonEmptyNodes = Array.from(heading.childNodes).filter(
+            (node) => node.nodeType !== 3 || String(node.textContent || '').trim() !== '',
+        );
+        const centerWrappers = nonEmptyNodes.filter(
+            (node) => node.nodeType === 1 && node.tagName === 'CENTER',
+        );
+        if (centerWrappers.length > 0 && centerWrappers.length === nonEmptyNodes.length) {
+            heading.setAttribute('data-align', 'center');
+            centerWrappers.forEach((wrapper) => {
+                const fragment = wrapper.ownerDocument.createDocumentFragment();
+                while (wrapper.firstChild) fragment.appendChild(wrapper.firstChild);
+                wrapper.replaceWith(fragment);
+            });
+        }
+    });
+    return element;
+}
+
+const BaseHeading = StarterKit?.config?.addExtensions?.call({ options: {} })
+    ?.find((ext) => ext?.name === 'heading')
+    || Node.create({ name: 'heading', content: 'inline*', group: 'block', defining: true });
+
+export const DumbPadHeading = BaseHeading.extend({
+    addAttributes() {
+        return {
+            ...(this.parent?.() || {}),
+            align: {
+                default: null,
+                parseHTML: (element) => {
+                    const raw = element.getAttribute('data-align')
+                        || element.getAttribute('align')
+                        || element.style?.textAlign;
+                    if (String(raw || '').trim().toLowerCase() === 'center') return 'center';
+                    if (element.querySelector?.(':scope > center')) return 'center';
+                    return null;
+                },
+                renderHTML: (attributes) => (attributes.align === 'center' ? { 'data-align': 'center' } : {}),
+            },
+        };
+    },
+
+    addCommands() {
+        return {
+            ...(this.parent?.() || {}),
+            setHeadingAlign: (align) => ({ tr, dispatch }) => {
+                const { $from } = tr.selection;
+                if ($from.parent?.type?.name !== 'heading') return false;
+                const pos = $from.before($from.depth);
+                const node = $from.parent;
+                const nextAlign = align === 'center' ? 'center' : null;
+                if ((node.attrs?.align || null) === nextAlign) return true;
+                if (dispatch) {
+                    tr.setNodeMarkup(pos, undefined, { ...node.attrs, align: nextAlign });
+                }
+                return true;
+            },
+            toggleHeadingCenter: () => ({ tr, dispatch }) => {
+                const { $from } = tr.selection;
+                if ($from.parent?.type?.name !== 'heading') return false;
+                const pos = $from.before($from.depth);
+                const node = $from.parent;
+                const nextAlign = node.attrs?.align === 'center' ? null : 'center';
+                if (dispatch) {
+                    tr.setNodeMarkup(pos, undefined, { ...node.attrs, align: nextAlign });
+                }
+                return true;
+            },
+        };
+    },
+
+    addKeyboardShortcuts() {
+        return {
+            ...(this.parent?.() || {}),
+            'Mod-Shift-e': () => this.editor.commands.toggleHeadingCenter(),
+            'Mod-Shift-E': () => this.editor.commands.toggleHeadingCenter(),
+        };
+    },
+
+    addStorage() {
+        const coreMarkdown = getMarkdownSpec(BaseHeading) ?? {};
+        return {
+            markdown: {
+                ...coreMarkdown,
+                serialize(serializer, node) {
+                    const level = Math.min(6, Math.max(1, Number(node.attrs?.level) || 1));
+                    serializer.write(`${serializer.repeat('#', level)} `);
+                    if (node.attrs?.align === 'center') serializer.write('<center>');
+                    serializer.renderInline(node, false);
+                    if (node.attrs?.align === 'center') serializer.write('</center>');
+                    serializer.closeBlock(node);
+                },
+                parse: {
+                    ...(coreMarkdown.parse || {}),
+                    updateDOM: (element) => unwrapCenteredHeadings(element),
+                },
+            },
+        };
+    },
+});
+
+const HEADING_ALIGN_ICON_LEFT = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="15" y2="12"/><line x1="3" y1="18" x2="19" y2="18"/></svg>';
+const HEADING_ALIGN_ICON_CENTER = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="3" y1="6" x2="21" y2="6"/><line x1="6" y1="12" x2="18" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/></svg>';
+
+export const headingAlignControlPluginKey = new PluginKey('dumbpadHeadingAlignControl');
+
+class HeadingAlignControlView {
+    constructor(view, editor) {
+        this.view = view;
+        this.editor = editor;
+        this.visible = false;
+        this.rafId = 0;
+
+        this.button = document.createElement('button');
+        this.button.type = 'button';
+        this.button.className = 'dumbpad-heading-align-btn';
+        this.button.hidden = true;
+        this.button.setAttribute('aria-label', '切换当前标题居中');
+        this.button.setAttribute('title', '标题居中 / 左对齐 (Ctrl+Shift+E)');
+        this.iconSpan = document.createElement('span');
+        this.iconSpan.className = 'dumbpad-heading-align-icon';
+        this.labelSpan = document.createElement('span');
+        this.labelSpan.className = 'dumbpad-heading-align-label';
+        this.button.append(this.iconSpan, this.labelSpan);
+        document.body.appendChild(this.button);
+
+        this.onPointerDown = (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+        };
+        this.onClick = (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            this.editor.commands.toggleHeadingCenter();
+            this.editor.view.focus();
+            this.sync();
+        };
+        this.onScroll = () => this.schedulePosition();
+        this.onResize = () => this.schedulePosition();
+        this.onBlur = () => {
+            setTimeout(() => {
+                if (!this.view.hasFocus() && document.activeElement !== this.button) {
+                    this.hide();
+                }
+            }, 90);
+        };
+
+        this.button.addEventListener('pointerdown', this.onPointerDown);
+        this.button.addEventListener('mousedown', this.onPointerDown);
+        this.button.addEventListener('click', this.onClick);
+        document.addEventListener('scroll', this.onScroll, { capture: true, passive: true });
+        window.addEventListener('resize', this.onResize, { passive: true });
+        this.view.dom.addEventListener('blur', this.onBlur, true);
+        this.sync();
+    }
+
+    getActiveHeading(state) {
+        if (!this.view.editable || !this.view.dom?.isConnected) return null;
+        const shell = this.view.dom.closest('.typora-editor-shell');
+        if (!shell || shell.classList.contains('is-reading-mode') || shell.classList.contains('is-source-mode')) {
+            return null;
+        }
+        if (document.body.classList.contains('thoughts-mode') || document.body.classList.contains('today-drafts-mode')) {
+            return null;
+        }
+        const { selection } = state;
+        if (!selection?.empty) return null;
+        const { $from } = selection;
+        if ($from.parent?.type?.name !== 'heading') return null;
+        if (!this.view.hasFocus() && document.activeElement !== this.button) return null;
+        return {
+            pos: $from.before($from.depth),
+            node: $from.parent,
+        };
+    }
+
+    sync() {
+        const active = this.getActiveHeading(this.view.state);
+        if (!active) {
+            this.hide();
+            return;
+        }
+        const centered = active.node.attrs?.align === 'center';
+        this.button.classList.toggle('is-active', centered);
+        this.button.setAttribute('aria-pressed', String(centered));
+        this.iconSpan.innerHTML = centered ? HEADING_ALIGN_ICON_LEFT : HEADING_ALIGN_ICON_CENTER;
+        this.labelSpan.textContent = centered ? '已居中' : '居中';
+        this.button.hidden = false;
+        this.visible = true;
+        this.position(active.pos);
+    }
+
+    schedulePosition() {
+        if (!this.visible || this.rafId) return;
+        this.rafId = requestAnimationFrame(() => {
+            this.rafId = 0;
+            const active = this.getActiveHeading(this.view.state);
+            if (!active) {
+                this.hide();
+                return;
+            }
+            this.position(active.pos);
+        });
+    }
+
+    position(headingPos) {
+        const dom = this.view.nodeDOM(headingPos);
+        const rect = dom?.getBoundingClientRect?.();
+        if (!rect || (rect.width === 0 && rect.height === 0)) return;
+        const card = this.view.dom.getBoundingClientRect();
+        const anchorRight = card.width > 0 ? card.right - 12 : rect.right;
+        const btnRect = this.button.getBoundingClientRect();
+        const btnW = btnRect.width || 60;
+        const btnH = btnRect.height || 26;
+        const minTop = (window.visualViewport?.offsetTop || 0) + 58;
+        const maxTop = (window.visualViewport?.offsetTop || 0) + (window.visualViewport?.height || window.innerHeight || 800) - btnH - 8;
+        let top = rect.top - btnH - 4;
+        if (top < minTop) {
+            top = Math.min(Math.max(rect.top + 2, minTop), maxTop);
+        }
+        const left = Math.max(12, Math.min(anchorRight - btnW, (window.innerWidth || 1200) - btnW - 10));
+        this.button.style.left = `${Math.round(left)}px`;
+        this.button.style.top = `${Math.round(top)}px`;
+    }
+
+    hide() {
+        if (this.rafId) {
+            cancelAnimationFrame(this.rafId);
+            this.rafId = 0;
+        }
+        if (!this.visible) return;
+        this.visible = false;
+        this.button.hidden = true;
+    }
+
+    update() {
+        this.sync();
+    }
+
+    destroy() {
+        this.hide();
+        this.button.removeEventListener('pointerdown', this.onPointerDown);
+        this.button.removeEventListener('mousedown', this.onPointerDown);
+        this.button.removeEventListener('click', this.onClick);
+        document.removeEventListener('scroll', this.onScroll, { capture: true });
+        window.removeEventListener('resize', this.onResize);
+        this.view.dom.removeEventListener('blur', this.onBlur, true);
+        this.button.remove();
+    }
+}
+
+export const HeadingAlignControl = Extension.create({
+    name: 'headingAlignControl',
+
+    addProseMirrorPlugins() {
+        const editor = this.editor;
+        return [
+            new Plugin({
+                key: headingAlignControlPluginKey,
+                view: (view) => new HeadingAlignControlView(view, editor),
             }),
         ];
     },

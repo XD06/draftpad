@@ -225,9 +225,6 @@ export default class SettingsManager {
         const bundle = getBundleById(bundleBtn.dataset.appearanceBundle);
         if (!bundle) return;
         const nextAppearance = normalizeAppearanceSettings({
-          calloutStyle: this.currentAppearance?.calloutStyle,
-          headingStyle: this.currentAppearance?.headingStyle,
-          listStyle: this.currentAppearance?.listStyle,
           ...bundle.appearance
         });
         this.currentAppearance = nextAppearance;

@@ -1380,6 +1380,7 @@ function renderSharePage({ notepad, content, marked, sanitizeHtml }) {
         .markdown-body h2 { font-size: 1.32em; margin: 1.45em 0 0.5em; }
         .markdown-body h3 { font-size: 1.12em; margin: 1.3em 0 0.45em; }
         .markdown-body h4 { font-size: 1em; margin: 1.15em 0 0.4em; }
+        .markdown-body :is(h1, h2, h3, h4, h5, h6)[data-align="center"] { text-align: center; }
 
         .toc-flash {
             animation: tocTargetPulse 1.6s ease;
@@ -1393,10 +1394,35 @@ function renderSharePage({ notepad, content, marked, sanitizeHtml }) {
         .markdown-body strong { color: var(--text-primary); font-weight: 650; }
         .markdown-body a {
             color: var(--primary);
-            text-decoration: underline;
-            text-underline-offset: 3px;
+            text-decoration: none;
             overflow-wrap: anywhere;
+            padding: 0 2px;
+            border-radius: 3px;
+            transition: background-color 0.16s ease;
         }
+        .markdown-body a:not(.file-pill):not(:has(> img)):not(:empty)::before {
+            content: "";
+            display: inline-block;
+            width: 0.84em;
+            height: 0.84em;
+            margin-right: 0.22em;
+            vertical-align: -0.11em;
+            background-color: currentColor;
+            opacity: 0.84;
+            pointer-events: none;
+            -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71'/%3E%3Cpath d='M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71'/%3E%3C/svg%3E");
+            mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71'/%3E%3Cpath d='M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71'/%3E%3C/svg%3E");
+            -webkit-mask-repeat: no-repeat;
+            mask-repeat: no-repeat;
+            -webkit-mask-position: center;
+            mask-position: center;
+            -webkit-mask-size: contain;
+            mask-size: contain;
+        }
+        .markdown-body a:not(.file-pill):hover {
+            background: color-mix(in srgb, var(--primary) 11%, transparent);
+        }
+        .dumbpad-share-media-meta a::before { display: none !important; content: none !important; }
         .markdown-body hr {
             border: 0;
             height: 1px;
@@ -2734,6 +2760,21 @@ function renderSharePage({ notepad, content, marked, sanitizeHtml }) {
                 if (v < 1024 * 1024) return (v / 1024).toFixed(v < 10240 ? 1 : 0) + ' KB';
                 return (v / (1024 * 1024)).toFixed(v < 10485760 ? 1 : 0) + ' MB';
             };
+
+            body.querySelectorAll('h1, h2, h3, h4, h5, h6').forEach(function (h) {
+                var nodes = Array.prototype.slice.call(h.childNodes).filter(function (n) {
+                    return n.nodeType !== 3 || String(n.textContent || '').trim() !== '';
+                });
+                var centers = nodes.filter(function (n) { return n.nodeType === 1 && n.tagName === 'CENTER'; });
+                if (centers.length > 0 && centers.length === nodes.length) {
+                    h.setAttribute('data-align', 'center');
+                    centers.forEach(function (c) {
+                        var frag = document.createDocumentFragment();
+                        while (c.firstChild) frag.appendChild(c.firstChild);
+                        c.parentNode.replaceChild(frag, c);
+                    });
+                }
+            });
 
             body.querySelectorAll('a[title^="dumbpad-file=1"]').forEach(function (a) {
                 a.classList.add('file-pill');

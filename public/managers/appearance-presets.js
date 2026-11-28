@@ -223,37 +223,85 @@ export const APPEARANCE_BUNDLES = Object.freeze([
         id: 'amber-classic',
         label: '琥珀经典',
         subtitle: 'DumbPad 默认原味',
-        appearance: Object.freeze({ accent: 'default', drawColor: 'default', highlightColor: 'default', annotationColor: 'default' })
+        appearance: Object.freeze({
+            accent: 'default',
+            drawColor: 'default',
+            highlightColor: 'default',
+            annotationColor: 'default',
+            calloutStyle: 'default',
+            headingStyle: 'default',
+            listStyle: 'default'
+        })
     }),
     Object.freeze({
         id: 'calm-study',
         label: '海盐研读',
         subtitle: '冷静专注 · Notion 风',
-        appearance: Object.freeze({ accent: 'blue', drawColor: 'cobalt', highlightColor: 'sky', annotationColor: 'indigo' })
+        appearance: Object.freeze({
+            accent: 'blue',
+            drawColor: 'cobalt',
+            highlightColor: 'sky',
+            annotationColor: 'indigo',
+            calloutStyle: 'tint',
+            headingStyle: 'bookmark',
+            listStyle: 'guide'
+        })
     }),
     Object.freeze({
         id: 'sage-forest',
         label: '鼠尾草护眼',
         subtitle: '柔和自然 · 久读不累',
-        appearance: Object.freeze({ accent: 'sage', drawColor: 'teal', highlightColor: 'mint', annotationColor: 'teal' })
+        appearance: Object.freeze({
+            accent: 'sage',
+            drawColor: 'teal',
+            highlightColor: 'mint',
+            annotationColor: 'teal',
+            calloutStyle: 'tint',
+            headingStyle: 'underline',
+            listStyle: 'tinted'
+        })
     }),
     Object.freeze({
         id: 'warm-paper',
         label: '落日暖茶',
         subtitle: '温润纸感 · 无冷蓝刺激',
-        appearance: Object.freeze({ accent: 'default', drawColor: 'amber', highlightColor: 'default', annotationColor: 'amber' })
+        appearance: Object.freeze({
+            accent: 'default',
+            drawColor: 'amber',
+            highlightColor: 'default',
+            annotationColor: 'amber',
+            calloutStyle: 'quote',
+            headingStyle: 'section',
+            listStyle: 'tinted'
+        })
     }),
     Object.freeze({
         id: 'mist-lavender',
         label: '柔雾暮紫',
         subtitle: '雅致层次 · 重点分明',
-        appearance: Object.freeze({ accent: 'plum', drawColor: 'cobalt', highlightColor: 'lavender', annotationColor: 'berry' })
+        appearance: Object.freeze({
+            accent: 'plum',
+            drawColor: 'cobalt',
+            highlightColor: 'lavender',
+            annotationColor: 'berry',
+            calloutStyle: 'quote',
+            headingStyle: 'diamond',
+            listStyle: 'tinted'
+        })
     }),
     Object.freeze({
         id: 'nordic-slate',
         label: '极简水墨',
         subtitle: '低噪中性 · 标注点睛',
-        appearance: Object.freeze({ accent: 'slate', drawColor: 'teal', highlightColor: 'mint', annotationColor: 'default' })
+        appearance: Object.freeze({
+            accent: 'slate',
+            drawColor: 'teal',
+            highlightColor: 'mint',
+            annotationColor: 'default',
+            calloutStyle: 'default',
+            headingStyle: 'underline',
+            listStyle: 'geometric'
+        })
     })
 ]);
 
@@ -269,6 +317,9 @@ export function findMatchingBundleId(appearance) {
         && bundle.appearance.drawColor === norm.drawColor
         && bundle.appearance.highlightColor === norm.highlightColor
         && bundle.appearance.annotationColor === norm.annotationColor
+        && bundle.appearance.calloutStyle === norm.calloutStyle
+        && bundle.appearance.headingStyle === norm.headingStyle
+        && bundle.appearance.listStyle === norm.listStyle
     ));
     return hit ? hit.id : 'custom';
 }

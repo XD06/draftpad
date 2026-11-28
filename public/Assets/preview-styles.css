@@ -20,12 +20,34 @@
 /* Link styling in markdown preview */
 #preview-pane a {
   color: var(--primary-color);
-  text-decoration: underline;
+  text-decoration: none;
+  padding: 0 2px;
+  border-radius: 3px;
+}
+
+#preview-pane a:not(:has(> img)):not(:empty)::before {
+  content: "";
+  display: inline-block;
+  width: 0.84em;
+  height: 0.84em;
+  margin-right: 0.22em;
+  vertical-align: -0.11em;
+  background-color: currentColor;
+  opacity: 0.84;
+  pointer-events: none;
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71'/%3E%3Cpath d='M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71'/%3E%3Cpath d='M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71'/%3E%3C/svg%3E");
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  mask-position: center;
+  -webkit-mask-size: contain;
+  mask-size: contain;
 }
 
 #preview-pane a:hover {
   color: var(--primary-color);
-  opacity: 0.7;
+  background: color-mix(in srgb, var(--primary-color) 11%, transparent);
 }
 
 #preview-pane code {

@@ -8,6 +8,12 @@
 
 ### 新增 / 优化
 
+- **主题预设联动排版、单标题块级居中、链接链环样式与表格整体操控**：
+  - **推荐主题搭配联动排版**：在 [appearance-presets.js](public/managers/appearance-presets.js) 与 [settings.js](public/managers/settings.js) 中为 6 套预设主题卡片补齐专属的 `calloutStyle` / `headingStyle` / `listStyle` 搭配（`琥珀经典` 维持默认、`海盐研读` 配 `纸面圆徽+书签色楔+嵌套引导线`、`鼠尾草护眼` 配 `纸面圆徽+短杠底线+主色柔点`、`落日暖茶` 配 `无底引号+章节印记+主色柔点`、`柔雾暮紫` 配 `无底引号+几何微标+主色柔点`、`极简水墨` 配 `雾底左浮标+短杠底线+几何方菱`），一键套用主题即可同步到位；`findMatchingBundleId` 扩展为 7 键协同匹配。
+  - **单标题块级居中**：在 [tiptap-extensions.js](public/managers/tiptap-extensions.js) 新增 `DumbPadHeading`（整块属性 `align: 'center' | null`、`Mod-Shift-E` 快捷键）与光标聚焦轻浮标 `HeadingAlignControl`（`.dumbpad-heading-align-btn`），并在 [tiptap-slash-menu.js](public/managers/tiptap-slash-menu.js) 增加标题上下文 `/center`（`/居中`）命令；持久化采用标准 ATX 嵌套 `# <center>标题</center>` 形态以完整保留加粗/高亮/批注/链接等行内语法与分享页渲染，[heading-index.js](public/managers/heading-index.js) 与 [article-title.js](public/managers/article-title.js) 同步剥离包装标签，5 套 `headingStyle` 居中时装饰跟随文字协同对齐。
+  - **文章链接矢量链环与去下划线**：[styles.css](public/Assets/styles.css)、[preview-styles.css](public/Assets/preview-styles.css) 与分享页 [share-renderer.js](scripts/share-renderer.js) 取消正文链接下划线，改为前置 `currentColor` 矢量链环图标（`mask-image` `::before`，自动排除附件胶囊与图片链接）。
+  - **表格整体操控与增删交互**：新增 [tiptap-table-controls.js](public/managers/tiptap-table-controls.js)（纳入 [service-worker.js](public/service-worker.js) `CORE_ASSETS`），与 [tiptap-table-stack.js](public/managers/tiptap-table-stack.js) 正交兼容：编辑态提供顶部情景胶囊条（整表选中/退格整体删除、`+行`/`+列`/`-行`/`-列`、复制 GFM Markdown、悬停红框预警一键删表）及桌面端表格底/右边快捷 `+` 轨道，阅读态与源码态零打扰；同步扩展 [test_appearance_presets.js](test/test_appearance_presets.js) 与新增 `npm run test:tiptap-heading-table`。
+
 - **PWA 冷重启秒开与 0ms 同构渲染快照（根治“显示源码、加载渲染慢”）**：
   - **零构建静态资源内容哈希与 `Import Map` 注入**：`scripts/build-version.js` 改用文件内容 SHA-1（含 `font/`）计算 `BUILD_VERSION`，消除 Docker 重建或 git 检出变更 `mtime` 误杀全量客户端缓存；新增 `scripts/asset-versioning.js` 在 `routes/auth-routes.js`（`/` 与 `/index.html`）与 `routes/static-routes.js`（`/service-worker.js`）响应期自动注入 `<script type="importmap">`、扁平化 `<link rel="modulepreload">` 与 `?v=<hash>` 链接，并对匹配哈希的静态请求下发 `Cache-Control: public, max-age=31536000, immutable`（保留 `/vendor/tiptap/tiptap.bundle.js` 与品牌图标 URL 稳定，改由 `RUNTIME_FINGERPRINT` 守护跨版继承一致性）。
   - **Service Worker 冷启动 0ms 缓存直出**：`public/service-worker.js` 对带 `?v=<hash>` 的应用 JS/CSS 启用 `0ms cacheFirst`（消灭 50+ 次 `no-cache` 公网协商与多波 450ms 超时等待），对已缓存 App Shell（`/`、`/index.html`）的非显式强制刷新导航启用 Stale-While-Revalidate 秒开 + 后台重验（会话失效重定向时自动清缓存；显式强制刷新保留 600ms `networkFirst`），并支持 `WARM_RUNTIME_URLS` 空闲预热编辑器内核与样式。

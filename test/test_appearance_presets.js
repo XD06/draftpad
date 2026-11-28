@@ -223,7 +223,7 @@ function runDomAndSettingsManagerTests() {
     assert.equal(loaded.disablePrintExpand, true);
     assert.deepEqual(loaded.appearance, DEFAULT_APPEARANCE);
 
-    // Click curated bundle -> applies all 4 tokens together & highlights bundle
+    // Click curated bundle -> applies all 4 color tokens + paired typography/callout styles together & highlights bundle
     const calmBtn = dom.window.document.querySelector('[data-appearance-bundle="calm-study"]');
     calmBtn.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
     assert.equal(calmBtn.classList.contains('is-active'), true);
@@ -233,6 +233,9 @@ function runDomAndSettingsManagerTests() {
     );
     assert.equal(dom.window.document.documentElement.style.getPropertyValue('--primary-color'), '#2563EB');
     assert.equal(dom.window.document.documentElement.style.getPropertyValue('--draw-color'), '#1D4ED8');
+    assert.equal(dom.window.document.documentElement.getAttribute('data-callout-style'), 'tint');
+    assert.equal(dom.window.document.documentElement.getAttribute('data-heading-style'), 'bookmark');
+    assert.equal(dom.window.document.documentElement.getAttribute('data-list-style'), 'guide');
 
     // Tweaking single swatch inside advanced switches bundle badge to 自定义微调
     const roseBtn = dom.window.document.querySelector('[data-appearance-group="drawColor"][data-appearance-value="rose"]');
@@ -248,38 +251,50 @@ function runDomAndSettingsManagerTests() {
     cobaltBtn.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
     assert.equal(calmBtn.classList.contains('is-active'), true);
 
-    // Step 8: selecting layout styles applies data-* attrs, updates labels, and survives color bundle switch
-    const tintBtn = dom.window.document.querySelector('[data-appearance-group="calloutStyle"][data-appearance-value="tint"]');
-    const bookmarkBtn = dom.window.document.querySelector('[data-appearance-group="headingStyle"][data-appearance-value="bookmark"]');
-    const guideBtn = dom.window.document.querySelector('[data-appearance-group="listStyle"][data-appearance-value="guide"]');
-    tintBtn.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
-    bookmarkBtn.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
-    guideBtn.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+    // Tweaking layout preset independently sets bundle badge to 自定义微调 while updating attrs & labels
+    const quoteBtn = dom.window.document.querySelector('[data-appearance-group="calloutStyle"][data-appearance-value="quote"]');
+    const sectionBtn = dom.window.document.querySelector('[data-appearance-group="headingStyle"][data-appearance-value="section"]');
+    const geoBtn = dom.window.document.querySelector('[data-appearance-group="listStyle"][data-appearance-value="geometric"]');
+    quoteBtn.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+    sectionBtn.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+    geoBtn.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
 
-    assert.equal(dom.window.document.documentElement.getAttribute('data-callout-style'), 'tint');
-    assert.equal(dom.window.document.documentElement.getAttribute('data-heading-style'), 'bookmark');
-    assert.equal(dom.window.document.documentElement.getAttribute('data-list-style'), 'guide');
+    assert.equal(dom.window.document.documentElement.getAttribute('data-callout-style'), 'quote');
+    assert.equal(dom.window.document.documentElement.getAttribute('data-heading-style'), 'section');
+    assert.equal(dom.window.document.documentElement.getAttribute('data-list-style'), 'geometric');
+    assert.equal(
+        dom.window.document.querySelector('[data-appearance-bundle-status]')?.textContent,
+        '自定义微调'
+    );
     assert.equal(
         dom.window.document.querySelector('[data-appearance-active-label="calloutStyle"]')?.textContent,
-        '纸面圆徽风'
+        '无底引号轻角标'
     );
     assert.equal(
         dom.window.document.querySelector('[data-appearance-active-label="headingStyle"]')?.textContent,
-        '书签色楔'
+        '章节印记'
     );
     assert.equal(
         dom.window.document.querySelector('[data-appearance-active-label="listStyle"]')?.textContent,
-        '嵌套引导线'
+        '几何方菱'
     );
 
+    // Clicking another bundle applies its paired layout styles too (warm-paper -> quote + section + tinted)
     const warmPaperBtn = dom.window.document.querySelector('[data-appearance-bundle="warm-paper"]');
     warmPaperBtn.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+    assert.equal(dom.window.document.documentElement.getAttribute('data-callout-style'), 'quote');
+    assert.equal(dom.window.document.documentElement.getAttribute('data-heading-style'), 'section');
+    assert.equal(dom.window.document.documentElement.getAttribute('data-list-style'), 'tinted');
+    assert.equal(
+        dom.window.document.querySelector('[data-appearance-bundle-status]')?.textContent,
+        '落日暖茶'
+    );
+
+    // Re-apply calm-study -> restores blue palette + tint/bookmark/guide together before save
+    calmBtn.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
     assert.equal(dom.window.document.documentElement.getAttribute('data-callout-style'), 'tint');
     assert.equal(dom.window.document.documentElement.getAttribute('data-heading-style'), 'bookmark');
     assert.equal(dom.window.document.documentElement.getAttribute('data-list-style'), 'guide');
-
-    // Re-apply calm-study to keep accent color check happy before save
-    calmBtn.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
 
     assert.equal(
         dom.window.document.querySelector('[data-appearance-active-label="accent"]')?.textContent,

@@ -35,7 +35,7 @@ function stripInlineMarkdown(text) {
 }
 
 function normalizeTitle(text) {
-    return stripInlineMarkdown(text)
+    return stripInlineMarkdown(String(text || '').replace(/<\/?center>/gi, ''))
         // 反斜杠转义还原（CommonMark：`\#` → `#`）——正文里单独的 `#` 会被
         // 序列化器转义成 `\#` 存进源码，不解义就会把「\#」当标题自动命名。
         .replace(/\\([!-\/:-@\[-`{-~])/g, '$1')

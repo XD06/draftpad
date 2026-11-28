@@ -45,7 +45,7 @@ export function buildMarkdownHeadingIndex(markdown = '') {
             }
             const match = line.match(HEADING_RE);
             if (!match) return null;
-            const text = match[2].replace(/[`*_~[\]()]/g, '').trim();
+            const text = match[2].replace(/<\/?center>/gi, '').replace(/[`*_~[\]()]/g, '').trim();
             const id = slugify(text, seen);
             headingLineBySlug.set(id, index);
             headingIds[index] = id;

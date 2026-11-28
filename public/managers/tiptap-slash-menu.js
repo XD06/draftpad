@@ -41,11 +41,12 @@ export function registerSlashCommand(definition) {
     });
 }
 
-export function filterSlashCommands(query) {
+export function filterSlashCommands(query, context = 'paragraph') {
+    const source = context === 'heading' ? HEADING_SLASH_COMMANDS : slashCommandRegistry;
     const needle = String(query || '').trim().toLowerCase();
-    if (!needle) return [...slashCommandRegistry];
+    if (!needle) return [...source];
     const scored = [];
-    slashCommandRegistry.forEach((entry, index) => {
+    source.forEach((entry, index) => {
         const id = String(entry.id || '').toLowerCase();
         const title = String(entry.title || '').toLowerCase();
         const keywords = (entry.keywords || []).map(k => String(k || '').toLowerCase());
@@ -61,7 +62,7 @@ export function filterSlashCommands(query) {
     return scored.map(item => item.entry);
 }
 
-/** 光标与「/命令文本」的位置关系：命中返回 { query, from, to }，否则 null。 */
+/** 光标与「/命令文本」的位置关系：命中返回 { query, from, to, context }，否则 null。 */
 export function findSlashQueryBeforeCaret(state) {
     const selection = state.selection;
     if (!selection.empty) return null;
@@ -69,7 +70,8 @@ export function findSlashQueryBeforeCaret(state) {
     // 命令禁区与 /time、/file 的现有守卫一致：代码块、行内代码不触发。
     if ($from.parent.type.spec.code) return null;
     if ($from.marks().some(mark => mark.type.name === 'code')) return null;
-    if ($from.parent.type.name !== 'paragraph') return null;
+    const parentName = $from.parent.type.name;
+    if (parentName !== 'paragraph' && parentName !== 'heading') return null;
     // textBetween 用段落内容相对坐标（0 基），parentOffset 同一坐标系；
     // $from.start() 是绝对位置，不能拿来当下界（会得到空窗口）。
     const lookbackStart = Math.max(0, $from.parentOffset - LOOKBACK);
@@ -81,8 +83,24 @@ export function findSlashQueryBeforeCaret(state) {
         query: match[1],
         from: selection.from - commandLength,
         to: selection.from,
+        context: parentName,
     };
 }
+
+const ALIGN_CENTER_ICON_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="3" y1="6" x2="21" y2="6"></line><line x1="6" y1="12" x2="18" y2="12"></line><line x1="4" y1="18" x2="20" y2="18"></line></svg>';
+
+export const HEADING_SLASH_COMMANDS = [
+    {
+        id: 'center',
+        title: '标题居中 / 左对齐',
+        hint: '/center',
+        keywords: ['center', 'align', '居中', '对齐', '标题居中'],
+        icon: ALIGN_CENTER_ICON_SVG,
+        run: ({ editor, range }) => {
+            editor.chain().focus().deleteRange(range).toggleHeadingCenter().run();
+        },
+    },
+];
 
 /* 内置命令 -------------------------------------------------------------- */
 
@@ -442,7 +460,7 @@ export const TiptapSlashMenu = Extension.create({
             new Plugin({
                 key: slashMenuPluginKey,
                 state: {
-                    init: () => ({ open: false, query: '', from: -1, to: -1, dismissed: null }),
+                    init: () => ({ open: false, query: '', from: -1, to: -1, context: 'paragraph', dismissed: null }),
                     apply(tr, value) {
                         const meta = tr.getMeta(slashMenuPluginKey);
                         if (meta?.type === 'dismiss') {
@@ -466,6 +484,7 @@ export const TiptapSlashMenu = Extension.create({
                             query: next ? next.query : '',
                             from: next ? next.from : -1,
                             to: next ? next.to : -1,
+                            context: next ? next.context : 'paragraph',
                             dismissed: stillDismissed ? dismissed : null,
                         };
                     },
@@ -571,7 +590,8 @@ class SlashMenuView {
         const shapeChanged = !prev?.open
             || prev.from !== next.from
             || prev.to !== next.to
-            || prev.query !== next.query;
+            || prev.query !== next.query
+            || prev.context !== next.context;
         if (!this.visible || shapeChanged) {
             this.show(next);
             return;
@@ -581,7 +601,7 @@ class SlashMenuView {
     }
 
     show(state) {
-        const items = filterSlashCommands(state.query);
+        const items = filterSlashCommands(state.query, state.context || 'paragraph');
         this.items = items;
         this.selectedIndex = 0;
         this.range = { from: state.from, to: state.to };
