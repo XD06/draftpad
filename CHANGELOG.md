@@ -15,11 +15,11 @@
   - **回归**：新增 `npm run test:cold-start`（`test/test_rendered_snapshot_and_versioning.js`）与真机浏览器回归 `npm run test:cold-start-browser`（`test/browser/pwa-cold-start.js`）。
 
 - **主题与外观排版定制及阅读灰阶/间距优化**：
-  - 在设置中心「主题与外观」面板的 `推荐主题搭配` 与 `自定义单项配色（高级）` 之间新增 `排版与提示块样式`（[appearance-presets.js](public/managers/appearance-presets.js)、[settings.js](public/managers/settings.js)、[index.html](public/index.html)），均默认保持原样零改动，支持实时预览、`Cancel` 撤回、`Save` 持久化及 `<head>` 首屏防闪烁恢复，切换推荐配色搭配时自动保留所选排版样式：
-    - **提示块样式（`calloutStyle`）**：`雾底左浮标（默认）`、`纸面圆徽风`、`无底引号轻角标` 3 档（含暗色实心圆徽对比适配，普通 `>` 引用不受影响）；
-    - **标题装饰（`headingStyle`）**：`极淡边标（默认）`、`书签色楔`、`章节印记`、`短杠底线`、`几何微标` 5 档（`::before` 全部排除 `.article-jump-target` 以保留目录跳转闪光，且 `H1` 在非默认模式下保持纯净留白）；
-    - **列表符号（`listStyle`）**：`经典圆点（默认）`、`主色柔点`、`几何方菱`、`嵌套引导线`（覆盖 `ul` / `ol` / `taskList` 互嵌且增强引导线可见度）4 档，仅作用 `::marker` 与子列表引导线，不改动 `li > p` 与待办对齐。
-  - 置顶预览区新增 `is-typo-preview` 二级联动预览行，同步扩展 [test_appearance_presets.js](test/test_appearance_presets.js) 覆盖 7 键归一化、属性同步与 FOUC 还原测试。
+  - 在设置中心「主题与外观」面板的 `推荐主题搭配` 与 `自定义单项配色（高级）` 之间新增可折叠的 `排版与提示块样式（高级）`（[appearance-presets.js](public/managers/appearance-presets.js)、[settings.js](public/managers/settings.js)、[index.html](public/index.html)，默认收纳保持界面紧凑），均默认保持原样零改动，支持实时预览、`Cancel` 撤回、`Save` 持久化及 `<head>` 首屏防闪烁恢复（覆盖 PWA 0ms 同构快照 `#boot-preview` 与移动端视图），切换推荐配色搭配时自动保留所选排版样式：
+    - **提示块样式（`calloutStyle`）**：`雾底左浮标（默认）`、`纸面圆徽风`（零外边框 + `overflow: hidden` 圆角裁切 `3px` 左色条 + 柔和淡染底）、`无底引号轻角标`（透明无底 + `2.5px` 圆头 `::before` 竖线 + 胶囊徽标）3 档，同步补齐 `:root` `--font-sans` 定义使标题字体严格命中 `650 13px` 无衬线规范；
+    - **标题装饰（`headingStyle`）**：`极淡边标（默认）`、`书签色楔`（H1 `4px` / H2 `3px` / H3 `2px`）、`章节印记`（`#` / `##` / `§`）、`短杠底线`（H1 `44px` / H2 `32px` 亮条 + 显化细灰线）、`几何微标`（H1 光环菱 / H2 实心菱 / H3 空心环）5 档（`::before` 显式重置 `font-size: 1em` / `top` 比例锚定首行视觉中心以适配移动端多行折行，关闭基础 `opacity` 过渡滞留，并统一排除 `.article-jump-target` 保留目录跳转闪光）；
+    - **列表符号（`listStyle`）**：`经典圆点（默认）`、`主色柔点`、`几何方菱`（统一无衬线方菱字形与 `01/02` 比例）、`嵌套引导线`（按父级真实字形几何区分常规/有序 `-0.78em` 与待办 `calc(-8.5px - 0.38em)` 竖线圆心）4 档，仅作用 `::marker` 与子列表引导线，不改动 `li > p` 与待办对齐。
+  - 置顶预览区新增 `is-typo-preview` 二级联动预览行（左对齐流式排版同屏展示 H1/H2、嵌套引导线与圆角裁切提示块样本），同步扩展 [test_appearance_presets.js](test/test_appearance_presets.js) 覆盖 7 键归一化、默认折叠态、属性同步与 FOUC 还原测试。
   - [styles.css](public/Assets/styles.css) 为正文/列表引入柔和炭灰与标题/加粗高对比的三阶阅读灰阶（[L3166-L3179](public/Assets/styles.css#L3166-L3179)）、还原普通 `>` 引用段落柔和对比度（`blockquote:not(.dumbpad-callout) p/li`），并在守住 `ul/ol` 收尾归零与列表行距不变式的前提下为普通引用与列表后继异类块补齐 `14px` 垂直呼吸间距。
 - **移动端阅读态顶栏隐显（Headroom）与悬浮胶囊打磨**：
   - 分享页移动端（[share-renderer.js](scripts/share-renderer.js) `< 1060px`）与主应用移动端阅读态（[app.js](public/app.js) `readingHeadroom` + [ios-theme.css](public/Assets/ios-theme.css) `≤ 980px`）：向下阅读滚动（`> 96px` 且累计下滑 `>= 28px`）时平滑向上收起顶部栏（分享页保留顶部 `2px` 进度条），轻微上滑（`>= 12px`）、回顶、打开目录/抽屉/弹窗或退出阅读态即时恢复；同步在下滑沉浸阅读时柔和弱化未展开的左下角 `.floating-actions` 胶囊为 `opacity: 0.72` 减少正文遮挡（编辑态与桌面端零变化），由 `test:share-page-browser`、`test:mobile-editor-browser` 与 `test:source-mode-browser` 覆盖。

@@ -1043,15 +1043,20 @@
                                         </span>
                                     </div>
                                     <div class="settings-appearance-preview-row is-typo-preview" aria-hidden="true">
-                                        <span class="settings-preview-heading-sample">章节标题</span>
-                                        <ul class="settings-preview-list-sample">
-                                            <li>
-                                                <span class="settings-preview-list-line">父级列表</span>
-                                                <ul class="settings-preview-list-nested">
-                                                    <li>嵌套子项</li>
-                                                </ul>
-                                            </li>
-                                        </ul>
+                                        <div class="settings-preview-typo-left">
+                                            <div class="settings-preview-headings-pair">
+                                                <span class="settings-preview-h1-sample">文档主标题</span>
+                                                <span class="settings-preview-heading-sample">二级章节</span>
+                                            </div>
+                                            <ul class="settings-preview-list-sample">
+                                                <li>
+                                                    <span class="settings-preview-list-line">父级列表</span>
+                                                    <ul class="settings-preview-list-nested">
+                                                        <li>嵌套子项</li>
+                                                    </ul>
+                                                </li>
+                                            </ul>
+                                        </div>
                                         <span class="settings-preview-callout-sample">
                                             <span class="settings-preview-callout-icon">i</span>
                                             <span class="settings-preview-callout-text">备注提示块</span>
@@ -1146,10 +1151,18 @@
                                         </div>
                                     </div>
 
-                                    <div class="settings-appearance-block">
-                                        <div class="settings-appearance-block-head">
-                                            <span class="settings-section-kicker">排版与提示块样式</span>
-                                        </div>
+                                    <details id="settings-appearance-typography-details" class="settings-cloud-advanced settings-appearance-advanced">
+                                        <summary>
+                                            <span class="settings-appearance-advanced-lead">
+                                                <svg class="settings-appearance-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none"
+                                                    stroke="currentColor" stroke-width="2.2" stroke-linecap="round"
+                                                    stroke-linejoin="round" aria-hidden="true">
+                                                    <path d="M9 6l6 6l-6 6" />
+                                                </svg>
+                                                <span>排版与提示块样式（高级）</span>
+                                            </span>
+                                            <span class="settings-row-subtitle">提示块 · 标题 · 列表</span>
+                                        </summary>
                                         <div class="settings-pref-group settings-typography-group">
                                             <div class="settings-appearance-row">
                                                 <div class="settings-appearance-row-head">
@@ -1188,7 +1201,7 @@
                                                         </span>
                                                         <div class="settings-pref-text">
                                                             <span class="settings-row-title">标题装饰</span>
-                                                            <span class="settings-row-subtitle">H1 保持留白，轻量区别二级/三级章节层次</span>
+                                                            <span class="settings-row-subtitle">轻量区分 H1 / H2 / H3 章节层次，保持阅读呼吸感</span>
                                                         </div>
                                                     </div>
                                                     <span class="settings-appearance-current" data-appearance-active-label="headingStyle">极淡边标</span>
@@ -1250,7 +1263,7 @@
                                                 </div>
                                             </div>
                                         </div>
-                                    </div>
+                                    </details>
 
                                     <details id="settings-appearance-custom-details" class="settings-cloud-advanced settings-appearance-advanced">
                                         <summary>

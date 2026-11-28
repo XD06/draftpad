@@ -186,6 +186,9 @@ function runDomAndSettingsManagerTests() {
             assert.ok(btn, `index.html missing appearance swatch button for ${group}:${id}`);
         }
     }
+    const typographyDetails = dom.window.document.getElementById('settings-appearance-typography-details');
+    assert.ok(typographyDetails, 'index.html should render collapsible typography appearance details');
+    assert.equal(typographyDetails.hasAttribute('open'), false, 'typography swatches should be collapsed by default');
     const customDetails = dom.window.document.getElementById('settings-appearance-custom-details');
     assert.ok(customDetails, 'index.html should render collapsible custom appearance details');
     assert.equal(customDetails.hasAttribute('open'), false, 'custom single-color swatches should be collapsed by default');
